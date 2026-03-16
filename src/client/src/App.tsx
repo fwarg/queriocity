@@ -7,6 +7,7 @@ import type { Message } from './lib/api.ts'
 export default function App() {
   const [messages, setMessages] = useState<Message[]>([])
   const [streaming, setStreaming] = useState('')
+  const [status, setStatus] = useState('')
   const [busy, setBusy] = useState(false)
   const [focusMode, setFocusMode] = useState<'speed' | 'balanced' | 'thorough'>('balanced')
   const [sessionId, setSessionId] = useState<string | undefined>()
@@ -36,6 +37,9 @@ export default function App() {
         if (chunk.type === 'text') {
           accumulated += chunk.delta as string
           setStreaming(accumulated)
+          setStatus('')
+        } else if (chunk.type === 'status') {
+          setStatus(chunk.text as string)
         } else if (chunk.type === 'sources') {
           sources.push(...(chunk.sources as Array<{ title: string; url: string }>))
         } else if (chunk.type === 'done') {
@@ -45,6 +49,7 @@ export default function App() {
     } finally {
       setMessages(prev => [...prev, { role: 'assistant', content: accumulated, sources }])
       setStreaming('')
+      setStatus('')
       setBusy(false)
     }
   }
@@ -53,6 +58,7 @@ export default function App() {
     setMessages([])
     setSessionId(undefined)
     setStreaming('')
+    setStatus('')
   }
 
   return (
@@ -104,6 +110,9 @@ export default function App() {
           </div>
         ) : (
           <MessageList messages={messages} streaming={streaming} />
+        )}
+        {status && (
+          <div className="px-4 py-1 text-xs text-gray-500 italic animate-pulse">{status}</div>
         )}
         <div ref={bottomRef} />
         <ChatInput

@@ -29,7 +29,7 @@ When done researching, call the done tool.`,
 const MODE_CONFIG = {
   speed:    { maxSteps: 2, count: 6 },
   balanced: { maxSteps: 4, count: 8 },
-  thorough: { maxSteps: 7, count: 10 },
+  thorough: { maxSteps: 5, count: 10 },
 }
 
 export interface ResearchOptions {

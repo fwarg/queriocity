@@ -63,13 +63,26 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
     let fullContent = ''
     const sources: unknown[] = []
 
+    const emitStatus = (text: string) =>
+      stream.writeSSE({ data: JSON.stringify({ type: 'status', text }) })
+
+    const emitSearchStatus = (args: any) => {
+      const queries: string[] = args.queries ?? (args.query ? [args.query] : [])
+      if (queries.length) emitStatus(`Searching: ${queries.map(q => `"${q}"`).join(', ')}`)
+    }
+
     if (focusMode === 'thorough') {
       // Phase 1: Research (collect sources, no text to client)
+      if (initialQueries?.length) {
+        await emitStatus(`Searching: ${initialQueries.map(q => `"${q}"`).join(', ')}`)
+      }
       const researcherResult = runResearcher({ messages: msgs, focusMode, userId, initialQueries, initialResults })
       const allSources: SearchResult[] = [...(initialResults ?? [])]
 
       for await (const part of researcherResult.fullStream as AsyncIterable<any>) {
-        if (part.type === 'tool-result' && part.toolName === 'web_search') {
+        if (part.type === 'tool-call' && part.toolName === 'web_search') {
+          await emitSearchStatus(part.args)
+        } else if (part.type === 'tool-result' && part.toolName === 'web_search') {
           allSources.push(...(part.result as SearchResult[]))
         }
       }
@@ -86,6 +99,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
       await stream.writeSSE({ data: JSON.stringify({ type: 'sources', sources: dedupedSources }) })
 
       // Phase 2: Writer pass
+      await emitStatus('Writing answer…')
       const writerResult = runWriter(dedupedSources, msgs)
       for await (const part of writerResult.fullStream) {
         if (part.type === 'text-delta') {
@@ -103,7 +117,9 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
       const result = runResearcher({ messages: msgs, focusMode, userId, initialQueries, initialResults })
 
       for await (const part of result.fullStream as AsyncIterable<any>) {
-        if (part.type === 'text-delta') {
+        if (part.type === 'tool-call' && part.toolName === 'web_search') {
+          await emitSearchStatus(part.args)
+        } else if (part.type === 'text-delta') {
           fullContent += part.textDelta
           await stream.writeSSE({ data: JSON.stringify({ type: 'text', delta: part.textDelta }) })
         } else if (part.type === 'tool-result' && part.toolName === 'web_search') {

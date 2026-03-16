@@ -2,10 +2,19 @@ import { streamText } from 'ai'
 import { getChatModel } from './llm.ts'
 import type { SearchResult } from './searxng.ts'
 
-const WRITER_SYSTEM = `You are a precise writer. Given the research results below, write a comprehensive answer.
-- Cite every factual claim with [number] notation referencing the source list.
-- Every paragraph must contain at least one citation.
-- Structure: brief intro, main content, conclusion.`
+const WRITER_SYSTEM = `You are a research writer. Given the research results, write a well-structured report.
+
+Formatting rules:
+- Use ## for main section headings, ### for subsections if needed.
+- Use bullet points or numbered lists for steps, requirements, or any enumerable content — avoid turning these into prose.
+- Keep paragraphs short: 2–4 sentences maximum. Prefer lists over long paragraphs.
+- Cite every factual claim inline with [N] notation. Every paragraph or list item needs at least one citation.
+- Do not invent information not found in the sources.
+
+Structure:
+1. One short introductory paragraph (3–5 sentences, no heading).
+2. Several ## sections covering distinct aspects of the topic (background, process, current status, obstacles, outlook, etc. — adapt to the question).
+3. A brief ## Conclusion or ## Summary section.`
 
 export function runWriter(
   sources: SearchResult[],
