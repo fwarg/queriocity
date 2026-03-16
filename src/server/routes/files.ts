@@ -26,7 +26,7 @@ filesRouter.post('/upload', async (c) => {
   return c.json({ fileId, filename: file.name })
 })
 
-const MAX_CONTEXT_CHARS = 20_000
+const MAX_CONTEXT_CHARS = parseInt(process.env.MAX_ATTACHMENT_CHARS ?? '20000')
 
 filesRouter.post('/extract', async (c) => {
   const body = await c.req.parseBody()

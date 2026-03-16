@@ -62,6 +62,8 @@ SEARXNG_URL=http://localhost:4000
 # ── Server ────────────────────────────────────────────────────────────────────
 PORT=3000
 DB_PATH=queriocity.db                       # path to SQLite database file
+JWT_SECRET=change-me-in-production-32chars!!
+MAX_ATTACHMENT_CHARS=20000                  # max chars injected from a chat attachment (~4 chars/token)
 ```
 
 ### Running
@@ -78,8 +80,8 @@ bun run start
 **Production**:
 
 ```bash
-bun run build:client  # builds React app into dist/client/
-bun run dev           # serves API + static files from a single port
+bun run build:client  # compile React app into dist/client/
+bun run serve                # serve API + static files on a single port
 ```
 
 Open `http://localhost:3000`. The first user to register becomes an admin.
@@ -104,7 +106,7 @@ The lightest path. A regex heuristic resolves pronouns in follow-up questions us
 previous answer, then the model searches once with a single query and streams its answer
 directly. Best for quick factual questions where you value speed over depth.
 
-- 1 search query
+- 1 search query, 6 results
 - Up to 2 LLM steps (think → answer)
 - No pre-search; the model decides whether to call `web_search` at all
 
@@ -128,7 +130,7 @@ that receives all deduplicated sources and synthesises a final, well-structured 
 Slower, but significantly more comprehensive.
 
 - Up to 3 pre-fetched queries (10 results each)
-- Up to 5 LLM steps in the researcher; unlimited search calls
+- Up to 5 LLM steps in the researcher; up to 3 search queries per step
 - Separate writer model pass for the final answer
 
 > When a file is attached to the message, reformulation and pre-search are skipped entirely
@@ -145,7 +147,7 @@ There are two distinct ways to bring file content into a conversation.
 
 Click the **paperclip** icon next to the message box and pick a file. The file is sent to
 the server, its text is extracted (PDF text layer, OCR for images, plain text for
-everything else), and up to 20 000 characters of that text are injected into the message
+everything else), and up to `MAX_ATTACHMENT_CHARS` characters (default 20 000, ~5 000 tokens) of that text are injected into the message
 you are about to send. The file is **not stored** — it lives only in that one message.
 
 Use this when you want to ask a one-off question about a document: *"Summarise this

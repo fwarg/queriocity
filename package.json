@@ -6,6 +6,7 @@
     "dev": "bun run src/server/index.ts",
     "dev:client": "vite dev --config vite.config.ts",
     "start": "bun run src/server/index.ts & vite dev --config vite.config.ts",
+    "serve": "bun run src/server/index.ts",
     "build:client": "vite build",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate"
