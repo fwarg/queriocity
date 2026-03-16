@@ -28,7 +28,7 @@ export interface Message {
 
 export async function* streamChat(
   messages: Message[],
-  focusMode: 'speed' | 'balanced' | 'thorough',
+  focusMode: 'fast' | 'balanced' | 'thorough',
   sessionId?: string,
 ): AsyncGenerator<{ type: string; [k: string]: unknown }> {
   const token = await ensureSession()

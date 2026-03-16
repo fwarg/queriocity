@@ -9,7 +9,7 @@ export default function App() {
   const [streaming, setStreaming] = useState('')
   const [status, setStatus] = useState('')
   const [busy, setBusy] = useState(false)
-  const [focusMode, setFocusMode] = useState<'speed' | 'balanced' | 'thorough'>('balanced')
+  const [focusMode, setFocusMode] = useState<'fast' | 'balanced' | 'thorough'>('balanced')
   const [sessionId, setSessionId] = useState<string | undefined>()
   const [sessions, setSessions] = useState<Array<{ id: string; title: string }>>([])
   const bottomRef = useRef<HTMLDivElement>(null)

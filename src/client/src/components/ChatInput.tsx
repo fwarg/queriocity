@@ -5,8 +5,14 @@ import { uploadFile } from '../lib/api.ts'
 interface Props {
   onSubmit: (text: string) => void
   disabled?: boolean
-  focusMode: 'speed' | 'balanced' | 'thorough'
-  onFocusModeChange: (m: 'speed' | 'balanced' | 'thorough') => void
+  focusMode: 'fast' | 'balanced' | 'thorough'
+  onFocusModeChange: (m: 'fast' | 'balanced' | 'thorough') => void
+}
+
+const MODE_DESCRIPTIONS: Record<'fast' | 'balanced' | 'thorough', string> = {
+  fast: 'Fast single-query search, streamed directly — best for simple factual questions.',
+  balanced: 'LLM-reformulated query with a couple of search rounds and inline citations.',
+  thorough: 'Multi-angle research with a dedicated writing pass — slower but more comprehensive.',
 }
 
 export function ChatInput({ onSubmit, disabled, focusMode, onFocusModeChange }: Props) {
@@ -43,8 +49,8 @@ export function ChatInput({ onSubmit, disabled, focusMode, onFocusModeChange }: 
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-2 p-4 border-t border-gray-800">
-      <div className="flex gap-2 text-xs">
-        {(['speed', 'balanced', 'thorough'] as const).map(m => (
+      <div className="flex items-center gap-2 text-xs">
+        {(['fast', 'balanced', 'thorough'] as const).map(m => (
           <button
             key={m}
             type="button"
@@ -54,6 +60,7 @@ export function ChatInput({ onSubmit, disabled, focusMode, onFocusModeChange }: 
             {m}
           </button>
         ))}
+        <span className="text-gray-500 ml-1">{MODE_DESCRIPTIONS[focusMode]}</span>
       </div>
       <div className="flex gap-2">
         <textarea

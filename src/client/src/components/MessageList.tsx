@@ -70,7 +70,7 @@ function SourceList({ content, sources }: { content: string; sources: Array<{ ti
             onClick={() => setShowUnused(v => !v)}
             className="text-xs text-gray-600 hover:text-gray-400 text-left mt-0.5"
           >
-            {showUnused ? '▾' : '▸'} {unused.length} unused source{unused.length > 1 ? 's' : ''}
+            {showUnused ? '▾' : '▸'} {unused.length} uncited source{unused.length > 1 ? 's' : ''}
           </button>
           {showUnused && sources.map((s, j) => !cited.has(j + 1) && (
             <a

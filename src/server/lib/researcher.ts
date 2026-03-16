@@ -7,7 +7,7 @@ import { searchUploads } from './files/uploads-search.ts'
 const CHAT_TARGET = `${process.env.CHAT_BASE_URL ?? 'ollama'} model=${process.env.CHAT_MODEL ?? 'llama3.2'}`
 
 export const SYSTEM_PROMPTS = {
-  speed: `You are a fast research assistant. Answer directly. If a web search would help, \
+  fast: `You are a fast research assistant. Answer directly. If a web search would help, \
 call web_search once with the most important query. Skip search for conversational \
 or factual questions you can answer from training. Be concise.`,
 
@@ -27,14 +27,14 @@ When done researching, call the done tool.`,
 }
 
 const MODE_CONFIG = {
-  speed:    { maxSteps: 2, count: 6 },
+  fast:    { maxSteps: 2, count: 6 },
   balanced: { maxSteps: 4, count: 8 },
   thorough: { maxSteps: 5, count: 10 },
 }
 
 export interface ResearchOptions {
   messages: Array<{ role: 'user' | 'assistant'; content: string }>
-  focusMode: 'speed' | 'balanced' | 'thorough'
+  focusMode: 'fast' | 'balanced' | 'thorough'
   userId: string
   initialQueries?: string[]
   initialResults?: SearchResult[]
@@ -53,7 +53,7 @@ export function runResearcher({ messages, focusMode, userId, initialQueries, ini
   let augmentedMessages: any[] = messages
   if (initialResults?.length && initialQueries?.length) {
     system += `\n\nNote: an initial search has already been performed and the results are in the conversation. Build on those results rather than repeating the same queries.`
-    const args = focusMode === 'speed'
+    const args = focusMode === 'fast'
       ? { query: initialQueries[0] }
       : { queries: initialQueries }
     augmentedMessages = [
@@ -63,7 +63,7 @@ export function runResearcher({ messages, focusMode, userId, initialQueries, ini
     ]
   }
 
-  const webSearchTool = focusMode === 'speed'
+  const webSearchTool = focusMode === 'fast'
     ? tool({
         description: 'Search the web for up-to-date information.',
         parameters: z.object({

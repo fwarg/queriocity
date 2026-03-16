@@ -18,7 +18,7 @@ const chatSchema = z.object({
     role: z.enum(['user', 'assistant']),
     content: z.string(),
   })),
-  focusMode: z.enum(['speed', 'balanced', 'thorough']).default('balanced'),
+  focusMode: z.enum(['fast', 'balanced', 'thorough']).default('balanced'),
 })
 
 export const chatRouter = new Hono<AppEnv>()
@@ -43,7 +43,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
   let initialQueries: string[] | undefined
   let initialResults: SearchResult[] | undefined
   try {
-    if (focusMode === 'speed') {
+    if (focusMode === 'fast') {
       const q = reformulateSpeed(msgs)
       if (q && q !== lastUser?.content) initialQueries = [q]
     } else {
