@@ -43,15 +43,23 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
   const userRow = await db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get()
   const customPrompt: string | undefined = userRow ? (JSON.parse(userRow.settings).customPrompt ?? undefined) : undefined
 
+  // Strip injected attachment content (everything after \n\n---\n) before reformulating,
+  // so the small model only sees the actual query and doesn't overflow its context.
+  const msgsForReformulate = msgs.map(m =>
+    m.role === 'user'
+      ? { ...m, content: m.content.replace(/\n\n---\n[\s\S]*$/, '').trim() }
+      : m
+  )
+
   // Reformulate query, then pre-execute for balanced/thorough
   let initialQueries: string[] | undefined
   let initialResults: SearchResult[] | undefined
   try {
     if (focusMode === 'fast') {
-      const q = reformulateSpeed(msgs)
+      const q = reformulateSpeed(msgsForReformulate)
       if (q && q !== lastUser?.content) initialQueries = [q]
     } else {
-      const queries = await reformulateLLM(msgs, focusMode)
+      const queries = await reformulateLLM(msgsForReformulate, focusMode)
       if (queries.length > 0) {
         initialQueries = queries
         const maxQueries = focusMode === 'thorough' ? 3 : 2

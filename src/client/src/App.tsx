@@ -7,7 +7,7 @@ import { SettingsPanel } from './components/SettingsPanel.tsx'
 import { AdminPanel } from './components/AdminPanel.tsx'
 import {
   streamChat, fetchHistory, fetchSession, deleteSession,
-  fetchFiles, deleteFile, getMe, hasUsers, logout,
+  fetchFiles, deleteFile, uploadFile, getMe, hasUsers, logout,
 } from './lib/api.ts'
 import type { AuthUser, Message } from './lib/api.ts'
 
@@ -150,8 +150,28 @@ export default function App() {
     deleteFile(id).then(() => setFiles(prev => prev.filter(f => f.id !== id))).catch(() => {})
   }
 
-  function refreshFiles() {
-    fetchFiles().then(setFiles).catch(() => {})
+  const kbFileRef = useRef<HTMLInputElement>(null)
+  const [kbUploadStatus, setKbUploadStatus] = useState<'idle' | 'uploading' | 'ok' | 'error'>('idle')
+  const [kbUploadMsg, setKbUploadMsg] = useState('')
+
+  async function handleKbUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setKbUploadStatus('uploading')
+    setKbUploadMsg(`Uploading ${file.name}…`)
+    try {
+      await uploadFile(file)
+      setKbUploadStatus('ok')
+      setKbUploadMsg(`"${file.name}" added to knowledge base`)
+      fetchFiles().then(setFiles).catch(() => {})
+      setTimeout(() => setKbUploadStatus('idle'), 3000)
+    } catch (err: any) {
+      setKbUploadStatus('error')
+      setKbUploadMsg(err.message ?? 'Upload failed')
+      setTimeout(() => setKbUploadStatus('idle'), 4000)
+    } finally {
+      e.target.value = ''
+    }
   }
 
   // Auth screens
@@ -266,17 +286,34 @@ export default function App() {
           </div>
         ) : view === 'files' ? (
           <div className="flex flex-col flex-1 overflow-y-auto p-6 gap-4">
-            <div className="flex flex-col gap-1">
-              <h2 className="text-lg font-semibold text-gray-200">Files</h2>
-              <p className="text-xs text-gray-500">
-                Uploaded files are stored in your personal knowledge base. The assistant automatically
-                searches them (via <span className="font-mono text-gray-400">uploads_search</span>) whenever
-                your query might be answered by their content — no need to reference them explicitly.
-                Supported: PDF, plain text, images (OCR).
-              </p>
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex flex-col gap-1">
+                <h2 className="text-lg font-semibold text-gray-200">Knowledge base</h2>
+                <p className="text-xs text-gray-500 max-w-lg">
+                  Files here are chunked, embedded, and searched automatically whenever your query
+                  might be answered by their content — no need to reference them explicitly.
+                  To ask about a specific file without storing it, use the paperclip in the chat input instead.
+                  Supported: PDF, plain text, images.
+                </p>
+              </div>
+              <div className="flex flex-col items-end gap-1 shrink-0">
+                <button
+                  onClick={() => kbFileRef.current?.click()}
+                  disabled={kbUploadStatus === 'uploading'}
+                  className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-sm font-medium whitespace-nowrap"
+                >
+                  {kbUploadStatus === 'uploading' ? 'Uploading…' : '+ Upload file'}
+                </button>
+                {kbUploadStatus !== 'idle' && (
+                  <span className={`text-xs ${kbUploadStatus === 'error' ? 'text-red-400' : 'text-green-400'}`}>
+                    {kbUploadMsg}
+                  </span>
+                )}
+                <input ref={kbFileRef} type="file" className="hidden" onChange={handleKbUpload} />
+              </div>
             </div>
             {files.length === 0 ? (
-              <p className="text-gray-500 text-sm">No files uploaded yet. Use the paperclip button in the chat input to upload.</p>
+              <p className="text-gray-500 text-sm">No files uploaded yet.</p>
             ) : (
               <div className="flex flex-col gap-2">
                 {files.map(f => (
@@ -288,7 +325,6 @@ export default function App() {
                     <button
                       onClick={(e) => handleDeleteFile(f.id, e)}
                       className="text-xs text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
-                      title="Delete file"
                     >
                       Delete
                     </button>
@@ -316,7 +352,6 @@ export default function App() {
               disabled={busy}
               focusMode={focusMode}
               onFocusModeChange={setFocusMode}
-              onFileUploaded={refreshFiles}
             />
           </>
         )}

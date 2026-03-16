@@ -143,6 +143,17 @@ export async function fetchHistory() {
   return res.json()
 }
 
+export async function extractFileForContext(file: File): Promise<{ filename: string; content: string }> {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch(`${BASE}/files/extract`, { method: 'POST', body: form })
+  if (!res.ok) {
+    const { error } = await res.json().catch(() => ({ error: 'Extraction failed' }))
+    throw new Error(error ?? 'Extraction failed')
+  }
+  return res.json()
+}
+
 export async function uploadFile(file: File): Promise<{ fileId: string; filename: string }> {
   const form = new FormData()
   form.append('file', file)

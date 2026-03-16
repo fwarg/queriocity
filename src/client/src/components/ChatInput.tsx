@@ -1,13 +1,17 @@
 import { useState, useRef, type FormEvent, type KeyboardEvent } from 'react'
-import { Send, Paperclip } from 'lucide-react'
-import { uploadFile } from '../lib/api.ts'
+import { Send, Paperclip, X } from 'lucide-react'
+import { extractFileForContext } from '../lib/api.ts'
 
 interface Props {
   onSubmit: (text: string) => void
   disabled?: boolean
   focusMode: 'fast' | 'balanced' | 'thorough'
   onFocusModeChange: (m: 'fast' | 'balanced' | 'thorough') => void
-  onFileUploaded?: () => void
+}
+
+interface Attachment {
+  filename: string
+  content: string
 }
 
 const MODE_DESCRIPTIONS: Record<'fast' | 'balanced' | 'thorough', string> = {
@@ -16,18 +20,26 @@ const MODE_DESCRIPTIONS: Record<'fast' | 'balanced' | 'thorough', string> = {
   thorough: 'Multi-angle research with a dedicated writing pass — slower but more comprehensive.',
 }
 
-export function ChatInput({ onSubmit, disabled, focusMode, onFocusModeChange, onFileUploaded }: Props) {
+export function ChatInput({ onSubmit, disabled, focusMode, onFocusModeChange }: Props) {
   const [value, setValue] = useState('')
-  const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'ok' | 'error'>('idle')
-  const [uploadMsg, setUploadMsg] = useState('')
+  const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [extractStatus, setExtractStatus] = useState<'idle' | 'loading' | 'error'>('idle')
+  const [extractError, setExtractError] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault()
     const text = value.trim()
-    if (!text || disabled) return
-    onSubmit(text)
+    if ((!text && attachments.length === 0) || disabled) return
+
+    let fullText = text
+    for (const att of attachments) {
+      fullText += `\n\n---\n[${att.filename}]\n${att.content}`
+    }
+
+    onSubmit(fullText)
     setValue('')
+    setAttachments([])
   }
 
   function handleKey(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -40,18 +52,16 @@ export function ChatInput({ onSubmit, disabled, focusMode, onFocusModeChange, on
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
-    setUploadStatus('uploading')
-    setUploadMsg(`Uploading ${file.name}…`)
+    setExtractStatus('loading')
+    setExtractError('')
     try {
-      const result = await uploadFile(file)
-      setUploadStatus('ok')
-      setUploadMsg(`"${result.filename}" uploaded`)
-      onFileUploaded?.()
-      setTimeout(() => setUploadStatus('idle'), 3000)
+      const att = await extractFileForContext(file)
+      setAttachments(prev => [...prev, att])
+      setExtractStatus('idle')
     } catch (err: any) {
-      setUploadStatus('error')
-      setUploadMsg(err.message ?? 'Upload failed')
-      setTimeout(() => setUploadStatus('idle'), 4000)
+      setExtractStatus('error')
+      setExtractError(err.message ?? 'Failed to read file')
+      setTimeout(() => setExtractStatus('idle'), 4000)
     } finally {
       e.target.value = ''
     }
@@ -72,10 +82,28 @@ export function ChatInput({ onSubmit, disabled, focusMode, onFocusModeChange, on
         ))}
         <span className="text-gray-500 ml-1">{MODE_DESCRIPTIONS[focusMode]}</span>
       </div>
-      {uploadStatus !== 'idle' && (
-        <div className={`text-xs px-1 ${uploadStatus === 'error' ? 'text-red-400' : uploadStatus === 'ok' ? 'text-green-400' : 'text-gray-400 animate-pulse'}`}>
-          {uploadMsg}
+      {attachments.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {attachments.map((att, i) => (
+            <div key={i} className="flex items-center gap-1 px-2 py-1 rounded bg-gray-700 text-xs text-gray-200">
+              <Paperclip size={10} className="shrink-0 text-gray-400" />
+              <span className="truncate max-w-40">{att.filename}</span>
+              <button
+                type="button"
+                onClick={() => setAttachments(prev => prev.filter((_, j) => j !== i))}
+                className="text-gray-400 hover:text-white ml-0.5"
+              >
+                <X size={10} />
+              </button>
+            </div>
+          ))}
         </div>
+      )}
+      {extractStatus === 'loading' && (
+        <div className="text-xs text-gray-400 animate-pulse">Reading file…</div>
+      )}
+      {extractStatus === 'error' && (
+        <div className="text-xs text-red-400">{extractError}</div>
       )}
       <div className="flex gap-2">
         <textarea
@@ -91,15 +119,15 @@ export function ChatInput({ onSubmit, disabled, focusMode, onFocusModeChange, on
           <button
             type="button"
             onClick={() => fileRef.current?.click()}
-            disabled={uploadStatus === 'uploading'}
+            disabled={extractStatus === 'loading'}
             className="p-2 rounded bg-gray-800 hover:bg-gray-700 disabled:opacity-50"
-            title="Upload file to personal knowledge base"
+            title="Attach file to this message (not stored)"
           >
-            <Paperclip size={16} className={uploadStatus === 'uploading' ? 'animate-pulse' : ''} />
+            <Paperclip size={16} className={extractStatus === 'loading' ? 'animate-pulse' : ''} />
           </button>
           <button
             type="submit"
-            disabled={disabled || !value.trim()}
+            disabled={disabled || (!value.trim() && attachments.length === 0)}
             className="p-2 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50"
           >
             <Send size={16} />

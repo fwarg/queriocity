@@ -15,6 +15,17 @@ function chunkText(text: string): string[] {
   return chunks
 }
 
+/** Extract full text from any supported file type without storing anything. */
+export async function extractFileText(buffer: ArrayBuffer, mimeType: string): Promise<string> {
+  if (mimeType === 'application/pdf') {
+    return (await extractPdfChunks(buffer)).join('\n\n')
+  }
+  if (mimeType.startsWith('image/')) {
+    return extractImageText(buffer, mimeType)
+  }
+  return new TextDecoder().decode(buffer)
+}
+
 export async function ingestFile(
   buffer: ArrayBuffer,
   filename: string,
@@ -24,17 +35,8 @@ export async function ingestFile(
   const fileId = randomUUID()
 
   // 1. Extract text chunks
-  let rawChunks: string[]
-  if (mimeType === 'application/pdf') {
-    rawChunks = await extractPdfChunks(buffer)
-  } else if (mimeType.startsWith('image/')) {
-    const text = await extractImageText(buffer, mimeType)
-    rawChunks = chunkText(text)
-  } else {
-    // Plain text / markdown
-    const text = new TextDecoder().decode(buffer)
-    rawChunks = chunkText(text)
-  }
+  const fullText = await extractFileText(buffer, mimeType)
+  const rawChunks = chunkText(fullText)
 
   // 2. Embed all chunks
   const embeddings = await embedTexts(rawChunks)
