@@ -51,11 +51,15 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
       : m
   )
 
+  const hasAttachment = /\n\n---\n\[/.test(lastUser?.content ?? '')
+
   // Reformulate query, then pre-execute for balanced/thorough
   let initialQueries: string[] | undefined
   let initialResults: SearchResult[] | undefined
   try {
-    if (focusMode === 'fast') {
+    if (hasAttachment) {
+      console.log(`  [chat] attachment detected — skipping reformulation/pre-search`)
+    } else if (focusMode === 'fast') {
       const q = reformulateSpeed(msgsForReformulate)
       if (q && q !== lastUser?.content) initialQueries = [q]
     } else {
