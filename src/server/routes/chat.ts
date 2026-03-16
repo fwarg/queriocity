@@ -95,6 +95,11 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
       }
     } else {
       // Speed / balanced: stream researcher output directly
+      if (initialResults?.length) {
+        sources.push(...initialResults.map(r => ({ title: r.title, url: r.url })))
+        await stream.writeSSE({ data: JSON.stringify({ type: 'sources', sources: initialResults }) })
+      }
+
       const result = runResearcher({ messages: msgs, focusMode, userId, initialQueries, initialResults })
 
       for await (const part of result.fullStream as AsyncIterable<any>) {

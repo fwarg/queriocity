@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { MessageList } from './components/MessageList.tsx'
 import { ChatInput } from './components/ChatInput.tsx'
-import { streamChat, fetchHistory, ensureSession } from './lib/api.ts'
+import { streamChat, fetchHistory, fetchSession, deleteSession, ensureSession } from './lib/api.ts'
 import type { Message } from './lib/api.ts'
 
 export default function App() {
@@ -66,13 +66,32 @@ export default function App() {
           + New chat
         </button>
         {sessions.map(s => (
-          <button
-            key={s.id}
-            onClick={() => { setSessionId(s.id); setMessages([]) }}
-            className={`text-left px-3 py-2 rounded text-sm truncate hover:bg-gray-800 ${sessionId === s.id ? 'bg-gray-800' : ''}`}
-          >
-            {s.title}
-          </button>
+          <div key={s.id} className={`flex items-center rounded hover:bg-gray-800 ${sessionId === s.id ? 'bg-gray-800' : ''}`}>
+            <button
+              onClick={() => {
+                setSessionId(s.id)
+                setMessages([])
+                setStreaming('')
+                fetchSession(s.id).then(setMessages).catch(() => {})
+              }}
+              className="flex-1 text-left px-3 py-2 text-sm truncate"
+            >
+              {s.title}
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                deleteSession(s.id).then(() => {
+                  setSessions(prev => prev.filter(x => x.id !== s.id))
+                  if (sessionId === s.id) newChat()
+                }).catch(() => {})
+              }}
+              className="px-2 py-2 text-gray-600 hover:text-red-400 shrink-0"
+              title="Delete"
+            >
+              ×
+            </button>
+          </div>
         ))}
       </aside>
 

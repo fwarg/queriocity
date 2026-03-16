@@ -63,6 +63,27 @@ export async function* streamChat(
   }
 }
 
+export async function fetchSession(id: string): Promise<Message[]> {
+  const token = await ensureSession()
+  const res = await fetch(`${BASE}/history/${id}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  const { messages } = await res.json()
+  return (messages as Array<{ role: 'user' | 'assistant'; content: string; sources?: string }>).map(m => ({
+    role: m.role,
+    content: m.content,
+    sources: m.sources ? JSON.parse(m.sources) : undefined,
+  }))
+}
+
+export async function deleteSession(id: string): Promise<void> {
+  const token = await ensureSession()
+  await fetch(`${BASE}/history/${id}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  })
+}
+
 export async function fetchHistory() {
   const token = await ensureSession()
   const res = await fetch(`${BASE}/history`, {
