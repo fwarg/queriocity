@@ -225,20 +225,13 @@ All direct runtime dependencies use **MIT** or **Apache 2.0** licenses.
 Dev dependencies (`vite`, `tailwindcss`, `drizzle-kit`, `@vitejs/plugin-react`, Babel
 plugins, type stubs) are likewise MIT or Apache 2.0.
 
-### Recommended license for this project
-
-**MIT** is the best fit. It is compatible with all dependencies listed above: MIT
-packages impose no downstream restrictions, and Apache 2.0 packages may be included in
-MIT-licensed projects provided their copyright and license notices are retained (which
-standard `node_modules` handling already does). MIT is also the simplest choice for a
-self-hosted tool where the primary value is the running instance, not the source
-distribution.
-
-If you want explicit patent protection clauses, choose **Apache 2.0** instead — it is
-equally compatible with all dependencies here.
+This project is licensed under **MIT**. It is compatible with all dependencies listed
+above: MIT packages impose no downstream restrictions, and Apache 2.0 packages may be
+included in MIT-licensed projects provided their copyright and license notices are
+retained (which standard `node_modules` handling already does).
 
 ---
 
 ## License
 
-MIT © the Queriocity contributors
+MIT — see [LICENSE.md](LICENSE.md)
