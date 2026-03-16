@@ -213,6 +213,7 @@ export default function App() {
 
       {/* Sidebar */}
       <aside className="w-56 bg-gray-900 border-r border-gray-800 flex flex-col p-3 gap-1 overflow-y-auto">
+        <div className="px-3 py-2 text-base font-bold text-white tracking-wide">Queriocity</div>
         <button
           onClick={newChat}
           className="w-full text-left px-3 py-2 rounded bg-blue-600 hover:bg-blue-500 text-sm font-medium"
