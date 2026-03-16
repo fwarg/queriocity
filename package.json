@@ -31,5 +31,9 @@
     "autoprefixer": "^10",
     "postcss": "^8",
     "@types/better-sqlite3": "^7"
-  }
+  },
+  "trustedDependencies": [
+    "es5-ext",
+    "tesseract.js"
+  ]
 }
