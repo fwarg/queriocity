@@ -38,14 +38,16 @@ export interface ResearchOptions {
   userId: string
   initialQueries?: string[]
   initialResults?: SearchResult[]
+  customPrompt?: string
 }
 
-export function runResearcher({ messages, focusMode, userId, initialQueries, initialResults }: ResearchOptions) {
+export function runResearcher({ messages, focusMode, userId, initialQueries, initialResults, customPrompt }: ResearchOptions) {
   const { maxSteps, count } = MODE_CONFIG[focusMode]
   const start = performance.now()
   console.log(`  [chat] ${CHAT_TARGET} focusMode=${focusMode} maxSteps=${maxSteps}`)
 
   let system = SYSTEM_PROMPTS[focusMode]
+  if (customPrompt?.trim()) system += `\n\nAdditional instructions from the user:\n${customPrompt.trim()}`
 
   // Inject pre-executed search results as a fake tool exchange so the model
   // sees them as already done and continues from there. Also note in the system

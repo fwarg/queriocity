@@ -12,6 +12,33 @@ export const db = drizzle(sqlite)
 
 // --- Schema ---
 
+export const users = sqliteTable('users', {
+  id: text('id').primaryKey(),
+  email: text('email').notNull().unique(),
+  name: text('name'),
+  role: text('role', { enum: ['user', 'admin'] }).notNull().default('user'),
+  settings: text('settings').notNull().default('{}'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+})
+
+export const authCredentials = sqliteTable('auth_credentials', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  email: text('email').notNull().unique(),
+  passwordHash: text('password_hash').notNull(),
+  active: integer('active', { mode: 'boolean' }).notNull().default(true),
+})
+
+export const invites = sqliteTable('invites', {
+  id: text('id').primaryKey(),
+  createdBy: text('created_by').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  email: text('email'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
+  usedAt: integer('used_at', { mode: 'timestamp' }),
+})
+
 export const chatSessions = sqliteTable('chat_sessions', {
   id: text('id').primaryKey(),
   title: text('title').notNull(),
@@ -42,6 +69,30 @@ export const uploadedFiles = sqliteTable('uploaded_files', {
 
 function initSchema() {
   sqlite.run(`
+    CREATE TABLE IF NOT EXISTS users (
+      id         TEXT PRIMARY KEY,
+      email      TEXT NOT NULL UNIQUE,
+      name       TEXT,
+      role       TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('user','admin')),
+      settings   TEXT NOT NULL DEFAULT '{}',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS auth_credentials (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      email         TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      active        INTEGER NOT NULL DEFAULT 1
+    );
+    CREATE TABLE IF NOT EXISTS invites (
+      id         TEXT PRIMARY KEY,
+      created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      email      TEXT,
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL,
+      used_at    INTEGER
+    );
     CREATE TABLE IF NOT EXISTS chat_sessions (
       id         TEXT PRIMARY KEY,
       title      TEXT NOT NULL,

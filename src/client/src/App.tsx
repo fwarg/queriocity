@@ -1,10 +1,20 @@
 import { useState, useEffect, useRef } from 'react'
 import { MessageList } from './components/MessageList.tsx'
 import { ChatInput } from './components/ChatInput.tsx'
-import { streamChat, fetchHistory, fetchSession, deleteSession, ensureSession } from './lib/api.ts'
-import type { Message } from './lib/api.ts'
+import { LoginPage } from './components/LoginPage.tsx'
+import { RegisterPage } from './components/RegisterPage.tsx'
+import { SettingsPanel } from './components/SettingsPanel.tsx'
+import { AdminPanel } from './components/AdminPanel.tsx'
+import { streamChat, fetchHistory, fetchSession, deleteSession, getMe, hasUsers, logout } from './lib/api.ts'
+import type { AuthUser, Message } from './lib/api.ts'
+
+type AuthView = 'loading' | 'login' | 'register'
 
 export default function App() {
+  const [authView, setAuthView] = useState<AuthView>('loading')
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null)
+  const [inviteToken, setInviteToken] = useState<string | undefined>()
+
   const [messages, setMessages] = useState<Message[]>([])
   const [streaming, setStreaming] = useState('')
   const [status, setStatus] = useState('')
@@ -13,15 +23,51 @@ export default function App() {
   const [sessionId, setSessionId] = useState<string | undefined>()
   const [sessions, setSessions] = useState<Array<{ id: string; title: string }>>([])
   const [view, setView] = useState<'chat' | 'library'>('chat')
+  const [showSettings, setShowSettings] = useState(false)
+  const [showAdmin, setShowAdmin] = useState(false)
+
   const bottomRef = useRef<HTMLDivElement>(null)
 
+  // Bootstrap: check auth, read invite token from URL
   useEffect(() => {
-    ensureSession().then(() => fetchHistory().then(setSessions).catch(() => {}))
+    const params = new URLSearchParams(window.location.search)
+    const token = params.get('token')
+    if (token) {
+      setInviteToken(token)
+      // Clean URL
+      window.history.replaceState({}, '', window.location.pathname)
+    }
+
+    getMe().then(user => {
+      if (user) {
+        setCurrentUser(user)
+        setAuthView('loading') // stay in app
+        fetchHistory().then(setSessions).catch(() => {})
+      } else if (token) {
+        setAuthView('register')
+      } else {
+        hasUsers().then(exists => setAuthView(exists ? 'login' : 'register'))
+      }
+    })
   }, [])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, streaming])
+
+  function handleAuthSuccess(user: AuthUser) {
+    setCurrentUser(user)
+    setAuthView('loading')
+    fetchHistory().then(setSessions).catch(() => {})
+  }
+
+  async function handleLogout() {
+    await logout()
+    setCurrentUser(null)
+    setSessions([])
+    setMessages([])
+    setAuthView('login')
+  }
 
   async function handleSubmit(text: string) {
     const userMsg: Message = { role: 'user', content: text }
@@ -66,7 +112,6 @@ export default function App() {
     setStreaming('')
     setView('chat')
     fetchSession(id).then(setMessages).catch(() => {})
-    // bring to top if not already
     setSessions(prev => [{ id, title }, ...prev.filter(s => s.id !== id)])
   }
 
@@ -86,8 +131,43 @@ export default function App() {
     }).catch(() => {})
   }
 
+  // Auth screens
+  if (authView === 'loading' && !currentUser) {
+    return <div className="flex h-screen items-center justify-center text-gray-500 text-sm">Loading…</div>
+  }
+  if (authView === 'login') {
+    return (
+      <LoginPage
+        onLogin={handleAuthSuccess}
+        showRegisterLink={!!inviteToken}
+        onRegister={() => setAuthView('register')}
+      />
+    )
+  }
+  if (authView === 'register') {
+    return (
+      <RegisterPage
+        onRegister={handleAuthSuccess}
+        inviteToken={inviteToken}
+        showLoginLink={true}
+        onLogin={() => setAuthView('login')}
+      />
+    )
+  }
+
   return (
     <div className="flex h-screen">
+      {showSettings && currentUser && (
+        <SettingsPanel
+          customPrompt={currentUser.settings?.customPrompt ?? ''}
+          onClose={() => setShowSettings(false)}
+          onSave={cp => setCurrentUser(u => u ? { ...u, settings: { ...u.settings, customPrompt: cp } } : u)}
+        />
+      )}
+      {showAdmin && currentUser && (
+        <AdminPanel currentUserId={currentUser.id} onClose={() => setShowAdmin(false)} />
+      )}
+
       {/* Sidebar */}
       <aside className="w-56 bg-gray-900 border-r border-gray-800 flex flex-col p-3 gap-1 overflow-y-auto">
         <button
@@ -105,21 +185,38 @@ export default function App() {
         <div className="border-t border-gray-800 my-1" />
         {sessions.map(s => (
           <div key={s.id} className={`flex items-center rounded hover:bg-gray-800 ${sessionId === s.id && view === 'chat' ? 'bg-gray-800' : ''}`}>
-            <button
-              onClick={() => loadSession(s.id, s.title)}
-              className="flex-1 text-left px-3 py-2 text-sm truncate"
-            >
+            <button onClick={() => loadSession(s.id, s.title)} className="flex-1 text-left px-3 py-2 text-sm truncate">
               {s.title}
             </button>
-            <button
-              onClick={(e) => handleDelete(s.id, e)}
-              className="px-2 py-2 text-gray-600 hover:text-red-400 shrink-0"
-              title="Delete"
-            >
+            <button onClick={(e) => handleDelete(s.id, e)} className="px-2 py-2 text-gray-600 hover:text-red-400 shrink-0" title="Delete">
               ×
             </button>
           </div>
         ))}
+
+        {/* Bottom user area */}
+        <div className="mt-auto border-t border-gray-800 pt-2 flex flex-col gap-1">
+          <button
+            onClick={() => setShowSettings(true)}
+            className="w-full text-left px-3 py-2 rounded text-xs text-gray-400 hover:bg-gray-800"
+          >
+            ⚙ Settings
+          </button>
+          {currentUser?.role === 'admin' && (
+            <button
+              onClick={() => setShowAdmin(true)}
+              className="w-full text-left px-3 py-2 rounded text-xs text-gray-400 hover:bg-gray-800"
+            >
+              ◈ Admin
+            </button>
+          )}
+          <button
+            onClick={handleLogout}
+            className="w-full text-left px-3 py-2 rounded text-xs text-gray-500 hover:bg-gray-800 hover:text-red-400"
+          >
+            Sign out — {currentUser?.name ?? currentUser?.email}
+          </button>
+        </div>
       </aside>
 
       {/* Main */}

@@ -1,23 +1,11 @@
 const BASE = '/api'
 
-function getToken(): string {
-  return localStorage.getItem('token') ?? ''
-}
-
-export async function ensureSession(): Promise<string> {
-  const existing = localStorage.getItem('token')
-  if (existing) return existing
-
-  const userId = localStorage.getItem('userId') ?? undefined
-  const res = await fetch(`${BASE}/auth/session`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ userId }),
-  })
-  const { token, userId: uid } = await res.json()
-  localStorage.setItem('token', token)
-  localStorage.setItem('userId', uid)
-  return token
+export interface AuthUser {
+  id: string
+  email: string
+  name: string | null
+  role: 'user' | 'admin'
+  settings: { customPrompt?: string }
 }
 
 export interface Message {
@@ -26,18 +14,93 @@ export interface Message {
   sources?: Array<{ title: string; url: string }>
 }
 
+// Auth — cookies are sent automatically by the browser
+export async function getMe(): Promise<AuthUser | null> {
+  const res = await fetch(`${BASE}/auth/me`)
+  if (!res.ok) return null
+  return res.json()
+}
+
+export async function hasUsers(): Promise<boolean> {
+  const res = await fetch(`${BASE}/auth/has-users`)
+  const data = await res.json()
+  return data.hasUsers
+}
+
+export async function login(email: string, password: string): Promise<AuthUser> {
+  const res = await fetch(`${BASE}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  })
+  if (!res.ok) {
+    const { error } = await res.json()
+    throw new Error(error ?? 'Login failed')
+  }
+  return res.json()
+}
+
+export async function register(email: string, password: string, name?: string, inviteToken?: string): Promise<AuthUser> {
+  const res = await fetch(`${BASE}/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password, name, inviteToken }),
+  })
+  if (!res.ok) {
+    const { error } = await res.json()
+    throw new Error(error ?? 'Registration failed')
+  }
+  return res.json()
+}
+
+export async function logout(): Promise<void> {
+  await fetch(`${BASE}/auth/logout`, { method: 'POST' })
+}
+
+export async function updateSettings(settings: { customPrompt?: string }): Promise<void> {
+  await fetch(`${BASE}/users/settings`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  })
+}
+
+// Admin
+export async function listUsers(): Promise<Array<{ id: string; email: string; name: string | null; role: string; createdAt: number }>> {
+  const res = await fetch(`${BASE}/admin/users`)
+  return res.json()
+}
+
+export async function setUserRole(id: string, role: 'user' | 'admin'): Promise<void> {
+  await fetch(`${BASE}/admin/users/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ role }),
+  })
+}
+
+export async function deleteUser(id: string): Promise<void> {
+  await fetch(`${BASE}/admin/users/${id}`, { method: 'DELETE' })
+}
+
+export async function createInvite(email?: string): Promise<{ token: string; expiresAt: string }> {
+  const res = await fetch(`${BASE}/admin/invites`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  })
+  return res.json()
+}
+
+// Chat
 export async function* streamChat(
   messages: Message[],
   focusMode: 'fast' | 'balanced' | 'thorough',
   sessionId?: string,
 ): AsyncGenerator<{ type: string; [k: string]: unknown }> {
-  const token = await ensureSession()
   const res = await fetch(`${BASE}/chat`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ messages, focusMode, sessionId }),
   })
 
@@ -55,19 +118,14 @@ export async function* streamChat(
     buffer = lines.pop() ?? ''
     for (const line of lines) {
       if (line.startsWith('data: ')) {
-        try {
-          yield JSON.parse(line.slice(6))
-        } catch {}
+        try { yield JSON.parse(line.slice(6)) } catch {}
       }
     }
   }
 }
 
 export async function fetchSession(id: string): Promise<Message[]> {
-  const token = await ensureSession()
-  const res = await fetch(`${BASE}/history/${id}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  })
+  const res = await fetch(`${BASE}/history/${id}`)
   const { messages } = await res.json()
   return (messages as Array<{ role: 'user' | 'assistant'; content: string; sources?: string }>).map(m => ({
     role: m.role,
@@ -77,29 +135,17 @@ export async function fetchSession(id: string): Promise<Message[]> {
 }
 
 export async function deleteSession(id: string): Promise<void> {
-  const token = await ensureSession()
-  await fetch(`${BASE}/history/${id}`, {
-    method: 'DELETE',
-    headers: { Authorization: `Bearer ${token}` },
-  })
+  await fetch(`${BASE}/history/${id}`, { method: 'DELETE' })
 }
 
 export async function fetchHistory() {
-  const token = await ensureSession()
-  const res = await fetch(`${BASE}/history`, {
-    headers: { Authorization: `Bearer ${token}` },
-  })
+  const res = await fetch(`${BASE}/history`)
   return res.json()
 }
 
 export async function uploadFile(file: File) {
-  const token = await ensureSession()
   const form = new FormData()
   form.append('file', file)
-  const res = await fetch(`${BASE}/files/upload`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
-    body: form,
-  })
+  const res = await fetch(`${BASE}/files/upload`, { method: 'POST', body: form })
   return res.json()
 }

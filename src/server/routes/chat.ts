@@ -6,7 +6,7 @@ import { runResearcher } from '../lib/researcher.ts'
 import { runWriter } from '../lib/writer.ts'
 import { reformulateSpeed, reformulateLLM } from '../lib/reformulate.ts'
 import { cacheKey, getCached, setCached } from '../lib/cache.ts'
-import { db, chatSessions, messages } from '../lib/db.ts'
+import { db, chatSessions, messages, users } from '../lib/db.ts'
 import { eq } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
@@ -38,6 +38,10 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
   if (cached) {
     return c.json({ cached: true, content: cached })
   }
+
+  // Fetch user's custom prompt
+  const userRow = await db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get()
+  const customPrompt: string | undefined = userRow ? (JSON.parse(userRow.settings).customPrompt ?? undefined) : undefined
 
   // Reformulate query, then pre-execute for balanced/thorough
   let initialQueries: string[] | undefined
@@ -76,7 +80,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
       if (initialQueries?.length) {
         await emitStatus(`Searching: ${initialQueries.map(q => `"${q}"`).join(', ')}`)
       }
-      const researcherResult = runResearcher({ messages: msgs, focusMode, userId, initialQueries, initialResults })
+      const researcherResult = runResearcher({ messages: msgs, focusMode, userId, initialQueries, initialResults, customPrompt })
       const allSources: SearchResult[] = [...(initialResults ?? [])]
 
       for await (const part of researcherResult.fullStream as AsyncIterable<any>) {
@@ -114,7 +118,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
         await stream.writeSSE({ data: JSON.stringify({ type: 'sources', sources: initialResults }) })
       }
 
-      const result = runResearcher({ messages: msgs, focusMode, userId, initialQueries, initialResults })
+      const result = runResearcher({ messages: msgs, focusMode, userId, initialQueries, initialResults, customPrompt })
 
       for await (const part of result.fullStream as AsyncIterable<any>) {
         if (part.type === 'tool-call' && part.toolName === 'web_search') {

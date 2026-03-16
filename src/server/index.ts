@@ -6,16 +6,20 @@ import { chatRouter } from './routes/chat.ts'
 import { filesRouter } from './routes/files.ts'
 import { historyRouter } from './routes/history.ts'
 import { authRouter } from './routes/auth.ts'
+import { adminRouter } from './routes/admin.ts'
+import { usersRouter } from './routes/users.ts'
 
 const app = new Hono()
 
 app.use('*', logger())
-app.use('/api/*', cors())
+app.use('/api/*', cors({ origin: '*', credentials: true }))
 
 app.route('/api/auth', authRouter)
 app.route('/api/chat', chatRouter)
 app.route('/api/files', filesRouter)
 app.route('/api/history', historyRouter)
+app.route('/api/admin', adminRouter)
+app.route('/api/users', usersRouter)
 
 // Serve built client in production
 app.use('*', serveStatic({ root: './dist/client' }))
