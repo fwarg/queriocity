@@ -1,5 +1,6 @@
 import { createOpenAI } from '@ai-sdk/openai'
 import { createOllama } from 'ollama-ai-provider'
+import type { EmbeddingModel } from 'ai'
 
 interface ProviderConfig {
   provider: string
@@ -26,15 +27,26 @@ const embedConfig: ProviderConfig = {
   apiKey: process.env.EMBED_API_KEY ?? chatConfig.apiKey,
 }
 
+const smallConfig: ProviderConfig = {
+  provider: process.env.SMALL_PROVIDER ?? chatConfig.provider,
+  baseURL: process.env.SMALL_BASE_URL ?? chatConfig.baseURL,
+  apiKey: process.env.SMALL_API_KEY ?? chatConfig.apiKey,
+}
+
 const chatProvider = makeProvider(chatConfig)
 const embedProvider = makeProvider(embedConfig)
+const smallProvider = makeProvider(smallConfig)
 
 export function getChatModel() {
   return chatProvider(process.env.CHAT_MODEL ?? 'llama3.2')
 }
 
-export function getEmbeddingModel() {
+export function getSmallModel() {
+  return smallProvider(process.env.SMALL_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2')
+}
+
+export function getEmbeddingModel(): EmbeddingModel<string> {
   const model = process.env.EMBED_MODEL ?? 'nomic-embed-text'
   // @ts-ignore — provider exposes .embedding() for embed models
-  return embedProvider.embedding ? embedProvider.embedding(model) : embedProvider(model)
+  return (embedProvider.embedding ? embedProvider.embedding(model) : embedProvider(model)) as EmbeddingModel<string>
 }

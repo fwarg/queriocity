@@ -2,9 +2,9 @@ import { Hono } from 'hono'
 import { db, uploadedFiles } from '../lib/db.ts'
 import { eq } from 'drizzle-orm'
 import { ingestFile } from '../lib/files/ingest.ts'
-import { authMiddleware } from '../middleware/auth.ts'
+import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 
-export const filesRouter = new Hono()
+export const filesRouter = new Hono<AppEnv>()
 
 filesRouter.use('*', authMiddleware)
 

@@ -1,9 +1,9 @@
 import { Hono } from 'hono'
 import { db, chatSessions, messages } from '../lib/db.ts'
 import { eq, and } from 'drizzle-orm'
-import { authMiddleware } from '../middleware/auth.ts'
+import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 
-export const historyRouter = new Hono()
+export const historyRouter = new Hono<AppEnv>()
 
 historyRouter.use('*', authMiddleware)
 

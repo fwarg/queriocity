@@ -8,6 +8,21 @@ export interface SearchResult {
   content: string
 }
 
+export async function webSearchMulti(queries: string[], countEach: number): Promise<SearchResult[]> {
+  const batches = await Promise.all(queries.map(q => webSearch(q, countEach)))
+  const seen = new Set<string>()
+  const results: SearchResult[] = []
+  for (const batch of batches) {
+    for (const r of batch) {
+      if (!seen.has(r.url)) {
+        seen.add(r.url)
+        results.push(r)
+      }
+    }
+  }
+  return results
+}
+
 export async function webSearch(query: string, count = 10): Promise<SearchResult[]> {
   const url = new URL('/search', SEARXNG_URL)
   url.searchParams.set('q', query)

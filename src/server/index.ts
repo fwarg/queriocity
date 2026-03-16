@@ -27,4 +27,4 @@ console.log(`  chat:   ${process.env.CHAT_PROVIDER ?? 'ollama'}  ${process.env.C
 console.log(`  embed:  ${process.env.EMBED_PROVIDER ?? process.env.CHAT_PROVIDER ?? 'ollama'}  ${process.env.EMBED_BASE_URL ?? process.env.CHAT_BASE_URL ?? 'http://localhost:11434/api'}  model=${process.env.EMBED_MODEL ?? 'nomic-embed-text'}`)
 console.log(`  searxng: ${process.env.SEARXNG_URL ?? 'http://localhost:4000'}`)
 
-export default { port: PORT, fetch: app.fetch }
+export default { port: PORT, fetch: app.fetch, idleTimeout: 120 }

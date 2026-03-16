@@ -1,7 +1,9 @@
-import type { Context, Next } from 'hono'
+import type { MiddlewareHandler } from 'hono'
 import { verifyToken } from '../lib/auth.ts'
 
-export async function authMiddleware(c: Context, next: Next) {
+export type AppEnv = { Variables: { userId: string } }
+
+export const authMiddleware: MiddlewareHandler<AppEnv> = async (c, next) => {
   const header = c.req.header('Authorization')
   if (!header?.startsWith('Bearer ')) {
     return c.json({ error: 'Unauthorized' }, 401)

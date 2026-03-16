@@ -12,8 +12,8 @@ export async function extractPdfChunks(buffer: ArrayBuffer): Promise<string[]> {
     const page = await doc.getPage(i)
     const content = await page.getTextContent()
     const text = content.items
-      .filter((item): item is { str: string } => 'str' in item)
-      .map(item => item.str)
+      .filter(item => 'str' in item)
+      .map(item => (item as { str: string }).str)
       .join(' ')
       .trim()
     if (text) chunks.push(text)
