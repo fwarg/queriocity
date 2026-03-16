@@ -4,6 +4,8 @@ import { getChatModel } from './llm.ts'
 import { webSearch } from './searxng.ts'
 import { searchUploads } from './files/uploads-search.ts'
 
+const CHAT_TARGET = `${process.env.CHAT_BASE_URL ?? 'ollama'} model=${process.env.CHAT_MODEL ?? 'llama3.2'}`
+
 const RESEARCHER_SYSTEM = `You are a research assistant with access to web search and uploaded documents.
 
 For each user query:
@@ -22,8 +24,16 @@ export interface ResearchOptions {
 
 export function runResearcher({ messages, focusMode, userId }: ResearchOptions) {
   const maxSteps = focusMode === 'speed' ? 2 : focusMode === 'thorough' ? 5 : 3
+  const start = performance.now()
+  console.log(`  [chat] ${CHAT_TARGET} focusMode=${focusMode} maxSteps=${maxSteps}`)
 
   return streamText({
+    onFinish: ({ usage }) => {
+      const ms = (performance.now() - start).toFixed(0)
+      const p = usage.promptTokens ?? '?'
+      const c = usage.completionTokens ?? '?'
+      console.log(`  [chat] done — ${ms}ms  tokens: ${p}p + ${c}c`)
+    },
     model: getChatModel(),
     system: RESEARCHER_SYSTEM,
     messages,

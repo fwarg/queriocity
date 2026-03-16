@@ -9,8 +9,9 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
+    host: true,
     proxy: {
-      '/api': 'http://localhost:3000',
+      '/api': `http://localhost:${process.env.PORT ?? 3333}`,
     },
   },
 })
