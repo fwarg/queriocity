@@ -14,7 +14,6 @@
     "@ai-sdk/openai": "^1",
     "ollama-ai-provider": "^1",
     "drizzle-orm": "^0.30",
-    "better-sqlite3": "^9",
     "sqlite-vec": "^0.1",
     "pdfjs-dist": "^4",
     "tesseract.js": "^5",
@@ -30,7 +29,6 @@
     "tailwindcss": "^3",
     "autoprefixer": "^10",
     "postcss": "^8",
-    "@types/better-sqlite3": "^7"
   },
   "trustedDependencies": [
     "es5-ext",

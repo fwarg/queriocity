@@ -1,13 +1,12 @@
-import Database from 'better-sqlite3'
+import { Database } from 'bun:sqlite'
 import * as sqliteVec from 'sqlite-vec'
-import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core'
-import { sql } from 'drizzle-orm'
+import { drizzle } from 'drizzle-orm/bun-sqlite'
+import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core'
 
 const DB_PATH = process.env.DB_PATH ?? 'queriocity.db'
 
 const sqlite = new Database(DB_PATH)
-sqliteVec.load(sqlite)
+sqlite.loadExtension(sqliteVec.getLoadablePath())
 
 export const db = drizzle(sqlite)
 
@@ -26,7 +25,7 @@ export const messages = sqliteTable('messages', {
   sessionId: text('session_id').notNull().references(() => chatSessions.id, { onDelete: 'cascade' }),
   role: text('role', { enum: ['user', 'assistant'] }).notNull(),
   content: text('content').notNull(),
-  sources: text('sources'),  // JSON array of source objects
+  sources: text('sources'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 
@@ -39,27 +38,10 @@ export const uploadedFiles = sqliteTable('uploaded_files', {
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 
-// --- Vector table (created directly via SQL) ---
+// --- Init ---
 
-export function initVectorTable() {
-  sqlite.exec(`
-    CREATE VIRTUAL TABLE IF NOT EXISTS file_chunks USING vec0(
-      chunk_id TEXT PRIMARY KEY,
-      embedding FLOAT[1536]
-    );
-  `)
-  // Metadata companion table
-  sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS file_chunk_meta (
-      chunk_id TEXT PRIMARY KEY,
-      file_id  TEXT NOT NULL,
-      content  TEXT NOT NULL
-    );
-  `)
-}
-
-export function initSchema() {
-  sqlite.exec(`
+function initSchema() {
+  sqlite.run(`
     CREATE TABLE IF NOT EXISTS chat_sessions (
       id         TEXT PRIMARY KEY,
       title      TEXT NOT NULL,
@@ -83,8 +65,16 @@ export function initSchema() {
       size       INTEGER NOT NULL,
       created_at INTEGER NOT NULL
     );
+    CREATE VIRTUAL TABLE IF NOT EXISTS file_chunks USING vec0(
+      chunk_id TEXT PRIMARY KEY,
+      embedding FLOAT[1536]
+    );
+    CREATE TABLE IF NOT EXISTS file_chunk_meta (
+      chunk_id TEXT PRIMARY KEY,
+      file_id  TEXT NOT NULL,
+      content  TEXT NOT NULL
+    );
   `)
-  initVectorTable()
 }
 
 initSchema()
