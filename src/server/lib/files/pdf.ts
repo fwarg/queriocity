@@ -1,23 +1,11 @@
-import * as pdfjs from 'pdfjs-dist'
+import pdfParse from 'pdf-parse'
 
-// Suppress worker warning in Node/Bun
-pdfjs.GlobalWorkerOptions.workerSrc = ''
-
-/** Extract all text from a PDF buffer, chunked by page. */
+/** Extract text from a PDF buffer, one chunk per page. */
 export async function extractPdfChunks(buffer: ArrayBuffer): Promise<string[]> {
-  const doc = await pdfjs.getDocument({ data: new Uint8Array(buffer) }).promise
-  const chunks: string[] = []
-
-  for (let i = 1; i <= doc.numPages; i++) {
-    const page = await doc.getPage(i)
-    const content = await page.getTextContent()
-    const text = content.items
-      .filter(item => 'str' in item)
-      .map(item => (item as { str: string }).str)
-      .join(' ')
-      .trim()
-    if (text) chunks.push(text)
-  }
-
-  return chunks
+  const { text } = await pdfParse(Buffer.from(buffer))
+  // pdf-parse joins all pages; split on form-feed characters (page breaks)
+  return text
+    .split(/\f/)
+    .map(p => p.trim())
+    .filter(p => p.length > 0)
 }

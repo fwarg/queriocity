@@ -5,10 +5,22 @@ import { LoginPage } from './components/LoginPage.tsx'
 import { RegisterPage } from './components/RegisterPage.tsx'
 import { SettingsPanel } from './components/SettingsPanel.tsx'
 import { AdminPanel } from './components/AdminPanel.tsx'
-import { streamChat, fetchHistory, fetchSession, deleteSession, getMe, hasUsers, logout } from './lib/api.ts'
+import {
+  streamChat, fetchHistory, fetchSession, deleteSession,
+  fetchFiles, deleteFile, getMe, hasUsers, logout,
+} from './lib/api.ts'
 import type { AuthUser, Message } from './lib/api.ts'
 
 type AuthView = 'loading' | 'login' | 'register'
+type MainView = 'chat' | 'chats' | 'files'
+
+type UploadedFile = { id: string; filename: string; mimeType: string; size: number; createdAt: number }
+
+function formatSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
 
 export default function App() {
   const [authView, setAuthView] = useState<AuthView>('loading')
@@ -22,27 +34,27 @@ export default function App() {
   const [focusMode, setFocusMode] = useState<'fast' | 'balanced' | 'thorough'>('balanced')
   const [sessionId, setSessionId] = useState<string | undefined>()
   const [sessions, setSessions] = useState<Array<{ id: string; title: string }>>([])
-  const [view, setView] = useState<'chat' | 'library'>('chat')
+  const [files, setFiles] = useState<UploadedFile[]>([])
+  const [view, setView] = useState<MainView>('chat')
   const [showSettings, setShowSettings] = useState(false)
   const [showAdmin, setShowAdmin] = useState(false)
 
   const bottomRef = useRef<HTMLDivElement>(null)
 
-  // Bootstrap: check auth, read invite token from URL
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const token = params.get('token')
     if (token) {
       setInviteToken(token)
-      // Clean URL
       window.history.replaceState({}, '', window.location.pathname)
     }
 
     getMe().then(user => {
       if (user) {
         setCurrentUser(user)
-        setAuthView('loading') // stay in app
+        setAuthView('loading')
         fetchHistory().then(setSessions).catch(() => {})
+        fetchFiles().then(setFiles).catch(() => {})
       } else if (token) {
         setAuthView('register')
       } else {
@@ -59,12 +71,14 @@ export default function App() {
     setCurrentUser(user)
     setAuthView('loading')
     fetchHistory().then(setSessions).catch(() => {})
+    fetchFiles().then(setFiles).catch(() => {})
   }
 
   async function handleLogout() {
     await logout()
     setCurrentUser(null)
     setSessions([])
+    setFiles([])
     setMessages([])
     setAuthView('login')
   }
@@ -123,12 +137,21 @@ export default function App() {
     setView('chat')
   }
 
-  function handleDelete(id: string, e: React.MouseEvent) {
+  function handleDeleteSession(id: string, e: React.MouseEvent) {
     e.stopPropagation()
     deleteSession(id).then(() => {
       setSessions(prev => prev.filter(x => x.id !== id))
       if (sessionId === id) newChat()
     }).catch(() => {})
+  }
+
+  function handleDeleteFile(id: string, e: React.MouseEvent) {
+    e.stopPropagation()
+    deleteFile(id).then(() => setFiles(prev => prev.filter(f => f.id !== id))).catch(() => {})
+  }
+
+  function refreshFiles() {
+    fetchFiles().then(setFiles).catch(() => {})
   }
 
   // Auth screens
@@ -177,10 +200,16 @@ export default function App() {
           + New chat
         </button>
         <button
-          onClick={() => setView(v => v === 'library' ? 'chat' : 'library')}
-          className={`w-full text-left px-3 py-2 rounded text-sm font-medium ${view === 'library' ? 'bg-indigo-700 text-white' : 'text-indigo-400 hover:bg-gray-800'}`}
+          onClick={() => setView(v => v === 'chats' ? 'chat' : 'chats')}
+          className={`w-full text-left px-3 py-2 rounded text-sm font-medium ${view === 'chats' ? 'bg-indigo-700 text-white' : 'text-indigo-400 hover:bg-gray-800'}`}
         >
-          Library ({sessions.length})
+          Chats ({sessions.length})
+        </button>
+        <button
+          onClick={() => setView(v => v === 'files' ? 'chat' : 'files')}
+          className={`w-full text-left px-3 py-2 rounded text-sm font-medium ${view === 'files' ? 'bg-indigo-700 text-white' : 'text-indigo-400 hover:bg-gray-800'}`}
+        >
+          Files ({files.length})
         </button>
         <div className="border-t border-gray-800 my-1" />
         {sessions.map(s => (
@@ -188,7 +217,7 @@ export default function App() {
             <button onClick={() => loadSession(s.id, s.title)} className="flex-1 text-left px-3 py-2 text-sm truncate">
               {s.title}
             </button>
-            <button onClick={(e) => handleDelete(s.id, e)} className="px-2 py-2 text-gray-600 hover:text-red-400 shrink-0" title="Delete">
+            <button onClick={(e) => handleDeleteSession(s.id, e)} className="px-2 py-2 text-gray-600 hover:text-red-400 shrink-0" title="Delete">
               ×
             </button>
           </div>
@@ -196,24 +225,15 @@ export default function App() {
 
         {/* Bottom user area */}
         <div className="mt-auto border-t border-gray-800 pt-2 flex flex-col gap-1">
-          <button
-            onClick={() => setShowSettings(true)}
-            className="w-full text-left px-3 py-2 rounded text-xs text-gray-400 hover:bg-gray-800"
-          >
+          <button onClick={() => setShowSettings(true)} className="w-full text-left px-3 py-2 rounded text-xs text-gray-400 hover:bg-gray-800">
             ⚙ Settings
           </button>
           {currentUser?.role === 'admin' && (
-            <button
-              onClick={() => setShowAdmin(true)}
-              className="w-full text-left px-3 py-2 rounded text-xs text-gray-400 hover:bg-gray-800"
-            >
+            <button onClick={() => setShowAdmin(true)} className="w-full text-left px-3 py-2 rounded text-xs text-gray-400 hover:bg-gray-800">
               ◈ Admin
             </button>
           )}
-          <button
-            onClick={handleLogout}
-            className="w-full text-left px-3 py-2 rounded text-xs text-gray-500 hover:bg-gray-800 hover:text-red-400"
-          >
+          <button onClick={handleLogout} className="w-full text-left px-3 py-2 rounded text-xs text-gray-500 hover:bg-gray-800 hover:text-red-400">
             Sign out — {currentUser?.name ?? currentUser?.email}
           </button>
         </div>
@@ -221,9 +241,9 @@ export default function App() {
 
       {/* Main */}
       <div className="flex flex-col flex-1 min-h-0">
-        {view === 'library' ? (
+        {view === 'chats' ? (
           <div className="flex flex-col flex-1 overflow-y-auto p-6 gap-3">
-            <h2 className="text-lg font-semibold text-gray-200 mb-2">Library</h2>
+            <h2 className="text-lg font-semibold text-gray-200 mb-2">Chats</h2>
             {sessions.length === 0 ? (
               <p className="text-gray-500 text-sm">No saved chats yet.</p>
             ) : sessions.map(s => (
@@ -235,7 +255,7 @@ export default function App() {
                   {s.title}
                 </button>
                 <button
-                  onClick={(e) => handleDelete(s.id, e)}
+                  onClick={(e) => handleDeleteSession(s.id, e)}
                   className="px-2 py-2 text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
                   title="Delete"
                 >
@@ -243,6 +263,39 @@ export default function App() {
                 </button>
               </div>
             ))}
+          </div>
+        ) : view === 'files' ? (
+          <div className="flex flex-col flex-1 overflow-y-auto p-6 gap-4">
+            <div className="flex flex-col gap-1">
+              <h2 className="text-lg font-semibold text-gray-200">Files</h2>
+              <p className="text-xs text-gray-500">
+                Uploaded files are stored in your personal knowledge base. The assistant automatically
+                searches them (via <span className="font-mono text-gray-400">uploads_search</span>) whenever
+                your query might be answered by their content — no need to reference them explicitly.
+                Supported: PDF, plain text, images (OCR).
+              </p>
+            </div>
+            {files.length === 0 ? (
+              <p className="text-gray-500 text-sm">No files uploaded yet. Use the paperclip button in the chat input to upload.</p>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {files.map(f => (
+                  <div key={f.id} className="flex items-center gap-3 group px-4 py-3 rounded-lg bg-gray-800">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm text-gray-100 truncate">{f.filename}</div>
+                      <div className="text-xs text-gray-500">{formatSize(f.size)} · {f.mimeType} · {new Date(f.createdAt * 1000).toLocaleDateString()}</div>
+                    </div>
+                    <button
+                      onClick={(e) => handleDeleteFile(f.id, e)}
+                      className="text-xs text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                      title="Delete file"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         ) : (
           <>
@@ -263,6 +316,7 @@ export default function App() {
               disabled={busy}
               focusMode={focusMode}
               onFocusModeChange={setFocusMode}
+              onFileUploaded={refreshFiles}
             />
           </>
         )}

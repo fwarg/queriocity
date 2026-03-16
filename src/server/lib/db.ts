@@ -67,7 +67,20 @@ export const uploadedFiles = sqliteTable('uploaded_files', {
 
 // --- Init ---
 
+export const EMBED_DIMS = parseInt(process.env.EMBED_DIMENSIONS ?? '1536')
+
 function initSchema() {
+  // Recreate file_chunks if the embedding dimension changed
+  const existing = sqlite.query(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='file_chunks'"
+  ).get() as { sql: string } | null
+  if (existing && !existing.sql.includes(`FLOAT[${EMBED_DIMS}]`)) {
+    console.log(`[db] Embedding dimension changed → recreating file_chunks (${EMBED_DIMS} dims), clearing uploaded files`)
+    sqlite.run('DROP TABLE IF EXISTS file_chunks')
+    sqlite.run('DELETE FROM file_chunk_meta')
+    sqlite.run('DELETE FROM uploaded_files')
+  }
+
   sqlite.run(`
     CREATE TABLE IF NOT EXISTS users (
       id         TEXT PRIMARY KEY,
@@ -116,16 +129,16 @@ function initSchema() {
       size       INTEGER NOT NULL,
       created_at INTEGER NOT NULL
     );
-    CREATE VIRTUAL TABLE IF NOT EXISTS file_chunks USING vec0(
-      chunk_id TEXT PRIMARY KEY,
-      embedding FLOAT[1536]
-    );
-    CREATE TABLE IF NOT EXISTS file_chunk_meta (
-      chunk_id TEXT PRIMARY KEY,
-      file_id  TEXT NOT NULL,
-      content  TEXT NOT NULL
-    );
   `)
+  sqlite.run(`CREATE VIRTUAL TABLE IF NOT EXISTS file_chunks USING vec0(
+    chunk_id TEXT PRIMARY KEY,
+    embedding FLOAT[${EMBED_DIMS}]
+  )`)
+  sqlite.run(`CREATE TABLE IF NOT EXISTS file_chunk_meta (
+    chunk_id TEXT PRIMARY KEY,
+    file_id  TEXT NOT NULL,
+    content  TEXT NOT NULL
+  )`)
 }
 
 initSchema()

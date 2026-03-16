@@ -7,6 +7,7 @@ interface Props {
   disabled?: boolean
   focusMode: 'fast' | 'balanced' | 'thorough'
   onFocusModeChange: (m: 'fast' | 'balanced' | 'thorough') => void
+  onFileUploaded?: () => void
 }
 
 const MODE_DESCRIPTIONS: Record<'fast' | 'balanced' | 'thorough', string> = {
@@ -15,9 +16,10 @@ const MODE_DESCRIPTIONS: Record<'fast' | 'balanced' | 'thorough', string> = {
   thorough: 'Multi-angle research with a dedicated writing pass — slower but more comprehensive.',
 }
 
-export function ChatInput({ onSubmit, disabled, focusMode, onFocusModeChange }: Props) {
+export function ChatInput({ onSubmit, disabled, focusMode, onFocusModeChange, onFileUploaded }: Props) {
   const [value, setValue] = useState('')
-  const [uploading, setUploading] = useState(false)
+  const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'ok' | 'error'>('idle')
+  const [uploadMsg, setUploadMsg] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
 
   function handleSubmit(e: FormEvent) {
@@ -38,11 +40,19 @@ export function ChatInput({ onSubmit, disabled, focusMode, onFocusModeChange }: 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
-    setUploading(true)
+    setUploadStatus('uploading')
+    setUploadMsg(`Uploading ${file.name}…`)
     try {
-      await uploadFile(file)
+      const result = await uploadFile(file)
+      setUploadStatus('ok')
+      setUploadMsg(`"${result.filename}" uploaded`)
+      onFileUploaded?.()
+      setTimeout(() => setUploadStatus('idle'), 3000)
+    } catch (err: any) {
+      setUploadStatus('error')
+      setUploadMsg(err.message ?? 'Upload failed')
+      setTimeout(() => setUploadStatus('idle'), 4000)
     } finally {
-      setUploading(false)
       e.target.value = ''
     }
   }
@@ -62,6 +72,11 @@ export function ChatInput({ onSubmit, disabled, focusMode, onFocusModeChange }: 
         ))}
         <span className="text-gray-500 ml-1">{MODE_DESCRIPTIONS[focusMode]}</span>
       </div>
+      {uploadStatus !== 'idle' && (
+        <div className={`text-xs px-1 ${uploadStatus === 'error' ? 'text-red-400' : uploadStatus === 'ok' ? 'text-green-400' : 'text-gray-400 animate-pulse'}`}>
+          {uploadMsg}
+        </div>
+      )}
       <div className="flex gap-2">
         <textarea
           className="flex-1 resize-none rounded bg-gray-900 border border-gray-700 p-2 text-sm focus:outline-none focus:border-blue-500"
@@ -76,11 +91,11 @@ export function ChatInput({ onSubmit, disabled, focusMode, onFocusModeChange }: 
           <button
             type="button"
             onClick={() => fileRef.current?.click()}
-            disabled={uploading}
+            disabled={uploadStatus === 'uploading'}
             className="p-2 rounded bg-gray-800 hover:bg-gray-700 disabled:opacity-50"
-            title="Upload file"
+            title="Upload file to personal knowledge base"
           >
-            <Paperclip size={16} />
+            <Paperclip size={16} className={uploadStatus === 'uploading' ? 'animate-pulse' : ''} />
           </button>
           <button
             type="submit"

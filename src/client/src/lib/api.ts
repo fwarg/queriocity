@@ -143,9 +143,22 @@ export async function fetchHistory() {
   return res.json()
 }
 
-export async function uploadFile(file: File) {
+export async function uploadFile(file: File): Promise<{ fileId: string; filename: string }> {
   const form = new FormData()
   form.append('file', file)
   const res = await fetch(`${BASE}/files/upload`, { method: 'POST', body: form })
+  if (!res.ok) {
+    const { error } = await res.json().catch(() => ({ error: 'Upload failed' }))
+    throw new Error(error ?? 'Upload failed')
+  }
   return res.json()
+}
+
+export async function fetchFiles(): Promise<Array<{ id: string; filename: string; mimeType: string; size: number; createdAt: number }>> {
+  const res = await fetch(`${BASE}/files`)
+  return res.json()
+}
+
+export async function deleteFile(id: string): Promise<void> {
+  await fetch(`${BASE}/files/${id}`, { method: 'DELETE' })
 }
