@@ -95,7 +95,7 @@ export async function createInvite(email?: string): Promise<{ token: string; exp
 // Chat
 export async function* streamChat(
   messages: Message[],
-  focusMode: 'fast' | 'balanced' | 'thorough',
+  focusMode: 'flash' | 'fast' | 'balanced' | 'thorough',
   sessionId?: string,
 ): AsyncGenerator<{ type: string; [k: string]: unknown }> {
   const res = await fetch(`${BASE}/chat`, {

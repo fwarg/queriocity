@@ -2,11 +2,13 @@ import { useState, useRef, type FormEvent, type KeyboardEvent } from 'react'
 import { Send, Paperclip, X } from 'lucide-react'
 import { extractFileForContext } from '../lib/api.ts'
 
+type FocusMode = 'flash' | 'fast' | 'balanced' | 'thorough'
+
 interface Props {
   onSubmit: (text: string) => void
   disabled?: boolean
-  focusMode: 'fast' | 'balanced' | 'thorough'
-  onFocusModeChange: (m: 'fast' | 'balanced' | 'thorough') => void
+  focusMode: FocusMode
+  onFocusModeChange: (m: FocusMode) => void
 }
 
 interface Attachment {
@@ -14,7 +16,10 @@ interface Attachment {
   content: string
 }
 
-const MODE_DESCRIPTIONS: Record<'fast' | 'balanced' | 'thorough', string> = {
+const FLASH_MAX = 200
+
+const MODE_DESCRIPTIONS: Record<FocusMode, string> = {
+  flash: 'Direct answer from model knowledge — no web search, max 5 sentences.',
   fast: 'Fast single-query search, streamed directly — best for simple factual questions.',
   balanced: 'LLM-reformulated query with a couple of search rounds and inline citations.',
   thorough: 'Multi-angle research with a dedicated writing pass — slower but more comprehensive.',
@@ -27,10 +32,13 @@ export function ChatInput({ onSubmit, disabled, focusMode, onFocusModeChange }: 
   const [extractError, setExtractError] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
 
+  const isFlash = focusMode === 'flash'
+  const isOverLimit = isFlash && value.length > FLASH_MAX
+
   function handleSubmit(e: FormEvent) {
     e.preventDefault()
     const text = value.trim()
-    if ((!text && attachments.length === 0) || disabled) return
+    if ((!text && attachments.length === 0) || disabled || isOverLimit) return
 
     let fullText = text
     for (const att of attachments) {
@@ -70,7 +78,7 @@ export function ChatInput({ onSubmit, disabled, focusMode, onFocusModeChange }: 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-2 p-4 border-t border-gray-800">
       <div className="flex items-center gap-2 text-xs">
-        {(['fast', 'balanced', 'thorough'] as const).map(m => (
+        {(['flash', 'fast', 'balanced', 'thorough'] as const).map(m => (
           <button
             key={m}
             type="button"
@@ -81,6 +89,11 @@ export function ChatInput({ onSubmit, disabled, focusMode, onFocusModeChange }: 
           </button>
         ))}
         <span className="text-gray-500 ml-1">{MODE_DESCRIPTIONS[focusMode]}</span>
+        {isFlash && (
+          <span className={`ml-auto ${isOverLimit ? 'text-red-400' : 'text-gray-500'}`}>
+            {value.length}/{FLASH_MAX}
+          </span>
+        )}
       </div>
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
@@ -119,15 +132,15 @@ export function ChatInput({ onSubmit, disabled, focusMode, onFocusModeChange }: 
           <button
             type="button"
             onClick={() => fileRef.current?.click()}
-            disabled={extractStatus === 'loading'}
+            disabled={isFlash || extractStatus === 'loading'}
             className="p-2 rounded bg-gray-800 hover:bg-gray-700 disabled:opacity-50"
-            title="Attach file to this message (not stored)"
+            title={isFlash ? 'Not available in flash mode' : 'Attach file to this message (not stored)'}
           >
             <Paperclip size={16} className={extractStatus === 'loading' ? 'animate-pulse' : ''} />
           </button>
           <button
             type="submit"
-            disabled={disabled || (!value.trim() && attachments.length === 0)}
+            disabled={disabled || (!value.trim() && attachments.length === 0) || isOverLimit}
             className="p-2 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50"
           >
             <Send size={16} />

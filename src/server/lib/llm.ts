@@ -45,6 +45,10 @@ export function getSmallModel() {
   return smallProvider(process.env.SMALL_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2')
 }
 
+export function getFlashModel() {
+  return process.env.FLASH_MODEL === 'small' ? getSmallModel() : getChatModel()
+}
+
 export function getEmbeddingModel(): EmbeddingModel<string> {
   const model = process.env.EMBED_MODEL ?? 'nomic-embed-text'
   // @ts-ignore — provider exposes .embedding() for embed models

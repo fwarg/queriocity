@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { streamSSE } from 'hono/streaming'
+import { streamText } from 'ai'
 import { runResearcher } from '../lib/researcher.ts'
 import { runWriter } from '../lib/writer.ts'
 import { reformulateSpeed, reformulateLLM } from '../lib/reformulate.ts'
@@ -11,6 +12,10 @@ import { eq, sql } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { webSearch, webSearchMulti, type SearchResult } from '../lib/searxng.ts'
+import { getFlashModel } from '../lib/llm.ts'
+
+const FLASH_SYSTEM = `Answer in at most 5 sentences using only your training knowledge. Be direct and factual.
+Do not search the web. If you cannot answer confidently, say so briefly.`
 
 const chatSchema = z.object({
   sessionId: z.string().optional(),
@@ -18,7 +23,7 @@ const chatSchema = z.object({
     role: z.enum(['user', 'assistant']),
     content: z.string(),
   })),
-  focusMode: z.enum(['fast', 'balanced', 'thorough']).default('balanced'),
+  focusMode: z.enum(['flash', 'fast', 'balanced', 'thorough']).default('balanced'),
 })
 
 export const chatRouter = new Hono<AppEnv>()
@@ -39,6 +44,32 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
     return c.json({ cached: true, content: cached })
   }
 
+  if (focusMode === 'flash') {
+    const userRow = await db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get()
+    const customPrompt: string | undefined = userRow ? (JSON.parse(userRow.settings).customPrompt ?? undefined) : undefined
+    const sid = sessionId ?? randomUUID()
+    const t0 = Date.now()
+    let fullContent = ''
+    return streamSSE(c, async (stream) => {
+      const result = streamText({
+        model: getFlashModel(),
+        system: FLASH_SYSTEM + (customPrompt ? `\n\nAdditional instructions:\n${customPrompt}` : ''),
+        messages: msgs,
+        maxTokens: 200,
+      })
+      for await (const part of result.fullStream) {
+        if (part.type === 'text-delta') {
+          fullContent += part.textDelta
+          await stream.writeSSE({ data: JSON.stringify({ type: 'text', delta: part.textDelta }) })
+        }
+      }
+      console.log(`  [flash] done in ${Date.now() - t0}ms, ${fullContent.length} chars`)
+      setCached(ck, fullContent)
+      await persistMessage(sid, userId, msgs, fullContent, [])
+      await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid }) })
+    })
+  }
+
   // Strip injected attachment content (everything after \n\n---\n) before reformulating,
   // so the small model only sees the actual query and doesn't overflow its context.
   const msgsForReformulate = msgs.map(m =>
@@ -49,11 +80,13 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
 
   const hasAttachment = /\n\n---\n\[/.test(lastUser?.content ?? '')
 
+  const t0 = Date.now()
+
   // Fetch user settings + file count + reformulate/pre-search in parallel
   const [userRow, fileCountRow, { initialQueries, initialResults }] = await Promise.all([
     db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get(),
     db.select({ count: sql<number>`count(*)` }).from(uploadedFiles).where(eq(uploadedFiles.userId, userId)).get(),
-    runReformulateAndPreSearch(msgsForReformulate, focusMode, hasAttachment),
+    runReformulateAndPreSearch(msgsForReformulate, focusMode as 'fast' | 'balanced' | 'thorough', hasAttachment),
   ])
   const customPrompt: string | undefined = userRow ? (JSON.parse(userRow.settings).customPrompt ?? undefined) : undefined
   const hasFiles = (fileCountRow?.count ?? 0) > 0
@@ -132,6 +165,8 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
       }
     }
 
+    console.log(`  [${focusMode}] done in ${Date.now() - t0}ms, ${fullContent.length} chars`)
+
     // Persist to DB
     const sid = sessionId ?? randomUUID()
     await persistMessage(sid, userId, msgs, fullContent, sources)
@@ -143,7 +178,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
 
 async function runReformulateAndPreSearch(
   msgsForReformulate: Array<{ role: string; content: string }>,
-  focusMode: 'fast' | 'balanced' | 'thorough',
+  focusMode: 'fast' | 'balanced' | 'thorough', // flash handled before this point
   hasAttachment: boolean,
 ): Promise<{ initialQueries?: string[]; initialResults?: SearchResult[] }> {
   try {
