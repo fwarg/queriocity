@@ -39,9 +39,10 @@ export interface ResearchOptions {
   initialQueries?: string[]
   initialResults?: SearchResult[]
   customPrompt?: string
+  hasFiles?: boolean
 }
 
-export function runResearcher({ messages, focusMode, userId, initialQueries, initialResults, customPrompt }: ResearchOptions) {
+export function runResearcher({ messages, focusMode, userId, initialQueries, initialResults, customPrompt, hasFiles }: ResearchOptions) {
   const { maxSteps, count } = MODE_CONFIG[focusMode]
   const start = performance.now()
   console.log(`  [chat] ${CHAT_TARGET} focusMode=${focusMode} maxSteps=${maxSteps}`)
@@ -83,15 +84,16 @@ export function runResearcher({ messages, focusMode, userId, initialQueries, ini
       })
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const tools: Record<string, any> = {
-    web_search: webSearchTool,
-    uploads_search: tool({
+  const tools: Record<string, any> = { web_search: webSearchTool }
+
+  if (hasFiles) {
+    tools.uploads_search = tool({
       description: 'Search uploaded documents belonging to the current user.',
       parameters: z.object({
         query: z.string().describe('Semantic search query'),
       }),
       execute: async ({ query }) => searchUploads(query, userId),
-    }),
+    })
   }
 
   if (focusMode === 'thorough') {

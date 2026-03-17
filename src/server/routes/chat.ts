@@ -6,11 +6,11 @@ import { runResearcher } from '../lib/researcher.ts'
 import { runWriter } from '../lib/writer.ts'
 import { reformulateSpeed, reformulateLLM } from '../lib/reformulate.ts'
 import { cacheKey, getCached, setCached } from '../lib/cache.ts'
-import { db, chatSessions, messages, users } from '../lib/db.ts'
-import { eq } from 'drizzle-orm'
+import { db, chatSessions, messages, users, uploadedFiles } from '../lib/db.ts'
+import { eq, sql } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
-import { webSearchMulti, type SearchResult } from '../lib/searxng.ts'
+import { webSearch, webSearchMulti, type SearchResult } from '../lib/searxng.ts'
 
 const chatSchema = z.object({
   sessionId: z.string().optional(),
@@ -39,10 +39,6 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
     return c.json({ cached: true, content: cached })
   }
 
-  // Fetch user's custom prompt
-  const userRow = await db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get()
-  const customPrompt: string | undefined = userRow ? (JSON.parse(userRow.settings).customPrompt ?? undefined) : undefined
-
   // Strip injected attachment content (everything after \n\n---\n) before reformulating,
   // so the small model only sees the actual query and doesn't overflow its context.
   const msgsForReformulate = msgs.map(m =>
@@ -53,27 +49,14 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
 
   const hasAttachment = /\n\n---\n\[/.test(lastUser?.content ?? '')
 
-  // Reformulate query, then pre-execute for balanced/thorough
-  let initialQueries: string[] | undefined
-  let initialResults: SearchResult[] | undefined
-  try {
-    if (hasAttachment) {
-      console.log(`  [chat] attachment detected — skipping reformulation/pre-search`)
-    } else if (focusMode === 'fast') {
-      const q = reformulateSpeed(msgsForReformulate)
-      if (q && q !== lastUser?.content) initialQueries = [q]
-    } else {
-      const queries = await reformulateLLM(msgsForReformulate, focusMode)
-      if (queries.length > 0) {
-        initialQueries = queries
-        const maxQueries = focusMode === 'thorough' ? 3 : 2
-        const countEach = focusMode === 'thorough' ? 10 : 8
-        initialResults = await webSearchMulti(queries.slice(0, maxQueries), countEach)
-      }
-    }
-  } catch (e) {
-    console.error('[reformulate] error:', e)
-  }
+  // Fetch user settings + file count + reformulate/pre-search in parallel
+  const [userRow, fileCountRow, { initialQueries, initialResults }] = await Promise.all([
+    db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get(),
+    db.select({ count: sql<number>`count(*)` }).from(uploadedFiles).where(eq(uploadedFiles.userId, userId)).get(),
+    runReformulateAndPreSearch(msgsForReformulate, focusMode, hasAttachment),
+  ])
+  const customPrompt: string | undefined = userRow ? (JSON.parse(userRow.settings).customPrompt ?? undefined) : undefined
+  const hasFiles = (fileCountRow?.count ?? 0) > 0
 
   return streamSSE(c, async (stream) => {
     let fullContent = ''
@@ -92,14 +75,17 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
       if (initialQueries?.length) {
         await emitStatus(`Searching: ${initialQueries.map(q => `"${q}"`).join(', ')}`)
       }
-      const researcherResult = runResearcher({ messages: msgs, focusMode, userId, initialQueries, initialResults, customPrompt })
+      const researcherResult = runResearcher({ messages: msgs, focusMode, userId, initialQueries, initialResults, customPrompt, hasFiles })
       const allSources: SearchResult[] = [...(initialResults ?? [])]
+      let researcherNotes = ''
 
       for await (const part of researcherResult.fullStream as AsyncIterable<any>) {
         if (part.type === 'tool-call' && part.toolName === 'web_search') {
           await emitSearchStatus(part.args)
         } else if (part.type === 'tool-result' && part.toolName === 'web_search') {
           allSources.push(...(part.result as SearchResult[]))
+        } else if (part.type === 'text-delta') {
+          researcherNotes += part.textDelta
         }
       }
 
@@ -116,7 +102,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
 
       // Phase 2: Writer pass
       await emitStatus('Writing answer…')
-      const writerResult = runWriter(dedupedSources, msgs)
+      const writerResult = runWriter(dedupedSources, msgs, researcherNotes.slice(0, 2000))
       for await (const part of writerResult.fullStream) {
         if (part.type === 'text-delta') {
           fullContent += part.textDelta
@@ -130,7 +116,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
         await stream.writeSSE({ data: JSON.stringify({ type: 'sources', sources: initialResults }) })
       }
 
-      const result = runResearcher({ messages: msgs, focusMode, userId, initialQueries, initialResults, customPrompt })
+      const result = runResearcher({ messages: msgs, focusMode, userId, initialQueries, initialResults, customPrompt, hasFiles })
 
       for await (const part of result.fullStream as AsyncIterable<any>) {
         if (part.type === 'tool-call' && part.toolName === 'web_search') {
@@ -154,6 +140,36 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
     await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid }) })
   })
 })
+
+async function runReformulateAndPreSearch(
+  msgsForReformulate: Array<{ role: string; content: string }>,
+  focusMode: 'fast' | 'balanced' | 'thorough',
+  hasAttachment: boolean,
+): Promise<{ initialQueries?: string[]; initialResults?: SearchResult[] }> {
+  try {
+    if (hasAttachment) {
+      console.log(`  [chat] attachment detected — skipping reformulation/pre-search`)
+      return {}
+    }
+    if (focusMode === 'fast') {
+      const q = reformulateSpeed(msgsForReformulate)
+      if (!q) return {}
+      const initialResults = await webSearch(q, 6)
+      return { initialQueries: [q], initialResults }
+    }
+
+    const countEach = focusMode === 'thorough' ? 10 : 6
+    const queries = await reformulateLLM(msgsForReformulate, focusMode)
+    if (queries.length === 0) return {}
+
+    const maxQueries = focusMode === 'thorough' ? 3 : 2
+    const initialResults = await webSearchMulti(queries.slice(0, maxQueries), countEach)
+    return { initialQueries: queries, initialResults }
+  } catch (e) {
+    console.error('[reformulate] error:', e)
+    return {}
+  }
+}
 
 async function persistMessage(
   sessionId: string,

@@ -9,16 +9,25 @@ export function reformulateSpeed(messages: Array<{ role: string; content: string
   if (!lastUser) return ''
 
   if (messages.length <= 1 || !PRONOUN_RE.test(lastUser.content)) {
+    console.log(`  [speed] passthrough → ${JSON.stringify(lastUser.content)}`)
     return lastUser.content
   }
 
   const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant')
-  if (!lastAssistant) return lastUser.content
+  if (!lastAssistant) {
+    console.log(`  [speed] passthrough (no assistant turn) → ${JSON.stringify(lastUser.content)}`)
+    return lastUser.content
+  }
 
   const subject = lastAssistant.content.match(/^[^,.]+/)?.[0]?.trim()
-  if (!subject) return lastUser.content
+  if (!subject) {
+    console.log(`  [speed] passthrough (no subject) → ${JSON.stringify(lastUser.content)}`)
+    return lastUser.content
+  }
 
-  return `${subject}: ${lastUser.content}`
+  const q = `${subject}: ${lastUser.content}`
+  console.log(`  [speed] subject-prepend → ${JSON.stringify(q)}`)
+  return q
 }
 
 const REFORMULATE_SYSTEM = `You are a search query optimizer. Your task is to rewrite the user's input into a concise, effective search engine query.

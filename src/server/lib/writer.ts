@@ -19,12 +19,16 @@ Structure:
 export function runWriter(
   sources: SearchResult[],
   messages: Array<{ role: 'user' | 'assistant'; content: string }>,
+  researcherNotes?: string,
 ) {
   const sourcesBlock = sources
     .map((s, i) => `<result index=${i + 1} title="${s.title}" url="${s.url}">${s.content}</result>`)
     .join('\n')
 
   const lastUser = [...messages].reverse().find(m => m.role === 'user')
+  const notesBlock = researcherNotes?.trim()
+    ? `\n\nResearcher notes:\n${researcherNotes.trim()}`
+    : ''
 
   return streamText({
     model: getChatModel(),
@@ -32,7 +36,7 @@ export function runWriter(
     messages: [
       {
         role: 'user',
-        content: `Research results:\n${sourcesBlock}\n\nQuestion: ${lastUser?.content ?? ''}`,
+        content: `Research results:\n${sourcesBlock}${notesBlock}\n\nQuestion: ${lastUser?.content ?? ''}`,
       },
     ],
   })
