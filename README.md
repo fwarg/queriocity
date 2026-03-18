@@ -1,4 +1,4 @@
-![Queriocity logo](doc/Queriocity_logo.png)
+<p align="center"><img src="doc/Queriocity_logo.png" width="50%"></p>
 
 # Queriocity
 
