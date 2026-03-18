@@ -1,3 +1,5 @@
+![Queriocity logo](doc/Queriocity_logo.png)
+
 # Queriocity
 
 > *Where **quer**y meets **curio**sity — and every answer carries its **cit**ations.*
