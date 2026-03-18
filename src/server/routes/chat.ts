@@ -152,14 +152,14 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
             await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: snippets + '\n\n' }) })
           }
         } else if (part.type === 'reasoning') {
-          await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: part.textDelta }) })
+          if (showThinking) await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: part.textDelta }) })
         } else if (part.type === 'text-delta') {
           if (thoroughExtractor) {
             const { text, thinking } = thoroughExtractor.process(part.textDelta)
-            if (thinking) await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: thinking }) })
+            if (thinking && showThinking) await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: thinking }) })
             if (text) {
               researcherNotes += text
-              await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: text }) })
+              if (showThinking) await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: text }) })
             }
           } else {
             researcherNotes += part.textDelta
@@ -167,6 +167,8 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
               await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: part.textDelta }) })
             }
           }
+        } else if (part.type === 'error') {
+          console.error('  [researcher] stream error:', part.error)
         }
       }
       if (thoroughExtractor) {
@@ -203,6 +205,8 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
           }
         } else if (part.type === 'reasoning' && showThinking) {
           await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: part.textDelta }) })
+        } else if ((part as any).type === 'error') {
+          console.error('  [writer] stream error:', (part as any).error)
         }
       }
       const { text: wt, thinking: wth } = writerExtractor.flush()
@@ -210,6 +214,10 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
       if (wt) {
         fullContent += wt
         await stream.writeSSE({ data: JSON.stringify({ type: 'text', delta: wt }) })
+      }
+      if (!fullContent) {
+        console.error('  [writer] produced 0 chars — model may be in a bad state')
+        await emitStatus('Model returned empty response. Try again or restart the model server.')
       }
     } else {
       // Speed / balanced: stream researcher output directly
