@@ -88,12 +88,14 @@ export function ChatInput({ onSubmit, disabled, focusMode, onFocusModeChange }: 
             {m}
           </button>
         ))}
-        <span className="text-gray-500 ml-1">{MODE_DESCRIPTIONS[focusMode]}</span>
         {isFlash && (
           <span className={`ml-auto ${isOverLimit ? 'text-red-400' : 'text-gray-500'}`}>
             {value.length}/{FLASH_MAX}
           </span>
         )}
+      </div>
+      <div className="h-7 flex items-center text-xs text-gray-500 overflow-hidden">
+        {MODE_DESCRIPTIONS[focusMode]}
       </div>
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-1.5">

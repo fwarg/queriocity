@@ -39,8 +39,14 @@ export default function App() {
   const [view, setView] = useState<MainView>('chat')
   const [showSettings, setShowSettings] = useState(false)
   const [showAdmin, setShowAdmin] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
 
   const bottomRef = useRef<HTMLDivElement>(null)
+
+  const fontSize = currentUser?.settings?.fontSize ?? 16
+  useEffect(() => {
+    document.documentElement.style.fontSize = `${fontSize}px`
+  }, [fontSize])
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -217,31 +223,43 @@ export default function App() {
           customPrompt={currentUser.settings?.customPrompt ?? ''}
           showThinking={currentUser.settings?.showThinking ?? { balanced: false, thorough: false }}
           useThinking={currentUser.settings?.useThinking ?? false}
+          fontSize={currentUser.settings?.fontSize ?? 16}
           onClose={() => setShowSettings(false)}
-          onSave={(cp, st, ut) => setCurrentUser(u => u ? { ...u, settings: { ...u.settings, customPrompt: cp, showThinking: st, useThinking: ut } } : u)}
+          onSave={(cp, st, ut, fs) => setCurrentUser(u => u ? { ...u, settings: { ...u.settings, customPrompt: cp, showThinking: st, useThinking: ut, fontSize: fs } } : u)}
         />
       )}
       {showAdmin && currentUser && (
         <AdminPanel currentUserId={currentUser.id} onClose={() => setShowAdmin(false)} />
       )}
 
-      {/* Sidebar */}
-      <aside className="w-56 bg-gray-900 border-r border-gray-800 flex flex-col p-3 gap-1 overflow-y-auto">
+      {/* Sidebar — overlay on mobile, static on md+ */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-20 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+      <aside className={`
+        fixed inset-y-0 left-0 z-30 w-64 bg-gray-900 border-r border-gray-800 flex flex-col p-3 gap-1 overflow-y-auto
+        transform transition-transform duration-200
+        ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
+        md:relative md:translate-x-0 md:w-56 md:z-auto md:transition-none
+      `}>
         <div className="px-3 py-2 text-base font-bold text-white tracking-wide">Queriocity</div>
         <button
-          onClick={newChat}
+          onClick={() => { newChat(); setSidebarOpen(false) }}
           className="w-full text-left px-3 py-2 rounded bg-blue-600 hover:bg-blue-500 text-sm font-medium"
         >
           + New chat
         </button>
         <button
-          onClick={() => setView(v => v === 'chats' ? 'chat' : 'chats')}
+          onClick={() => { setView(v => v === 'chats' ? 'chat' : 'chats'); setSidebarOpen(false) }}
           className={`w-full text-left px-3 py-2 rounded text-sm font-medium ${view === 'chats' ? 'bg-indigo-700 text-white' : 'text-indigo-400 hover:bg-gray-800'}`}
         >
           Chats ({sessions.length})
         </button>
         <button
-          onClick={() => setView(v => v === 'files' ? 'chat' : 'files')}
+          onClick={() => { setView(v => v === 'files' ? 'chat' : 'files'); setSidebarOpen(false) }}
           className={`w-full text-left px-3 py-2 rounded text-sm font-medium ${view === 'files' ? 'bg-indigo-700 text-white' : 'text-indigo-400 hover:bg-gray-800'}`}
         >
           Files ({files.length})
@@ -249,7 +267,7 @@ export default function App() {
         <div className="border-t border-gray-800 my-1" />
         {sessions.map(s => (
           <div key={s.id} className={`flex items-center rounded hover:bg-gray-800 ${sessionId === s.id && view === 'chat' ? 'bg-gray-800' : ''}`}>
-            <button onClick={() => loadSession(s.id, s.title)} className="flex-1 text-left px-3 py-2 text-sm truncate">
+            <button onClick={() => { loadSession(s.id, s.title); setSidebarOpen(false) }} className="flex-1 text-left px-3 py-2 text-sm truncate">
               {s.title}
             </button>
             <button onClick={(e) => handleDeleteSession(s.id, e)} className="px-2 py-2 text-gray-600 hover:text-red-400 shrink-0" title="Delete">
@@ -260,11 +278,11 @@ export default function App() {
 
         {/* Bottom user area */}
         <div className="mt-auto border-t border-gray-800 pt-2 flex flex-col gap-1">
-          <button onClick={() => setShowSettings(true)} className="w-full text-left px-3 py-2 rounded text-xs text-gray-400 hover:bg-gray-800">
+          <button onClick={() => { setShowSettings(true); setSidebarOpen(false) }} className="w-full text-left px-3 py-2 rounded text-xs text-gray-400 hover:bg-gray-800">
             ⚙ Settings
           </button>
           {currentUser?.role === 'admin' && (
-            <button onClick={() => setShowAdmin(true)} className="w-full text-left px-3 py-2 rounded text-xs text-gray-400 hover:bg-gray-800">
+            <button onClick={() => { setShowAdmin(true); setSidebarOpen(false) }} className="w-full text-left px-3 py-2 rounded text-xs text-gray-400 hover:bg-gray-800">
               ◈ Admin
             </button>
           )}
@@ -276,6 +294,17 @@ export default function App() {
 
       {/* Main */}
       <div className="flex flex-col flex-1 min-h-0">
+        {/* Mobile header bar */}
+        <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-800 md:hidden">
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="text-gray-400 hover:text-white text-xl leading-none"
+            aria-label="Open menu"
+          >
+            ☰
+          </button>
+          <span className="font-semibold text-white text-sm">Queriocity</span>
+        </div>
         {view === 'chats' ? (
           <div className="flex flex-col flex-1 overflow-y-auto p-6 gap-3">
             <h2 className="text-lg font-semibold text-gray-200 mb-2">Chats</h2>
@@ -291,7 +320,7 @@ export default function App() {
                 </button>
                 <button
                   onClick={(e) => handleDeleteSession(s.id, e)}
-                  className="px-2 py-2 text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                  className="px-2 py-2 text-gray-600 hover:text-red-400 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
                   title="Delete"
                 >
                   ×

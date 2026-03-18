@@ -221,9 +221,12 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
       }
     } else {
       // Speed / balanced: stream researcher output directly
-      if (initialQueries?.length && showThinking) {
-        await stream.writeSSE({ data: JSON.stringify({ type: 'thinking',
-          delta: `🔍 Searching: ${initialQueries.map(q => `"${q}"`).join(', ')}\n` }) })
+      if (initialQueries?.length) {
+        await emitStatus(`Searching: ${initialQueries.map(q => `"${q}"`).join(', ')}`)
+        if (showThinking) {
+          await stream.writeSSE({ data: JSON.stringify({ type: 'thinking',
+            delta: `🔍 Searching: ${initialQueries.map(q => `"${q}"`).join(', ')}\n` }) })
+        }
       }
       if (initialResults?.length) {
         if (showThinking) {

@@ -1,18 +1,27 @@
 import { useState, type FormEvent } from 'react'
 import { updateSettings } from '../lib/api.ts'
 
+const FONT_SIZES = [
+  { label: 'Small', value: 14 },
+  { label: 'Normal', value: 16 },
+  { label: 'Large', value: 18 },
+  { label: 'XL', value: 20 },
+]
+
 interface Props {
   customPrompt: string
   showThinking: { balanced: boolean; thorough: boolean }
   useThinking: boolean
+  fontSize: number
   onClose: () => void
-  onSave: (customPrompt: string, showThinking: { balanced: boolean; thorough: boolean }, useThinking: boolean) => void
+  onSave: (customPrompt: string, showThinking: { balanced: boolean; thorough: boolean }, useThinking: boolean, fontSize: number) => void
 }
 
-export function SettingsPanel({ customPrompt: initial, showThinking: initialShowThinking, useThinking: initialUseThinking, onClose, onSave }: Props) {
+export function SettingsPanel({ customPrompt: initial, showThinking: initialShowThinking, useThinking: initialUseThinking, fontSize: initialFontSize, onClose, onSave }: Props) {
   const [customPrompt, setCustomPrompt] = useState(initial)
   const [showThinking, setShowThinking] = useState(initialShowThinking)
   const [useThinking, setUseThinking] = useState(initialUseThinking)
+  const [fontSize, setFontSize] = useState(initialFontSize)
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
 
@@ -20,8 +29,8 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
     e.preventDefault()
     setBusy(true)
     try {
-      await updateSettings({ customPrompt, showThinking, useThinking })
-      onSave(customPrompt, showThinking, useThinking)
+      await updateSettings({ customPrompt, showThinking, useThinking, fontSize })
+      onSave(customPrompt, showThinking, useThinking, fontSize)
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } finally {
@@ -90,6 +99,22 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
               />
               Enable model thinking
             </label>
+          </div>
+          <div className="border-t border-gray-800" />
+          <div className="flex flex-col gap-2">
+            <label className="text-xs text-gray-400 font-medium">Font size</label>
+            <div className="flex gap-2">
+              {FONT_SIZES.map(({ label, value }) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setFontSize(value)}
+                  className={`px-3 py-1 rounded text-sm ${fontSize === value ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="flex gap-2 justify-end">
             <button type="button" onClick={onClose} className="px-4 py-1.5 rounded text-sm text-gray-400 hover:text-gray-200">
