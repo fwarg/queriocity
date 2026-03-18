@@ -215,8 +215,10 @@ export default function App() {
       {showSettings && currentUser && (
         <SettingsPanel
           customPrompt={currentUser.settings?.customPrompt ?? ''}
+          showThinking={currentUser.settings?.showThinking ?? { balanced: false, thorough: false }}
+          useThinking={currentUser.settings?.useThinking ?? false}
           onClose={() => setShowSettings(false)}
-          onSave={(cp) => setCurrentUser(u => u ? { ...u, settings: { ...u.settings, customPrompt: cp } } : u)}
+          onSave={(cp, st, ut) => setCurrentUser(u => u ? { ...u, settings: { ...u.settings, customPrompt: cp, showThinking: st, useThinking: ut } } : u)}
         />
       )}
       {showAdmin && currentUser && (
@@ -360,6 +362,9 @@ export default function App() {
               <div className="px-4 py-1 text-xs text-gray-500 italic animate-pulse">{status}</div>
             )}
             <div ref={bottomRef} />
+            {focusMode === 'thorough' && currentUser?.settings?.useThinking && (
+              <div className="px-4 py-0.5 text-xs text-purple-400 opacity-70">⬡ Model thinking active</div>
+            )}
             <ChatInput
               onSubmit={handleSubmit}
               disabled={busy}

@@ -91,7 +91,11 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
   ])
   const parsedSettings = userRow ? JSON.parse(userRow.settings) : {}
   const customPrompt: string | undefined = parsedSettings.customPrompt ?? undefined
-  const showThinking = focusMode === 'balanced' || focusMode === 'thorough'
+  const showThinkingSettings = parsedSettings.showThinking ?? { balanced: false, thorough: false }
+  const showThinking = focusMode === 'balanced' ? showThinkingSettings.balanced
+                     : focusMode === 'thorough'  ? showThinkingSettings.thorough
+                     : false
+  const useThinking: boolean = !!(parsedSettings.useThinking) && focusMode === 'thorough'
   const hasFiles = (fileCountRow?.count ?? 0) > 0
 
   return streamSSE(c, async (stream) => {
@@ -110,10 +114,26 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
       // Phase 1: Research (collect sources, no text to client)
       if (initialQueries?.length) {
         await emitStatus(`Searching: ${initialQueries.map(q => `"${q}"`).join(', ')}`)
+        if (showThinking) {
+          await stream.writeSSE({ data: JSON.stringify({ type: 'thinking',
+            delta: `🔍 Searching: ${initialQueries.map(q => `"${q}"`).join(', ')}\n` }) })
+        }
       }
-      const researcherResult = runResearcher({ messages: msgs, focusMode, userId, initialQueries, initialResults, customPrompt, hasFiles })
+      if (showThinking && initialResults?.length) {
+        const snippets = initialResults.slice(0, 3)
+          .map(r => `  • ${r.title}\n    ${r.url}\n    ${r.content.slice(0, 120)}…`)
+          .join('\n')
+        await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: snippets + '\n\n' }) })
+      }
+      const thinkingTrigger = process.env.THINKING_TRIGGER ?? '/think'
+      const researchMsgs = useThinking
+        ? msgs.map((m, i, arr) => m.role === 'user' && i === arr.length - 1
+            ? { ...m, content: `${thinkingTrigger}\n${m.content}` } : m)
+        : msgs
+      const researcherResult = runResearcher({ messages: researchMsgs, focusMode, userId, initialQueries, initialResults, customPrompt, hasFiles })
       const allSources: SearchResult[] = [...(initialResults ?? [])]
       let researcherNotes = ''
+      const thoroughExtractor = useThinking ? new ThinkExtractor() : null
 
       for await (const part of researcherResult.fullStream as AsyncIterable<any>) {
         if (part.type === 'tool-call' && part.toolName === 'web_search') {
@@ -131,11 +151,30 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
               .join('\n')
             await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: snippets + '\n\n' }) })
           }
+        } else if (part.type === 'reasoning') {
+          await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: part.textDelta }) })
         } else if (part.type === 'text-delta') {
-          researcherNotes += part.textDelta
-          if (showThinking) {
-            await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: part.textDelta }) })
+          if (thoroughExtractor) {
+            const { text, thinking } = thoroughExtractor.process(part.textDelta)
+            if (thinking) await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: thinking }) })
+            if (text) {
+              researcherNotes += text
+              await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: text }) })
+            }
+          } else {
+            researcherNotes += part.textDelta
+            if (showThinking) {
+              await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: part.textDelta }) })
+            }
           }
+        }
+      }
+      if (thoroughExtractor) {
+        const { text, thinking } = thoroughExtractor.flush()
+        if (thinking) await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: thinking }) })
+        if (text) {
+          researcherNotes += text
+          await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: text }) })
         }
       }
 

@@ -11,6 +11,8 @@ usersRouter.use('*', authMiddleware)
 
 const settingsSchema = z.object({
   customPrompt: z.string().max(2000).optional(),
+  showThinking: z.object({ balanced: z.boolean(), thorough: z.boolean() }).optional(),
+  useThinking: z.boolean().optional(),
 })
 
 usersRouter.get('/settings', async (c) => {
