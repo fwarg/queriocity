@@ -39,9 +39,16 @@ Rules:
 4. Match the language of the input (Swedish → Swedish, English → English).
 5. Output ONLY the search string or SKIP. No explanations, no quotes, no preamble.
 
-Example 1 (Input): "What does CETA stand for?" → SKIP
+Example 1 (Input, prior turn explained CETA): "What does CETA stand for?" → SKIP
 Example 2 (Input): "What is the latest news on EU-Canada trade?" → EU Canada trade news 2025
-Example 3 (Input): "What is the best way to clean a mechanical keyboard?" → how to clean mechanical keyboard safely`
+Example 3 (Input, no prior context): "What does CETA stand for?" → CETA trade agreement definition`
+
+/** Returns true if the string looks like a natural language sentence rather than a search query. */
+function looksLikeSentence(s: string): boolean {
+  return /\b(stands for|is an? |refers to|means |is the abbreviation|is short for)\b/i.test(s)
+    || s.split(/\s+/).length > 12
+    || s.endsWith('.')
+}
 
 /** Balanced/thorough mode: small LLM rewrites query as optimized search queries. */
 export async function reformulateLLM(
@@ -70,8 +77,8 @@ export async function reformulateLLM(
     : lastUser.content
 
   const userPrompt = count === 1
-    ? `Rewrite into 1 optimized query: "${contextPart}"`
-    : `Rewrite into ${count} complementary queries covering different angles, one per line: "${contextPart}"`
+    ? `Output SKIP or 1 optimized search query: "${contextPart}"`
+    : `Output SKIP or ${count} complementary search queries covering different angles, one per line: "${contextPart}"`
 
   const SMALL_TARGET = `${process.env.SMALL_BASE_URL ?? process.env.CHAT_BASE_URL ?? 'ollama'} model=${process.env.SMALL_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2'}`
   console.log(`  [reformulate] ${SMALL_TARGET} mode=${mode} count=${count}`)
@@ -89,6 +96,6 @@ export async function reformulateLLM(
   return text
     .split('\n')
     .map(l => l.replace(/^\d+[\.\)]\s*/, '').trim())
-    .filter(l => l && !/^skip$/i.test(l))
+    .filter(l => l && !/^skip$/i.test(l) && !looksLikeSentence(l))
     .slice(0, count)
 }
