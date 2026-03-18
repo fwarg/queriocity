@@ -192,11 +192,24 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
       // Phase 2: Writer pass
       await emitStatus('Writing answer…')
       const writerResult = runWriter(dedupedSources, msgs, researcherNotes.slice(0, 2000))
+      const writerExtractor = new ThinkExtractor()
       for await (const part of writerResult.fullStream) {
         if (part.type === 'text-delta') {
-          fullContent += part.textDelta
-          await stream.writeSSE({ data: JSON.stringify({ type: 'text', delta: part.textDelta }) })
+          const { text, thinking } = writerExtractor.process(part.textDelta)
+          if (thinking && showThinking) await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: thinking }) })
+          if (text) {
+            fullContent += text
+            await stream.writeSSE({ data: JSON.stringify({ type: 'text', delta: text }) })
+          }
+        } else if (part.type === 'reasoning' && showThinking) {
+          await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: part.textDelta }) })
         }
+      }
+      const { text: wt, thinking: wth } = writerExtractor.flush()
+      if (wth && showThinking) await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: wth }) })
+      if (wt) {
+        fullContent += wt
+        await stream.writeSSE({ data: JSON.stringify({ type: 'text', delta: wt }) })
       }
     } else {
       // Speed / balanced: stream researcher output directly
