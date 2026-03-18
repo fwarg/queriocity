@@ -33,13 +33,13 @@ export function reformulateSpeed(messages: Array<{ role: string; content: string
 const REFORMULATE_SYSTEM = `You are a search query optimizer. Decide whether a web search is needed, then rewrite the query if so.
 
 Rules:
-1. Output NOTHING (empty response) if the question can be answered from conversation context or is purely definitional/conceptual with no time-sensitive component (e.g. "what does X stand for", "explain Y", "what did you mean by Z").
+1. Output the word SKIP if the question can be answered from conversation context or is purely definitional/conceptual with no time-sensitive component (e.g. "what does X stand for", "explain Y", "what did you mean by Z").
 2. Output a search query if the question involves current events, recent news, statistics, prices, or anything that may have changed.
 3. Strip conversational filler. Use keywords a search engine favors.
 4. Match the language of the input (Swedish → Swedish, English → English).
-5. Output ONLY the search string or nothing. No explanations, no quotes, no preamble.
+5. Output ONLY the search string or SKIP. No explanations, no quotes, no preamble.
 
-Example 1 (Input): "What does CETA stand for?" → (empty — definitional, answerable from context)
+Example 1 (Input): "What does CETA stand for?" → SKIP
 Example 2 (Input): "What is the latest news on EU-Canada trade?" → EU Canada trade news 2025
 Example 3 (Input): "What is the best way to clean a mechanical keyboard?" → how to clean mechanical keyboard safely`
 
@@ -80,7 +80,8 @@ export async function reformulateLLM(
   const { text } = await generateText({
     model: getSmallModel(),
     system: REFORMULATE_SYSTEM,
-    prompt: userPrompt,
+    prompt: process.env.NO_THINK_TRIGGER ? `${process.env.NO_THINK_TRIGGER}\n${userPrompt}` : userPrompt,
+    maxTokens: 80,
   })
 
   console.log(`  [reformulate] done — ${(performance.now() - start).toFixed(0)}ms → ${JSON.stringify(text.trim())}`)
@@ -88,6 +89,6 @@ export async function reformulateLLM(
   return text
     .split('\n')
     .map(l => l.replace(/^\d+[\.\)]\s*/, '').trim())
-    .filter(Boolean)
+    .filter(l => l && !/^skip$/i.test(l))
     .slice(0, count)
 }
