@@ -66,6 +66,31 @@ PORT=3000                                   # not used in Docker (see docker/com
 DB_PATH=queriocity.db                       # path to SQLite database file
 JWT_SECRET=change-me-in-production-32chars!!
 MAX_ATTACHMENT_CHARS=20000                  # max chars injected from a chat attachment (~4 chars/token)
+
+# ── Thinking mode ─────────────────────────────────────────────────────────────
+# Some models require a trigger token to activate chain-of-thought reasoning.
+# Set THINKING_TRIGGER to the token your model expects (Qwen3 uses /think;
+# DeepSeek-R1 emits <think> blocks natively and needs no trigger).
+# The token is prepended to the user message when the "Enable thinking" toggle
+# is on in the chat UI.
+#
+# THINKING_TRIGGER=/think
+#
+# Small models used for query reformulation rarely benefit from thinking and it
+# significantly increases latency. Set NO_THINK_TRIGGER to suppress it for the
+# reformulation step only (Qwen3 supports /no_think for this purpose).
+#
+# NO_THINK_TRIGGER=/no_think
+
+# ── Reformulate context limits ────────────────────────────────────────────────
+# The small model receives recent conversation history so it can resolve
+# pronouns and follow-up references ("it", "that company", etc.) when
+# rewriting queries. These caps bound how much history is injected, keeping
+# the small model's context short for latency. Reduce if your small model is
+# slow or has a limited context window. (~4 chars ≈ 1 token)
+#
+# REFORMULATE_USER_CTX=400                  # max chars of prior user turns
+# REFORMULATE_ASSISTANT_CTX=1000            # max chars of prior assistant turns
 ```
 
 ### Running
@@ -122,6 +147,8 @@ was it founded?" after asking about a company becomes "When was [company] founde
 the pre-search query is self-contained. Best for quick factual questions where you value
 speed over depth.
 
+Responses are always in the same language as the user's question.
+
 - 1 pre-search query, 6 results
 - Up to 2 LLM steps (think → answer)
 - Model may call `web_search` once more if the pre-fetched results are insufficient
@@ -130,9 +157,11 @@ speed over depth.
 
 A small model first rewrites the user's question into an optimized search query, which is
 executed before the main model starts. For example, "what's the latest on the mars mission?"
-might become `NASA Mars mission 2025 latest news`. The main model then receives pre-fetched
-results and may issue one more round of searches (up to 2 queries at a time) before
-answering. Answers include inline citations `[1][2]`.
+might become `NASA Mars mission 2025 latest news`. The small model preserves the language of
+the user's question, so Swedish queries produce Swedish search terms. The main model then
+receives pre-fetched results and may issue one more round of searches (up to 2 queries at a
+time) before answering. Answers include inline citations `[1][2]` and are always in the same
+language as the user's question.
 
 - 1 LLM-reformulated query pre-fetched in parallel
 - Up to 4 LLM steps; up to 2 parallel search queries per step
@@ -144,7 +173,8 @@ A two-phase pipeline. Phase 1 is a dedicated **researcher** run: the model explo
 topic from multiple angles, calling `web_search` (up to 3 queries per call) up to 5 times
 in total, finishing by calling a `done` tool. Phase 2 is a separate **writer** pass
 that receives all deduplicated sources and synthesises a final, well-structured answer.
-Slower, but significantly more comprehensive.
+Slower, but significantly more comprehensive. Responses are always in the same language as
+the user's question.
 
 - Up to 3 pre-fetched queries (10 results each)
 - Up to 5 LLM steps in the researcher; up to 3 search queries per step

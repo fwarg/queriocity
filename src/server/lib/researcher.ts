@@ -16,6 +16,7 @@ Always respond in the same language the user used.`,
 1. Start with 1-2 broad queries to get an overview.
 2. Based on results, optionally refine with more specific queries.
 3. Answer clearly with inline [N] citations only (e.g. [1][2]). Do NOT use markdown hyperlinks.
+4. Only cite [N] when the specific fact is directly supported by that result's content. Skip irrelevant results.
 Use web_search with up to 2 queries at a time. Stop when you have enough information.
 Always respond in the same language the user used.`,
 
@@ -24,6 +25,7 @@ Always respond in the same language the user used.`,
 2. Use up to 3 queries per call, covering different aspects.
 3. Cross-reference information across sources.
 4. Prefer specific, targeted queries over broad ones after the first iteration.
+5. Only cite [N] when the specific fact is directly supported by that result's content. Skip irrelevant results.
 Call web_search as many times as needed. Do NOT write your answer yet — just research.
 When done researching, call the done tool.
 Always respond in the same language the user used.`,
