@@ -12,8 +12,8 @@ call web_search once with the most important query. Skip search for conversation
 or factual questions you can answer from training. Be concise.`,
 
   balanced: `You are a research assistant. For each query:
-1. Call web_search when the query involves current events, recent news, statistics, or anything that may have changed — including follow-up questions on those topics. Skip search only for purely conceptual or conversational questions you can answer confidently from existing context.
-2. Start with 1-2 focused queries. Based on results, optionally refine with more specific queries.
+1. Start with 1-2 broad queries to get an overview.
+2. Based on results, optionally refine with more specific queries.
 3. Answer clearly with inline [N] citations only (e.g. [1][2]). Do NOT use markdown hyperlinks.
 Use web_search with up to 2 queries at a time. Stop when you have enough information.`,
 

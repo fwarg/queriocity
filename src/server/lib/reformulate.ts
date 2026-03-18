@@ -30,19 +30,18 @@ export function reformulateSpeed(messages: Array<{ role: string; content: string
   return q
 }
 
-const REFORMULATE_SYSTEM = `You are a search query optimizer. Your task is to rewrite the user's input into a concise, effective search engine query.
+const REFORMULATE_SYSTEM = `You are a search query optimizer. Decide whether a web search is needed, then rewrite the query if so.
 
 Rules:
-1. Strip away conversational filler (e.g., "can you find", "please search for").
-2. Identify the core intent and use keywords that a search engine favors.
-3. If the input is in Swedish, output the search query in Swedish. If in English, output in English.
-4. Output ONLY the search string. No explanations, no quotes, no preamble.
+1. Output NOTHING (empty response) if the question can be answered from conversation context or is purely definitional/conceptual with no time-sensitive component (e.g. "what does X stand for", "explain Y", "what did you mean by Z").
+2. Output a search query if the question involves current events, recent news, statistics, prices, or anything that may have changed.
+3. Strip conversational filler. Use keywords a search engine favors.
+4. Match the language of the input (Swedish → Swedish, English → English).
+5. Output ONLY the search string or nothing. No explanations, no quotes, no preamble.
 
-Example 1 (Input): "Jag undrar hur man bakar surdegsbröd hemma utan en gjutjärnsgryta"
-Example 1 (Output): recept surdegsbröd utan gjutjärnsgryta guide
-
-Example 2 (Input): "What is the best way to clean a mechanical keyboard without breaking it?"
-Example 2 (Output): how to clean mechanical keyboard safely`
+Example 1 (Input): "What does CETA stand for?" → (empty — definitional, answerable from context)
+Example 2 (Input): "What is the latest news on EU-Canada trade?" → EU Canada trade news 2025
+Example 3 (Input): "What is the best way to clean a mechanical keyboard?" → how to clean mechanical keyboard safely`
 
 /** Balanced/thorough mode: small LLM rewrites query as optimized search queries. */
 export async function reformulateLLM(
@@ -53,14 +52,21 @@ export async function reformulateLLM(
   if (!lastUser) return []
 
   const count = mode === 'thorough' ? 3 : 1
-  const history = messages
-    .slice(0, -1)
-    .filter(m => m.role === 'user' || m.role === 'assistant')
-    .map(m => `${m.role}: ${m.content}`)
-    .join('\n')
 
-  const contextPart = history
-    ? `Conversation so far:\n${history}\n\nLatest question: ${lastUser.content}`
+  // Only pass the immediately preceding turn — enough to resolve pronouns and
+  // judge what's already in context, without overflowing the small model's window.
+  const prevMessages = messages.slice(0, -1).filter(m => m.role === 'user' || m.role === 'assistant')
+  const lastAssistant = [...prevMessages].reverse().find(m => m.role === 'assistant')
+  const lastPriorUser = [...prevMessages].reverse().find(m => m.role === 'user')
+  const userCtxLen = parseInt(process.env.REFORMULATE_USER_CTX ?? '300', 10)
+  const assistantCtxLen = parseInt(process.env.REFORMULATE_ASSISTANT_CTX ?? '800', 10)
+  const historyParts = [
+    lastPriorUser ? `user: ${lastPriorUser.content.slice(0, userCtxLen)}` : '',
+    lastAssistant ? `assistant: ${lastAssistant.content.slice(0, assistantCtxLen)}` : '',
+  ].filter(Boolean)
+
+  const contextPart = historyParts.length
+    ? `Previous turn:\n${historyParts.join('\n')}\n\nLatest question: ${lastUser.content}`
     : lastUser.content
 
   const userPrompt = count === 1
