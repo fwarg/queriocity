@@ -7,6 +7,8 @@ OpenAI-compatible) language model to a private SearXNG search instance, stores y
 conversation history and uploaded documents locally in SQLite, and serves everything
 through a single Bun process.
 
+![Queriocity screenshot](doc/queriocity.png)
+
 ---
 
 ## Requirements
@@ -22,7 +24,7 @@ through a single Bun process.
 ## Installation
 
 ```bash
-git clone <repo-url> queriocity
+git clone https://github.com/fwarg/queriocity.git
 cd queriocity
 bun install
 ```
@@ -113,20 +115,24 @@ model instead of the main chat model.
 
 ### Fast
 
-The lightest path. A regex heuristic resolves pronouns in follow-up questions using the
-previous answer, then the model searches once with a single query and streams its answer
-directly. Best for quick factual questions where you value speed over depth.
+A single pre-search query using the chat question directly is fired
+and the results are injected before the model starts. The model streams its answer
+directly and may issue one additional search if needed. A regex heuristic resolves pronouns in follow-up questions before searching — e.g. "When
+was it founded?" after asking about a company becomes "When was [company] founded?" — so
+the pre-search query is self-contained. Best for quick factual questions where you value
+speed over depth.
 
-- 1 search query, 6 results
+- 1 pre-search query, 6 results
 - Up to 2 LLM steps (think → answer)
-- No pre-search; the model decides whether to call `web_search` at all
+- Model may call `web_search` once more if the pre-fetched results are insufficient
 
 ### Balanced *(default)*
 
 A small model first rewrites the user's question into an optimized search query, which is
-executed before the main model starts. The main model then receives pre-fetched results and
-may issue one more round of searches (up to 2 queries at a time) before answering. Answers
-include inline citations `[1][2]`.
+executed before the main model starts. For example, "what's the latest on the mars mission?"
+might become `NASA Mars mission 2025 latest news`. The main model then receives pre-fetched
+results and may issue one more round of searches (up to 2 queries at a time) before
+answering. Answers include inline citations `[1][2]`.
 
 - 1 LLM-reformulated query pre-fetched in parallel
 - Up to 4 LLM steps; up to 2 parallel search queries per step
@@ -135,8 +141,8 @@ include inline citations `[1][2]`.
 ### Thorough
 
 A two-phase pipeline. Phase 1 is a dedicated **researcher** run: the model explores the
-topic from multiple angles, calling `web_search` (up to 3 queries per call) as many times
-as it needs and finishing by calling a `done` tool. Phase 2 is a separate **writer** pass
+topic from multiple angles, calling `web_search` (up to 3 queries per call) up to 5 times
+in total, finishing by calling a `done` tool. Phase 2 is a separate **writer** pass
 that receives all deduplicated sources and synthesises a final, well-structured answer.
 Slower, but significantly more comprehensive.
 
