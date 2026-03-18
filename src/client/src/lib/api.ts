@@ -12,6 +12,7 @@ export interface Message {
   role: 'user' | 'assistant'
   content: string
   sources?: Array<{ title: string; url: string }>
+  thinking?: string
 }
 
 // Auth — cookies are sent automatically by the browser

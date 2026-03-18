@@ -13,6 +13,7 @@ import { randomUUID } from 'crypto'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { webSearch, webSearchMulti, type SearchResult } from '../lib/searxng.ts'
 import { getFlashModel } from '../lib/llm.ts'
+import { ThinkExtractor } from '../lib/think-extractor.ts'
 
 const FLASH_SYSTEM = `Answer in at most 5 sentences using only your training knowledge. Be direct and factual.
 Do not search the web. If you cannot answer confidently, say so briefly.`
@@ -88,7 +89,9 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
     db.select({ count: sql<number>`count(*)` }).from(uploadedFiles).where(eq(uploadedFiles.userId, userId)).get(),
     runReformulateAndPreSearch(msgsForReformulate, focusMode as 'fast' | 'balanced' | 'thorough', hasAttachment),
   ])
-  const customPrompt: string | undefined = userRow ? (JSON.parse(userRow.settings).customPrompt ?? undefined) : undefined
+  const parsedSettings = userRow ? JSON.parse(userRow.settings) : {}
+  const customPrompt: string | undefined = parsedSettings.customPrompt ?? undefined
+  const showThinking = focusMode === 'balanced' || focusMode === 'thorough'
   const hasFiles = (fileCountRow?.count ?? 0) > 0
 
   return streamSSE(c, async (stream) => {
@@ -115,10 +118,24 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
       for await (const part of researcherResult.fullStream as AsyncIterable<any>) {
         if (part.type === 'tool-call' && part.toolName === 'web_search') {
           await emitSearchStatus(part.args)
+          if (showThinking) {
+            const queries: string[] = part.args.queries ?? (part.args.query ? [part.args.query] : [])
+            await stream.writeSSE({ data: JSON.stringify({ type: 'thinking',
+              delta: `🔍 Searching: ${queries.map(q => `"${q}"`).join(', ')}\n` }) })
+          }
         } else if (part.type === 'tool-result' && part.toolName === 'web_search') {
           allSources.push(...(part.result as SearchResult[]))
+          if (showThinking) {
+            const snippets = (part.result as SearchResult[]).slice(0, 3)
+              .map(r => `  • ${r.title}\n    ${r.url}\n    ${r.content.slice(0, 120)}…`)
+              .join('\n')
+            await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: snippets + '\n\n' }) })
+          }
         } else if (part.type === 'text-delta') {
           researcherNotes += part.textDelta
+          if (showThinking) {
+            await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: part.textDelta }) })
+          }
         }
       }
 
@@ -150,17 +167,51 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
       }
 
       const result = runResearcher({ messages: msgs, focusMode, userId, initialQueries, initialResults, customPrompt, hasFiles })
+      const extractor = showThinking ? new ThinkExtractor() : null
 
       for await (const part of result.fullStream as AsyncIterable<any>) {
         if (part.type === 'tool-call' && part.toolName === 'web_search') {
           await emitSearchStatus(part.args)
+          if (showThinking) {
+            const queries: string[] = part.args.queries ?? (part.args.query ? [part.args.query] : [])
+            await stream.writeSSE({ data: JSON.stringify({ type: 'thinking',
+              delta: `🔍 Searching: ${queries.map(q => `"${q}"`).join(', ')}\n` }) })
+          }
         } else if (part.type === 'text-delta') {
-          fullContent += part.textDelta
-          await stream.writeSSE({ data: JSON.stringify({ type: 'text', delta: part.textDelta }) })
+          if (extractor) {
+            const { text, thinking } = extractor.process(part.textDelta)
+            if (thinking) await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: thinking }) })
+            if (text) {
+              fullContent += text
+              await stream.writeSSE({ data: JSON.stringify({ type: 'text', delta: text }) })
+            }
+          } else {
+            fullContent += part.textDelta
+            await stream.writeSSE({ data: JSON.stringify({ type: 'text', delta: part.textDelta }) })
+          }
+        } else if (part.type === 'reasoning') {
+          if (showThinking) {
+            await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: part.textDelta }) })
+          }
         } else if (part.type === 'tool-result' && part.toolName === 'web_search') {
           const results = part.result as SearchResult[]
           sources.push(...results.map(r => ({ title: r.title, url: r.url })))
           await stream.writeSSE({ data: JSON.stringify({ type: 'sources', sources: results }) })
+          if (showThinking) {
+            const snippets = results.slice(0, 3)
+              .map(r => `  • ${r.title}\n    ${r.url}\n    ${r.content.slice(0, 120)}…`)
+              .join('\n')
+            await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: snippets + '\n\n' }) })
+          }
+        }
+      }
+
+      if (extractor) {
+        const { text, thinking } = extractor.flush()
+        if (thinking) await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: thinking }) })
+        if (text) {
+          fullContent += text
+          await stream.writeSSE({ data: JSON.stringify({ type: 'text', delta: text }) })
         }
       }
     }

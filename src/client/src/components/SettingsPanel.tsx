@@ -49,7 +49,7 @@ export function SettingsPanel({ customPrompt: initial, onClose, onSave }: Props)
               className="mt-1 px-3 py-2 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 resize-none focus:outline-none focus:border-blue-500"
             />
           </div>
-          <div className="flex gap-2 justify-end">
+<div className="flex gap-2 justify-end">
             <button type="button" onClick={onClose} className="px-4 py-1.5 rounded text-sm text-gray-400 hover:text-gray-200">
               Cancel
             </button>

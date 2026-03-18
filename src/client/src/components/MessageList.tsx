@@ -7,6 +7,7 @@ import type { Message } from '../lib/api.ts'
 interface Props {
   messages: Message[]
   streaming?: string
+  streamingThinking?: string
 }
 
 /** Replace [N] with markdown links [[N]](url) so react-markdown renders them as links. */
@@ -109,7 +110,18 @@ function SourceList({ content, sources }: { content: string; sources: Array<{ ti
   )
 }
 
-export function MessageList({ messages, streaming }: Props) {
+function ThinkingBlock({ content, open }: { content: string; open?: boolean }) {
+  return (
+    <details open={open} className="mb-2 text-xs text-gray-500">
+      <summary className="cursor-pointer hover:text-gray-400 select-none">Thinking…</summary>
+      <div className="mt-1 pl-2 border-l border-gray-700 whitespace-pre-wrap font-mono text-gray-600 leading-relaxed">
+        {content}
+      </div>
+    </details>
+  )
+}
+
+export function MessageList({ messages, streaming, streamingThinking }: Props) {
   return (
     <div className="flex flex-col gap-4 p-4 overflow-y-auto flex-1">
       {messages.map((msg, i) => (
@@ -121,22 +133,31 @@ export function MessageList({ messages, streaming }: Props) {
                 : 'bg-gray-800 text-gray-100'
             }`}
           >
-            {msg.role === 'assistant'
-              ? <ReactMarkdown components={mdComponents} remarkPlugins={[remarkGfm]}>
+            {msg.role === 'assistant' ? (
+              <>
+                {msg.thinking && <ThinkingBlock content={msg.thinking} />}
+                <ReactMarkdown components={mdComponents} remarkPlugins={[remarkGfm]}>
                   {msg.sources?.length ? insertCitationLinks(msg.content, msg.sources) : msg.content}
                 </ReactMarkdown>
-              : msg.content}
+              </>
+            ) : msg.content}
           </div>
           {msg.sources && msg.sources.length > 0 && (
             <SourceList content={msg.content} sources={msg.sources} />
           )}
         </div>
       ))}
-      {streaming && (
+      {(streaming || streamingThinking) && (
         <div className="flex items-start">
           <div className="max-w-2xl rounded-lg px-4 py-2 text-sm bg-gray-800 text-gray-100">
-            <ReactMarkdown components={mdComponents} remarkPlugins={[remarkGfm]}>{streaming}</ReactMarkdown>
-            <span className="animate-pulse">▋</span>
+            {streamingThinking && <ThinkingBlock content={streamingThinking} open />}
+            {streaming && (
+              <>
+                <ReactMarkdown components={mdComponents} remarkPlugins={[remarkGfm]}>{streaming}</ReactMarkdown>
+                <span className="animate-pulse">▋</span>
+              </>
+            )}
+            {!streaming && <span className="animate-pulse">▋</span>}
           </div>
         </div>
       )}

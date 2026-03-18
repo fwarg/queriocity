@@ -29,6 +29,7 @@ export default function App() {
 
   const [messages, setMessages] = useState<Message[]>([])
   const [streaming, setStreaming] = useState('')
+  const [streamingThinking, setStreamingThinking] = useState('')
   const [status, setStatus] = useState('')
   const [busy, setBusy] = useState(false)
   const [focusMode, setFocusMode] = useState<'flash' | 'fast' | 'balanced' | 'thorough'>('balanced')
@@ -91,6 +92,7 @@ export default function App() {
     setStreaming('')
 
     let accumulated = ''
+    let thinkingAccumulated = ''
     const sources: Array<{ title: string; url: string }> = []
 
     try {
@@ -99,6 +101,9 @@ export default function App() {
           accumulated += chunk.delta as string
           setStreaming(accumulated)
           setStatus('')
+        } else if (chunk.type === 'thinking') {
+          thinkingAccumulated += chunk.delta as string
+          setStreamingThinking(thinkingAccumulated)
         } else if (chunk.type === 'status') {
           setStatus(chunk.text as string)
         } else if (chunk.type === 'sources') {
@@ -113,8 +118,14 @@ export default function App() {
         }
       }
     } finally {
-      setMessages(prev => [...prev, { role: 'assistant', content: accumulated, sources }])
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: accumulated,
+        sources,
+        thinking: thinkingAccumulated || undefined,
+      }])
       setStreaming('')
+      setStreamingThinking('')
       setStatus('')
       setBusy(false)
     }
@@ -133,6 +144,7 @@ export default function App() {
     setMessages([])
     setSessionId(undefined)
     setStreaming('')
+    setStreamingThinking('')
     setStatus('')
     setView('chat')
   }
@@ -204,7 +216,7 @@ export default function App() {
         <SettingsPanel
           customPrompt={currentUser.settings?.customPrompt ?? ''}
           onClose={() => setShowSettings(false)}
-          onSave={cp => setCurrentUser(u => u ? { ...u, settings: { ...u.settings, customPrompt: cp } } : u)}
+          onSave={(cp) => setCurrentUser(u => u ? { ...u, settings: { ...u.settings, customPrompt: cp } } : u)}
         />
       )}
       {showAdmin && currentUser && (
@@ -342,7 +354,7 @@ export default function App() {
                 <span className="text-sm">LLM-driven web search</span>
               </div>
             ) : (
-              <MessageList messages={messages} streaming={streaming} />
+              <MessageList messages={messages} streaming={streaming} streamingThinking={streamingThinking} />
             )}
             {status && (
               <div className="px-4 py-1 text-xs text-gray-500 italic animate-pulse">{status}</div>
