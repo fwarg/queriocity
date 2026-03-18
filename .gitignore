@@ -6,3 +6,5 @@ dist/
 *.db-shm
 bun.lockb
 .DS_Store
+docker/env.local
+docker/data/

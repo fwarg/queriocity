@@ -228,11 +228,37 @@ docker compose -f docker/compose.yml up -d
 
 The app is available at `http://localhost:8070` (or whatever external port is set in `compose.yml`).
 
-The database is stored in `docker/data/queriocity.db` on the host. To stop without losing data:
+The database is stored in `docker/data/queriocity.db` on the host — a plain file you can
+inspect, back up, or copy directly. The `docker/data/` directory is excluded from git, so
+create it before the first run:
+
+```bash
+mkdir -p docker/data
+```
+
+To stop without losing data:
 
 ```bash
 docker compose -f docker/compose.yml down
 ```
+
+If you prefer a Docker-managed volume instead, replace the `volumes:` block in `compose.yml`:
+
+```yaml
+# replace this:
+    volumes:
+      - ./data:/data
+
+# with this:
+    volumes:
+      - queriocity-data:/data
+
+volumes:
+  queriocity-data:
+```
+
+The data will then live under `/var/lib/docker/volumes/docker_queriocity-data/` and is
+managed by Docker rather than appearing as a regular directory.
 
 `extra_hosts: host.docker.internal:host-gateway` is set in the compose file and is required
 on Linux to make `host.docker.internal` resolve to the host. Docker Desktop on macOS/Windows
