@@ -34,7 +34,7 @@ const REFORMULATE_SYSTEM = `You are a search query optimizer. Rewrite the user q
 
 Rules:
 1. Strip conversational filler. Use keywords a search engine favors.
-2. Match the language of the input (Swedish → Swedish, English → English).
+2. Match the language of the user's question (ignore the language of any assistant context).
 3. Output ONLY the search string. No explanations, no quotes, no preamble.`
 
 /** Returns true if the string looks like a natural language sentence rather than a search query. */

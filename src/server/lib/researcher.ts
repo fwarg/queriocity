@@ -9,13 +9,15 @@ const CHAT_TARGET = `${process.env.CHAT_BASE_URL ?? 'ollama'} model=${process.en
 export const SYSTEM_PROMPTS = {
   fast: `You are a fast research assistant. Answer directly. If a web search would help, \
 call web_search once with the most important query. Skip search for conversational \
-or factual questions you can answer from training. Be concise.`,
+or factual questions you can answer from training. Be concise.
+Always respond in the same language the user used.`,
 
   balanced: `You are a research assistant. For each query:
 1. Start with 1-2 broad queries to get an overview.
 2. Based on results, optionally refine with more specific queries.
 3. Answer clearly with inline [N] citations only (e.g. [1][2]). Do NOT use markdown hyperlinks.
-Use web_search with up to 2 queries at a time. Stop when you have enough information.`,
+Use web_search with up to 2 queries at a time. Stop when you have enough information.
+Always respond in the same language the user used.`,
 
   thorough: `You are a thorough research assistant. For each query:
 1. Explore multiple angles: definitions, current state, comparisons, recent news, expert views.
@@ -23,7 +25,8 @@ Use web_search with up to 2 queries at a time. Stop when you have enough informa
 3. Cross-reference information across sources.
 4. Prefer specific, targeted queries over broad ones after the first iteration.
 Call web_search as many times as needed. Do NOT write your answer yet — just research.
-When done researching, call the done tool.`,
+When done researching, call the done tool.
+Always respond in the same language the user used.`,
 }
 
 const MODE_CONFIG = {
@@ -53,14 +56,19 @@ export function runResearcher({ messages, focusMode, userId, initialQueries, ini
   // Inject pre-executed search results as a fake tool exchange so the model
   // sees them as already done and continues from there. Also note in the system
   // prompt that initial research has been done to discourage redundant searches.
-  let augmentedMessages: any[] = messages
+  const cleanMessages = messages.map(m =>
+    m.role === 'assistant'
+      ? { ...m, content: typeof m.content === 'string' ? m.content.replace(/\[\d+\]/g, '') : m.content }
+      : m
+  )
+  let augmentedMessages: any[] = cleanMessages
   if (initialResults?.length && initialQueries?.length) {
     system += `\n\nNote: an initial search has already been performed and the results are in the conversation. Build on those results rather than repeating the same queries.`
     const args = focusMode === 'fast'
       ? { query: initialQueries[0] }
       : { queries: initialQueries }
     augmentedMessages = [
-      ...messages,
+      ...cleanMessages,
       { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'pre-0', toolName: 'web_search', args }] },
       { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'pre-0', toolName: 'web_search', result: initialResults }] },
     ]
