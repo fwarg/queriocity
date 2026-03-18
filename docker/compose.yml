@@ -1,0 +1,13 @@
+services:
+  queriocity:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    env_file: env.local
+    ports:
+      - "8070:3000"
+    volumes:
+      - ./data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped

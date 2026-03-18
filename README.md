@@ -60,7 +60,7 @@ EMBED_DIMENSIONS=1536                       # must match the model's output size
 SEARXNG_URL=http://localhost:4000
 
 # ── Server ────────────────────────────────────────────────────────────────────
-PORT=3000
+PORT=3000                                   # not used in Docker (see docker/compose.yml)
 DB_PATH=queriocity.db                       # path to SQLite database file
 JWT_SECRET=change-me-in-production-32chars!!
 MAX_ATTACHMENT_CHARS=20000                  # max chars injected from a chat attachment (~4 chars/token)
@@ -98,7 +98,18 @@ Open `http://localhost:3000`. The first user to register becomes an admin.
 
 ## Research modes
 
-Queriocity runs every chat request in one of three focus modes, selectable per message in the chat input bar.
+Queriocity runs every chat request in one of four focus modes, selectable per message in the chat input bar.
+
+### Flash
+
+Bypasses all search infrastructure entirely. The model answers directly from its training
+knowledge with no web search, no query reformulation, and no tool calls. Responses are
+capped at ~5 sentences. Use this for quick factual questions where sub-3s latency matters
+and web freshness is not needed. Attachments are disabled in this mode. Query length is
+capped at 200 characters.
+
+The model used can be overridden via `FLASH_MODEL=small` to use the small/reformulation
+model instead of the main chat model.
 
 ### Fast
 
@@ -175,6 +186,53 @@ Max upload size: 50 MB.
 In **Settings** you can add a custom prompt that is appended to the system prompt for every
 request. Use this to set a persona, preferred language, citation style, or any standing
 instruction.
+
+---
+
+## Docker
+
+### Build
+
+```bash
+docker build -t queriocity .
+```
+
+### Configure
+
+Copy `docker/env.template` to `docker/env.local` and fill in your values:
+
+```bash
+cp docker/env.template docker/env.local
+# edit docker/env.local
+```
+
+Key differences from the bare-metal config:
+
+- `DB_PATH=/data/queriocity.db` — the container writes the database to `/data`; mount a host directory there for persistence.
+- If your LLM servers (Ollama, llama.cpp, SearXNG, etc.) run on the **host machine**, replace `localhost` with `host.docker.internal` in all `*_BASE_URL` and `SEARXNG_URL` values.
+- `PORT` is not used in Docker — the container always listens on port 3000 internally. The external port is set in `docker/compose.yml` (`"8070:3000"` by default).
+
+`docker/env.local` is excluded from the Docker image via `.dockerignore`.
+
+### Run
+
+```bash
+docker compose -f docker/compose.yml up -d
+```
+
+The app is available at `http://localhost:8070` (or whatever external port is set in `compose.yml`).
+
+The database is stored in `docker/data/queriocity.db` on the host. To stop without losing data:
+
+```bash
+docker compose -f docker/compose.yml down
+```
+
+`extra_hosts: host.docker.internal:host-gateway` is set in the compose file and is required
+on Linux to make `host.docker.internal` resolve to the host. Docker Desktop on macOS/Windows
+adds this automatically.
+
+The schema is created automatically on first start — no separate migration step needed.
 
 ---
 
