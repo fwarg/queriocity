@@ -30,23 +30,17 @@ export function reformulateSpeed(messages: Array<{ role: string; content: string
   return q
 }
 
-const REFORMULATE_SYSTEM = `You are a search query optimizer. Decide whether a web search is needed, then rewrite the query if so.
+const REFORMULATE_SYSTEM = `You are a search query optimizer. Rewrite the user question as an optimized search query.
 
 Rules:
-1. Output the word SKIP if the question can be answered from conversation context or is purely definitional/conceptual with no time-sensitive component (e.g. "what does X stand for", "explain Y", "what did you mean by Z").
-2. Output a search query if the question involves current events, recent news, statistics, prices, or anything that may have changed.
-3. Strip conversational filler. Use keywords a search engine favors.
-4. Match the language of the input (Swedish → Swedish, English → English).
-5. Output ONLY the search string or SKIP. No explanations, no quotes, no preamble.
-
-Example 1 (Input, prior turn explained CETA): "What does CETA stand for?" → SKIP
-Example 2 (Input): "What is the latest news on EU-Canada trade?" → EU Canada trade news 2025
-Example 3 (Input, no prior context): "What does CETA stand for?" → CETA trade agreement definition`
+1. Strip conversational filler. Use keywords a search engine favors.
+2. Match the language of the input (Swedish → Swedish, English → English).
+3. Output ONLY the search string. No explanations, no quotes, no preamble.`
 
 /** Returns true if the string looks like a natural language sentence rather than a search query. */
 function looksLikeSentence(s: string): boolean {
-  return /\b(stands for|is an? |refers to|means |is the abbreviation|is short for)\b/i.test(s)
-    || s.split(/\s+/).length > 12
+  return /\b(stands? for|is an? |refers to|means |is the abbreviation|is short for|is used to|was (founded|created|established))\b/i.test(s)
+    || s.split(/\s+/).length > 9
     || s.endsWith('.')
 }
 
@@ -77,8 +71,8 @@ export async function reformulateLLM(
     : lastUser.content
 
   const userPrompt = count === 1
-    ? `Output SKIP or 1 optimized search query: "${contextPart}"`
-    : `Output SKIP or ${count} complementary search queries covering different angles, one per line: "${contextPart}"`
+    ? `Rewrite into 1 optimized search query: "${contextPart}"`
+    : `Rewrite into ${count} complementary search queries covering different angles, one per line: "${contextPart}"`
 
   const SMALL_TARGET = `${process.env.SMALL_BASE_URL ?? process.env.CHAT_BASE_URL ?? 'ollama'} model=${process.env.SMALL_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2'}`
   console.log(`  [reformulate] ${SMALL_TARGET} mode=${mode} count=${count}`)
