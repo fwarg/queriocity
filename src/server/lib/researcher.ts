@@ -14,7 +14,7 @@ or factual questions you can answer from training. Be concise.`,
   balanced: `You are a research assistant. For each query:
 1. Start with 1-2 broad queries to get an overview.
 2. Based on results, optionally refine with more specific queries.
-3. Answer clearly with inline citations [1][2].
+3. Answer clearly with inline [N] citations only (e.g. [1][2]). Do NOT use markdown hyperlinks.
 Use web_search with up to 2 queries at a time. Stop when you have enough information.`,
 
   thorough: `You are a thorough research assistant. For each query:
