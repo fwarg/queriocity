@@ -34,7 +34,7 @@ const REFORMULATE_SYSTEM = `You are a search query optimizer. Rewrite the user q
 
 Rules:
 1. Strip conversational filler. Use keywords a search engine favors.
-2. For questions about current/recent/latest topics, append the current year to the query.
+2. For questions about current/recent/latest topics, append the current month and year (e.g. "March 2026") to the query.
 3. Output ONLY the search string. No explanations, no quotes, no preamble.`
 
 /** Returns true if the string looks like a natural language sentence rather than a search query. */
