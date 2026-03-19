@@ -1,4 +1,4 @@
-<p align="center"><img src="doc/Queriocity_logo.png" width="50%"></p>
+<p align="center"><img src="doc/Queriocity_logo_o.png" width="50%"></p>
 
 # Queriocity
 
@@ -9,7 +9,7 @@ OpenAI-compatible) language model to a private SearXNG search instance, stores y
 conversation history and uploaded documents locally in SQLite, and serves everything
 through a single Bun process.
 
-![Queriocity screenshot](doc/queriocity.png)
+![Queriocity screenshot](doc/queriocity_screen.png)
 
 ---
 
