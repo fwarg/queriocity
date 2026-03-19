@@ -30,11 +30,11 @@ export function reformulateSpeed(messages: Array<{ role: string; content: string
   return q
 }
 
-const REFORMULATE_SYSTEM = `You are a search query optimizer. Rewrite the user question as an optimized search query.
+const REFORMULATE_SYSTEM = `You are a search query optimizer. Rewrite the user question as an optimized search query. Today's date is ${new Date().toISOString().split('T')[0]}.
 
 Rules:
 1. Strip conversational filler. Use keywords a search engine favors.
-2. Match the language of the user's question (ignore the language of any assistant context).
+2. For questions about current/recent/latest topics, append the current year to the query.
 3. Output ONLY the search string. No explanations, no quotes, no preamble.`
 
 /** Returns true if the string looks like a natural language sentence rather than a search query. */

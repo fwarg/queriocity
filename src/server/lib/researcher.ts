@@ -52,7 +52,7 @@ export function runResearcher({ messages, focusMode, userId, initialQueries, ini
   const start = performance.now()
   console.log(`  [chat] ${CHAT_TARGET} focusMode=${focusMode} maxSteps=${maxSteps}`)
 
-  let system = SYSTEM_PROMPTS[focusMode]
+  let system = `Today's date is ${new Date().toISOString().split('T')[0]}.\n\n` + SYSTEM_PROMPTS[focusMode]
   if (customPrompt?.trim()) system += `\n\nAdditional instructions from the user:\n${customPrompt.trim()}`
 
   // Inject pre-executed search results as a fake tool exchange so the model
