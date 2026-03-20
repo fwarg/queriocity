@@ -67,7 +67,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
       console.log(`  [flash] done in ${Date.now() - t0}ms, ${fullContent.length} chars`)
       setCached(ck, fullContent)
       await persistMessage(sid, userId, msgs, fullContent, [])
-      await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid }) })
+      await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, elapsedMs: Date.now() - t0 }) })
     })
   }
 
@@ -296,7 +296,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
     await persistMessage(sid, userId, msgs, fullContent, sources)
 
     setCached(ck, fullContent)
-    await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid }) })
+    await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, elapsedMs: Date.now() - t0 }) })
   })
 })
 

@@ -31,6 +31,7 @@ export default function App() {
   const [streaming, setStreaming] = useState('')
   const [streamingThinking, setStreamingThinking] = useState('')
   const [status, setStatus] = useState('')
+  const [answerTime, setAnswerTime] = useState('')
   const [busy, setBusy] = useState(false)
   const [focusMode, setFocusMode] = useState<'flash' | 'fast' | 'balanced' | 'thorough'>('balanced')
   const [sessionId, setSessionId] = useState<string | undefined>()
@@ -95,6 +96,7 @@ export default function App() {
     const next = [...messages, userMsg]
     setMessages(next)
     setBusy(true)
+    setAnswerTime('')
     setStreaming('')
 
     let accumulated = ''
@@ -115,6 +117,8 @@ export default function App() {
         } else if (chunk.type === 'sources') {
           sources.push(...(chunk.sources as Array<{ title: string; url: string }>))
         } else if (chunk.type === 'done') {
+          console.log('[done]', chunk)
+          if (chunk.elapsedMs) setAnswerTime(`Answered in ${(chunk.elapsedMs as number / 1000).toFixed(1)} seconds.`)
           setSessionId(chunk.sessionId as string)
           setSessions(prev => {
             const sid = chunk.sessionId as string
@@ -389,6 +393,9 @@ export default function App() {
             )}
             {status && (
               <div className="px-4 py-1 text-xs text-gray-500 italic animate-pulse">{status}</div>
+            )}
+            {answerTime && !busy && (
+              <div className="px-4 py-1 text-xs text-gray-500">{answerTime}</div>
             )}
             <div ref={bottomRef} />
             {focusMode === 'thorough' && currentUser?.settings?.useThinking && (

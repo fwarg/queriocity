@@ -80,7 +80,7 @@ function SourceList({ content, sources }: { content: string; sources: Array<{ ti
         >
           <span className="text-gray-500 shrink-0">[{j + 1}]</span>
           <ExternalLink size={10} className="shrink-0" />
-          <span className="truncate">{s.title || s.url}</span>
+          <span className="truncate min-w-0">{s.title || s.url}</span>
         </a>
       ))}
       {unused.length > 0 && (
@@ -101,7 +101,7 @@ function SourceList({ content, sources }: { content: string; sources: Array<{ ti
             >
               <span className="text-gray-700 shrink-0">[{j + 1}]</span>
               <ExternalLink size={10} className="shrink-0" />
-              <span className="truncate">{s.title || s.url}</span>
+              <span className="truncate min-w-0">{s.title || s.url}</span>
             </a>
           ))}
         </>
@@ -114,7 +114,7 @@ function ThinkingBlock({ content, open }: { content: string; open?: boolean }) {
   return (
     <details open={open} className="mb-2 text-xs text-gray-500">
       <summary className="cursor-pointer hover:text-gray-400 select-none">Thinking…</summary>
-      <div className="mt-1 pl-2 border-l border-gray-700 whitespace-pre-wrap font-mono text-gray-600 leading-relaxed">
+      <div className="mt-1 pl-2 border-l border-gray-700 whitespace-pre-wrap break-words font-mono text-gray-600 leading-relaxed overflow-x-auto">
         {content}
       </div>
     </details>
