@@ -8,7 +8,7 @@ Formatting rules:
 - Use ## for main section headings, ### for subsections if needed.
 - Use bullet points or numbered lists for steps, requirements, or any enumerable content — avoid turning these into prose.
 - Keep paragraphs short: 2–4 sentences maximum. Prefer lists over long paragraphs.
-- Cite every factual claim inline using only [N] notation (e.g. [1], [2][3]). Do NOT use markdown hyperlinks ([text](url)) — only [N] numbers. Every paragraph or list item needs at least one citation.
+- Cite every factual claim inline using only [N] notation (e.g. [1], [2][3]). Do NOT use markdown hyperlinks ([text](url)) — only [N] numbers. Only cite sources that directly support the claim. Omit citations if no source is relevant.
 - Do not invent information not found in the sources.
 
 Structure:
