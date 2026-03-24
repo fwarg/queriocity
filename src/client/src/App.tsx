@@ -384,7 +384,8 @@ export default function App() {
         ) : (
           <>
             {messages.length === 0 && !streaming ? (
-              <div className="flex flex-col items-center justify-center flex-1 gap-2 text-gray-500">
+              <div className="flex flex-col items-center justify-center flex-1 gap-3 text-gray-500">
+                <img src="/logo.webp" alt="Queriocity" className="w-24 sm:w-32 md:w-40 h-auto" />
                 <span className="text-2xl font-semibold text-gray-300">Queriocity</span>
                 <span className="text-sm">LLM-driven web search</span>
               </div>
