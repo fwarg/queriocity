@@ -42,21 +42,18 @@ sees these results as already done and continues from there.
 - Con: the pre-executed SearXNG call happens sequentially before streaming starts,
   adding latency to the first byte (same wall time overall, but perceived differently)
 
-## Potential future change: force follow-up search in balanced mode
+## Potential future change: force follow-up search in code (balanced mode)
 
-The balanced researcher rarely runs a second search round in practice. Because
-pre-search results are already injected into context, the model sees step 1 as
-done and "optionally refine" (current prompt wording) gives it an easy out.
+Prompt changes alone haven't been enough to make smaller local models (e.g.
+Qwen3-30B-A3B) reliably perform a follow-up search in balanced mode. The model
+sees the pre-injected results and answers directly, ignoring the "ALWAYS call
+web_search at least once more" instruction.
 
-**Proposed fix:** Change `SYSTEM_PROMPTS.balanced` step 2 in `researcher.ts`
-from:
+**Option 1 — Minimum tool-call gate:** In `chat.ts`, track whether the
+researcher made at least one real `web_search` call. If the model finishes
+without searching, auto-inject a follow-up round (e.g. extract key terms from
+the answer and search) before streaming the text to the client.
 
-> "Based on results, optionally refine with more specific queries."
-
-To:
-
-> "After seeing the initial results, always run at least one follow-up search
-> with more specific or targeted queries before answering."
-
-`maxSteps=4` is already sufficient — the pre-injected tool exchange does not
-count against it. Trade-off: ~1–2s extra latency per balanced query.
+**Option 2 — Two-pass balanced:** Split balanced into research + writer passes
+like thorough mode, using a `done` tool to prevent the researcher from
+answering. More expensive but structurally guarantees research happens.
