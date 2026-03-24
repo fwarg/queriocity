@@ -125,7 +125,7 @@ export function MessageList({ messages, streaming, streamingThinking }: Props) {
   return (
     <div className="flex flex-col gap-4 p-4 overflow-y-auto overflow-x-hidden flex-1">
       {messages.map((msg, i) => (
-        <div key={i} className={`flex flex-col gap-1 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+        <div key={i} className={`flex flex-col gap-1 w-full ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
           <div
             className={`max-w-2xl min-w-0 rounded-lg px-4 py-2 text-sm break-words ${
               msg.role === 'user'

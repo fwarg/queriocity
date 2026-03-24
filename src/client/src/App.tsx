@@ -297,7 +297,7 @@ export default function App() {
       </aside>
 
       {/* Main */}
-      <div className="flex flex-col flex-1 min-h-0">
+      <div className="flex flex-col flex-1 min-h-0 min-w-0 overflow-hidden">
         {/* Mobile header bar */}
         <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-800 md:hidden">
           <button
