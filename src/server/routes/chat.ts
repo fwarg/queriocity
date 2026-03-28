@@ -16,7 +16,8 @@ import { getFlashModel } from '../lib/llm.ts'
 import { ThinkExtractor } from '../lib/think-extractor.ts'
 
 const FLASH_SYSTEM = `Answer in at most 5 sentences using only your training knowledge. Be direct and factual.
-Do not search the web. If you cannot answer confidently, say so briefly.`
+Do not search the web. If you cannot answer confidently, say so briefly.
+Always respond in the same language the user used.`
 
 const chatSchema = z.object({
   sessionId: z.string().optional(),

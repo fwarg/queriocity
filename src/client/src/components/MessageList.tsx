@@ -127,7 +127,7 @@ export function MessageList({ messages, streaming, streamingThinking }: Props) {
       {messages.map((msg, i) => (
         <div key={i} className={`flex flex-col gap-1 w-full ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
           <div
-            className={`max-w-2xl min-w-0 rounded-lg px-4 py-2 text-sm break-words ${
+            className={`w-full max-w-2xl min-w-0 overflow-x-hidden rounded-lg px-4 py-2 text-sm break-words ${
               msg.role === 'user'
                 ? 'bg-blue-700 text-white whitespace-pre-wrap'
                 : 'bg-gray-800 text-gray-100'
@@ -149,7 +149,7 @@ export function MessageList({ messages, streaming, streamingThinking }: Props) {
       ))}
       {(streaming || streamingThinking) && (
         <div className="flex items-start">
-          <div className="max-w-2xl min-w-0 rounded-lg px-4 py-2 text-sm bg-gray-800 text-gray-100 break-words">
+          <div className="w-full max-w-2xl min-w-0 overflow-x-hidden rounded-lg px-4 py-2 text-sm bg-gray-800 text-gray-100 break-words">
             {streamingThinking && <ThinkingBlock content={streamingThinking} open />}
             {streaming && (
               <>
