@@ -74,7 +74,7 @@ export async function reformulateLLM(
     ? `Rewrite into 1 optimized search query: "${contextPart}"`
     : `Rewrite into ${count} complementary search queries covering different angles, one per line: "${contextPart}"`
 
-  const SMALL_TARGET = `${process.env.SMALL_BASE_URL ?? process.env.CHAT_BASE_URL ?? 'ollama'} model=${process.env.SMALL_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2'}`
+  const SMALL_TARGET = `${process.env.SMALL_BASE_URL ?? process.env.CHAT_BASE_URL ?? process.env.BASE_URL ?? 'openai'} model=${process.env.SMALL_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2'}`
   console.log(`  [reformulate] ${SMALL_TARGET} mode=${mode} count=${count}`)
   const start = performance.now()
 

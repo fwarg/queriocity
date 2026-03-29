@@ -88,7 +88,7 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
           <div className="flex flex-col gap-2">
             <label className="text-xs text-gray-400 font-medium">Model thinking (thorough mode)</label>
             <p className="text-xs text-gray-500">
-              Prepends the <code className="text-gray-400">THINKING_TRIGGER</code> token to activate extended reasoning. Requires a thinking-capable model (e.g. Qwen3).
+              Uses the <code className="text-gray-400">THINKING_MODEL</code> for the research phase (falls back to the chat model if not configured). Requires a reasoning-capable model (e.g. Qwen3).
             </p>
             <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
               <input

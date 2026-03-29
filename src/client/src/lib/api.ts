@@ -93,6 +93,13 @@ export async function createInvite(email?: string): Promise<{ token: string; exp
   return res.json()
 }
 
+export type ModelTestResult = { role: string; model: string; ok: boolean; ms: number; info: string }
+
+export async function testModels(): Promise<ModelTestResult[]> {
+  const res = await fetch(`${BASE}/admin/models-test`)
+  return res.json()
+}
+
 // Chat
 export async function* streamChat(
   messages: Message[],

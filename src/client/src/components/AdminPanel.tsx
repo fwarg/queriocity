@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { listUsers, setUserRole, deleteUser, createInvite } from '../lib/api.ts'
+import { listUsers, setUserRole, deleteUser, createInvite, testModels, type ModelTestResult } from '../lib/api.ts'
 
 interface Props {
   currentUserId: string
@@ -13,6 +13,8 @@ export function AdminPanel({ currentUserId, onClose }: Props) {
   const [inviteUrl, setInviteUrl] = useState('')
   const [inviteEmail, setInviteEmail] = useState('')
   const [busy, setBusy] = useState(false)
+  const [modelResults, setModelResults] = useState<ModelTestResult[] | null>(null)
+  const [testingModels, setTestingModels] = useState(false)
 
   useEffect(() => {
     listUsers().then(setUserList).catch(() => {})
@@ -28,6 +30,16 @@ export function AdminPanel({ currentUserId, onClose }: Props) {
     if (!confirm('Delete this user and all their data?')) return
     await deleteUser(id)
     setUserList(prev => prev.filter(x => x.id !== id))
+  }
+
+  async function handleTestModels() {
+    setTestingModels(true)
+    setModelResults(null)
+    try {
+      setModelResults(await testModels())
+    } finally {
+      setTestingModels(false)
+    }
   }
 
   async function handleCreateInvite() {
@@ -93,6 +105,37 @@ export function AdminPanel({ currentUserId, onClose }: Props) {
             ))}
           </tbody>
         </table>
+
+        {/* Model test */}
+        <div className="flex flex-col gap-2 border-t border-gray-800 pt-4">
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-gray-400 font-medium">Model connectivity</p>
+            <button
+              onClick={handleTestModels}
+              disabled={testingModels}
+              className="px-3 py-1 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-xs font-medium"
+            >
+              {testingModels ? 'Testing…' : 'Test models'}
+            </button>
+          </div>
+          {modelResults && (
+            <table className="w-full text-xs">
+              <tbody>
+                {modelResults.map(r => (
+                  <tr key={r.role} className="border-b border-gray-800/40">
+                    <td className="py-1.5 w-16 text-gray-500">{r.role}</td>
+                    <td className="py-1.5 w-36 text-gray-300 font-mono truncate">{r.model}</td>
+                    <td className="py-1.5 w-8">
+                      <span className={r.ok ? 'text-green-400' : 'text-red-400'}>{r.ok ? 'OK' : 'FAIL'}</span>
+                    </td>
+                    <td className="py-1.5 w-14 text-gray-500 text-right">{r.ms > 0 ? `${r.ms}ms` : ''}</td>
+                    <td className="py-1.5 pl-3 text-gray-400 truncate max-w-0 w-full">{r.info}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
 
         {/* Invite */}
         <div className="flex flex-col gap-2 border-t border-gray-800 pt-4">

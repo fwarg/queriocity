@@ -1,10 +1,12 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
+import { generateText, embed } from 'ai'
 import { db, users, invites } from '../lib/db.ts'
 import { eq } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { authMiddleware, adminMiddleware, type AppEnv } from '../middleware/auth.ts'
+import { getChatModel, getSmallModel, getThinkingModel, getEmbeddingModel } from '../lib/llm.ts'
 
 export const adminRouter = new Hono<AppEnv>()
 
@@ -35,6 +37,51 @@ adminRouter.delete('/users/:id', async (c) => {
   if (id === c.get('userId')) return c.json({ error: 'Cannot delete yourself' }, 400)
   await db.delete(users).where(eq(users.id, id))
   return c.json({ ok: true })
+})
+
+adminRouter.get('/models-test', async (c) => {
+  type Result = { role: string; model: string; ok: boolean; ms: number; info: string }
+  const results: Result[] = []
+
+  async function testChat(role: string, modelName: string, getModel: () => ReturnType<typeof getChatModel>, maxTokens = 50) {
+    const t = performance.now()
+    try {
+      const { text } = await generateText({
+        model: getModel(),
+        messages: [{ role: 'user', content: 'Reply with one word: OK' }],
+        maxTokens,
+      })
+      results.push({ role, model: modelName, ok: true, ms: Math.round(performance.now() - t), info: text.trim().slice(0, 80) })
+    } catch (e: any) {
+      results.push({ role, model: modelName, ok: false, ms: Math.round(performance.now() - t), info: String(e?.message ?? e).slice(0, 120) })
+    }
+  }
+
+  async function testEmbed(modelName: string) {
+    const t = performance.now()
+    try {
+      const { embedding } = await embed({ model: getEmbeddingModel(), value: 'hello world' })
+      results.push({ role: 'embed', model: modelName, ok: true, ms: Math.round(performance.now() - t), info: `dim=${embedding.length}` })
+    } catch (e: any) {
+      results.push({ role: 'embed', model: modelName, ok: false, ms: Math.round(performance.now() - t), info: String(e?.message ?? e).slice(0, 120) })
+    }
+  }
+
+  const chatModel = process.env.CHAT_MODEL ?? 'llama3.2'
+  const smallModel = process.env.SMALL_MODEL ?? chatModel
+  const thinkingModel = process.env.THINKING_MODEL
+  const embedModel = process.env.EMBED_MODEL ?? 'nomic-embed-text'
+
+  await testChat('chat', chatModel, getChatModel)
+  await testChat('small', smallModel, getSmallModel)
+  if (thinkingModel) {
+    await testChat('thinking', thinkingModel, getThinkingModel, 2000)
+  } else {
+    results.push({ role: 'thinking', model: '(not configured — uses chat)', ok: true, ms: 0, info: 'skipped' })
+  }
+  await testEmbed(embedModel)
+
+  return c.json(results)
 })
 
 adminRouter.post('/invites', zValidator('json', z.object({ email: z.string().email().optional() })), async (c) => {
