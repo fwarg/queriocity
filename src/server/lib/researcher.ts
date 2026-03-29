@@ -46,13 +46,14 @@ export interface ResearchOptions {
   focusMode: 'fast' | 'balanced' | 'thorough'
   userId: string
   model: LanguageModel
+  abortSignal?: AbortSignal
   initialQueries?: string[]
   initialResults?: SearchResult[]
   customPrompt?: string
   hasFiles?: boolean
 }
 
-export function runResearcher({ messages, focusMode, userId, model, initialQueries, initialResults, customPrompt, hasFiles }: ResearchOptions) {
+export function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, customPrompt, hasFiles }: ResearchOptions) {
   const { maxSteps, count } = MODE_CONFIG[focusMode]
   const start = performance.now()
   console.log(`  [chat] ${CHAT_TARGET} focusMode=${focusMode} maxSteps=${maxSteps}`)
@@ -126,6 +127,7 @@ export function runResearcher({ messages, focusMode, userId, model, initialQueri
       console.log(`  [chat] done — ${ms}ms  tokens: ${fmt(usage.promptTokens)}p + ${fmt(usage.completionTokens)}c`)
     },
     model,
+    abortSignal,
     system,
     messages: augmentedMessages,
     maxSteps,

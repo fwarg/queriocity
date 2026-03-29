@@ -36,6 +36,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
   const userId = c.get('userId') as string
   const { sessionId, messages: msgs, focusMode } = c.req.valid('json')
 
+  const abortSignal = c.req.raw.signal
   const lastUser = [...msgs].reverse().find(m => m.role === 'user')
   const preview = (lastUser?.content ?? '').slice(0, 100).replace(/\n/g, ' ')
   console.log(`\n━━━ [${focusMode}] ${preview}`)
@@ -55,6 +56,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
     return streamSSE(c, async (stream) => {
       const result = streamText({
         model: getFlashModel(),
+        abortSignal,
         system: FLASH_SYSTEM + (customPrompt ? `\n\nAdditional instructions:\n${customPrompt}` : ''),
         messages: msgs,
         maxTokens: 200,
@@ -127,11 +129,15 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
         await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: snippets + '\n\n' }) })
       }
       const researchModel = useThinking ? getThinkingModelOrFallback() : getChatModel()
-      const researcherResult = runResearcher({ messages: msgs, focusMode, userId, model: researchModel, initialQueries, initialResults, customPrompt, hasFiles })
+      const researcherResult = runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, customPrompt, hasFiles })
       const allSources: SearchResult[] = [...(initialResults ?? [])]
       let researcherNotes = ''
       const thoroughExtractor = useThinking ? new ThinkExtractor() : null
 
+      const keepalive = setInterval(() => {
+        stream.writeSSE({ data: JSON.stringify({ type: 'ping' }) }).catch(() => {})
+      }, 15000)
+      try {
       for await (const part of researcherResult.fullStream as AsyncIterable<any>) {
         if (part.type === 'tool-call' && part.toolName === 'web_search') {
           await emitSearchStatus(part.args)
@@ -168,6 +174,9 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
           console.error('  [researcher] stream error:', part.error)
         }
       }
+      } finally {
+        clearInterval(keepalive)
+      }
       if (thoroughExtractor) {
         const { text, thinking } = thoroughExtractor.flush()
         if (thinking) await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: thinking }) })
@@ -190,7 +199,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
 
       // Phase 2: Writer pass
       await emitStatus('Writing answer…')
-      const writerResult = runWriter(dedupedSources, msgs, researcherNotes.slice(0, 2000))
+      const writerResult = runWriter(dedupedSources, msgs, researcherNotes.slice(0, 2000), abortSignal)
       const writerExtractor = new ThinkExtractor()
       for await (const part of writerResult.fullStream) {
         if (part.type === 'text-delta') {
@@ -236,7 +245,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
         await stream.writeSSE({ data: JSON.stringify({ type: 'sources', sources: initialResults }) })
       }
 
-      const result = runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), initialQueries, initialResults, customPrompt, hasFiles })
+      const result = runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, customPrompt, hasFiles })
       const extractor = showThinking ? new ThinkExtractor() : null
 
       for await (const part of result.fullStream as AsyncIterable<any>) {

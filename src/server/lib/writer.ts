@@ -21,6 +21,7 @@ export function runWriter(
   sources: SearchResult[],
   messages: Array<{ role: 'user' | 'assistant'; content: string }>,
   researcherNotes?: string,
+  abortSignal?: AbortSignal,
 ) {
   const sourcesBlock = sources
     .map((s, i) => `<result index=${i + 1} title="${s.title}" url="${s.url}">${s.content}</result>`)
@@ -35,6 +36,7 @@ export function runWriter(
 
   return streamText({
     model: getChatModel(),
+    abortSignal,
     system: WRITER_SYSTEM,
     messages: [{ role: 'user', content: userContent }],
   })
