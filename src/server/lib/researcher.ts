@@ -1,10 +1,10 @@
 import { streamText, tool } from 'ai'
 import { z } from 'zod'
-import { getChatModel } from './llm.ts'
+import type { LanguageModel } from 'ai'
 import { webSearch, webSearchMulti, type SearchResult } from './searxng.ts'
 import { searchUploads } from './files/uploads-search.ts'
 
-const CHAT_TARGET = `${process.env.CHAT_BASE_URL ?? 'ollama'} model=${process.env.CHAT_MODEL ?? 'llama3.2'}`
+const CHAT_TARGET = `${process.env.THINKING_BASE_URL ?? process.env.CHAT_BASE_URL ?? 'openai'} model=${process.env.THINKING_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2'} (thinking=${!!process.env.THINKING_MODEL})`
 
 export const SYSTEM_PROMPTS = {
   fast: `You are a fast research assistant. Answer directly. If a web search would help, \
@@ -45,13 +45,14 @@ export interface ResearchOptions {
   messages: Array<{ role: 'user' | 'assistant'; content: string }>
   focusMode: 'fast' | 'balanced' | 'thorough'
   userId: string
+  model: LanguageModel
   initialQueries?: string[]
   initialResults?: SearchResult[]
   customPrompt?: string
   hasFiles?: boolean
 }
 
-export function runResearcher({ messages, focusMode, userId, initialQueries, initialResults, customPrompt, hasFiles }: ResearchOptions) {
+export function runResearcher({ messages, focusMode, userId, model, initialQueries, initialResults, customPrompt, hasFiles }: ResearchOptions) {
   const { maxSteps, count } = MODE_CONFIG[focusMode]
   const start = performance.now()
   console.log(`  [chat] ${CHAT_TARGET} focusMode=${focusMode} maxSteps=${maxSteps}`)
@@ -124,7 +125,7 @@ export function runResearcher({ messages, focusMode, userId, initialQueries, ini
       const fmt = (n: number | undefined) => (n != null && !isNaN(n)) ? String(n) : '?'
       console.log(`  [chat] done — ${ms}ms  tokens: ${fmt(usage.promptTokens)}p + ${fmt(usage.completionTokens)}c`)
     },
-    model: getChatModel(),
+    model,
     system,
     messages: augmentedMessages,
     maxSteps,

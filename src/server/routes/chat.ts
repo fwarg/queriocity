@@ -12,7 +12,7 @@ import { eq, sql } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { webSearch, webSearchMulti, type SearchResult } from '../lib/searxng.ts'
-import { getFlashModel } from '../lib/llm.ts'
+import { getFlashModel, getChatModel, getThinkingModelOrFallback } from '../lib/llm.ts'
 import { ThinkExtractor } from '../lib/think-extractor.ts'
 
 const FLASH_SYSTEM = `Answer in at most 5 sentences using only your training knowledge. Be direct and factual.
@@ -126,12 +126,8 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
           .join('\n')
         await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: snippets + '\n\n' }) })
       }
-      const thinkingTrigger = process.env.THINKING_TRIGGER ?? '/think'
-      const researchMsgs = useThinking
-        ? msgs.map((m, i, arr) => m.role === 'user' && i === arr.length - 1
-            ? { ...m, content: `${thinkingTrigger}\n${m.content}` } : m)
-        : msgs
-      const researcherResult = runResearcher({ messages: researchMsgs, focusMode, userId, initialQueries, initialResults, customPrompt, hasFiles })
+      const researchModel = useThinking ? getThinkingModelOrFallback() : getChatModel()
+      const researcherResult = runResearcher({ messages: msgs, focusMode, userId, model: researchModel, initialQueries, initialResults, customPrompt, hasFiles })
       const allSources: SearchResult[] = [...(initialResults ?? [])]
       let researcherNotes = ''
       const thoroughExtractor = useThinking ? new ThinkExtractor() : null
@@ -240,7 +236,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
         await stream.writeSSE({ data: JSON.stringify({ type: 'sources', sources: initialResults }) })
       }
 
-      const result = runResearcher({ messages: msgs, focusMode, userId, initialQueries, initialResults, customPrompt, hasFiles })
+      const result = runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), initialQueries, initialResults, customPrompt, hasFiles })
       const extractor = showThinking ? new ThinkExtractor() : null
 
       for await (const part of result.fullStream as AsyncIterable<any>) {

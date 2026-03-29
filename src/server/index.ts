@@ -27,9 +27,13 @@ app.get('*', serveStatic({ path: './dist/client/index.html' }))
 
 const PORT = parseInt(process.env.PORT ?? '3000')
 console.log(`queriocity listening on http://localhost:${PORT}`)
-console.log(`  chat:   ${process.env.CHAT_PROVIDER ?? 'ollama'}  ${process.env.CHAT_BASE_URL ?? 'http://localhost:11434/api'}  model=${process.env.CHAT_MODEL ?? 'llama3.2'}`)
-console.log(`  small:  ${process.env.SMALL_PROVIDER ?? process.env.CHAT_PROVIDER ?? 'ollama'}  ${process.env.SMALL_BASE_URL ?? process.env.CHAT_BASE_URL ?? 'http://localhost:11434/api'}  model=${process.env.SMALL_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2'}`)
-console.log(`  embed:  ${process.env.EMBED_PROVIDER ?? process.env.CHAT_PROVIDER ?? 'ollama'}  ${process.env.EMBED_BASE_URL ?? process.env.CHAT_BASE_URL ?? 'http://localhost:11434/api'}  model=${process.env.EMBED_MODEL ?? 'nomic-embed-text'}  dims=${process.env.EMBED_DIMENSIONS ?? '1536'}`)
+const _baseURL = process.env.BASE_URL
+const _defaultProvider = process.env.BASE_PROVIDER ?? 'openai'
+const _defaultBase = _baseURL ?? 'http://localhost:11434/api'
+console.log(`  chat:   ${process.env.CHAT_PROVIDER ?? _defaultProvider}  ${process.env.CHAT_BASE_URL ?? _defaultBase}  model=${process.env.CHAT_MODEL ?? 'llama3.2'}`)
+console.log(`  small:  ${process.env.SMALL_PROVIDER ?? process.env.CHAT_PROVIDER ?? _defaultProvider}  ${process.env.SMALL_BASE_URL ?? process.env.CHAT_BASE_URL ?? _defaultBase}  model=${process.env.SMALL_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2'}`)
+console.log(`  thinking: ${process.env.THINKING_PROVIDER ?? process.env.CHAT_PROVIDER ?? _defaultProvider}  ${process.env.THINKING_BASE_URL ?? process.env.CHAT_BASE_URL ?? _defaultBase}  model=${process.env.THINKING_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2'}`)
+console.log(`  embed:  ${process.env.EMBED_PROVIDER ?? process.env.CHAT_PROVIDER ?? _defaultProvider}  ${process.env.EMBED_BASE_URL ?? process.env.CHAT_BASE_URL ?? _defaultBase}  model=${process.env.EMBED_MODEL ?? 'nomic-embed-text'}  dims=${process.env.EMBED_DIMENSIONS ?? '1536'}`)
 console.log(`  searxng: ${process.env.SEARXNG_URL ?? 'http://localhost:4000'}`)
 
 export default { port: PORT, fetch: app.fetch, idleTimeout: 120 }

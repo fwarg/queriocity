@@ -15,9 +15,12 @@ function makeProvider({ provider, baseURL, apiKey }: ProviderConfig) {
   return createOpenAI({ baseURL, apiKey: apiKey ?? 'sk-placeholder' })
 }
 
+const BASE_URL = process.env.BASE_URL
+const BASE_PROVIDER = process.env.BASE_PROVIDER ?? 'openai'
+
 const chatConfig: ProviderConfig = {
-  provider: process.env.CHAT_PROVIDER ?? 'ollama',
-  baseURL: process.env.CHAT_BASE_URL ?? 'http://localhost:11434/api',
+  provider: process.env.CHAT_PROVIDER ?? BASE_PROVIDER,
+  baseURL: process.env.CHAT_BASE_URL ?? BASE_URL ?? 'http://localhost:11434/api',
   apiKey: process.env.CHAT_API_KEY,
 }
 
@@ -33,9 +36,16 @@ const smallConfig: ProviderConfig = {
   apiKey: process.env.SMALL_API_KEY ?? chatConfig.apiKey,
 }
 
+const thinkingConfig: ProviderConfig = {
+  provider: process.env.THINKING_PROVIDER ?? chatConfig.provider,
+  baseURL: process.env.THINKING_BASE_URL ?? chatConfig.baseURL,
+  apiKey: process.env.THINKING_API_KEY ?? chatConfig.apiKey,
+}
+
 const chatProvider = makeProvider(chatConfig)
 const embedProvider = makeProvider(embedConfig)
 const smallProvider = makeProvider(smallConfig)
+const thinkingProvider = makeProvider(thinkingConfig)
 
 export function getChatModel() {
   return chatProvider(process.env.CHAT_MODEL ?? 'llama3.2')
@@ -43,6 +53,18 @@ export function getChatModel() {
 
 export function getSmallModel() {
   return smallProvider(process.env.SMALL_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2')
+}
+
+export function getThinkingModel() {
+  return thinkingProvider(process.env.THINKING_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2')
+}
+
+export function getThinkingModelOrFallback() {
+  if (!process.env.THINKING_MODEL) {
+    console.warn('[llm] THINKING_MODEL not set — falling back to CHAT_MODEL for thinking')
+    return getChatModel()
+  }
+  return getThinkingModel()
 }
 
 export function getFlashModel() {

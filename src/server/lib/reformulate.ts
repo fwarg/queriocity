@@ -81,7 +81,7 @@ export async function reformulateLLM(
   const { text } = await generateText({
     model: getSmallModel(),
     system: REFORMULATE_SYSTEM,
-    prompt: process.env.NO_THINK_TRIGGER ? `${process.env.NO_THINK_TRIGGER}\n${userPrompt}` : userPrompt,
+    prompt: userPrompt,
     maxTokens: 80,
   })
 

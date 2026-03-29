@@ -31,9 +31,7 @@ export function runWriter(
     ? `\n\nResearcher notes:\n${researcherNotes.trim()}`
     : ''
 
-  // Suppress thinking for the writer — it synthesises, it doesn't need to reason.
-  const noThink = process.env.NO_THINK_TRIGGER
-  const userContent = `${noThink ? noThink + '\n' : ''}Research results:\n${sourcesBlock}${notesBlock}\n\nQuestion: ${lastUser?.content ?? ''}`
+  const userContent = `Research results:\n${sourcesBlock}${notesBlock}\n\nQuestion: ${lastUser?.content ?? ''}`
 
   return streamText({
     model: getChatModel(),
