@@ -4,7 +4,6 @@ import type { LanguageModel } from 'ai'
 import { webSearch, webSearchMulti, type SearchResult } from './searxng.ts'
 import { searchUploads } from './files/uploads-search.ts'
 
-const CHAT_TARGET = `${process.env.THINKING_BASE_URL ?? process.env.CHAT_BASE_URL ?? 'openai'} model=${process.env.THINKING_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2'} (thinking=${!!process.env.THINKING_MODEL})`
 
 export const SYSTEM_PROMPTS = {
   fast: `You are a fast research assistant. Answer directly. If a web search would help, \
@@ -56,7 +55,7 @@ export interface ResearchOptions {
 export function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, customPrompt, hasFiles }: ResearchOptions) {
   const { maxSteps, count } = MODE_CONFIG[focusMode]
   const start = performance.now()
-  console.log(`  [chat] ${CHAT_TARGET} focusMode=${focusMode} maxSteps=${maxSteps}`)
+  console.log(`  [chat] model=${(model as any).modelId ?? model} focusMode=${focusMode} maxSteps=${maxSteps}`)
 
   let system = `Today's date is ${new Date().toISOString().split('T')[0]}.\n\n` + SYSTEM_PROMPTS[focusMode]
   if (customPrompt?.trim()) system += `\n\nAdditional instructions from the user:\n${customPrompt.trim()}`
