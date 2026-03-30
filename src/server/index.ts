@@ -36,4 +36,4 @@ console.log(`  thinking: ${process.env.THINKING_PROVIDER ?? process.env.CHAT_PRO
 console.log(`  embed:  ${process.env.EMBED_PROVIDER ?? process.env.CHAT_PROVIDER ?? _defaultProvider}  ${process.env.EMBED_BASE_URL ?? process.env.CHAT_BASE_URL ?? _defaultBase}  model=${process.env.EMBED_MODEL ?? 'nomic-embed-text'}  dims=${process.env.EMBED_DIMENSIONS ?? '1536'}`)
 console.log(`  searxng: ${process.env.SEARXNG_URL ?? 'http://localhost:4000'}`)
 
-export default { port: PORT, fetch: app.fetch, idleTimeout: 600 }
+export default { port: PORT, fetch: app.fetch, idleTimeout: 255 }
