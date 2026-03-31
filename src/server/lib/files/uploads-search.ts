@@ -1,5 +1,6 @@
 import { sqlite } from '../db.ts'
 import { embedText } from '../embeddings.ts'
+import { rerank, rerankEnabled } from '../reranker.ts'
 
 export interface ChunkResult {
   chunkId: string
@@ -24,5 +25,7 @@ export async function searchUploads(query: string, userId: string, limit = 5): P
     ORDER BY v.distance
   `).all(embeddingJson, userId, limit) as ChunkResult[]
 
-  return rows
+  if (!rerankEnabled || rows.length === 0) return rows
+  const indices = await rerank(query, rows.map(r => r.content), rows.length)
+  return indices.map(i => rows[i])
 }

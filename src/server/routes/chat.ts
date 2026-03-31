@@ -14,6 +14,7 @@ import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { webSearch, webSearchMulti, type SearchResult } from '../lib/searxng.ts'
 import { getFlashModel, getChatModel, getThinkingModelOrFallback } from '../lib/llm.ts'
 import { ThinkExtractor } from '../lib/think-extractor.ts'
+import { rerank, rerankEnabled } from '../lib/reranker.ts'
 
 const FLASH_SYSTEM = `Answer in at most 5 sentences using only your training knowledge. Be direct and factual.
 Do not search the web. If you cannot answer confidently, say so briefly.
@@ -194,12 +195,21 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
         return true
       })
 
-      sources.push(...dedupedSources)
-      await stream.writeSSE({ data: JSON.stringify({ type: 'sources', sources: dedupedSources }) })
+      let finalSources = dedupedSources
+      if (rerankEnabled && dedupedSources.length > 0) {
+        const userQuery = msgs.findLast(m => m.role === 'user')?.content ?? ''
+        const t = performance.now()
+        const indices = await rerank(userQuery, dedupedSources.map(s => s.content), dedupedSources.length)
+        finalSources = indices.map(i => dedupedSources[i])
+        console.log(`  [reranker] ${dedupedSources.length} → ${finalSources.length} sources in ${Math.round(performance.now() - t)}ms`)
+      }
+
+      sources.push(...finalSources)
+      await stream.writeSSE({ data: JSON.stringify({ type: 'sources', sources: finalSources }) })
 
       // Phase 2: Writer pass
       await emitStatus('Writing answer…')
-      const writerResult = runWriter(dedupedSources, msgs, researcherNotes.slice(0, 2000), abortSignal)
+      const writerResult = runWriter(finalSources, msgs, researcherNotes.slice(0, 2000), abortSignal)
       const writerExtractor = new ThinkExtractor()
       for await (const part of writerResult.fullStream) {
         if (part.type === 'text-delta') {
