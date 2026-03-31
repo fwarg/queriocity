@@ -43,25 +43,49 @@ bun run db:migrate    # apply migrations (creates queriocity.db)
 Create a `.env` file (or set variables in your shell):
 
 ```dotenv
-# ── LLM: chat model ──────────────────────────────────────────────────────────
-CHAT_PROVIDER=ollama                        # "ollama" or "openai"
-CHAT_BASE_URL=http://localhost:11434/api    # Ollama API base
-CHAT_MODEL=llama3.2                         # model name
+# ── Unified base URL (optional shorthand) ────────────────────────────────────
+# If all your models are served from the same endpoint (e.g. LiteLLM, Ollama),
+# set BASE_URL and BASE_PROVIDER once. Every service falls back to these unless
+# overridden by its own *_BASE_URL / *_PROVIDER vars.
+# BASE_URL=http://localhost:11434/api
+# BASE_PROVIDER=openai              # "openai" or "ollama"; default: openai
 
-# ── LLM: small model (query reformulation) ──────────────────────────────────
-# Defaults to CHAT_* if unset. Use a fast 1-3B model for best latency.
-SMALL_PROVIDER=ollama
-SMALL_BASE_URL=http://localhost:11434/api
+# ── LLM: chat model ──────────────────────────────────────────────────────────
+CHAT_PROVIDER=ollama                        # falls back to BASE_PROVIDER
+CHAT_BASE_URL=http://localhost:11434/api    # falls back to BASE_URL
+CHAT_MODEL=llama3.2
+
+# ── LLM: thinking/reasoning model (researcher phase) ─────────────────────────
+# Optional. When set, used for the researcher phase in thorough mode when the
+# "Use thinking model" setting is enabled in the UI. Falls back to CHAT_* if unset.
+# THINKING_PROVIDER=openai
+# THINKING_BASE_URL=
+# THINKING_MODEL=
+# THINKING_API_KEY=
+
+# ── LLM: small model (query reformulation) ───────────────────────────────────
+# Optional. Use a fast 1–3 B model for best latency. Falls back to CHAT_* if unset.
+# SMALL_PROVIDER=ollama
+# SMALL_BASE_URL=http://localhost:11434/api
 SMALL_MODEL=llama3.2
 
 # ── LLM: embedding model ─────────────────────────────────────────────────────
 EMBED_PROVIDER=ollama
-EMBED_BASE_URL=http://localhost:11434/api
+EMBED_BASE_URL=http://localhost:11434/api   # falls back to CHAT_BASE_URL
 EMBED_MODEL=nomic-embed-text
 EMBED_DIMENSIONS=1536                       # must match the model's output size
 
+# ── Reranker (optional) ───────────────────────────────────────────────────────
+# When RERANK_MODEL is set, a cross-encoder reranker reorders accumulated sources
+# by relevance before the thorough-mode writer pass, and reorders library search
+# results. RERANK_BASE_URL defaults to BASE_URL if unset.
+# RERANK_BASE_URL=http://localhost:8097
+# RERANK_MODEL=
+# RERANK_TOP_N=15                           # sources kept after reranking (default 15)
+
 # ── SearXNG ───────────────────────────────────────────────────────────────────
 SEARXNG_URL=http://localhost:4000
+# SEARXNG_ENGINES=                          # comma-separated engine list; blank = SearXNG defaults
 
 # ── Server ────────────────────────────────────────────────────────────────────
 PORT=3000                                   # not used in Docker (see docker/compose.yml)
@@ -69,28 +93,11 @@ DB_PATH=queriocity.db                       # path to SQLite database file
 JWT_SECRET=change-me-in-production-32chars!!
 MAX_ATTACHMENT_CHARS=20000                  # max chars injected from a chat attachment (~4 chars/token)
 
-# ── Thinking mode ─────────────────────────────────────────────────────────────
-# Some models require a trigger token to activate chain-of-thought reasoning.
-# Set THINKING_TRIGGER to the token your model expects (Qwen3 uses /think;
-# DeepSeek-R1 emits <think> blocks natively and needs no trigger).
-# The token is prepended to the user message when the "Enable thinking" toggle
-# is on in the chat UI.
-#
-# THINKING_TRIGGER=/think
-#
-# Small models used for query reformulation rarely benefit from thinking and it
-# significantly increases latency. Set NO_THINK_TRIGGER to suppress it for the
-# reformulation step only (Qwen3 supports /no_think for this purpose).
-#
-# NO_THINK_TRIGGER=/no_think
-
 # ── Reformulate context limits ────────────────────────────────────────────────
 # The small model receives recent conversation history so it can resolve
 # pronouns and follow-up references ("it", "that company", etc.) when
 # rewriting queries. These caps bound how much history is injected, keeping
-# the small model's context short for latency. Reduce if your small model is
-# slow or has a limited context window. (~4 chars ≈ 1 token)
-#
+# the small model's context short for latency. (~4 chars ≈ 1 token)
 # REFORMULATE_USER_CTX=400                  # max chars of prior user turns
 # REFORMULATE_ASSISTANT_CTX=1000            # max chars of prior assistant turns
 ```
@@ -181,6 +188,7 @@ the user's question.
 - Up to 3 pre-fetched queries (10 results each)
 - Up to 5 LLM steps in the researcher; up to 3 search queries per step
 - Separate writer model pass for the final answer
+- If `RERANK_MODEL` is configured, accumulated sources are reranked by relevance before the writer pass, improving synthesis quality
 
 > When a file is attached to the message, reformulation and pre-search are skipped entirely
 > in all modes. The model reads the file content directly and decides autonomously whether
@@ -300,6 +308,183 @@ The schema is created automatically on first start — no separate migration ste
 
 ---
 
+## Practical setup guide
+
+Queriocity needs three external services: a **web search backend** (SearXNG), one or more **model servers** (llama.cpp recommended for local use), and optionally a **proxy layer** (LiteLLM) to give all your models a single unified endpoint. This guide walks through a typical self-hosted stack on Linux using Docker for SearXNG and LiteLLM, and bare-metal llama.cpp for the models.
+
+### 1. SearXNG
+
+The only required change from the default SearXNG config is to enable JSON output, which Queriocity's search calls depend on.
+
+Create a `settings.yml` with at minimum:
+
+```yaml
+search:
+  formats:
+    - html
+    - json
+```
+
+Run with Docker:
+
+```bash
+docker run -d \
+  --name searxng \
+  -p 8009:8080 \
+  -v $(pwd)/searxng:/etc/searxng \
+  searxng/searxng
+```
+
+Set `SEARXNG_URL=http://localhost:8009` in your Queriocity env. If Queriocity runs in Docker too, use `http://host.docker.internal:8009`.
+
+### 2. llama.cpp model servers
+
+Run `llama-server` in OpenAI-compatible mode for each model. Each model needs its own port.
+
+```bash
+# Large instruct model (main chat + researcher)
+llama-server \
+  --model /models/my-instruct-model.gguf \
+  --host 0.0.0.0 --port 8095 \
+  --ctx-size 8192 \
+  --n-gpu-layers 99 \
+  --threads 8
+
+# Small/fast model (query reformulation)
+llama-server \
+  --model /models/my-small-model.gguf \
+  --host 0.0.0.0 --port 8093 \
+  --ctx-size 4096 \
+  --n-gpu-layers 99 \
+  --threads 4
+
+# Embedding model
+llama-server \
+  --model /models/my-embed-model.gguf \
+  --host 0.0.0.0 --port 8096 \
+  --ctx-size 512 \
+  --n-gpu-layers 99 \
+  --embedding --pooling mean
+```
+
+**Hybrid thinking models** (e.g. Qwen3): llama.cpp exposes a single server for both thinking and non-thinking variants. You control which mode to use via `enable_thinking` in the LiteLLM config (see below) — no separate server flag is needed.
+
+### 3. LiteLLM proxy
+
+LiteLLM maps friendly model names to your llama.cpp backends and exposes a single OpenAI-compatible endpoint. This lets Queriocity use one `BASE_URL` for all models.
+
+**`litellm_config.yaml`**:
+
+```yaml
+model_list:
+  - model_name: my-chat-model
+    litellm_params:
+      model: openai/my-chat-model
+      api_base: http://host.docker.internal:8095/v1
+      api_key: none
+
+  # For hybrid thinking models: two entries pointing at the same server,
+  # one with thinking enabled and one without.
+  - model_name: my-think-model
+    litellm_params:
+      model: openai/my-chat-model
+      api_base: http://host.docker.internal:8095/v1
+      api_key: none
+      extra_body:
+        chat_template_kwargs:
+          enable_thinking: true
+
+  - model_name: my-small-model
+    litellm_params:
+      model: openai/my-small-model
+      api_base: http://host.docker.internal:8093/v1
+      api_key: none
+
+  - model_name: my-embed-model
+    litellm_params:
+      model: openai/my-embed-model
+      api_base: http://host.docker.internal:8096/v1
+      api_key: none
+      mode: embedding
+      custom_llm_provider: openai
+```
+
+Run LiteLLM via Docker:
+
+```yaml
+# docker-compose.yml
+services:
+  litellm:
+    image: docker.litellm.ai/berriai/litellm:main-stable
+    ports:
+      - "8088:4000"
+    volumes:
+      - ./litellm_config.yaml:/app/config.yaml
+    command: --config /app/config.yaml
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # required on Linux
+```
+
+```bash
+docker compose up -d
+```
+
+### 4. Queriocity env
+
+With LiteLLM running on port 8088, configure Queriocity using `BASE_URL` so all models route through it:
+
+```dotenv
+BASE_URL=http://localhost:8088/v1    # or host.docker.internal:8088/v1 if in Docker
+BASE_PROVIDER=openai
+
+CHAT_MODEL=my-chat-model
+SMALL_MODEL=my-small-model
+EMBED_MODEL=my-embed-model
+EMBED_DIMENSIONS=1536               # match your embedding model's output size
+
+# Optional: dedicated thinking model for thorough mode researcher phase
+THINKING_MODEL=my-think-model
+
+SEARXNG_URL=http://localhost:8009
+
+JWT_SECRET=                         # generate with: openssl rand -base64 32
+DB_PATH=./queriocity.db
+```
+
+See the [Environment](#environment) section for the full reference.
+
+### Reranker (optional)
+
+llama.cpp supports reranking via the `--reranking` flag. Run a cross-encoder model on its own port:
+
+```bash
+llama-server \
+  --model /models/my-reranker-model.gguf \
+  --host 0.0.0.0 --port 8097 \
+  --n-gpu-layers 99 \
+  --reranking
+```
+
+Add the model to your LiteLLM config:
+
+```yaml
+  - model_name: my-reranker-model
+    litellm_params:
+      model: hosted_vllm/my-reranker-model   # hosted_vllm is a LiteLLM workaround; backend is llama.cpp
+      api_base: http://host.docker.internal:8097
+      api_key: none
+      mode: rerank
+```
+
+Then set in your Queriocity env:
+
+```dotenv
+RERANK_BASE_URL=http://localhost:8088/v1   # via LiteLLM, or point directly at port 8097
+RERANK_MODEL=my-reranker-model
+```
+
+---
+
 ## Architecture overview
 
 ```
@@ -314,8 +499,9 @@ Hono server (Bun)
   ├── /api/admin     — user & invite management
   └── /api/users     — user settings
         │
-        ├── SearXNG   (Google + Bing + DuckDuckGo)
+        ├── SearXNG   (meta-search)
         ├── Ollama / OpenAI-compatible API
+        ├── Reranker API (optional, cross-encoder)
         └── SQLite + sqlite-vec   (queriocity.db)
 ```
 
