@@ -33,6 +33,7 @@ export function useChat({ sessionId, focusMode, onSessionCreated }: UseChatOptio
     setBusy(true)
     setAnswerTime('')
     setStreaming('')
+    setStreamingThinking('')
 
     let accumulated = ''
     let thinkingAccumulated = ''

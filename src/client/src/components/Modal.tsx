@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useRef, useCallback, type ReactNode } from 'react'
 
 interface Props {
   title: string
@@ -10,12 +10,16 @@ interface Props {
 /** Accessible modal with focus trap, Escape-to-close, and backdrop click dismiss. */
 export function Modal({ title, onClose, children, maxWidth = 'max-w-md' }: Props) {
   const panelRef = useRef<HTMLDivElement>(null)
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+
+  const stableClose = useCallback(() => onCloseRef.current(), [])
 
   useEffect(() => {
     panelRef.current?.focus()
 
     function handleKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') { onClose(); return }
+      if (e.key === 'Escape') { onCloseRef.current(); return }
       if (e.key !== 'Tab') return
       const focusables = panelRef.current?.querySelectorAll<HTMLElement>(
         'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
@@ -32,10 +36,10 @@ export function Modal({ title, onClose, children, maxWidth = 'max-w-md' }: Props
 
     document.addEventListener('keydown', handleKey)
     return () => document.removeEventListener('keydown', handleKey)
-  }, [onClose])
+  }, []) // stable — uses ref for onClose so effect doesn't re-run on every render
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={stableClose}>
       <div
         ref={panelRef}
         tabIndex={-1}
@@ -44,7 +48,7 @@ export function Modal({ title, onClose, children, maxWidth = 'max-w-md' }: Props
       >
         <div className="flex items-center justify-between">
           <h2 className="text-base font-semibold text-gray-100">{title}</h2>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-300" aria-label="Close">✕</button>
+          <button onClick={stableClose} className="text-gray-500 hover:text-gray-300" aria-label="Close">✕</button>
         </div>
         {children}
       </div>

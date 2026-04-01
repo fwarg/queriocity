@@ -13,8 +13,7 @@ COPY src ./src
 COPY tsconfig.json drizzle.config.ts ./
 COPY --from=builder /app/dist ./dist
 
-RUN adduser --disabled-password --gecos '' appuser && mkdir -p /data && chown appuser:appuser /data
-USER appuser
+RUN mkdir -p /data
 
 VOLUME /data
 EXPOSE 3000
