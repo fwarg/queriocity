@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie'
-import { db, users, authCredentials, invites } from '../lib/db.ts'
+import { db, users, authCredentials, invites, parseSettings } from '../lib/db.ts'
 import { eq, count } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import {
@@ -11,6 +11,23 @@ import {
 } from '../lib/auth.ts'
 
 export const authRouter = new Hono()
+
+// Simple in-memory rate limiter for login: max 10 attempts per 15 minutes per IP
+const loginAttempts = new Map<string, { count: number; resetAt: number }>()
+const LOGIN_LIMIT = 10
+const LOGIN_WINDOW_MS = 15 * 60 * 1000
+
+function checkLoginRateLimit(ip: string): boolean {
+  const now = Date.now()
+  const entry = loginAttempts.get(ip)
+  if (!entry || entry.resetAt < now) {
+    loginAttempts.set(ip, { count: 1, resetAt: now + LOGIN_WINDOW_MS })
+    return true
+  }
+  if (entry.count >= LOGIN_LIMIT) return false
+  entry.count++
+  return true
+}
 
 authRouter.get('/has-users', async (c) => {
   const [{ value }] = await db.select({ value: count() }).from(users)
@@ -71,6 +88,9 @@ const loginSchema = z.object({
 })
 
 authRouter.post('/login', zValidator('json', loginSchema), async (c) => {
+  const ip = c.req.header('x-forwarded-for') ?? c.req.header('x-real-ip') ?? 'unknown'
+  if (!checkLoginRateLimit(ip)) return c.json({ error: 'Too many login attempts. Try again later.' }, 429)
+
   const { email, password } = c.req.valid('json')
   const cred = await db.select().from(authCredentials)
     .where(eq(authCredentials.email, email.toLowerCase())).get()
@@ -98,7 +118,7 @@ authRouter.get('/me', async (c) => {
     if (!user) return c.json({ error: 'User not found' }, 404)
     return c.json({
       id: user.id, email: user.email, name: user.name,
-      role: user.role, settings: JSON.parse(user.settings),
+      role: user.role, settings: parseSettings(user.settings),
     })
   } catch {
     return c.json({ error: 'Invalid token' }, 401)

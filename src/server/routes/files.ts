@@ -8,14 +8,14 @@ export const filesRouter = new Hono<AppEnv>()
 
 filesRouter.use('*', authMiddleware)
 
+const MAX_SIZE = 50 * 1024 * 1024 // 50 MB
+
 filesRouter.post('/upload', async (c) => {
   const userId = c.get('userId') as string
   const body = await c.req.parseBody()
   const file = body['file'] as File | undefined
 
   if (!file) return c.json({ error: 'No file provided' }, 400)
-
-  const MAX_SIZE = 50 * 1024 * 1024 // 50 MB
   if (file.size > MAX_SIZE) return c.json({ error: 'File too large (max 50 MB)' }, 413)
 
   const buffer = await file.arrayBuffer()
@@ -32,6 +32,7 @@ filesRouter.post('/extract', async (c) => {
   const body = await c.req.parseBody()
   const file = body['file'] as File | undefined
   if (!file) return c.json({ error: 'No file provided' }, 400)
+  if (file.size > MAX_SIZE) return c.json({ error: 'File too large (max 50 MB)' }, 413)
   const buffer = await file.arrayBuffer()
   console.log(`\n━━━ [extract] "${file.name}"  type=${file.type}  size=${(file.size / 1024).toFixed(0)}KB`)
   const text = await extractFileText(buffer, file.type)

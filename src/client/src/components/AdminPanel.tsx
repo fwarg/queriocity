@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { listUsers, setUserRole, deleteUser, createInvite, testModels, type ModelTestResult } from '../lib/api.ts'
+import { Modal } from './Modal.tsx'
 
 interface Props {
   currentUserId: string
@@ -13,23 +14,32 @@ export function AdminPanel({ currentUserId, onClose }: Props) {
   const [inviteUrl, setInviteUrl] = useState('')
   const [inviteEmail, setInviteEmail] = useState('')
   const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
   const [modelResults, setModelResults] = useState<ModelTestResult[] | null>(null)
   const [testingModels, setTestingModels] = useState(false)
 
   useEffect(() => {
-    listUsers().then(setUserList).catch(() => {})
+    listUsers().then(setUserList).catch(() => setError('Failed to load users.'))
   }, [])
 
   async function handleRoleToggle(u: UserRow) {
     const newRole = u.role === 'admin' ? 'user' : 'admin'
-    await setUserRole(u.id, newRole)
-    setUserList(prev => prev.map(x => x.id === u.id ? { ...x, role: newRole } : x))
+    try {
+      await setUserRole(u.id, newRole)
+      setUserList(prev => prev.map(x => x.id === u.id ? { ...x, role: newRole } : x))
+    } catch {
+      setError('Failed to update role.')
+    }
   }
 
   async function handleDelete(id: string) {
     if (!confirm('Delete this user and all their data?')) return
-    await deleteUser(id)
-    setUserList(prev => prev.filter(x => x.id !== id))
+    try {
+      await deleteUser(id)
+      setUserList(prev => prev.filter(x => x.id !== id))
+    } catch {
+      setError('Failed to delete user.')
+    }
   }
 
   async function handleTestModels() {
@@ -54,15 +64,9 @@ export function AdminPanel({ currentUserId, onClose }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose}>
-      <div
-        className="bg-gray-900 border border-gray-800 rounded-xl p-6 w-full max-w-2xl flex flex-col gap-5 max-h-[80vh] overflow-y-auto"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between">
-          <h2 className="text-base font-semibold text-gray-100">Admin — Users</h2>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-300">✕</button>
-        </div>
+    <Modal title="Admin — Users" onClose={onClose} maxWidth="max-w-2xl">
+      <div className="flex flex-col gap-5">
+        {error && <p className="text-xs text-red-400">{error}</p>}
 
         {/* User list */}
         <table className="w-full text-sm">
@@ -174,6 +178,6 @@ export function AdminPanel({ currentUserId, onClose }: Props) {
           )}
         </div>
       </div>
-    </div>
+    </Modal>
   )
 }

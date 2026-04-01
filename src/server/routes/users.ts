@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
-import { db, users } from '../lib/db.ts'
+import { db, users, parseSettings } from '../lib/db.ts'
 import { eq } from 'drizzle-orm'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 
@@ -20,7 +20,7 @@ usersRouter.get('/settings', async (c) => {
   const user = await db.select({ settings: users.settings }).from(users)
     .where(eq(users.id, c.get('userId'))).get()
   if (!user) return c.json({ error: 'User not found' }, 404)
-  return c.json(JSON.parse(user.settings))
+  return c.json(parseSettings(user.settings))
 })
 
 usersRouter.patch('/settings', zValidator('json', settingsSchema), async (c) => {
@@ -28,7 +28,7 @@ usersRouter.patch('/settings', zValidator('json', settingsSchema), async (c) => 
   const user = await db.select({ settings: users.settings }).from(users)
     .where(eq(users.id, c.get('userId'))).get()
   if (!user) return c.json({ error: 'User not found' }, 404)
-  const merged = { ...JSON.parse(user.settings), ...updates }
+  const merged = { ...parseSettings(user.settings), ...updates }
   await db.update(users)
     .set({ settings: JSON.stringify(merged), updatedAt: new Date() })
     .where(eq(users.id, c.get('userId')))

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useCallback, memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { ExternalLink } from 'lucide-react'
@@ -18,18 +18,27 @@ function insertCitationLinks(content: string, sources: Array<{ url: string }>) {
   })
 }
 
-const mdComponents = {
+function makeMdComponents(highlightedSource: number | null, onCitationClick: (n: number) => void) {
+  return {
   a: ({ href, children }: any) => {
-    const isCitation = /^\[\d+\]$/.test(String(children))
+    const match = /^\[(\d+)\]$/.exec(String(children))
+    const num = match ? parseInt(match[1]) : null
+    const isHighlighted = num !== null && num === highlightedSource
+    if (num !== null) {
+      return (
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={`text-xs align-super leading-none ${isHighlighted ? 'text-yellow-400 font-bold' : 'text-blue-400 hover:text-blue-300'}`}
+          onClick={e => { e.preventDefault(); onCitationClick(num) }}
+        >
+          {children}
+        </a>
+      )
+    }
     return (
-      <a
-        href={href}
-        target="_blank"
-        rel="noopener noreferrer"
-        className={isCitation
-          ? 'text-blue-400 hover:text-blue-300 text-xs align-super leading-none'
-          : 'text-blue-400 hover:underline'}
-      >
+      <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">
         {children}
       </a>
     )
@@ -59,9 +68,16 @@ const mdComponents = {
   tr: ({ children }: any) => <tr className="border-b border-gray-700">{children}</tr>,
   th: ({ children }: any) => <th className="px-3 py-1 text-left font-semibold border-r border-gray-700 last:border-r-0">{children}</th>,
   td: ({ children }: any) => <td className="px-3 py-1 border-r border-gray-700 last:border-r-0">{children}</td>,
+}}
+
+interface SourceListProps {
+  content: string
+  sources: Array<{ title: string; url: string }>
+  highlightedSource: number | null
+  onSourceClick: (n: number) => void
 }
 
-function SourceList({ content, sources }: { content: string; sources: Array<{ title: string; url: string }> }) {
+function SourceList({ content, sources, highlightedSource, onSourceClick }: SourceListProps) {
   const [showUnused, setShowUnused] = useState(false)
   const cited = new Set(
     [...content.matchAll(/\[(\d+)\]/g)].map(m => parseInt(m[1]))
@@ -76,9 +92,10 @@ function SourceList({ content, sources }: { content: string; sources: Array<{ ti
           href={s.url}
           target="_blank"
           rel="noopener noreferrer"
-          className="flex items-center gap-1.5 text-xs text-blue-400 hover:underline"
+          onClick={() => onSourceClick(j + 1)}
+          className={`flex items-center gap-1.5 text-xs hover:underline rounded px-1 -mx-1 transition-colors ${highlightedSource === j + 1 ? 'text-yellow-400 bg-yellow-400/10' : 'text-blue-400'}`}
         >
-          <span className="text-gray-500 shrink-0">[{j + 1}]</span>
+          <span className="shrink-0">[{j + 1}]</span>
           <ExternalLink size={10} className="shrink-0" />
           <span className="truncate min-w-0">{s.title || s.url}</span>
         </a>
@@ -121,31 +138,43 @@ function ThinkingBlock({ content, open }: { content: string; open?: boolean }) {
   )
 }
 
-export function MessageList({ messages, streaming, streamingThinking }: Props) {
+const baseMdComponents = makeMdComponents(null, () => {})
+
+function MessageItem({ msg }: { msg: Message }) {
+  const [highlightedSource, setHighlightedSource] = useState<number | null>(null)
+  const toggleSource = useCallback((n: number) => setHighlightedSource(v => v === n ? null : n), [])
+  const mdComponents = makeMdComponents(highlightedSource, toggleSource)
+
+  return (
+    <div className={`flex flex-col gap-1 w-full ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+      <div
+        className={`w-full max-w-2xl min-w-0 overflow-x-hidden rounded-lg px-4 py-2 text-sm break-words ${
+          msg.role === 'user'
+            ? 'bg-blue-700 text-white whitespace-pre-wrap'
+            : 'bg-gray-800 text-gray-100'
+        }`}
+      >
+        {msg.role === 'assistant' ? (
+          <>
+            {msg.thinking && <ThinkingBlock content={msg.thinking} />}
+            <ReactMarkdown components={mdComponents} remarkPlugins={[remarkGfm]}>
+              {msg.sources?.length ? insertCitationLinks(msg.content, msg.sources) : msg.content}
+            </ReactMarkdown>
+          </>
+        ) : msg.content}
+      </div>
+      {msg.sources && msg.sources.length > 0 && (
+        <SourceList content={msg.content} sources={msg.sources} highlightedSource={highlightedSource} onSourceClick={toggleSource} />
+      )}
+    </div>
+  )
+}
+
+export const MessageList = memo(function MessageList({ messages, streaming, streamingThinking }: Props) {
   return (
     <div className="flex flex-col gap-4 p-4 overflow-y-auto overflow-x-hidden flex-1">
       {messages.map((msg, i) => (
-        <div key={i} className={`flex flex-col gap-1 w-full ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-          <div
-            className={`w-full max-w-2xl min-w-0 overflow-x-hidden rounded-lg px-4 py-2 text-sm break-words ${
-              msg.role === 'user'
-                ? 'bg-blue-700 text-white whitespace-pre-wrap'
-                : 'bg-gray-800 text-gray-100'
-            }`}
-          >
-            {msg.role === 'assistant' ? (
-              <>
-                {msg.thinking && <ThinkingBlock content={msg.thinking} />}
-                <ReactMarkdown components={mdComponents} remarkPlugins={[remarkGfm]}>
-                  {msg.sources?.length ? insertCitationLinks(msg.content, msg.sources) : msg.content}
-                </ReactMarkdown>
-              </>
-            ) : msg.content}
-          </div>
-          {msg.sources && msg.sources.length > 0 && (
-            <SourceList content={msg.content} sources={msg.sources} />
-          )}
-        </div>
+        <MessageItem key={i} msg={msg} />
       ))}
       {(streaming || streamingThinking) && (
         <div className="flex items-start">
@@ -153,7 +182,7 @@ export function MessageList({ messages, streaming, streamingThinking }: Props) {
             {streamingThinking && <ThinkingBlock content={streamingThinking} open />}
             {streaming && (
               <>
-                <ReactMarkdown components={mdComponents} remarkPlugins={[remarkGfm]}>{streaming}</ReactMarkdown>
+                <ReactMarkdown components={baseMdComponents} remarkPlugins={[remarkGfm]}>{streaming}</ReactMarkdown>
                 <span className="animate-pulse">▋</span>
               </>
             )}
@@ -163,4 +192,4 @@ export function MessageList({ messages, streaming, streamingThinking }: Props) {
       )}
     </div>
   )
-}
+})

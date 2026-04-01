@@ -1,11 +1,12 @@
 import { useState, useRef, type FormEvent, type KeyboardEvent } from 'react'
-import { Send, Paperclip, X } from 'lucide-react'
+import { Send, Paperclip, X, Square } from 'lucide-react'
 import { extractFileForContext } from '../lib/api.ts'
 
 type FocusMode = 'flash' | 'fast' | 'balanced' | 'thorough'
 
 interface Props {
   onSubmit: (text: string) => void
+  onCancel?: () => void
   disabled?: boolean
   focusMode: FocusMode
   onFocusModeChange: (m: FocusMode) => void
@@ -25,7 +26,7 @@ const MODE_DESCRIPTIONS: Record<FocusMode, string> = {
   thorough: 'Multi-angle research with a dedicated writing pass — slower but more comprehensive.',
 }
 
-export function ChatInput({ onSubmit, disabled, focusMode, onFocusModeChange }: Props) {
+export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusModeChange }: Props) {
   const [value, setValue] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [extractStatus, setExtractStatus] = useState<'idle' | 'loading' | 'error'>('idle')
@@ -137,16 +138,30 @@ export function ChatInput({ onSubmit, disabled, focusMode, onFocusModeChange }: 
             disabled={isFlash || extractStatus === 'loading'}
             className="p-2 rounded bg-gray-800 hover:bg-gray-700 disabled:opacity-50"
             title={isFlash ? 'Not available in flash mode' : 'Attach file to this message (not stored)'}
+            aria-label={isFlash ? 'Attach file (not available in flash mode)' : 'Attach file to this message'}
           >
             <Paperclip size={16} className={extractStatus === 'loading' ? 'animate-pulse' : ''} />
           </button>
-          <button
-            type="submit"
-            disabled={disabled || (!value.trim() && attachments.length === 0) || isOverLimit}
-            className="p-2 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50"
-          >
-            <Send size={16} />
-          </button>
+          {disabled && onCancel ? (
+            <button
+              type="button"
+              onClick={onCancel}
+              className="p-2 rounded bg-red-700 hover:bg-red-600"
+              title="Stop generation"
+              aria-label="Stop generation"
+            >
+              <Square size={16} />
+            </button>
+          ) : (
+            <button
+              type="submit"
+              disabled={disabled || (!value.trim() && attachments.length === 0) || isOverLimit}
+              className="p-2 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50"
+              aria-label="Send message"
+            >
+              <Send size={16} />
+            </button>
+          )}
         </div>
         <input ref={fileRef} type="file" className="hidden" onChange={handleFile} />
       </div>

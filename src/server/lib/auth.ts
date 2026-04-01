@@ -3,9 +3,8 @@ import bcrypt from 'bcryptjs'
 
 export const AUTH_COOKIE = 'auth-token'
 
-const secret = new TextEncoder().encode(
-  process.env.JWT_SECRET ?? 'change-me-in-production-32chars!!'
-)
+if (!process.env.JWT_SECRET) throw new Error('JWT_SECRET env var is required')
+const secret = new TextEncoder().encode(process.env.JWT_SECRET)
 const ALG = 'HS256'
 
 export interface AuthUser {

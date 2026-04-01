@@ -8,11 +8,13 @@ import { historyRouter } from './routes/history.ts'
 import { authRouter } from './routes/auth.ts'
 import { adminRouter } from './routes/admin.ts'
 import { usersRouter } from './routes/users.ts'
+import { sqlite } from './lib/db.ts'
 
 const app = new Hono()
 
 app.use('*', logger())
-app.use('/api/*', cors({ origin: '*', credentials: true }))
+const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN ?? '*'
+app.use('/api/*', cors({ origin: ALLOWED_ORIGIN, credentials: true }))
 
 app.route('/api/auth', authRouter)
 app.route('/api/chat', chatRouter)
@@ -35,5 +37,34 @@ console.log(`  small:  ${process.env.SMALL_PROVIDER ?? process.env.CHAT_PROVIDER
 console.log(`  thinking: ${process.env.THINKING_PROVIDER ?? process.env.CHAT_PROVIDER ?? _defaultProvider}  ${process.env.THINKING_BASE_URL ?? process.env.CHAT_BASE_URL ?? _defaultBase}  model=${process.env.THINKING_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2'}`)
 console.log(`  embed:  ${process.env.EMBED_PROVIDER ?? process.env.CHAT_PROVIDER ?? _defaultProvider}  ${process.env.EMBED_BASE_URL ?? process.env.CHAT_BASE_URL ?? _defaultBase}  model=${process.env.EMBED_MODEL ?? 'nomic-embed-text'}  dims=${process.env.EMBED_DIMENSIONS ?? '1536'}`)
 console.log(`  searxng: ${process.env.SEARXNG_URL ?? 'http://localhost:4000'}`)
+
+function shutdown() {
+  try { sqlite.close() } catch {}
+  process.exit(0)
+}
+process.on('SIGTERM', shutdown)
+process.on('SIGINT', shutdown)
+
+async function preflight() {
+  const searxngUrl = process.env.SEARXNG_URL ?? 'http://localhost:4000'
+  try {
+    const res = await fetch(`${searxngUrl}/healthz`, { signal: AbortSignal.timeout(3000) })
+    if (res.ok) console.log(`  [preflight] searxng OK`)
+    else console.warn(`  [preflight] searxng returned ${res.status} — search may not work`)
+  } catch {
+    console.warn(`  [preflight] searxng unreachable at ${searxngUrl} — search will fail`)
+  }
+
+  const chatBase = process.env.CHAT_BASE_URL ?? process.env.BASE_URL ?? 'http://localhost:11434/api'
+  try {
+    const res = await fetch(chatBase, { signal: AbortSignal.timeout(3000) })
+    if (res.status < 500) console.log(`  [preflight] chat LLM OK`)
+    else console.warn(`  [preflight] chat LLM at ${chatBase} returned ${res.status}`)
+  } catch {
+    console.warn(`  [preflight] chat LLM unreachable at ${chatBase} — chat will fail`)
+  }
+}
+
+preflight().catch(() => {})
 
 export default { port: PORT, fetch: app.fetch, idleTimeout: 255 }

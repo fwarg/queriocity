@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { db, chatSessions, messages } from '../lib/db.ts'
-import { eq, and } from 'drizzle-orm'
+import { eq, and, desc } from 'drizzle-orm'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 
 export const historyRouter = new Hono<AppEnv>()
@@ -9,9 +9,13 @@ historyRouter.use('*', authMiddleware)
 
 historyRouter.get('/', async (c) => {
   const userId = c.get('userId') as string
+  const limit = Math.min(parseInt(c.req.query('limit') ?? '50'), 200)
+  const offset = parseInt(c.req.query('offset') ?? '0')
   const sessions = await db.select().from(chatSessions)
     .where(eq(chatSessions.userId, userId))
-
+    .orderBy(desc(chatSessions.updatedAt))
+    .limit(limit)
+    .offset(offset)
   return c.json(sessions)
 })
 

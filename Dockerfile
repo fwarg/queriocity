@@ -13,8 +13,10 @@ COPY src ./src
 COPY tsconfig.json drizzle.config.ts ./
 COPY --from=builder /app/dist ./dist
 
+RUN adduser --disabled-password --gecos '' appuser && mkdir -p /data && chown appuser:appuser /data
+USER appuser
+
 VOLUME /data
 EXPOSE 3000
 
-# Run migrations then start server
 CMD ["bun", "run", "src/server/index.ts"]

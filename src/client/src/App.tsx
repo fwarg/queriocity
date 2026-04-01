@@ -6,10 +6,11 @@ import { RegisterPage } from './components/RegisterPage.tsx'
 import { SettingsPanel } from './components/SettingsPanel.tsx'
 import { AdminPanel } from './components/AdminPanel.tsx'
 import {
-  streamChat, fetchHistory, fetchSession, deleteSession,
+  fetchHistory, fetchSession, deleteSession,
   fetchFiles, deleteFile, uploadFile, getMe, hasUsers, logout,
 } from './lib/api.ts'
-import type { AuthUser, Message } from './lib/api.ts'
+import type { AuthUser } from './lib/api.ts'
+import { useChat } from './hooks/useChat.ts'
 
 type AuthView = 'loading' | 'login' | 'register'
 type MainView = 'chat' | 'chats' | 'files'
@@ -27,20 +28,24 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null)
   const [inviteToken, setInviteToken] = useState<string | undefined>()
 
-  const [messages, setMessages] = useState<Message[]>([])
-  const [streaming, setStreaming] = useState('')
-  const [streamingThinking, setStreamingThinking] = useState('')
-  const [status, setStatus] = useState('')
-  const [answerTime, setAnswerTime] = useState('')
-  const [busy, setBusy] = useState(false)
   const [focusMode, setFocusMode] = useState<'flash' | 'fast' | 'balanced' | 'thorough'>('balanced')
   const [sessionId, setSessionId] = useState<string | undefined>()
   const [sessions, setSessions] = useState<Array<{ id: string; title: string }>>([])
+  const [sessionSearch, setSessionSearch] = useState('')
   const [files, setFiles] = useState<UploadedFile[]>([])
   const [view, setView] = useState<MainView>('chat')
   const [showSettings, setShowSettings] = useState(false)
   const [showAdmin, setShowAdmin] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+
+  const { messages, setMessages, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, cancel, reset } = useChat({
+    sessionId,
+    focusMode,
+    onSessionCreated: (id, title) => {
+      setSessionId(id)
+      setSessions(prev => prev.some(s => s.id === id) ? prev : [{ id, title }, ...prev])
+    },
+  })
 
   const bottomRef = useRef<HTMLDivElement>(null)
 
@@ -91,71 +96,18 @@ export default function App() {
     setAuthView('login')
   }
 
-  async function handleSubmit(text: string) {
-    const userMsg: Message = { role: 'user', content: text }
-    const next = [...messages, userMsg]
-    setMessages(next)
-    setBusy(true)
-    setAnswerTime('')
-    setStreaming('')
-
-    let accumulated = ''
-    let thinkingAccumulated = ''
-    const sources: Array<{ title: string; url: string }> = []
-
-    try {
-      for await (const chunk of streamChat(next, focusMode, sessionId)) {
-        if (chunk.type === 'text') {
-          accumulated += chunk.delta as string
-          setStreaming(accumulated)
-          setStatus('')
-        } else if (chunk.type === 'thinking') {
-          thinkingAccumulated += chunk.delta as string
-          setStreamingThinking(thinkingAccumulated)
-        } else if (chunk.type === 'status') {
-          setStatus(chunk.text as string)
-        } else if (chunk.type === 'sources') {
-          sources.push(...(chunk.sources as Array<{ title: string; url: string }>))
-        } else if (chunk.type === 'done') {
-          console.log('[done]', chunk)
-          if (chunk.elapsedMs) setAnswerTime(`Answered in ${(chunk.elapsedMs as number / 1000).toFixed(1)} seconds.`)
-          setSessionId(chunk.sessionId as string)
-          setSessions(prev => {
-            const sid = chunk.sessionId as string
-            if (prev.some(s => s.id === sid)) return prev
-            return [{ id: sid, title: text.slice(0, 60) }, ...prev]
-          })
-        }
-      }
-    } finally {
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: accumulated,
-        sources,
-        thinking: thinkingAccumulated || undefined,
-      }])
-      setStreaming('')
-      setStreamingThinking('')
-      setStatus('')
-      setBusy(false)
-    }
-  }
 
   function loadSession(id: string, title: string) {
     setSessionId(id)
-    setMessages([])
-    setStreaming('')
+    reset()
     setView('chat')
     fetchSession(id).then(setMessages).catch(() => {})
     setSessions(prev => [{ id, title }, ...prev.filter(s => s.id !== id)])
   }
 
   function newChat() {
-    setMessages([])
     setSessionId(undefined)
-    setStreaming('')
-    setStreamingThinking('')
-    setStatus('')
+    reset()
     setView('chat')
   }
 
@@ -164,7 +116,7 @@ export default function App() {
     deleteSession(id).then(() => {
       setSessions(prev => prev.filter(x => x.id !== id))
       if (sessionId === id) newChat()
-    }).catch(() => {})
+    }).catch(() => setStatus('Failed to delete chat.'))
   }
 
   function handleDeleteFile(id: string, e: React.MouseEvent) {
@@ -269,12 +221,21 @@ export default function App() {
           Files ({files.length})
         </button>
         <div className="border-t border-gray-800 my-1" />
-        {sessions.map(s => (
+        {sessions.length > 5 && (
+          <input
+            type="search"
+            placeholder="Search chats…"
+            value={sessionSearch}
+            onChange={e => setSessionSearch(e.target.value)}
+            className="mx-1 px-2 py-1 rounded bg-gray-800 border border-gray-700 text-xs text-gray-300 focus:outline-none focus:border-blue-500"
+          />
+        )}
+        {sessions.filter(s => !sessionSearch || s.title.toLowerCase().includes(sessionSearch.toLowerCase())).map(s => (
           <div key={s.id} className={`flex items-center rounded hover:bg-gray-800 ${sessionId === s.id && view === 'chat' ? 'bg-gray-800' : ''}`}>
             <button onClick={() => { loadSession(s.id, s.title); setSidebarOpen(false) }} className="flex-1 text-left px-3 py-2 text-sm truncate">
               {s.title}
             </button>
-            <button onClick={(e) => handleDeleteSession(s.id, e)} className="px-2 py-2 text-gray-600 hover:text-red-400 shrink-0" title="Delete">
+            <button onClick={(e) => handleDeleteSession(s.id, e)} className="px-2 py-2 text-gray-600 hover:text-red-400 shrink-0" aria-label={`Delete "${s.title}"`}>
               ×
             </button>
           </div>
@@ -325,7 +286,7 @@ export default function App() {
                 <button
                   onClick={(e) => handleDeleteSession(s.id, e)}
                   className="px-2 py-2 text-gray-600 hover:text-red-400 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
-                  title="Delete"
+                  aria-label={`Delete "${s.title}"`}
                 >
                   ×
                 </button>
@@ -403,7 +364,8 @@ export default function App() {
               <div className="px-4 py-0.5 text-xs text-purple-400 opacity-70">⬡ Model thinking active</div>
             )}
             <ChatInput
-              onSubmit={handleSubmit}
+              onSubmit={submit}
+              onCancel={cancel}
               disabled={busy}
               focusMode={focusMode}
               onFocusModeChange={setFocusMode}

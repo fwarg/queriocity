@@ -44,7 +44,7 @@ export const chatSessions = sqliteTable('chat_sessions', {
   title: text('title').notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
-  userId: text('user_id').notNull(),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
 })
 
 export const messages = sqliteTable('messages', {
@@ -58,7 +58,7 @@ export const messages = sqliteTable('messages', {
 
 export const uploadedFiles = sqliteTable('uploaded_files', {
   id: text('id').primaryKey(),
-  userId: text('user_id').notNull(),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   filename: text('filename').notNull(),
   mimeType: text('mime_type').notNull(),
   size: integer('size').notNull(),
@@ -111,7 +111,7 @@ function initSchema() {
       title      TEXT NOT NULL,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
-      user_id    TEXT NOT NULL
+      user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE
     );
     CREATE TABLE IF NOT EXISTS messages (
       id         TEXT PRIMARY KEY,
@@ -123,7 +123,7 @@ function initSchema() {
     );
     CREATE TABLE IF NOT EXISTS uploaded_files (
       id         TEXT PRIMARY KEY,
-      user_id    TEXT NOT NULL,
+      user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       filename   TEXT NOT NULL,
       mime_type  TEXT NOT NULL,
       size       INTEGER NOT NULL,
@@ -139,8 +139,18 @@ function initSchema() {
     file_id  TEXT NOT NULL,
     content  TEXT NOT NULL
   )`)
+
+  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_id ON chat_sessions(user_id)`)
+  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)`)
+  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_uploaded_files_user_id ON uploaded_files(user_id)`)
+  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_file_chunk_meta_file_id ON file_chunk_meta(file_id)`)
 }
 
 initSchema()
 
 export { sqlite }
+
+/** Safely parse a user's settings JSON, returning {} on malformed data. */
+export function parseSettings(s: string): Record<string, unknown> {
+  try { return JSON.parse(s) } catch { return {} }
+}

@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { updateSettings } from '../lib/api.ts'
+import { Modal } from './Modal.tsx'
 
 const FONT_SIZES = [
   { label: 'Small', value: 14 },
@@ -39,16 +40,8 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
   }
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose}>
-      <div
-        className="bg-gray-900 border border-gray-800 rounded-xl p-6 w-full max-w-md flex flex-col gap-4"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between">
-          <h2 className="text-base font-semibold text-gray-100">Settings</h2>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-300">✕</button>
-        </div>
-        <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+    <Modal title="Settings" onClose={onClose}>
+      <form onSubmit={handleSubmit} className="flex flex-col gap-3">
           <div className="flex flex-col gap-1">
             <label className="text-xs text-gray-400 font-medium">Custom system prompt</label>
             <p className="text-xs text-gray-500">
@@ -128,8 +121,7 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
               {saved ? 'Saved!' : busy ? 'Saving…' : 'Save'}
             </button>
           </div>
-        </form>
-      </div>
-    </div>
+      </form>
+    </Modal>
   )
 }
