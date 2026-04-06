@@ -73,6 +73,5 @@ export function getFlashModel() {
 
 export function getEmbeddingModel(): EmbeddingModel<string> {
   const model = process.env.EMBED_MODEL ?? 'nomic-embed-text'
-  // @ts-ignore — provider exposes .embedding() for embed models
   return (embedProvider.embedding ? embedProvider.embedding(model) : embedProvider(model)) as EmbeddingModel<string>
 }

@@ -201,7 +201,10 @@ export default function App() {
         ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
         md:relative md:translate-x-0 md:w-56 md:z-auto md:transition-none
       `}>
-        <div className="px-3 py-2 text-base font-bold text-white tracking-wide">Queriocity</div>
+        <div className="px-3 py-2">
+          <div className="text-base font-bold text-white tracking-wide">Queriocity</div>
+          <div className="text-xs text-gray-500">v{__APP_VERSION__}</div>
+        </div>
         <button
           onClick={() => { newChat(); setSidebarOpen(false) }}
           className="w-full text-left px-3 py-2 rounded bg-blue-600 hover:bg-blue-500 text-sm font-medium"

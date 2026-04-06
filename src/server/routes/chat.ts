@@ -99,8 +99,8 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
     runReformulateAndPreSearch(msgsForReformulate, focusMode as 'fast' | 'balanced' | 'thorough', hasAttachment),
   ])
   const parsedSettings = parseSettings(userRow?.settings ?? '{}')
-  const customPrompt: string | undefined = parsedSettings.customPrompt ?? undefined
-  const showThinkingSettings = parsedSettings.showThinking ?? { balanced: false, thorough: false }
+  const customPrompt = parsedSettings.customPrompt as string | undefined
+  const showThinkingSettings = (parsedSettings.showThinking ?? { balanced: false, thorough: false }) as { balanced: boolean; thorough: boolean }
   const showThinking = focusMode === 'balanced' ? showThinkingSettings.balanced
                      : focusMode === 'thorough'  ? showThinkingSettings.thorough
                      : false
