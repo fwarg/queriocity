@@ -15,11 +15,11 @@ through a single Bun process.
 
 ## Requirements
 
-| Dependency | Purpose |
-|---|---|
-| [Bun](https://bun.sh) ≥ 1.1 | Runtime & package manager |
+| Dependency                           | Purpose                     |
+| --------------------------------------| -----------------------------|
+| [Bun](https://bun.sh) ≥ 1.1          | Runtime & package manager   |
 | [SearXNG](https://docs.searxng.org/) | Private meta-search backend |
-| Ollama or any OpenAI-compatible API | Language model serving |
+| Ollama or any OpenAI-compatible API  | Language model serving      |
 
 ---
 
@@ -47,31 +47,33 @@ Create a `.env` file (or set variables in your shell):
 # If all your models are served from the same endpoint (e.g. LiteLLM, Ollama),
 # set BASE_URL and BASE_PROVIDER once. Every service falls back to these unless
 # overridden by its own *_BASE_URL / *_PROVIDER vars.
-# BASE_URL=http://localhost:11434/api
-# BASE_PROVIDER=openai              # "openai" or "ollama"; default: openai
+BASE_URL=http://host.docker.internal:8000/v1     # Set your url/port, e.g. localhost, host.docker.internal (if using docker on Linux, etc)
+BASE_PROVIDER=openai                             # "openai" or "ollama"; default: openai
 
 # ── LLM: chat model ──────────────────────────────────────────────────────────
-CHAT_PROVIDER=ollama                        # falls back to BASE_PROVIDER
-CHAT_BASE_URL=http://localhost:11434/api    # falls back to BASE_URL
-CHAT_MODEL=llama3.2
+# Base chat model
+# CHAT_PROVIDER=ollama                        # falls back to BASE_PROVIDER
+# CHAT_BASE_URL=http://localhost:11434/api    # falls back to BASE_URL
+# CHAT_API_KEY=sk-placeholder
+CHAT_MODEL=qwen3.5-instruct                      # Model name/alias from your LLM endpoint
 
 # ── LLM: thinking/reasoning model (researcher phase) ─────────────────────────
 # Optional. When set, used for the researcher phase in thorough mode when the
 # "Use thinking model" setting is enabled in the UI. Falls back to CHAT_* if unset.
 # THINKING_PROVIDER=openai
 # THINKING_BASE_URL=
-# THINKING_MODEL=
 # THINKING_API_KEY=
+THINKING_MODEL=qwen3.5-thinking
 
 # ── LLM: small model (query reformulation) ───────────────────────────────────
 # Optional. Use a fast 1–3 B model for best latency. Falls back to CHAT_* if unset.
 # SMALL_PROVIDER=ollama
 # SMALL_BASE_URL=http://localhost:11434/api
-SMALL_MODEL=llama3.2
+SMALL_MODEL=qwen3.5-small
 
 # ── LLM: embedding model ─────────────────────────────────────────────────────
-EMBED_PROVIDER=ollama
-EMBED_BASE_URL=http://localhost:11434/api   # falls back to CHAT_BASE_URL
+# EMBED_PROVIDER=ollama
+# EMBED_BASE_URL=http://localhost:11434/api   # falls back to CHAT_BASE_URL
 EMBED_MODEL=nomic-embed-text
 EMBED_DIMENSIONS=1536                       # must match the model's output size
 
@@ -80,26 +82,26 @@ EMBED_DIMENSIONS=1536                       # must match the model's output size
 # by relevance before the thorough-mode writer pass, and reorders library search
 # results. RERANK_BASE_URL defaults to BASE_URL if unset.
 # RERANK_BASE_URL=http://localhost:8097
-# RERANK_MODEL=
-# RERANK_TOP_N=15                           # sources kept after reranking (default 15)
+RERANK_MODEL=qwen3-reranker
+RERANK_TOP_N=15                           # sources kept after reranking (default 15)
 
 # ── SearXNG ───────────────────────────────────────────────────────────────────
-SEARXNG_URL=http://localhost:4000
-# SEARXNG_ENGINES=                          # comma-separated engine list; blank = SearXNG defaults
+SEARXNG_URL=http://localhost:4000  # url to your searxng instance
+# SEARXNG_ENGINES=                            # comma-separated engine list; blank = SearXNG defaults
 
 # ── Server ────────────────────────────────────────────────────────────────────
 PORT=3000                                   # not used in Docker (see docker/compose.yml)
-DB_PATH=queriocity.db                       # path to SQLite database file
+DB_PATH=queriocity.db                       # path to SQLite database file (for docker see docker/compose.yml))
 JWT_SECRET=change-me-in-production-32chars!!
-MAX_ATTACHMENT_CHARS=20000                  # max chars injected from a chat attachment (~4 chars/token)
+MAX_ATTACHMENT_CHARS=20000                  # max chars injected in conversation from a chat attachment (~4 chars/token)
 
 # ── Reformulate context limits ────────────────────────────────────────────────
 # The small model receives recent conversation history so it can resolve
 # pronouns and follow-up references ("it", "that company", etc.) when
 # rewriting queries. These caps bound how much history is injected, keeping
 # the small model's context short for latency. (~4 chars ≈ 1 token)
-# REFORMULATE_USER_CTX=400                  # max chars of prior user turns
-# REFORMULATE_ASSISTANT_CTX=1000            # max chars of prior assistant turns
+REFORMULATE_USER_CTX=400                  # max chars of prior user turns
+REFORMULATE_ASSISTANT_CTX=1000            # max chars of prior assistant turns
 ```
 
 ### Running
@@ -117,7 +119,7 @@ bun run start
 
 ```bash
 bun run build:client  # compile React app into dist/client/
-bun run serve                # serve API + static files on a single port
+bun run serve         # serve API + static files on a single port
 ```
 
 Open `http://localhost:3000`. The first user to register becomes an admin.
@@ -134,24 +136,25 @@ Open `http://localhost:3000`. The first user to register becomes an admin.
 
 ## Research modes
 
-Queriocity runs every chat request in one of four focus modes, selectable per message in the chat input bar.
+Queriocity runs every chat request in one of four modes, selectable per message in the chat input bar.
 
 ### Flash
 
 Bypasses all search infrastructure entirely. The model answers directly from its training
 knowledge with no web search, no query reformulation, and no tool calls. Responses are
-capped at ~5 sentences. Use this for quick factual questions where sub-3s latency matters
+capped at ~5 sentences. Use this for quick factual questions where latency matters
 and web freshness is not needed. Attachments are disabled in this mode. Query length is
 capped at 200 characters.
 
-The model used can be overridden via `FLASH_MODEL=small` to use the small/reformulation
-model instead of the main chat model.
+The model used in flash mode can be overridden via `FLASH_MODEL=small` to use the 
+small/reformulation model instead of the main chat model.
 
 ### Fast
 
 A single pre-search query using the chat question directly is fired
 and the results are injected before the model starts. The model streams its answer
-directly and may issue one additional search if needed. A regex heuristic resolves pronouns in follow-up questions before searching — e.g. "When
+directly and may issue one additional search if needed. A regex heuristic resolves (english only) 
+pronouns in follow-up questions before searching — e.g. "When
 was it founded?" after asking about a company becomes "When was [company] founded?" — so
 the pre-search query is self-contained. Best for quick factual questions where you value
 speed over depth.
@@ -166,15 +169,14 @@ Responses are always in the same language as the user's question.
 
 A small model first rewrites the user's question into an optimized search query, which is
 executed before the main model starts. For example, "what's the latest on the mars mission?"
-might become `NASA Mars mission 2025 latest news`. The small model preserves the language of
-the user's question, so Swedish queries produce Swedish search terms. The main model then
+might become `NASA Mars mission 2026 latest news`. The main model then
 receives pre-fetched results and may issue one more round of searches (up to 2 queries at a
 time) before answering. Answers include inline citations `[1][2]` and are always in the same
 language as the user's question.
 
-- 1 LLM-reformulated query pre-fetched in parallel
+- 1 LLM-reformulated query pre-fetched
 - Up to 4 LLM steps; up to 2 parallel search queries per step
-- 8 results per query
+- 8 results per web-search query
 
 ### Thorough
 
@@ -210,7 +212,7 @@ you are about to send. The file is **not stored** — it lives only in that one 
 Use this when you want to ask a one-off question about a document: *"Summarise this
 contract"*, *"What are the key findings in this paper?"*
 
-Supported: PDF, images (PNG, JPG, TIFF, …), and any plain-text format.
+Supported: PDF and plain text (images TBD)
 
 ### Library upload (persistent, vector-searchable)
 
@@ -240,7 +242,7 @@ instruction.
 ### Build
 
 ```bash
-docker build -t queriocity .
+docker compose -f docker/compose.yml build
 ```
 
 ### Configure
@@ -256,7 +258,7 @@ Key differences from the bare-metal config:
 
 - `DB_PATH=/data/queriocity.db` — the container writes the database to `/data`; mount a host directory there for persistence.
 - If your LLM servers (Ollama, llama.cpp, SearXNG, etc.) run on the **host machine**, replace `localhost` with `host.docker.internal` in all `*_BASE_URL` and `SEARXNG_URL` values.
-- `PORT` is not used in Docker — the container always listens on port 3000 internally. The external port is set in `docker/compose.yml` (`"8070:3000"` by default).
+- `PORT` is not used in Docker — the container always listens on port 3000 internally. The external port is set in `docker/compose.yml` (`"8012:3000"` by default).
 
 `docker/env.local` is excluded from the Docker image via `.dockerignore`.
 
@@ -266,7 +268,7 @@ Key differences from the bare-metal config:
 docker compose -f docker/compose.yml up -d
 ```
 
-The app is available at `http://localhost:8070` (or whatever external port is set in `compose.yml`).
+The app is available at `http://localhost:8012` (or whatever external port is set in `compose.yml`).
 
 The database is stored in `docker/data/queriocity.db` on the host — a plain file you can
 inspect, back up, or copy directly. The `docker/data/` directory is excluded from git, so
@@ -310,7 +312,9 @@ The schema is created automatically on first start — no separate migration ste
 
 ## Practical setup guide
 
-Queriocity needs three external services: a **web search backend** (SearXNG), one or more **model servers** (llama.cpp recommended for local use), and optionally a **proxy layer** (LiteLLM) to give all your models a single unified endpoint. This guide walks through a typical self-hosted stack on Linux using Docker for SearXNG and LiteLLM, and bare-metal llama.cpp for the models.
+Queriocity needs three external services: a **web search backend** (SearXNG), and one or more **model servers** (an openai compatible such as llama.cpp or ollama for local use).
+
+A practical setup could be using a **proxy layer** (e.g. LiteLLM) to give all your models a single unified endpoint while having multiple loaded models using their own separate model servers. This guide walks through an example self-hosted stack on Linux using Docker for SearXNG and LiteLLM, and bare-metal llama.cpp for the models.
 
 ### 1. SearXNG
 
@@ -330,29 +334,31 @@ Run with Docker:
 ```bash
 docker run -d \
   --name searxng \
-  -p 8009:8080 \
+  -p 4000:8080 \
   -v $(pwd)/searxng:/etc/searxng \
   searxng/searxng
 ```
 
-Set `SEARXNG_URL=http://localhost:8009` in your Queriocity env. If Queriocity runs in Docker too, use `http://host.docker.internal:8009`.
+Set `SEARXNG_URL=http://localhost:4000` in your Queriocity env. If Queriocity runs in Docker too, use `http://host.docker.internal:4000`.
 
 ### 2. llama.cpp model servers
 
-Run `llama-server` in OpenAI-compatible mode for each model. Each model needs its own port.
+Run a `llama-server` in OpenAI-compatible mode for each model. Each model needs its own port. All models need to fit in vram simultaneously for this example setup.
 
 ```bash
 # Large instruct model (main chat + researcher)
 llama-server \
   --model /models/my-instruct-model.gguf \
+  --alias my-chat-model \
   --host 0.0.0.0 --port 8095 \
-  --ctx-size 8192 \
+  --ctx-size 65536 \
   --n-gpu-layers 99 \
   --threads 8
 
 # Small/fast model (query reformulation)
 llama-server \
   --model /models/my-small-model.gguf \
+  --alias my-small-model \
   --host 0.0.0.0 --port 8093 \
   --ctx-size 4096 \
   --n-gpu-layers 99 \
@@ -361,13 +367,14 @@ llama-server \
 # Embedding model
 llama-server \
   --model /models/my-embed-model.gguf \
+  --alias my-embed-model \
   --host 0.0.0.0 --port 8096 \
-  --ctx-size 512 \
+  --ctx-size 32768 \
   --n-gpu-layers 99 \
-  --embedding --pooling mean
+  --embedding
 ```
 
-**Hybrid thinking models** (e.g. Qwen3): llama.cpp exposes a single server for both thinking and non-thinking variants. You control which mode to use via `enable_thinking` in the LiteLLM config (see below) — no separate server flag is needed.
+**Hybrid thinking models** (e.g. Qwen3.5): You can set it up so that llama.cpp exposes a single server for both thinking and non-thinking variants where you instead control which mode to use via `enable_thinking` in the LiteLLM config (see below) — no separate server flag is needed.
 
 ### 3. LiteLLM proxy
 
@@ -417,7 +424,7 @@ services:
   litellm:
     image: docker.litellm.ai/berriai/litellm:main-stable
     ports:
-      - "8088:4000"
+      - "8000:4000"
     volumes:
       - ./litellm_config.yaml:/app/config.yaml
     command: --config /app/config.yaml
@@ -431,10 +438,10 @@ docker compose up -d
 
 ### 4. Queriocity env
 
-With LiteLLM running on port 8088, configure Queriocity using `BASE_URL` so all models route through it:
+With LiteLLM running on port 8000, configure Queriocity using `BASE_URL` so all models route through it:
 
 ```dotenv
-BASE_URL=http://localhost:8088/v1    # or host.docker.internal:8088/v1 if in Docker
+BASE_URL=http://localhost:8000/v1    # or host.docker.internal:8000/v1 if in Docker
 BASE_PROVIDER=openai
 
 CHAT_MODEL=my-chat-model
@@ -445,7 +452,7 @@ EMBED_DIMENSIONS=1536               # match your embedding model's output size
 # Optional: dedicated thinking model for thorough mode researcher phase
 THINKING_MODEL=my-think-model
 
-SEARXNG_URL=http://localhost:8009
+SEARXNG_URL=http://localhost:4000
 
 JWT_SECRET=                         # generate with: openssl rand -base64 32
 DB_PATH=./queriocity.db
@@ -460,6 +467,7 @@ llama.cpp supports reranking via the `--reranking` flag. Run a cross-encoder mod
 ```bash
 llama-server \
   --model /models/my-reranker-model.gguf \
+  --alias my-reranker-model
   --host 0.0.0.0 --port 8097 \
   --n-gpu-layers 99 \
   --reranking
@@ -479,7 +487,7 @@ Add the model to your LiteLLM config:
 Then set in your Queriocity env:
 
 ```dotenv
-RERANK_BASE_URL=http://localhost:8088/v1   # via LiteLLM, or point directly at port 8097
+RERANK_BASE_URL=http://localhost:8000/v1   # via LiteLLM
 RERANK_MODEL=my-reranker-model
 ```
 
@@ -511,24 +519,24 @@ Hono server (Bun)
 
 All direct runtime dependencies use **MIT** or **Apache 2.0** licenses.
 
-| Package | License | Purpose |
-|---|---|---|
-| `hono` | MIT | HTTP server framework |
-| `@hono/zod-validator` | MIT | Request validation middleware |
-| `ai` (Vercel AI SDK) | Apache 2.0 | LLM streaming & tool-call abstraction |
-| `@ai-sdk/openai` | Apache 2.0 | OpenAI-compatible provider adapter |
-| `ollama-ai-provider` | MIT | Ollama provider adapter |
-| `zod` | MIT | Schema validation |
-| `jose` | MIT | JWT signing & verification |
-| `bcryptjs` | MIT | Password hashing |
-| `drizzle-orm` | Apache 2.0 | Type-safe SQLite ORM |
-| `sqlite-vec` | MIT | Vector similarity search in SQLite |
-| `pdf-parse` | MIT | PDF text extraction |
-| `pdfjs-dist` | Apache 2.0 | PDF rendering (canvas fallback) |
-| `tesseract.js` | Apache 2.0 | OCR for image attachments |
-| `react` / `react-dom` | MIT | UI framework |
-| `react-markdown` | MIT | Markdown rendering |
-| `lucide-react` | ISC | Icon library |
+| Package               | License    | Purpose                               |
+| -----------------------| ------------| ---------------------------------------|
+| `hono`                | MIT        | HTTP server framework                 |
+| `@hono/zod-validator` | MIT        | Request validation middleware         |
+| `ai` (Vercel AI SDK)  | Apache 2.0 | LLM streaming & tool-call abstraction |
+| `@ai-sdk/openai`      | Apache 2.0 | OpenAI-compatible provider adapter    |
+| `ollama-ai-provider`  | MIT        | Ollama provider adapter               |
+| `zod`                 | MIT        | Schema validation                     |
+| `jose`                | MIT        | JWT signing & verification            |
+| `bcryptjs`            | MIT        | Password hashing                      |
+| `drizzle-orm`         | Apache 2.0 | Type-safe SQLite ORM                  |
+| `sqlite-vec`          | MIT        | Vector similarity search in SQLite    |
+| `pdf-parse`           | MIT        | PDF text extraction                   |
+| `pdfjs-dist`          | Apache 2.0 | PDF rendering (canvas fallback)       |
+| `tesseract.js`        | Apache 2.0 | OCR for image attachments             |
+| `react` / `react-dom` | MIT        | UI framework                          |
+| `react-markdown`      | MIT        | Markdown rendering                    |
+| `lucide-react`        | ISC        | Icon library                          |
 
 Dev dependencies (`vite`, `tailwindcss`, `drizzle-kit`, `@vitejs/plugin-react`, Babel
 plugins, type stubs) are likewise MIT or Apache 2.0.
