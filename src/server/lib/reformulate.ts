@@ -1,7 +1,7 @@
 import { generateText } from 'ai'
 import { getSmallModel } from './llm.ts'
 
-const PRONOUN_RE = /\b(it|its|they|their|this|that|these|those)\b/i
+const PRONOUN_RE = /\b(it|its|they|their|them|this|that|these|those|he|him|his|she|her|hers|we|us|our|ours)\b/i
 
 /** Speed mode: regex heuristic, no LLM call. Returns single query string. */
 export function reformulateSpeed(messages: Array<{ role: string; content: string }>): string {

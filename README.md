@@ -56,6 +56,7 @@ BASE_PROVIDER=openai                             # "openai" or "ollama"; default
 # CHAT_BASE_URL=http://localhost:11434/api    # falls back to BASE_URL
 # CHAT_API_KEY=sk-placeholder
 CHAT_MODEL=qwen3.5-instruct                      # Model name/alias from your LLM endpoint
+# FLASH_MODEL=small                              # Optional. Set to "small" to use SMALL_MODEL for flash mode instead of CHAT_MODEL
 
 # ── LLM: thinking/reasoning model (researcher phase) ─────────────────────────
 # Optional. When set, used for the researcher phase in thorough mode when the
@@ -93,6 +94,7 @@ SEARXNG_URL=http://localhost:4000  # url to your searxng instance
 PORT=3000                                   # not used in Docker (see docker/compose.yml)
 DB_PATH=queriocity.db                       # path to SQLite database file (for docker see docker/compose.yml))
 JWT_SECRET=change-me-in-production-32chars!!
+ALLOWED_ORIGIN=http://localhost:3000        # CORS allowed origin; defaults to * (lock this in production)
 MAX_ATTACHMENT_CHARS=20000                  # max chars injected in conversation from a chat attachment (~4 chars/token)
 
 # ── Reformulate context limits ────────────────────────────────────────────────
@@ -175,7 +177,7 @@ time) before answering. Answers include inline citations `[1][2]` and are always
 language as the user's question.
 
 - 1 LLM-reformulated query pre-fetched
-- Up to 4 LLM steps; up to 2 parallel search queries per step
+- Up to 3 LLM steps; up to 2 parallel search queries per step
 - 8 results per web-search query
 
 ### Thorough
@@ -212,7 +214,7 @@ you are about to send. The file is **not stored** — it lives only in that one 
 Use this when you want to ask a one-off question about a document: *"Summarise this
 contract"*, *"What are the key findings in this paper?"*
 
-Supported: PDF and plain text (images TBD)
+Supported: PDF, plain text, and images (via vision LLM with Tesseract OCR fallback)
 
 ### Library upload (persistent, vector-searchable)
 
@@ -306,6 +308,10 @@ managed by Docker rather than appearing as a regular directory.
 on Linux to make `host.docker.internal` resolve to the host. Docker Desktop on macOS/Windows
 adds this automatically.
 
+`user: "${UID:-1000}:${GID:-1000}"` runs the container process as your host user's UID/GID
+(defaulting to 1000:1000). This ensures files written to the `./data` volume are owned by
+your user rather than root, so you can read, copy, and back up the database without `sudo`.
+
 The schema is created automatically on first start — no separate migration step needed.
 
 ---
@@ -347,6 +353,10 @@ Run a `llama-server` in OpenAI-compatible mode for each model. Each model needs 
 
 ```bash
 # Large instruct model (main chat + researcher)
+# Add --mmproj /models/my-instruct-mmproj.gguf to enable vision (image attachments).
+# The mmproj file is a separate download alongside the main model weights.
+# Also add --image-min-tokens 1024 for Qwen-VL models (improves grounding accuracy).
+# In LiteLLM, set supports_vision: true on this model entry.
 llama-server \
   --model /models/my-instruct-model.gguf \
   --alias my-chat-model \

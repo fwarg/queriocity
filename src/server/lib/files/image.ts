@@ -7,7 +7,8 @@ const VISION_PROMPT = 'Extract all text and describe the content of this image i
 export async function extractImageText(buffer: ArrayBuffer, mimeType: string): Promise<string> {
   try {
     return await visionLLM(buffer, mimeType)
-  } catch {
+  } catch (err) {
+    console.warn('[image] vision LLM failed, falling back to Tesseract:', err)
     return tesseractFallback(buffer)
   }
 }
