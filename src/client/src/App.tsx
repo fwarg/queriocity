@@ -120,11 +120,15 @@ export default function App() {
     const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
     const header = `# ${title}\n_Exported: ${date}_\n\n`
     const subset = scope === 'last' ? msgs.filter(m => m.role === 'assistant').slice(-1) : msgs
-    const body = subset.map(m => {
+    const body = subset.map((m, msgIdx) => {
       const label = m.role === 'user' ? '**User**' : '**Assistant**'
-      let block = `${label}\n\n${m.content}`
+      let content = m.content
+      if (m.role === 'assistant' && m.sources?.length) {
+        content = content.replace(/\[(\d+)\]/g, (_, n) => `[${n}](#ref-${msgIdx}-${n})`)
+      }
+      let block = `${label}\n\n${content}`
       if (m.sources?.length) {
-        block += '\n\n**Sources**\n' + m.sources.map((s, i) => `${i + 1}. [${s.title}](${s.url})`).join('\n')
+        block += '\n\n**Sources**\n' + m.sources.map((s, i) => `${i + 1}. <a id="ref-${msgIdx}-${i + 1}"></a>[${s.title}](${s.url})`).join('\n')
       }
       return block
     }).join('\n\n---\n\n')
