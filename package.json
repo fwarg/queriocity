@@ -1,6 +1,6 @@
 {
   "name": "queriocity",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "scripts": {
     "dev": "bun run src/server/index.ts",
@@ -18,11 +18,13 @@
   "dependencies": {
     "@ai-sdk/openai": "^1",
     "@hono/zod-validator": "^0.2",
+    "@types/react-syntax-highlighter": "^15.5.13",
     "ai": "^4",
     "bcryptjs": "^3.0.3",
     "drizzle-orm": "^0.30",
     "hono": "^4",
     "jose": "^5",
+    "katex": "^0.16.45",
     "lucide-react": "^0.400.0",
     "ollama-ai-provider": "^1",
     "pdf-parse": "1",
@@ -30,13 +32,17 @@
     "react": "^18",
     "react-dom": "^18",
     "react-markdown": "^10.1.0",
+    "react-syntax-highlighter": "^16.1.1",
+    "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
     "sqlite-vec": "^0.1",
     "tesseract.js": "^5",
     "zod": "^3"
   },
   "devDependencies": {
     "@types/bcryptjs": "^3.0.0",
+    "@types/katex": "^0.16.8",
     "@types/pdf-parse": "1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

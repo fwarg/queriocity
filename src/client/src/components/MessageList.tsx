@@ -1,6 +1,10 @@
 import { useState, useCallback, memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import remarkMath from 'remark-math'
+import rehypeKatex from 'rehype-katex'
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { ExternalLink } from 'lucide-react'
 import type { Message } from '../lib/api.ts'
 
@@ -52,11 +56,22 @@ function makeMdComponents(highlightedSource: number | null, onCitationClick: (n:
   h2: ({ children }: any) => <h2 className="text-sm font-semibold text-white mb-1 mt-2">{children}</h2>,
   h3: ({ children }: any) => <h3 className="text-sm font-medium text-white mb-1 mt-1">{children}</h3>,
   code: ({ children, className }: any) => {
-    const isBlock = className?.startsWith('language-')
-    if (isBlock) return <code className={`font-mono text-xs ${className}`}>{children}</code>
+    const match = /language-(\w+)/.exec(className || '')
+    if (match) {
+      return (
+        <SyntaxHighlighter
+          style={oneDark}
+          language={match[1]}
+          PreTag="div"
+          customStyle={{ margin: '0 0 0.5rem', borderRadius: '0.375rem', padding: '0.75rem', fontSize: '0.75rem' }}
+        >
+          {String(children).replace(/\n$/, '')}
+        </SyntaxHighlighter>
+      )
+    }
     return <code className="bg-gray-700 text-gray-100 rounded px-1 py-0.5 text-xs font-mono">{children}</code>
   },
-  pre: ({ children }: any) => <pre className="bg-gray-900 rounded p-3 overflow-x-auto mb-2 text-xs font-mono">{children}</pre>,
+  pre: ({ children }: any) => <>{children}</>,
   blockquote: ({ children }: any) => <blockquote className="border-l-2 border-gray-600 pl-3 text-gray-400 italic my-2">{children}</blockquote>,
   del: ({ children }: any) => <del className="text-gray-500">{children}</del>,
   input: ({ type, checked }: any) => type === 'checkbox'
@@ -157,7 +172,7 @@ function MessageItem({ msg }: { msg: Message }) {
         {msg.role === 'assistant' ? (
           <>
             {msg.thinking && <ThinkingBlock content={msg.thinking} />}
-            <ReactMarkdown components={mdComponents} remarkPlugins={[remarkGfm]}>
+            <ReactMarkdown components={mdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
               {msg.sources?.length ? insertCitationLinks(msg.content, msg.sources) : msg.content}
             </ReactMarkdown>
           </>
@@ -182,7 +197,7 @@ export const MessageList = memo(function MessageList({ messages, streaming, stre
             {streamingThinking && <ThinkingBlock content={streamingThinking} open />}
             {streaming && (
               <>
-                <ReactMarkdown components={baseMdComponents} remarkPlugins={[remarkGfm]}>{streaming}</ReactMarkdown>
+                <ReactMarkdown components={baseMdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{streaming}</ReactMarkdown>
                 <span className="animate-pulse">▋</span>
               </>
             )}
