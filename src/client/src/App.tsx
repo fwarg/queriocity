@@ -6,10 +6,10 @@ import { RegisterPage } from './components/RegisterPage.tsx'
 import { SettingsPanel } from './components/SettingsPanel.tsx'
 import { AdminPanel } from './components/AdminPanel.tsx'
 import {
-  fetchHistory, fetchSession, deleteSession,
+  fetchHistory, fetchSession, deleteSession, updateSessionTitle,
   fetchFiles, deleteFile, uploadFile, getMe, hasUsers, logout,
 } from './lib/api.ts'
-import type { AuthUser } from './lib/api.ts'
+import type { AuthUser, Message } from './lib/api.ts'
 import { useChat } from './hooks/useChat.ts'
 
 type AuthView = 'loading' | 'login' | 'register'
@@ -37,6 +37,9 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [showAdmin, setShowAdmin] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [exportOpen, setExportOpen] = useState(false)
+  const [editingTitle, setEditingTitle] = useState(false)
+  const [titleDraft, setTitleDraft] = useState('')
 
   const { messages, setMessages, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, cancel, reset } = useChat({
     sessionId,
@@ -99,6 +102,7 @@ export default function App() {
 
   function loadSession(id: string, title: string) {
     setSessionId(id)
+    setEditingTitle(false)
     reset()
     setView('chat')
     fetchSession(id).then(setMessages).catch(() => {})
@@ -107,8 +111,47 @@ export default function App() {
 
   function newChat() {
     setSessionId(undefined)
+    setEditingTitle(false)
     reset()
     setView('chat')
+  }
+
+  function buildSessionMarkdown(msgs: Message[], title: string, scope: 'full' | 'last'): string {
+    const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+    const header = `# ${title}\n_Exported: ${date}_\n\n`
+    const subset = scope === 'last' ? msgs.filter(m => m.role === 'assistant').slice(-1) : msgs
+    const body = subset.map(m => {
+      const label = m.role === 'user' ? '**User**' : '**Assistant**'
+      let block = `${label}\n\n${m.content}`
+      if (m.sources?.length) {
+        block += '\n\n**Sources**\n' + m.sources.map((s, i) => `${i + 1}. [${s.title}](${s.url})`).join('\n')
+      }
+      return block
+    }).join('\n\n---\n\n')
+    return header + body
+  }
+
+  function handleTitleSave() {
+    const trimmed = titleDraft.trim()
+    if (!trimmed || !sessionId) { setEditingTitle(false); return }
+    setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, title: trimmed } : s))
+    setEditingTitle(false)
+    updateSessionTitle(sessionId, trimmed).catch(() => {})
+  }
+
+  function handleExport(scope: 'full' | 'last') {
+    const title = sessions.find(s => s.id === sessionId)?.title ?? 'chat'
+    const content = buildSessionMarkdown(messages, title, scope)
+    const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50)
+    const filename = scope === 'last' ? `${slug}-last-answer.md` : `${slug}.md`
+    const blob = new Blob([content], { type: 'text/markdown' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
+    setExportOpen(false)
   }
 
   function handleDeleteSession(id: string, e: React.MouseEvent) {
@@ -347,6 +390,34 @@ export default function App() {
           </div>
         ) : (
           <>
+            {sessionId && (() => {
+              const title = sessions.find(s => s.id === sessionId)?.title ?? ''
+              return (
+                <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-800 min-h-[2.5rem]">
+                  {editingTitle ? (
+                    <input
+                      autoFocus
+                      value={titleDraft}
+                      onChange={e => setTitleDraft(e.target.value)}
+                      onBlur={handleTitleSave}
+                      onKeyDown={e => { if (e.key === 'Enter') handleTitleSave(); if (e.key === 'Escape') setEditingTitle(false) }}
+                      className="flex-1 bg-gray-800 border border-gray-600 rounded px-2 py-0.5 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
+                    />
+                  ) : (
+                    <>
+                      <span className="flex-1 text-sm text-gray-400 truncate">{title}</span>
+                      <button
+                        onClick={() => { setTitleDraft(title); setEditingTitle(true) }}
+                        className="text-xs text-gray-600 hover:text-gray-400 shrink-0"
+                        aria-label="Edit title"
+                      >
+                        ✎
+                      </button>
+                    </>
+                  )}
+                </div>
+              )
+            })()}
             {messages.length === 0 && !streaming ? (
               <div className="flex flex-col items-center justify-center flex-1 gap-3 text-gray-500">
                 <img src="/logo.webp" alt="Queriocity" className="w-24 sm:w-32 md:w-40 h-auto" />
@@ -361,6 +432,29 @@ export default function App() {
             )}
             {answerTime && !busy && (
               <div className="px-4 py-1 text-xs text-gray-500">{answerTime}</div>
+            )}
+            {sessionId && messages.length > 0 && !busy && (
+              <div className="px-4 py-1 relative flex items-center">
+                <div className="relative">
+                  <button
+                    onClick={() => setExportOpen(o => !o)}
+                    onBlur={e => { if (!e.currentTarget.parentElement?.contains(e.relatedTarget)) setExportOpen(false) }}
+                    className="text-xs text-gray-600 hover:text-gray-400 flex items-center gap-0.5"
+                  >
+                    Export ▾
+                  </button>
+                  {exportOpen && (
+                    <div className="absolute bottom-full mb-1 left-0 bg-gray-800 border border-gray-700 rounded shadow-lg z-10 py-1 min-w-max">
+                      <button onMouseDown={() => handleExport('full')} className="block w-full text-left px-4 py-2 text-xs text-gray-300 hover:bg-gray-700">
+                        Download full chat (.md)
+                      </button>
+                      <button onMouseDown={() => handleExport('last')} className="block w-full text-left px-4 py-2 text-xs text-gray-300 hover:bg-gray-700">
+                        Download last answer (.md)
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
             )}
             <div ref={bottomRef} />
             {focusMode === 'thorough' && currentUser?.settings?.useThinking && (

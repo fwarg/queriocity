@@ -152,6 +152,14 @@ export async function fetchSession(id: string): Promise<Message[]> {
   }))
 }
 
+export async function updateSessionTitle(id: string, title: string): Promise<void> {
+  await fetch(`${BASE}/history/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title }),
+  })
+}
+
 export async function deleteSession(id: string): Promise<void> {
   await fetch(`${BASE}/history/${id}`, { method: 'DELETE' })
 }
