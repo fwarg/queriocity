@@ -1,6 +1,8 @@
 import { useState, useCallback, memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import remarkMath from 'remark-math'
+import rehypeKatex from 'rehype-katex'
 import { ExternalLink } from 'lucide-react'
 import type { Message } from '../lib/api.ts'
 
@@ -157,7 +159,7 @@ function MessageItem({ msg }: { msg: Message }) {
         {msg.role === 'assistant' ? (
           <>
             {msg.thinking && <ThinkingBlock content={msg.thinking} />}
-            <ReactMarkdown components={mdComponents} remarkPlugins={[remarkGfm]}>
+            <ReactMarkdown components={mdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
               {msg.sources?.length ? insertCitationLinks(msg.content, msg.sources) : msg.content}
             </ReactMarkdown>
           </>
@@ -182,7 +184,7 @@ export const MessageList = memo(function MessageList({ messages, streaming, stre
             {streamingThinking && <ThinkingBlock content={streamingThinking} open />}
             {streaming && (
               <>
-                <ReactMarkdown components={baseMdComponents} remarkPlugins={[remarkGfm]}>{streaming}</ReactMarkdown>
+                <ReactMarkdown components={baseMdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{streaming}</ReactMarkdown>
                 <span className="animate-pulse">▋</span>
               </>
             )}
