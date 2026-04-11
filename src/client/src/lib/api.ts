@@ -8,6 +8,8 @@ export interface AuthUser {
   settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; fontSize?: number }
 }
 
+export interface Space { id: string; name: string; chatCount: number; createdAt: number }
+
 export interface Message {
   role: 'user' | 'assistant'
   content: string
@@ -164,9 +166,43 @@ export async function deleteSession(id: string): Promise<void> {
   await fetch(`${BASE}/history/${id}`, { method: 'DELETE' })
 }
 
-export async function fetchHistory() {
+export async function fetchHistory(): Promise<Array<{ id: string; title: string; spaceId: string | null }>> {
   const res = await fetch(`${BASE}/history`)
   return res.json()
+}
+
+export async function fetchSpaces(): Promise<Space[]> {
+  const res = await fetch(`${BASE}/spaces`)
+  return res.json()
+}
+
+export async function createSpace(name: string): Promise<Space> {
+  const res = await fetch(`${BASE}/spaces`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+  return res.json()
+}
+
+export async function updateSpace(id: string, name: string): Promise<void> {
+  await fetch(`${BASE}/spaces/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+}
+
+export async function deleteSpace(id: string): Promise<void> {
+  await fetch(`${BASE}/spaces/${id}`, { method: 'DELETE' })
+}
+
+export async function assignChatToSpace(chatId: string, spaceId: string | null): Promise<void> {
+  await fetch(`${BASE}/history/${chatId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ spaceId }),
+  })
 }
 
 export async function extractFileForContext(file: File): Promise<{ filename: string; content: string }> {
