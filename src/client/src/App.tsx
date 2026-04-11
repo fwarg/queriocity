@@ -142,10 +142,11 @@ export default function App() {
     })
   }
 
-  function newChat() {
+  function newChat(inSpaceId?: string) {
     setSessionId(undefined)
     setEditingTitle(false)
     reset()
+    setCurrentSpaceId(inSpaceId ?? null)
     setView('chat')
   }
 
@@ -519,6 +520,12 @@ export default function App() {
                     </button>
                   </h2>
                 )}
+                <button
+                  onClick={() => newChat(currentSpaceId!)}
+                  className="ml-auto px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-sm font-medium whitespace-nowrap"
+                >
+                  + New chat
+                </button>
               </div>
               {/* Memory section */}
               <div className="border border-gray-800 rounded-lg p-3">
