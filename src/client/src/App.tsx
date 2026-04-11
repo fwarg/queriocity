@@ -8,12 +8,14 @@ import { AdminPanel } from './components/AdminPanel.tsx'
 import {
   fetchHistory, fetchSession, deleteSession, updateSessionTitle,
   fetchFiles, deleteFile, uploadFile, getMe, hasUsers, logout,
+  fetchSpaces, createSpace, updateSpace, deleteSpace, assignChatToSpace,
 } from './lib/api.ts'
-import type { AuthUser, Message } from './lib/api.ts'
+import type { AuthUser, Message, Space } from './lib/api.ts'
 import { useChat } from './hooks/useChat.ts'
 
 type AuthView = 'loading' | 'login' | 'register'
-type MainView = 'chat' | 'chats' | 'files'
+type MainView = 'chat' | 'chats' | 'files' | 'spaces'
+type Session = { id: string; title: string; spaceId: string | null }
 
 type UploadedFile = { id: string; filename: string; mimeType: string; size: number; createdAt: number }
 
@@ -30,9 +32,16 @@ export default function App() {
 
   const [focusMode, setFocusMode] = useState<'flash' | 'fast' | 'balanced' | 'thorough'>('balanced')
   const [sessionId, setSessionId] = useState<string | undefined>()
-  const [sessions, setSessions] = useState<Array<{ id: string; title: string }>>([])
+  const [sessions, setSessions] = useState<Session[]>([])
   const [sessionSearch, setSessionSearch] = useState('')
   const [files, setFiles] = useState<UploadedFile[]>([])
+  const [spaces, setSpaces] = useState<Space[]>([])
+  const [currentSpaceId, setCurrentSpaceId] = useState<string | null>(null)
+  const [editingSpaceId, setEditingSpaceId] = useState<string | null>(null)
+  const [spaceDraft, setSpaceDraft] = useState('')
+  const [newSpaceOpen, setNewSpaceOpen] = useState(false)
+  const [newSpaceDraft, setNewSpaceDraft] = useState('')
+  const [spacePickerOpen, setSpacePickerOpen] = useState<string | null>(null)
   const [view, setView] = useState<MainView>('chat')
   const [showSettings, setShowSettings] = useState(false)
   const [showAdmin, setShowAdmin] = useState(false)
@@ -46,7 +55,7 @@ export default function App() {
     focusMode,
     onSessionCreated: (id, title) => {
       setSessionId(id)
-      setSessions(prev => prev.some(s => s.id === id) ? prev : [{ id, title }, ...prev])
+      setSessions(prev => prev.some(s => s.id === id) ? prev : [{ id, title, spaceId: null }, ...prev])
     },
   })
 
@@ -71,6 +80,7 @@ export default function App() {
         setAuthView('loading')
         fetchHistory().then(setSessions).catch(() => {})
         fetchFiles().then(setFiles).catch(() => {})
+        fetchSpaces().then(setSpaces).catch(() => {})
       } else if (token) {
         setAuthView('register')
       } else {
@@ -88,6 +98,7 @@ export default function App() {
     setAuthView('loading')
     fetchHistory().then(setSessions).catch(() => {})
     fetchFiles().then(setFiles).catch(() => {})
+    fetchSpaces().then(setSpaces).catch(() => {})
   }
 
   async function handleLogout() {
@@ -95,7 +106,9 @@ export default function App() {
     setCurrentUser(null)
     setSessions([])
     setFiles([])
+    setSpaces([])
     setMessages([])
+    setCurrentSpaceId(null)
     setAuthView('login')
   }
 
@@ -106,7 +119,10 @@ export default function App() {
     reset()
     setView('chat')
     fetchSession(id).then(setMessages).catch(() => {})
-    setSessions(prev => [{ id, title }, ...prev.filter(s => s.id !== id)])
+    setSessions(prev => {
+      const existing = prev.find(s => s.id === id)
+      return [{ id, title, spaceId: existing?.spaceId ?? null }, ...prev.filter(s => s.id !== id)]
+    })
   }
 
   function newChat() {
@@ -161,7 +177,13 @@ export default function App() {
   function handleDeleteSession(id: string, e: React.MouseEvent) {
     e.stopPropagation()
     deleteSession(id).then(() => {
-      setSessions(prev => prev.filter(x => x.id !== id))
+      setSessions(prev => {
+        const session = prev.find(s => s.id === id)
+        if (session?.spaceId) {
+          setSpaces(sps => sps.map(sp => sp.id === session.spaceId ? { ...sp, chatCount: Math.max(0, sp.chatCount - 1) } : sp))
+        }
+        return prev.filter(x => x.id !== id)
+      })
       if (sessionId === id) newChat()
     }).catch(() => setStatus('Failed to delete chat.'))
   }
@@ -169,6 +191,45 @@ export default function App() {
   function handleDeleteFile(id: string, e: React.MouseEvent) {
     e.stopPropagation()
     deleteFile(id).then(() => setFiles(prev => prev.filter(f => f.id !== id))).catch(() => {})
+  }
+
+  function handleCreateSpace() {
+    const name = newSpaceDraft.trim()
+    if (!name) { setNewSpaceOpen(false); return }
+    createSpace(name).then(s => {
+      setSpaces(prev => [...prev, s])
+      setNewSpaceDraft('')
+      setNewSpaceOpen(false)
+    }).catch(() => {})
+  }
+
+  function handleDeleteSpace(id: string, e: React.MouseEvent) {
+    e.stopPropagation()
+    deleteSpace(id).then(() => {
+      setSpaces(prev => prev.filter(s => s.id !== id))
+      setSessions(prev => prev.map(s => s.spaceId === id ? { ...s, spaceId: null } : s))
+      if (currentSpaceId === id) setCurrentSpaceId(null)
+    }).catch(() => {})
+  }
+
+  function handleSpaceRenameSave(id: string) {
+    const name = spaceDraft.trim()
+    setEditingSpaceId(null)
+    if (!name) return
+    setSpaces(prev => prev.map(s => s.id === id ? { ...s, name } : s))
+    updateSpace(id, name).catch(() => {})
+  }
+
+  function handleAssignToSpace(chatId: string, spaceId: string | null) {
+    const prevSpaceId = sessions.find(s => s.id === chatId)?.spaceId ?? null
+    setSessions(prev => prev.map(s => s.id === chatId ? { ...s, spaceId } : s))
+    setSpaces(prev => prev.map(sp => {
+      if (sp.id === prevSpaceId) return { ...sp, chatCount: Math.max(0, sp.chatCount - 1) }
+      if (sp.id === spaceId) return { ...sp, chatCount: sp.chatCount + 1 }
+      return sp
+    }))
+    setSpacePickerOpen(null)
+    assignChatToSpace(chatId, spaceId).catch(() => {})
   }
 
   const kbFileRef = useRef<HTMLInputElement>(null)
@@ -270,6 +331,12 @@ export default function App() {
         >
           Files ({files.length})
         </button>
+        <button
+          onClick={() => { setView(v => v === 'spaces' ? 'chat' : 'spaces'); setCurrentSpaceId(null); setSidebarOpen(false) }}
+          className={`w-full text-left px-3 py-2 rounded text-sm font-medium ${view === 'spaces' ? 'bg-indigo-700 text-white' : 'text-indigo-400 hover:bg-gray-800'}`}
+        >
+          Spaces ({spaces.length})
+        </button>
         <div className="border-t border-gray-800 my-1" />
         {sessions.length > 5 && (
           <input
@@ -321,28 +388,204 @@ export default function App() {
           <span className="font-semibold text-white text-sm">Queriocity</span>
         </div>
         {view === 'chats' ? (
-          <div className="flex flex-col flex-1 overflow-y-auto p-6 gap-3">
+          <div className="flex flex-col flex-1 overflow-y-auto p-6 gap-3" onClick={() => setSpacePickerOpen(null)}>
             <h2 className="text-lg font-semibold text-gray-200 mb-2">Chats</h2>
             {sessions.length === 0 ? (
               <p className="text-gray-500 text-sm">No saved chats yet.</p>
-            ) : sessions.map(s => (
-              <div key={s.id} className="flex items-center gap-2 group">
-                <button
-                  onClick={() => loadSession(s.id, s.title)}
-                  className="flex-1 text-left px-4 py-3 rounded-lg bg-gray-800 hover:bg-gray-700 text-sm text-gray-100"
-                >
-                  {s.title}
-                </button>
-                <button
-                  onClick={(e) => handleDeleteSession(s.id, e)}
-                  className="px-2 py-2 text-gray-600 hover:text-red-400 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
-                  aria-label={`Delete "${s.title}"`}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
+            ) : sessions.map(s => {
+              const spaceName = s.spaceId ? spaces.find(sp => sp.id === s.spaceId)?.name : null
+              return (
+                <div key={s.id} className="flex items-center gap-2 group relative">
+                  <button
+                    onClick={() => loadSession(s.id, s.title)}
+                    className="flex-1 text-left px-4 py-3 rounded-lg bg-gray-800 hover:bg-gray-700 text-sm text-gray-100"
+                  >
+                    {s.title}
+                  </button>
+                  {spaces.length > 0 && (
+                    <div className="relative shrink-0">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setSpacePickerOpen(prev => prev === s.id ? null : s.id) }}
+                        className={`px-2 py-1 rounded text-xs transition-opacity ${spaceName ? 'text-indigo-400 bg-indigo-900/40' : 'text-gray-600 hover:text-gray-400 md:opacity-0 md:group-hover:opacity-100'}`}
+                        title="Move to space"
+                      >
+                        {spaceName ?? '⊡'}
+                      </button>
+                      {spacePickerOpen === s.id && (
+                        <div className="absolute right-0 top-full mt-1 z-10 bg-gray-800 border border-gray-700 rounded shadow-lg min-w-36 py-1" onClick={e => e.stopPropagation()}>
+                          {spaces.map(sp => (
+                            <button
+                              key={sp.id}
+                              onClick={() => handleAssignToSpace(s.id, sp.id)}
+                              className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-700 ${s.spaceId === sp.id ? 'text-indigo-400' : 'text-gray-300'}`}
+                            >
+                              {sp.name}
+                            </button>
+                          ))}
+                          {s.spaceId && (
+                            <button
+                              onClick={() => handleAssignToSpace(s.id, null)}
+                              className="w-full text-left px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-700 hover:text-red-400 border-t border-gray-700 mt-1 pt-1"
+                            >
+                              Remove from space
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <button
+                    onClick={(e) => handleDeleteSession(s.id, e)}
+                    className="px-2 py-2 text-gray-600 hover:text-red-400 md:opacity-0 md:group-hover:opacity-100 transition-opacity shrink-0"
+                    aria-label={`Delete "${s.title}"`}
+                  >
+                    ×
+                  </button>
+                </div>
+              )
+            })}
           </div>
+        ) : view === 'spaces' ? (
+          currentSpaceId ? (
+            <div className="flex flex-col flex-1 overflow-y-auto p-6 gap-3">
+              <div className="flex items-center gap-3 mb-2">
+                <button
+                  onClick={() => setCurrentSpaceId(null)}
+                  className="text-gray-500 hover:text-gray-300 text-sm"
+                >
+                  ← Spaces
+                </button>
+                {editingSpaceId === currentSpaceId ? (
+                  <input
+                    autoFocus
+                    type="text"
+                    value={spaceDraft}
+                    onChange={e => setSpaceDraft(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') handleSpaceRenameSave(currentSpaceId); if (e.key === 'Escape') setEditingSpaceId(null) }}
+                    onBlur={() => handleSpaceRenameSave(currentSpaceId)}
+                    className="text-lg font-semibold bg-transparent border-b border-indigo-500 text-gray-100 focus:outline-none"
+                  />
+                ) : (
+                  <h2 className="text-lg font-semibold text-gray-200 flex items-center gap-2">
+                    {spaces.find(s => s.id === currentSpaceId)?.name ?? ''}
+                    <button
+                      onClick={() => { setSpaceDraft(spaces.find(s => s.id === currentSpaceId)?.name ?? ''); setEditingSpaceId(currentSpaceId) }}
+                      className="text-gray-600 hover:text-gray-400 text-sm"
+                      aria-label="Rename space"
+                    >
+                      ✎
+                    </button>
+                  </h2>
+                )}
+              </div>
+              {(() => {
+                const spaceChats = sessions.filter(s => s.spaceId === currentSpaceId)
+                const filtered = spaceChats.filter(s => !sessionSearch || s.title.toLowerCase().includes(sessionSearch.toLowerCase()))
+                return (
+                  <>
+                    <input
+                      type="search"
+                      placeholder="Search chats…"
+                      value={sessionSearch}
+                      onChange={e => setSessionSearch(e.target.value)}
+                      className="px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-300 focus:outline-none focus:border-blue-500"
+                    />
+                    {filtered.length === 0 ? (
+                      <p className="text-gray-500 text-sm">{spaceChats.length === 0 ? 'No chats in this space yet.' : 'No chats match your search.'}</p>
+                    ) : filtered.map(s => {
+                const spaceName = spaces.find(sp => sp.id === s.spaceId)?.name ?? null
+                return (
+                  <div key={s.id} className="flex items-center gap-2 group">
+                    <button
+                      onClick={() => loadSession(s.id, s.title)}
+                      className="flex-1 text-left px-4 py-3 rounded-lg bg-gray-800 hover:bg-gray-700 text-sm text-gray-100"
+                    >
+                      {s.title}
+                    </button>
+                    <div className="relative shrink-0">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setSpacePickerOpen(prev => prev === s.id ? null : s.id) }}
+                        className="px-2 py-1 rounded text-xs text-indigo-400 bg-indigo-900/40 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
+                        title="Move to space"
+                      >
+                        {spaceName}
+                      </button>
+                      {spacePickerOpen === s.id && (
+                        <div className="absolute right-0 top-full mt-1 z-10 bg-gray-800 border border-gray-700 rounded shadow-lg min-w-36 py-1" onClick={e => e.stopPropagation()}>
+                          {spaces.map(sp => (
+                            <button
+                              key={sp.id}
+                              onClick={() => handleAssignToSpace(s.id, sp.id)}
+                              className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-700 ${s.spaceId === sp.id ? 'text-indigo-400' : 'text-gray-300'}`}
+                            >
+                              {sp.name}
+                            </button>
+                          ))}
+                          <button
+                            onClick={() => handleAssignToSpace(s.id, null)}
+                            className="w-full text-left px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-700 hover:text-red-400 border-t border-gray-700 mt-1 pt-1"
+                          >
+                            Remove from space
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+                  </>
+                )
+              })()}
+            </div>
+          ) : (
+            <div className="flex flex-col flex-1 overflow-y-auto p-6 gap-3">
+              <div className="flex items-center justify-between mb-2">
+                <h2 className="text-lg font-semibold text-gray-200">Spaces</h2>
+                {!newSpaceOpen && (
+                  <button
+                    onClick={() => setNewSpaceOpen(true)}
+                    className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-sm font-medium whitespace-nowrap"
+                  >
+                    + New space
+                  </button>
+                )}
+              </div>
+              {newSpaceOpen && (
+                <div className="flex gap-2 items-center">
+                  <input
+                    autoFocus
+                    type="text"
+                    value={newSpaceDraft}
+                    onChange={e => setNewSpaceDraft(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') handleCreateSpace(); if (e.key === 'Escape') { setNewSpaceOpen(false); setNewSpaceDraft('') } }}
+                    onBlur={handleCreateSpace}
+                    placeholder="Space name…"
+                    className="flex-1 px-3 py-2 rounded bg-gray-800 border border-gray-700 text-sm text-gray-200 focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+              )}
+              {spaces.length === 0 && !newSpaceOpen ? (
+                <p className="text-gray-500 text-sm">No spaces yet.</p>
+              ) : spaces.map(sp => (
+                <div key={sp.id} className="flex items-center gap-2 group">
+                  <button
+                    onClick={() => setCurrentSpaceId(sp.id)}
+                    className="flex-1 text-left px-4 py-3 rounded-lg bg-gray-800 hover:bg-gray-700 text-sm text-gray-100"
+                  >
+                    {sp.name}
+                    <span className="ml-2 text-xs text-gray-500">{sp.chatCount} chat{sp.chatCount !== 1 ? 's' : ''}</span>
+                  </button>
+                  <button
+                    onClick={(e) => handleDeleteSpace(sp.id, e)}
+                    className="px-2 py-2 text-gray-600 hover:text-red-400 md:opacity-0 md:group-hover:opacity-100 transition-opacity shrink-0"
+                    aria-label={`Delete space "${sp.name}"`}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )
         ) : view === 'files' ? (
           <div className="flex flex-col flex-1 overflow-y-auto p-6 gap-4">
             <div className="flex items-start justify-between gap-4">
@@ -410,6 +653,43 @@ export default function App() {
                   ) : (
                     <>
                       <span className="flex-1 text-sm text-gray-400 truncate">{title}</span>
+                      {spaces.length > 0 && sessionId && (() => {
+                        const session = sessions.find(s => s.id === sessionId)
+                        const spaceName = session?.spaceId ? spaces.find(sp => sp.id === session.spaceId)?.name : null
+                        const pickerId = `heading-${sessionId}`
+                        return (
+                          <div className="relative shrink-0">
+                            <button
+                              onClick={() => setSpacePickerOpen(prev => prev === pickerId ? null : pickerId)}
+                              className={`text-xs px-2 py-0.5 rounded ${spaceName ? 'text-indigo-400 bg-indigo-900/40' : 'text-gray-600 hover:text-gray-400'}`}
+                              title="Assign to space"
+                            >
+                              {spaceName ?? '⊡'}
+                            </button>
+                            {spacePickerOpen === pickerId && (
+                              <div className="absolute right-0 top-full mt-1 z-10 bg-gray-800 border border-gray-700 rounded shadow-lg min-w-36 py-1">
+                                {spaces.map(sp => (
+                                  <button
+                                    key={sp.id}
+                                    onClick={() => { handleAssignToSpace(sessionId, sp.id); setSpacePickerOpen(null) }}
+                                    className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-700 ${session?.spaceId === sp.id ? 'text-indigo-400' : 'text-gray-300'}`}
+                                  >
+                                    {sp.name}
+                                  </button>
+                                ))}
+                                {session?.spaceId && (
+                                  <button
+                                    onClick={() => { handleAssignToSpace(sessionId, null); setSpacePickerOpen(null) }}
+                                    className="w-full text-left px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-700 hover:text-red-400 border-t border-gray-700 mt-1 pt-1"
+                                  >
+                                    Remove from space
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })()}
                       <button
                         onClick={() => { setTitleDraft(title); setEditingTitle(true) }}
                         className="text-xs text-gray-600 hover:text-gray-400 shrink-0"

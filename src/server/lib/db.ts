@@ -39,12 +39,21 @@ export const invites = sqliteTable('invites', {
   usedAt: integer('used_at', { mode: 'timestamp' }),
 })
 
+export const spaces = sqliteTable('spaces', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+})
+
 export const chatSessions = sqliteTable('chat_sessions', {
   id: text('id').primaryKey(),
   title: text('title').notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  spaceId: text('space_id').references(() => spaces.id, { onDelete: 'set null' }),
 })
 
 export const messages = sqliteTable('messages', {
@@ -106,6 +115,13 @@ function initSchema() {
       expires_at INTEGER NOT NULL,
       used_at    INTEGER
     );
+    CREATE TABLE IF NOT EXISTS spaces (
+      id         TEXT PRIMARY KEY,
+      name       TEXT NOT NULL,
+      user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS chat_sessions (
       id         TEXT PRIMARY KEY,
       title      TEXT NOT NULL,
@@ -140,7 +156,14 @@ function initSchema() {
     content  TEXT NOT NULL
   )`)
 
+  // Migration: add space_id column if it doesn't exist yet
+  try {
+    sqlite.run(`ALTER TABLE chat_sessions ADD COLUMN space_id TEXT REFERENCES spaces(id) ON DELETE SET NULL`)
+  } catch {}
+
+  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_spaces_user_id ON spaces(user_id)`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_id ON chat_sessions(user_id)`)
+  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_chat_sessions_space_id ON chat_sessions(space_id)`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_uploaded_files_user_id ON uploaded_files(user_id)`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_file_chunk_meta_file_id ON file_chunk_meta(file_id)`)
