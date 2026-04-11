@@ -124,7 +124,7 @@ export default function App() {
       const label = m.role === 'user' ? '**User**' : '**Assistant**'
       let content = m.content
       if (m.role === 'assistant' && m.sources?.length) {
-        content = content.replace(/\[(\d+)\]/g, (_, n) => `[${n}](#ref-${msgIdx}-${n})`)
+        content = content.replace(/\[(\d+)\]/g, (_, n) => `[\\[${n}\\]](#ref-${msgIdx}-${n})`)
       }
       let block = `${label}\n\n${content}`
       if (m.sources?.length) {
