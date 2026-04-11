@@ -8,7 +8,12 @@ export interface AuthUser {
   settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; fontSize?: number }
 }
 
-export interface Space { id: string; name: string; chatCount: number; createdAt: number }
+export interface Space { id: string; name: string; chatCount: number; memoryCount: number; createdAt: number }
+
+export interface SpaceMemory {
+  id: string; content: string; source: 'tool' | 'extraction' | 'manual'
+  sessionId: string | null; createdAt: number
+}
 
 export interface Message {
   role: 'user' | 'assistant'
@@ -108,11 +113,12 @@ export async function* streamChat(
   focusMode: 'flash' | 'fast' | 'balanced' | 'thorough',
   sessionId?: string,
   signal?: AbortSignal,
+  spaceId?: string,
 ): AsyncGenerator<{ type: string; [k: string]: unknown }> {
   const res = await fetch(`${BASE}/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messages, focusMode, sessionId }),
+    body: JSON.stringify({ messages, focusMode, sessionId, spaceId }),
     signal,
   })
 
@@ -203,6 +209,32 @@ export async function assignChatToSpace(chatId: string, spaceId: string | null):
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ spaceId }),
   })
+}
+
+export async function fetchSpaceMemories(spaceId: string): Promise<SpaceMemory[]> {
+  const res = await fetch(`${BASE}/spaces/${spaceId}/memories`)
+  return res.json()
+}
+
+export async function createSpaceMemory(spaceId: string, content: string): Promise<SpaceMemory> {
+  const res = await fetch(`${BASE}/spaces/${spaceId}/memories`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  })
+  return res.json()
+}
+
+export async function updateSpaceMemory(spaceId: string, memoryId: string, content: string): Promise<void> {
+  await fetch(`${BASE}/spaces/${spaceId}/memories/${memoryId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  })
+}
+
+export async function deleteSpaceMemory(spaceId: string, memoryId: string): Promise<void> {
+  await fetch(`${BASE}/spaces/${spaceId}/memories/${memoryId}`, { method: 'DELETE' })
 }
 
 export async function extractFileForContext(file: File): Promise<{ filename: string; content: string }> {

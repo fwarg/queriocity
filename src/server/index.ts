@@ -9,6 +9,7 @@ import { spacesRouter } from './routes/spaces.ts'
 import { authRouter } from './routes/auth.ts'
 import { adminRouter } from './routes/admin.ts'
 import { usersRouter } from './routes/users.ts'
+import { memoriesRouter } from './routes/memories.ts'
 import { sqlite } from './lib/db.ts'
 
 const app = new Hono()
@@ -22,6 +23,7 @@ app.route('/api/chat', chatRouter)
 app.route('/api/files', filesRouter)
 app.route('/api/history', historyRouter)
 app.route('/api/spaces', spacesRouter)
+app.route('/api/spaces', memoriesRouter)
 app.route('/api/admin', adminRouter)
 app.route('/api/users', usersRouter)
 

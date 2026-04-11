@@ -56,6 +56,16 @@ export const chatSessions = sqliteTable('chat_sessions', {
   spaceId: text('space_id').references(() => spaces.id, { onDelete: 'set null' }),
 })
 
+export const spaceMemories = sqliteTable('space_memories', {
+  id: text('id').primaryKey(),
+  spaceId: text('space_id').notNull().references(() => spaces.id, { onDelete: 'cascade' }),
+  content: text('content').notNull(),
+  source: text('source', { enum: ['tool', 'extraction', 'manual'] }).notNull().default('tool'),
+  sessionId: text('session_id').references(() => chatSessions.id, { onDelete: 'set null' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+})
+
 export const messages = sqliteTable('messages', {
   id: text('id').primaryKey(),
   sessionId: text('session_id').notNull().references(() => chatSessions.id, { onDelete: 'cascade' }),
@@ -145,6 +155,15 @@ function initSchema() {
       size       INTEGER NOT NULL,
       created_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS space_memories (
+      id         TEXT PRIMARY KEY,
+      space_id   TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+      content    TEXT NOT NULL,
+      source     TEXT NOT NULL DEFAULT 'tool' CHECK(source IN ('tool','extraction','manual')),
+      session_id TEXT REFERENCES chat_sessions(id) ON DELETE SET NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
   `)
   sqlite.run(`CREATE VIRTUAL TABLE IF NOT EXISTS file_chunks USING vec0(
     chunk_id TEXT PRIMARY KEY,
@@ -167,6 +186,7 @@ function initSchema() {
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_uploaded_files_user_id ON uploaded_files(user_id)`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_file_chunk_meta_file_id ON file_chunk_meta(file_id)`)
+  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_space_memories_space_id ON space_memories(space_id)`)
 }
 
 initSchema()

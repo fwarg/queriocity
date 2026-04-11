@@ -15,6 +15,7 @@ import { webSearch, webSearchMulti, type SearchResult } from '../lib/searxng.ts'
 import { getFlashModel, getChatModel, getThinkingModelOrFallback } from '../lib/llm.ts'
 import { ThinkExtractor } from '../lib/think-extractor.ts'
 import { rerank, rerankEnabled } from '../lib/reranker.ts'
+import { buildMemoryBlock, extractMemoriesPostHoc } from '../lib/memory.ts'
 
 const FLASH_SYSTEM = `Answer in at most 5 sentences using only your training knowledge. Be direct and factual.
 Do not search the web. If you cannot answer confidently, say so briefly.
@@ -27,6 +28,7 @@ const SESSION_TITLE_MAX = 60
 
 const chatSchema = z.object({
   sessionId: z.string().optional(),
+  spaceId: z.string().optional(),
   messages: z.array(z.object({
     role: z.enum(['user', 'assistant']),
     content: z.string(),
@@ -40,7 +42,8 @@ chatRouter.use('*', authMiddleware)
 
 chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
   const userId = c.get('userId') as string
-  const { sessionId, messages: msgs, focusMode } = c.req.valid('json')
+  const { sessionId, spaceId, messages: msgs, focusMode } = c.req.valid('json')
+  const sid = sessionId ?? randomUUID()
 
   const abortSignal = c.req.raw.signal
   const lastUser = [...msgs].reverse().find(m => m.role === 'user')
@@ -54,16 +57,20 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
   }
 
   if (focusMode === 'flash') {
-    const userRow = await db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get()
+    const [userRow, memoryBlock] = await Promise.all([
+      db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get(),
+      spaceId ? buildMemoryBlock(spaceId) : Promise.resolve(''),
+    ])
     const customPrompt: string | undefined = userRow ? (parseSettings(userRow.settings).customPrompt as string | undefined) : undefined
-    const sid = sessionId ?? randomUUID()
     const t0 = Date.now()
     let fullContent = ''
     return streamSSE(c, async (stream) => {
       const result = streamText({
         model: getFlashModel(),
         abortSignal,
-        system: FLASH_SYSTEM + (customPrompt ? `\n\nAdditional instructions:\n${customPrompt}` : ''),
+        system: FLASH_SYSTEM
+          + (customPrompt ? `\n\nAdditional instructions:\n${customPrompt}` : '')
+          + (memoryBlock ? '\n\n' + memoryBlock : ''),
         messages: msgs,
         maxTokens: FLASH_MAX_TOKENS,
       })
@@ -75,8 +82,9 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
       }
       console.log(`  [flash] done in ${Date.now() - t0}ms, ${fullContent.length} chars`)
       setCached(ck, fullContent)
-      const { title: sessionTitle } = await persistMessage(sid, userId, msgs, fullContent, [])
+      const { title: sessionTitle } = await persistMessage(sid, userId, msgs, fullContent, [], spaceId)
       await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title: sessionTitle, elapsedMs: Date.now() - t0 }) })
+      if (spaceId) extractMemoriesPostHoc(spaceId, sid, lastUser?.content ?? '', fullContent).catch(e => console.error('[memory]', e))
     })
   }
 
@@ -92,11 +100,12 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
 
   const t0 = Date.now()
 
-  // Fetch user settings + file count + reformulate/pre-search in parallel
-  const [userRow, fileCountRow, { initialQueries, initialResults }] = await Promise.all([
+  // Fetch user settings + file count + reformulate/pre-search + memory in parallel
+  const [userRow, fileCountRow, { initialQueries, initialResults }, memoryBlock] = await Promise.all([
     db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get(),
     db.select({ count: sql<number>`count(*)` }).from(uploadedFiles).where(eq(uploadedFiles.userId, userId)).get(),
     runReformulateAndPreSearch(msgsForReformulate, focusMode as 'fast' | 'balanced' | 'thorough', hasAttachment),
+    spaceId ? buildMemoryBlock(spaceId) : Promise.resolve(''),
   ])
   const parsedSettings = parseSettings(userRow?.settings ?? '{}')
   const customPrompt = parsedSettings.customPrompt as string | undefined
@@ -135,7 +144,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
         await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: snippets + '\n\n' }) })
       }
       const researchModel = useThinking ? getThinkingModelOrFallback() : getChatModel()
-      const researcherResult = runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, customPrompt, hasFiles })
+      const researcherResult = runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock })
       const allSources: SearchResult[] = [...(initialResults ?? [])]
       let researcherNotes = ''
       const thoroughExtractor = useThinking ? new ThinkExtractor() : null
@@ -223,7 +232,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
         await stream.writeSSE({ data: JSON.stringify({ type: 'sources', sources: initialResults }) })
       }
 
-      const result = runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, customPrompt, hasFiles })
+      const result = runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock })
       const extractor = showThinking ? new ThinkExtractor() : null
 
       await drainResearcherStream(result, {
@@ -243,11 +252,11 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
     console.log(`  [${focusMode}] done in ${Date.now() - t0}ms, ${fullContent.length} chars`)
 
     // Persist to DB
-    const sid = sessionId ?? randomUUID()
-    const { title: sessionTitle } = await persistMessage(sid, userId, msgs, fullContent, sources)
+    const { title: sessionTitle } = await persistMessage(sid, userId, msgs, fullContent, sources, spaceId)
 
     setCached(ck, fullContent)
     await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title: sessionTitle, elapsedMs: Date.now() - t0 }) })
+    if (spaceId) extractMemoriesPostHoc(spaceId, sid, lastUser?.content ?? '', fullContent).catch(e => console.error('[memory]', e))
   })
 })
 
@@ -281,6 +290,8 @@ async function drainResearcherStream(
         const queries: string[] = part.args.queries ?? (part.args.query ? [part.args.query] : [])
         await emitThinking(`🔍 Searching: ${queries.map((q: string) => `"${q}"`).join(', ')}\n`)
       }
+    } else if (part.type === 'tool-call' && part.toolName === 'save_to_memory') {
+      await stream.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Saving to memory…' }) })
     } else if (part.type === 'tool-result' && part.toolName === 'web_search') {
       const results = part.result as SearchResult[]
       await onSources(results)
@@ -354,13 +365,14 @@ async function persistMessage(
   msgs: Array<{ role: 'user' | 'assistant'; content: string }>,
   assistantContent: string,
   sources: unknown[],
+  spaceId?: string,
 ): Promise<{ title: string }> {
   const now = new Date()
   const title = msgs.find(m => m.role === 'user')?.content.slice(0, SESSION_TITLE_MAX) ?? 'Chat'
   const lastUser = [...msgs].reverse().find(m => m.role === 'user')
 
   await db.transaction(async (tx) => {
-    await tx.insert(chatSessions).values({ id: sessionId, title, createdAt: now, updatedAt: now, userId })
+    await tx.insert(chatSessions).values({ id: sessionId, title, createdAt: now, updatedAt: now, userId, spaceId: spaceId ?? null })
       .onConflictDoNothing()
     if (lastUser) {
       await tx.insert(messages).values({ id: randomUUID(), sessionId, role: 'user', content: lastUser.content, createdAt: now })

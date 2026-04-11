@@ -9,8 +9,9 @@ import {
   fetchHistory, fetchSession, deleteSession, updateSessionTitle,
   fetchFiles, deleteFile, uploadFile, getMe, hasUsers, logout,
   fetchSpaces, createSpace, updateSpace, deleteSpace, assignChatToSpace,
+  fetchSpaceMemories, createSpaceMemory, updateSpaceMemory, deleteSpaceMemory,
 } from './lib/api.ts'
-import type { AuthUser, Message, Space } from './lib/api.ts'
+import type { AuthUser, Message, Space, SpaceMemory } from './lib/api.ts'
 import { useChat } from './hooks/useChat.ts'
 
 type AuthView = 'loading' | 'login' | 'register'
@@ -42,6 +43,11 @@ export default function App() {
   const [newSpaceOpen, setNewSpaceOpen] = useState(false)
   const [newSpaceDraft, setNewSpaceDraft] = useState('')
   const [spacePickerOpen, setSpacePickerOpen] = useState<string | null>(null)
+  const [spaceMemories, setSpaceMemories] = useState<SpaceMemory[]>([])
+  const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null)
+  const [memoryDraft, setMemoryDraft] = useState('')
+  const [newMemoryOpen, setNewMemoryOpen] = useState(false)
+  const [newMemoryDraft, setNewMemoryDraft] = useState('')
   const [view, setView] = useState<MainView>('chat')
   const [showSettings, setShowSettings] = useState(false)
   const [showAdmin, setShowAdmin] = useState(false)
@@ -50,12 +56,18 @@ export default function App() {
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
 
+  const activeSpaceId = sessionId
+    ? sessions.find(s => s.id === sessionId)?.spaceId ?? null
+    : currentSpaceId
+
   const { messages, setMessages, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, cancel, reset } = useChat({
     sessionId,
     focusMode,
+    spaceId: activeSpaceId ?? undefined,
     onSessionCreated: (id, title) => {
       setSessionId(id)
-      setSessions(prev => prev.some(s => s.id === id) ? prev : [{ id, title, spaceId: null }, ...prev])
+      setSessions(prev => prev.some(s => s.id === id) ? prev : [{ id, title, spaceId: activeSpaceId }, ...prev])
+      if (activeSpaceId) setSpaces(sps => sps.map(sp => sp.id === activeSpaceId ? { ...sp, chatCount: sp.chatCount + 1 } : sp))
     },
   })
 
@@ -88,6 +100,11 @@ export default function App() {
       }
     })
   }, [])
+
+  useEffect(() => {
+    if (currentSpaceId) fetchSpaceMemories(currentSpaceId).then(setSpaceMemories).catch(() => {})
+    else setSpaceMemories([])
+  }, [currentSpaceId])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -230,6 +247,31 @@ export default function App() {
     }))
     setSpacePickerOpen(null)
     assignChatToSpace(chatId, spaceId).catch(() => {})
+  }
+
+  function handleCreateMemory() {
+    const content = newMemoryDraft.trim()
+    if (!content || !currentSpaceId) { setNewMemoryOpen(false); return }
+    createSpaceMemory(currentSpaceId, content).then(m => {
+      setSpaceMemories(prev => [m, ...prev])
+      setNewMemoryDraft('')
+      setNewMemoryOpen(false)
+    }).catch(() => {})
+  }
+
+  function handleDeleteMemory(id: string) {
+    if (!currentSpaceId) return
+    deleteSpaceMemory(currentSpaceId, id).then(() => {
+      setSpaceMemories(prev => prev.filter(m => m.id !== id))
+    }).catch(() => {})
+  }
+
+  function handleMemorySave(id: string) {
+    const content = memoryDraft.trim()
+    setEditingMemoryId(null)
+    if (!content || !currentSpaceId) return
+    setSpaceMemories(prev => prev.map(m => m.id === id ? { ...m, content } : m))
+    updateSpaceMemory(currentSpaceId, id, content).catch(() => {})
   }
 
   const kbFileRef = useRef<HTMLInputElement>(null)
@@ -478,6 +520,61 @@ export default function App() {
                   </h2>
                 )}
               </div>
+              {/* Memory section */}
+              <div className="border border-gray-800 rounded-lg p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-sm font-medium text-gray-400">Memory ({spaceMemories.length})</h3>
+                  {!newMemoryOpen && (
+                    <button onClick={() => setNewMemoryOpen(true)} className="text-xs text-blue-400 hover:text-blue-300">+ Add</button>
+                  )}
+                </div>
+                {newMemoryOpen && (
+                  <div className="mb-2">
+                    <input
+                      autoFocus
+                      type="text"
+                      value={newMemoryDraft}
+                      onChange={e => setNewMemoryDraft(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') handleCreateMemory(); if (e.key === 'Escape') { setNewMemoryOpen(false); setNewMemoryDraft('') } }}
+                      onBlur={handleCreateMemory}
+                      placeholder="Add a fact…"
+                      className="w-full px-2 py-1.5 rounded bg-gray-800 border border-gray-700 text-xs text-gray-200 focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                )}
+                {spaceMemories.length === 0 && !newMemoryOpen ? (
+                  <p className="text-xs text-gray-600">No memories yet. The assistant will save noteworthy facts from conversations in this space.</p>
+                ) : spaceMemories.map(m => (
+                  <div key={m.id} className="flex items-start gap-1.5 group py-1">
+                    {editingMemoryId === m.id ? (
+                      <input
+                        autoFocus
+                        type="text"
+                        value={memoryDraft}
+                        onChange={e => setMemoryDraft(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') handleMemorySave(m.id); if (e.key === 'Escape') setEditingMemoryId(null) }}
+                        onBlur={() => handleMemorySave(m.id)}
+                        className="flex-1 px-2 py-0.5 rounded bg-gray-800 border border-gray-700 text-xs text-gray-200 focus:outline-none focus:border-blue-500"
+                      />
+                    ) : (
+                      <span
+                        onClick={() => { setMemoryDraft(m.content); setEditingMemoryId(m.id) }}
+                        className="flex-1 text-xs text-gray-300 cursor-pointer hover:text-gray-100"
+                      >
+                        {m.content}
+                      </span>
+                    )}
+                    <span className="text-[10px] text-gray-600 shrink-0 mt-0.5">{m.source === 'tool' ? 'auto' : m.source === 'extraction' ? 'extracted' : 'manual'}</span>
+                    <button
+                      onClick={() => handleDeleteMemory(m.id)}
+                      className="text-gray-700 hover:text-red-400 text-xs shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+
               {(() => {
                 const spaceChats = sessions.filter(s => s.spaceId === currentSpaceId)
                 const filtered = spaceChats.filter(s => !sessionSearch || s.title.toLowerCase().includes(sessionSearch.toLowerCase()))
@@ -573,7 +670,7 @@ export default function App() {
                     className="flex-1 text-left px-4 py-3 rounded-lg bg-gray-800 hover:bg-gray-700 text-sm text-gray-100"
                   >
                     {sp.name}
-                    <span className="ml-2 text-xs text-gray-500">{sp.chatCount} chat{sp.chatCount !== 1 ? 's' : ''}</span>
+                    <span className="ml-2 text-xs text-gray-500">{sp.chatCount} chat{sp.chatCount !== 1 ? 's' : ''}{sp.memoryCount > 0 ? ` · ${sp.memoryCount} memor${sp.memoryCount !== 1 ? 'ies' : 'y'}` : ''}</span>
                   </button>
                   <button
                     onClick={(e) => handleDeleteSpace(sp.id, e)}

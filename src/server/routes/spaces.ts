@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { db, spaces, chatSessions } from '../lib/db.ts'
+import { db, spaces, chatSessions, spaceMemories } from '../lib/db.ts'
 import { eq, and, sql } from 'drizzle-orm'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
@@ -17,12 +17,11 @@ spacesRouter.get('/', async (c) => {
       id: spaces.id,
       name: spaces.name,
       createdAt: spaces.createdAt,
-      chatCount: sql<number>`count(${chatSessions.id})`,
+      chatCount: sql<number>`(SELECT count(*) FROM chat_sessions WHERE space_id = ${spaces.id})`,
+      memoryCount: sql<number>`(SELECT count(*) FROM space_memories WHERE space_id = ${spaces.id})`,
     })
     .from(spaces)
-    .leftJoin(chatSessions, and(eq(chatSessions.spaceId, spaces.id), eq(chatSessions.userId, userId)))
     .where(eq(spaces.userId, userId))
-    .groupBy(spaces.id)
     .orderBy(spaces.createdAt)
   return c.json(rows.map(r => ({ ...r, createdAt: r.createdAt instanceof Date ? Math.floor(r.createdAt.getTime() / 1000) : r.createdAt })))
 })
@@ -33,7 +32,7 @@ spacesRouter.post('/', zValidator('json', z.object({ name: z.string().min(1).max
   const now = new Date()
   const id = randomUUID()
   await db.insert(spaces).values({ id, name, userId, createdAt: now, updatedAt: now })
-  return c.json({ id, name, chatCount: 0, createdAt: Math.floor(now.getTime() / 1000) }, 201)
+  return c.json({ id, name, chatCount: 0, memoryCount: 0, createdAt: Math.floor(now.getTime() / 1000) }, 201)
 })
 
 spacesRouter.patch('/:id', zValidator('json', z.object({ name: z.string().min(1).max(100) })), async (c) => {

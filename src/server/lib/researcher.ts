@@ -3,6 +3,7 @@ import { z } from 'zod'
 import type { LanguageModel } from 'ai'
 import { webSearch, webSearchMulti, type SearchResult } from './searxng.ts'
 import { searchUploads } from './files/uploads-search.ts'
+import { saveMemory } from './memory.ts'
 
 
 export const SYSTEM_PROMPTS = {
@@ -50,15 +51,20 @@ export interface ResearchOptions {
   initialResults?: SearchResult[]
   customPrompt?: string
   hasFiles?: boolean
+  spaceId?: string
+  sessionId?: string
+  memoryBlock?: string
 }
 
-export function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, customPrompt, hasFiles }: ResearchOptions) {
+export function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, customPrompt, hasFiles, spaceId, sessionId, memoryBlock }: ResearchOptions) {
   const { maxSteps, count } = MODE_CONFIG[focusMode]
   const start = performance.now()
   console.log(`  [chat] model=${(model as any).modelId ?? model} focusMode=${focusMode} maxSteps=${maxSteps}`)
 
   let system = `Today's date is ${new Date().toISOString().split('T')[0]}.\n\n` + SYSTEM_PROMPTS[focusMode]
   if (customPrompt?.trim()) system += `\n\nAdditional instructions from the user:\n${customPrompt.trim()}`
+  if (memoryBlock) system += '\n\n' + memoryBlock
+  if (spaceId) system += `\n\nYou have a save_to_memory tool. Use it when the user expresses a preference, makes a decision, or shares context that would be useful in future conversations. Do not save trivial or ephemeral details.`
 
   // Inject pre-executed search results as a fake tool exchange so the model
   // sees them as already done and continues from there. Also note in the system
@@ -116,6 +122,18 @@ export function runResearcher({ messages, focusMode, userId, model, abortSignal,
       description: 'Signal that research is complete. Call this when you have gathered enough information.',
       parameters: z.object({}),
       execute: async () => ({ done: true }),
+    })
+  }
+
+  if (spaceId) {
+    tools.save_to_memory = tool({
+      description: 'Save a noteworthy fact, preference, or decision to the space memory for future conversations. Keep entries concise (1-2 sentences).',
+      parameters: z.object({ fact: z.string().describe('The fact to remember') }),
+      execute: async ({ fact }) => {
+        console.log(`  [memory] save_to_memory tool called: "${fact.slice(0, 80)}"`)
+        await saveMemory(spaceId, fact, 'tool', sessionId)
+        return 'Saved.'
+      },
     })
   }
 
