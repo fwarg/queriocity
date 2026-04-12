@@ -16,6 +16,7 @@ import { getFlashModel, getChatModel, getThinkingModelOrFallback } from '../lib/
 import { ThinkExtractor } from '../lib/think-extractor.ts'
 import { rerank, rerankEnabled } from '../lib/reranker.ts'
 import { buildMemoryBlock, extractMemoriesPostHoc } from '../lib/memory.ts'
+import { indexContents } from '../lib/chat-indexer.ts'
 
 const FLASH_SYSTEM = `Answer in at most 5 sentences using only your training knowledge. Be direct and factual.
 Do not search the web. If you cannot answer confidently, say so briefly.
@@ -89,7 +90,11 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
       if (fullContent.length >= 50) setCached(ck, fullContent)
       const { title: sessionTitle } = await persistMessage(sid, userId, msgs, fullContent, [], spaceId)
       await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title: sessionTitle, elapsedMs: Date.now() - t0 }) })
-      if (spaceId) extractMemoriesPostHoc(spaceId, sid, lastUser?.content ?? '', fullContent).catch(e => console.error('[memory]', e))
+      if (spaceId) {
+        extractMemoriesPostHoc(spaceId, sid, lastUser?.content ?? '', fullContent).catch(e => console.error('[memory]', e))
+        const newContents = [lastUser?.content, fullContent].filter(Boolean) as string[]
+        indexContents(sid, newContents).catch(e => console.error('[chat-index]', e))
+      }
     })
   }
 
@@ -266,7 +271,11 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
 
     if (fullContent.length >= 50) setCached(ck, fullContent)
     await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title: sessionTitle, elapsedMs: Date.now() - t0 }) })
-    if (spaceId) extractMemoriesPostHoc(spaceId, sid, lastUser?.content ?? '', fullContent).catch(e => console.error('[memory]', e))
+    if (spaceId) {
+      extractMemoriesPostHoc(spaceId, sid, lastUser?.content ?? '', fullContent).catch(e => console.error('[memory]', e))
+      const newContents = [lastUser?.content, fullContent].filter(Boolean) as string[]
+      indexContents(sid, newContents).catch(e => console.error('[chat-index]', e))
+    }
   })
 })
 

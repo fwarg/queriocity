@@ -9,7 +9,7 @@ import {
   fetchHistory, fetchSession, deleteSession, updateSessionTitle,
   fetchFiles, deleteFile, uploadFile, getMe, hasUsers, logout,
   fetchSpaces, createSpace, updateSpace, deleteSpace, assignChatToSpace, recreateChatMemories,
-  fetchSpaceMemories, createSpaceMemory, updateSpaceMemory, deleteSpaceMemory, compactSpaceMemories, recreateAllSpaceMemories, clearSpaceMemories, rebuildSpaceEmbeddings,
+  fetchSpaceMemories, createSpaceMemory, updateSpaceMemory, deleteSpaceMemory, compactSpaceMemories, recreateAllSpaceMemories, clearSpaceMemories,
   fetchSpaceFiles, tagFileToSpace, untagFileFromSpace,
 } from './lib/api.ts'
 import type { AuthUser, Message, Space, SpaceMemory, SpaceFile } from './lib/api.ts'
@@ -58,7 +58,6 @@ export default function App() {
   const [newSpaceDraft, setNewSpaceDraft] = useState('')
   const [spacePickerOpen, setSpacePickerOpen] = useState<string | null>(null)
   const [spaceMemories, setSpaceMemories] = useState<SpaceMemory[]>([])
-  const [embeddedCount, setEmbeddedCount] = useState(0)
   const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null)
   const [memoryDraft, setMemoryDraft] = useState('')
   const [newMemoryOpen, setNewMemoryOpen] = useState(false)
@@ -127,11 +126,10 @@ export default function App() {
 
   useEffect(() => {
     if (currentSpaceId) {
-      fetchSpaceMemories(currentSpaceId).then(({ memories, embedded }) => { setSpaceMemories(memories); setEmbeddedCount(embedded) }).catch(() => {})
+      fetchSpaceMemories(currentSpaceId).then(({ memories }) => { setSpaceMemories(memories) }).catch(() => {})
       fetchSpaceFiles(currentSpaceId).then(setTaggedFiles).catch(() => {})
     } else {
       setSpaceMemories([])
-      setEmbeddedCount(0)
       setTaggedFiles([])
     }
     setMemorySectionOpen(false)
@@ -579,14 +577,7 @@ export default function App() {
                     className="flex items-center gap-1.5 text-sm font-medium text-gray-400 hover:text-gray-200"
                   >
                     <span>{memorySectionOpen ? '▾' : '▸'}</span>
-                    Memory ({spaceMemories.length}
-                    {spaceMemories.length > 0 && embeddedCount < spaceMemories.length && (
-                      <span className="text-amber-500/80" title={`${embeddedCount}/${spaceMemories.length} indexed for RAG`}> ⚠</span>
-                    )}
-                    {spaceMemories.length > 0 && embeddedCount >= spaceMemories.length && (
-                      <span className="text-gray-600 text-xs" title="All memories indexed for RAG"> ✓</span>
-                    )}
-                    )
+                    Memory ({spaceMemories.length})
                   </button>
                   {memorySectionOpen && !newMemoryOpen && (
                     <div className="flex items-center gap-2">
@@ -597,7 +588,7 @@ export default function App() {
                             setCompactResult(null)
                             try {
                               const { before, after, compacted } = await compactSpaceMemories(currentSpaceId!)
-                              if (compacted) fetchSpaceMemories(currentSpaceId!).then(({ memories, embedded }) => { setSpaceMemories(memories); setEmbeddedCount(embedded) }).catch(() => {})
+                              if (compacted) fetchSpaceMemories(currentSpaceId!).then(({ memories }) => { setSpaceMemories(memories) }).catch(() => {})
                               setCompactResult(compacted ? `${before} → ${after}` : 'Already within target')
                               setTimeout(() => setCompactResult(null), 4000)
                             } finally {
@@ -621,7 +612,7 @@ export default function App() {
                             for await (const ev of recreateAllSpaceMemories(currentSpaceId!)) {
                               if (ev.processing !== undefined) setRecreateProgress(`${ev.processing}/${ev.total}`)
                               if (ev.done) {
-                                fetchSpaceMemories(currentSpaceId!).then(({ memories, embedded }) => { setSpaceMemories(memories); setEmbeddedCount(embedded) }).catch(() => {})
+                                fetchSpaceMemories(currentSpaceId!).then(({ memories }) => { setSpaceMemories(memories) }).catch(() => {})
                                 if (ev.errors) {
                                   setCompactResult(`${ev.errors} chat${ev.errors > 1 ? 's' : ''} failed — reduce extraction context in settings`)
                                   setTimeout(() => setCompactResult(null), 6000)
@@ -638,25 +629,11 @@ export default function App() {
                       >
                         {recreating ? (recreateProgress ? `Processing (${recreateProgress})` : 'Starting…') : 'Recreate all'}
                       </button>
-                      {spaceMemories.length > 0 && embeddedCount < spaceMemories.length && (
-                        <button
-                          onClick={async () => {
-                            const { rebuilt } = await rebuildSpaceEmbeddings(currentSpaceId!)
-                            setEmbeddedCount(rebuilt)
-                          }}
-                          disabled={compacting || recreating}
-                          className="text-xs text-amber-500/80 hover:text-amber-400 disabled:opacity-50"
-                          title="Some memories are not yet indexed for RAG search"
-                        >
-                          Rebuild index
-                        </button>
-                      )}
                       <button
                         onClick={async () => {
                           if (!confirm('Delete all memories in this space? This cannot be undone.')) return
                           await clearSpaceMemories(currentSpaceId!)
                           setSpaceMemories([])
-                          setEmbeddedCount(0)
                         }}
                         disabled={compacting || recreating}
                         className="text-xs text-gray-500 hover:text-red-400 disabled:opacity-50"

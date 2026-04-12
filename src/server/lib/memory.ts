@@ -6,16 +6,6 @@ import { getSmallModel } from './llm.ts'
 import { embedText } from './embeddings.ts'
 import { searchSpaceFiles, spaceHasTaggedFiles } from './files/uploads-search.ts'
 
-export async function upsertMemoryEmbedding(id: string, content: string): Promise<void> {
-  const embedding = await embedText(content)
-  sqlite.run('DELETE FROM memory_chunks WHERE memory_id = ?', [id])
-  sqlite.run('INSERT INTO memory_chunks(memory_id, embedding) VALUES (?, ?)', [id, JSON.stringify(embedding)])
-}
-
-export function deleteMemoryEmbedding(id: string): void {
-  sqlite.run('DELETE FROM memory_chunks WHERE memory_id = ?', [id])
-}
-
 export interface SpaceMemory {
   id: string
   spaceId: string
@@ -47,7 +37,6 @@ export async function buildMemoryBlock(
   const headerTokens = Math.ceil(header.length / 4)
   let remaining = tokenBudget - headerTokens
   const lines: string[] = []
-  const fixedIds = new Set<string>()
 
   for (const m of memories) {
     const line = `- ${m.content}`
@@ -55,7 +44,6 @@ export async function buildMemoryBlock(
     if (cost > remaining) break
     remaining -= cost
     lines.push(line)
-    fixedIds.add(m.id)
   }
 
   if (!lines.length) return ''
@@ -75,34 +63,33 @@ export async function buildMemoryBlock(
     }
 
     if (embedding) {
-      // Memory RAG: retrieve memories relevant to the current query
+      // Chat RAG: retrieve relevant message chunks from this space's chats
       try {
         const ragRows = sqlite.prepare(`
-          SELECT mc.memory_id, sm.content
-          FROM memory_chunks mc
-          JOIN space_memories sm ON sm.id = mc.memory_id
-          WHERE mc.embedding MATCH ?
-            AND sm.space_id = ?
+          SELECT ccm.chunk_id, ccm.content
+          FROM chat_chunks cc
+          JOIN chat_chunk_meta ccm ON ccm.chunk_id = cc.chunk_id
+          JOIN chat_sessions cs ON cs.id = ccm.session_id
+          WHERE cc.embedding MATCH ?
+            AND cs.space_id = ?
             AND k = 10
-          ORDER BY mc.distance
-        `).all(JSON.stringify(embedding), spaceId) as Array<{ memory_id: string; content: string }>
+          ORDER BY cc.distance
+        `).all(JSON.stringify(embedding), spaceId) as Array<{ chunk_id: string; content: string }>
 
-        const ragMemLines: string[] = []
+        const ragLines: string[] = []
         for (const row of ragRows) {
-          if (fixedIds.has(row.memory_id)) continue
-          const line = `- ${row.content}`
-          const cost = Math.ceil(line.length / 4)
+          const cost = Math.ceil(row.content.length / 4)
           if (cost > ragRemaining) break
           ragRemaining -= cost
-          ragMemLines.push(line)
+          ragLines.push(row.content)
           ragInjected++
-          console.log(`    [rag:mem] ${line.length} chars: ${JSON.stringify(line.slice(0, 60))}`)
+          console.log(`    [rag:chat] ${row.content.length} chars: ${JSON.stringify(row.content.slice(0, 60))}`)
         }
-        if (ragMemLines.length) {
-          block += '\n\n## Relevant past context\n' + ragMemLines.join('\n')
+        if (ragLines.length) {
+          block += '\n\n## Relevant past conversations\n' + ragLines.map(l => `> ${l}`).join('\n\n')
         }
       } catch (e) {
-        console.error('  [memory] memory RAG search failed:', e)
+        console.error('  [memory] chat RAG search failed:', e)
       }
 
       // Space file RAG: only if files are actually tagged (avoids reranker call when not needed)
@@ -152,7 +139,6 @@ export async function saveMemory(
       const now = new Date()
       await db.update(spaceMemories).set({ content: trimmed, updatedAt: now })
         .where(eq(spaceMemories.id, m.id))
-      upsertMemoryEmbedding(m.id, trimmed).catch(e => console.error('[memory] embed failed:', e))
       return m.id
     }
   }
@@ -164,7 +150,6 @@ export async function saveMemory(
     sessionId: sessionId ?? null,
     createdAt: now, updatedAt: now,
   })
-  upsertMemoryEmbedding(id, trimmed).catch(e => console.error('[memory] embed failed:', e))
   return id
 }
 
@@ -248,12 +233,6 @@ Target: approximately ${targetTokens * 4} characters total.`,
       })
     }
   })
-  // Sync embeddings: delete old, insert new
-  sqlite.run('DELETE FROM memory_chunks WHERE memory_id NOT IN (SELECT id FROM space_memories WHERE space_id = ?)', [spaceId])
-  for (const { id, content } of newMemories) {
-    await upsertMemoryEmbedding(id, content)
-  }
-
   console.log(`  [compact] ${memories.length} → ${newFacts.length} memories in ${Math.round(performance.now() - t0)}ms for space ${spaceId.slice(0, 8)}`)
   return true
 }

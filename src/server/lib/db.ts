@@ -111,13 +111,14 @@ function initSchema() {
     sqlite.run('DELETE FROM uploaded_files')
   }
 
-  // Recreate memory_chunks if the embedding dimension changed
-  const existingMem = sqlite.query(
-    "SELECT sql FROM sqlite_master WHERE type='table' AND name='memory_chunks'"
+  // Recreate chat_chunks if the embedding dimension changed
+  const existingChat = sqlite.query(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='chat_chunks'"
   ).get() as { sql: string } | null
-  if (existingMem && !existingMem.sql.includes(`FLOAT[${EMBED_DIMS}]`)) {
-    console.log(`[db] Embedding dimension changed → recreating memory_chunks (${EMBED_DIMS} dims)`)
-    sqlite.run('DROP TABLE IF EXISTS memory_chunks')
+  if (existingChat && !existingChat.sql.includes(`FLOAT[${EMBED_DIMS}]`)) {
+    console.log(`[db] Embedding dimension changed → recreating chat_chunks (${EMBED_DIMS} dims)`)
+    sqlite.run('DROP TABLE IF EXISTS chat_chunks')
+    sqlite.run('DELETE FROM chat_chunk_meta')
   }
 
   sqlite.run(`
@@ -198,15 +199,24 @@ function initSchema() {
     file_id  TEXT NOT NULL,
     content  TEXT NOT NULL
   )`)
-  sqlite.run(`CREATE VIRTUAL TABLE IF NOT EXISTS memory_chunks USING vec0(
-    memory_id TEXT PRIMARY KEY,
+  sqlite.run(`CREATE VIRTUAL TABLE IF NOT EXISTS chat_chunks USING vec0(
+    chunk_id TEXT PRIMARY KEY,
     embedding FLOAT[${EMBED_DIMS}]
   )`)
+  sqlite.run(`CREATE TABLE IF NOT EXISTS chat_chunk_meta (
+    chunk_id   TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    content    TEXT NOT NULL
+  )`)
+  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_chat_chunk_meta_session ON chat_chunk_meta(session_id)`)
   sqlite.run(`CREATE TABLE IF NOT EXISTS space_files (
     space_id TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
     file_id  TEXT NOT NULL REFERENCES uploaded_files(id) ON DELETE CASCADE,
     PRIMARY KEY (space_id, file_id)
   )`)
+
+  // Migration: drop old memory_chunks table (replaced by chat_chunks)
+  sqlite.run('DROP TABLE IF EXISTS memory_chunks')
 
   // Migration: add space_id column if it doesn't exist yet
   try {

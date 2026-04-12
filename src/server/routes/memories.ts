@@ -1,10 +1,10 @@
 import { Hono } from 'hono'
-import { db, spaces, spaceMemories, spaceFiles, uploadedFiles, chatSessions, messages, sqlite } from '../lib/db.ts'
+import { db, spaces, spaceMemories, spaceFiles, uploadedFiles, chatSessions, messages } from '../lib/db.ts'
 import { eq, and, ne } from 'drizzle-orm'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
-import { getSpaceMemories, saveMemory, compactSpaceMemories, extractMemoriesPostHoc, upsertMemoryEmbedding, deleteMemoryEmbedding } from '../lib/memory.ts'
+import { getSpaceMemories, saveMemory, compactSpaceMemories, extractMemoriesPostHoc } from '../lib/memory.ts'
 import { getAppSetting } from '../lib/db.ts'
 
 export const memoriesRouter = new Hono<AppEnv>()
@@ -22,25 +22,7 @@ memoriesRouter.get('/:spaceId/memories', async (c) => {
   const spaceId = c.req.param('spaceId')
   if (!await verifySpaceOwner(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
   const memories = await getSpaceMemories(spaceId)
-  const { embedded } = sqlite.prepare(
-    `SELECT COUNT(*) AS embedded FROM memory_chunks mc
-     JOIN space_memories sm ON sm.id = mc.memory_id WHERE sm.space_id = ?`
-  ).get(spaceId) as { embedded: number }
-  return c.json({ memories, embedded })
-})
-
-memoriesRouter.post('/:spaceId/rebuild-embeddings', async (c) => {
-  const userId = c.get('userId') as string
-  const spaceId = c.req.param('spaceId')
-  if (!await verifySpaceOwner(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
-  const memories = await getSpaceMemories(spaceId)
-  let rebuilt = 0
-  for (const m of memories) {
-    await upsertMemoryEmbedding(m.id, m.content)
-    rebuilt++
-  }
-  console.log(`  [memory] rebuilt ${rebuilt} embeddings for space ${spaceId.slice(0, 8)}`)
-  return c.json({ ok: true, rebuilt })
+  return c.json({ memories })
 })
 
 memoriesRouter.post('/:spaceId/memories', zValidator('json', z.object({
@@ -70,7 +52,6 @@ memoriesRouter.patch('/:spaceId/memories/:id', zValidator('json', z.object({
   const { content } = c.req.valid('json')
   await db.update(spaceMemories).set({ content, updatedAt: new Date() })
     .where(eq(spaceMemories.id, id))
-  upsertMemoryEmbedding(id, content).catch(e => console.error('[memory] embed failed:', e))
   return c.json({ ok: true })
 })
 
@@ -85,7 +66,6 @@ memoriesRouter.delete('/:spaceId/memories/:id', async (c) => {
   if (!memory) return c.json({ error: 'Not found' }, 404)
 
   await db.delete(spaceMemories).where(eq(spaceMemories.id, id))
-  deleteMemoryEmbedding(id)
   return c.json({ ok: true })
 })
 
@@ -93,7 +73,6 @@ memoriesRouter.delete('/:spaceId/memories', async (c) => {
   const userId = c.get('userId') as string
   const spaceId = c.req.param('spaceId')
   if (!await verifySpaceOwner(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
-  sqlite.run('DELETE FROM memory_chunks WHERE memory_id IN (SELECT id FROM space_memories WHERE space_id = ?)', [spaceId])
   await db.delete(spaceMemories).where(eq(spaceMemories.spaceId, spaceId))
   return c.json({ ok: true })
 })
@@ -114,10 +93,7 @@ memoriesRouter.post('/:spaceId/recreate-memories', async (c) => {
   const spaceId = c.req.param('spaceId')
   if (!await verifySpaceOwner(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
 
-  // Delete all auto-extracted memories (and their embeddings), keep manual ones
-  sqlite.run(`DELETE FROM memory_chunks WHERE memory_id IN (
-    SELECT id FROM space_memories WHERE space_id = ? AND source != 'manual'
-  )`, [spaceId])
+  // Delete all auto-extracted memories, keep manual ones
   await db.delete(spaceMemories)
     .where(and(eq(spaceMemories.spaceId, spaceId), ne(spaceMemories.source, 'manual')))
 

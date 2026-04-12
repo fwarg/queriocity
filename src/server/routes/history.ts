@@ -1,17 +1,11 @@
 import { Hono } from 'hono'
-import { db, chatSessions, messages, spaces, spaceMemories, sqlite } from '../lib/db.ts'
+import { db, chatSessions, messages, spaces, spaceMemories } from '../lib/db.ts'
 import { eq, and, desc, ne } from 'drizzle-orm'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { extractMemoriesPostHoc } from '../lib/memory.ts'
-
-/** Delete memory embeddings for all auto-extracted memories belonging to a chat session. */
-function deleteSessionEmbeddings(sessionId: string) {
-  sqlite.run(`DELETE FROM memory_chunks WHERE memory_id IN (
-    SELECT id FROM space_memories WHERE session_id = ? AND source != 'manual'
-  )`, [sessionId])
-}
+import { deindexSession, indexSession } from '../lib/chat-indexer.ts'
 
 export const historyRouter = new Hono<AppEnv>()
 
@@ -72,12 +66,13 @@ historyRouter.patch('/:id', zValidator('json', z.object({
   if (body.spaceId !== undefined && body.spaceId !== session.spaceId) {
     const autoMemoriesFilter = and(eq(spaceMemories.sessionId, id), ne(spaceMemories.source, 'manual'))
     if (body.spaceId === null) {
-      deleteSessionEmbeddings(id)
+      deindexSession(id)
       await db.delete(spaceMemories).where(autoMemoriesFilter)
     } else if (session.spaceId) {
+      // Moving between spaces — chat_chunks join through chat_sessions so no reindex needed
       await db.update(spaceMemories).set({ spaceId: body.spaceId }).where(autoMemoriesFilter)
     } else {
-      // Newly assigned to a space — retroactively extract memories from conversation
+      // Newly assigned to a space — retroactively extract memories and index chat history
       const msgs = await db.select().from(messages).where(eq(messages.sessionId, id))
       const userContent = msgs.filter(m => m.role === 'user').map(m => m.content).join('\n\n')
       const assistantContent = msgs.filter(m => m.role === 'assistant').map(m => m.content).join('\n\n')
@@ -85,6 +80,7 @@ historyRouter.patch('/:id', zValidator('json', z.object({
         extractMemoriesPostHoc(body.spaceId, id, userContent, assistantContent)
           .catch(e => console.error('[memory] retroactive extraction failed:', e))
       }
+      indexSession(id).catch(e => console.error('[chat-index] retroactive index failed:', e))
     }
   }
 
@@ -101,7 +97,6 @@ historyRouter.post('/:id/recreate-memories', async (c) => {
   if (!session) return c.json({ error: 'Not found' }, 404)
   if (!session.spaceId) return c.json({ error: 'Chat is not in a space' }, 400)
 
-  deleteSessionEmbeddings(id)
   await db.delete(spaceMemories).where(and(eq(spaceMemories.sessionId, id), ne(spaceMemories.source, 'manual')))
 
   const msgs = await db.select().from(messages).where(eq(messages.sessionId, id))
@@ -111,6 +106,7 @@ historyRouter.post('/:id/recreate-memories', async (c) => {
     extractMemoriesPostHoc(session.spaceId, id, userContent, assistantContent)
       .catch(e => console.error('[memory] recreate extraction failed:', e))
   }
+  indexSession(id).catch(e => console.error('[chat-index] reindex failed:', e))
 
   return c.json({ ok: true })
 })
@@ -124,7 +120,7 @@ historyRouter.delete('/:id', async (c) => {
 
   if (!session) return c.json({ error: 'Not found' }, 404)
 
-  deleteSessionEmbeddings(id)
+  deindexSession(id)
   await db.delete(spaceMemories).where(and(eq(spaceMemories.sessionId, id), ne(spaceMemories.source, 'manual')))
   await db.delete(chatSessions).where(eq(chatSessions.id, id))
 

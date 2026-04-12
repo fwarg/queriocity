@@ -282,13 +282,8 @@ export async function* recreateAllSpaceMemories(
   }
 }
 
-export async function fetchSpaceMemories(spaceId: string): Promise<{ memories: SpaceMemory[]; embedded: number }> {
+export async function fetchSpaceMemories(spaceId: string): Promise<{ memories: SpaceMemory[] }> {
   const res = await fetch(`${BASE}/spaces/${spaceId}/memories`)
-  return res.json()
-}
-
-export async function rebuildSpaceEmbeddings(spaceId: string): Promise<{ rebuilt: number }> {
-  const res = await fetch(`${BASE}/spaces/${spaceId}/rebuild-embeddings`, { method: 'POST' })
   return res.json()
 }
 
