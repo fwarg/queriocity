@@ -9,7 +9,7 @@ import {
   fetchHistory, fetchSession, deleteSession, updateSessionTitle,
   fetchFiles, deleteFile, uploadFile, getMe, hasUsers, logout,
   fetchSpaces, createSpace, updateSpace, deleteSpace, assignChatToSpace, recreateChatMemories,
-  fetchSpaceMemories, createSpaceMemory, updateSpaceMemory, deleteSpaceMemory, compactSpaceMemories, recreateAllSpaceMemories,
+  fetchSpaceMemories, createSpaceMemory, updateSpaceMemory, deleteSpaceMemory, compactSpaceMemories, recreateAllSpaceMemories, clearSpaceMemories,
 } from './lib/api.ts'
 import type { AuthUser, Message, Space, SpaceMemory } from './lib/api.ts'
 import { useChat } from './hooks/useChat.ts'
@@ -597,8 +597,14 @@ export default function App() {
                           setCompactResult(null)
                           try {
                             for await (const ev of recreateAllSpaceMemories(currentSpaceId!)) {
-                              if (ev.processed !== undefined) setRecreateProgress(`${ev.processed}/${ev.total}`)
-                              if (ev.done) fetchSpaceMemories(currentSpaceId!).then(setSpaceMemories).catch(() => {})
+                              if (ev.processing !== undefined) setRecreateProgress(`${ev.processing}/${ev.total}`)
+                              if (ev.done) {
+                                fetchSpaceMemories(currentSpaceId!).then(setSpaceMemories).catch(() => {})
+                                if (ev.errors) {
+                                  setCompactResult(`${ev.errors} chat${ev.errors > 1 ? 's' : ''} failed — reduce extraction context in settings`)
+                                  setTimeout(() => setCompactResult(null), 6000)
+                                }
+                              }
                             }
                           } finally {
                             setRecreating(false)
@@ -608,7 +614,18 @@ export default function App() {
                         disabled={compacting || recreating}
                         className="text-xs text-gray-500 hover:text-gray-300 disabled:opacity-50"
                       >
-                        {recreating ? (recreateProgress ? `${recreateProgress}…` : 'Starting…') : 'Recreate all'}
+                        {recreating ? (recreateProgress ? `Processing (${recreateProgress})` : 'Starting…') : 'Recreate all'}
+                      </button>
+                      <button
+                        onClick={async () => {
+                          if (!confirm('Delete all memories in this space? This cannot be undone.')) return
+                          await clearSpaceMemories(currentSpaceId!)
+                          setSpaceMemories([])
+                        }}
+                        disabled={compacting || recreating}
+                        className="text-xs text-gray-500 hover:text-red-400 disabled:opacity-50"
+                      >
+                        Clear all
                       </button>
                       <button onClick={() => setNewMemoryOpen(true)} className="text-xs text-blue-400 hover:text-blue-300">+ Add</button>
                     </div>

@@ -1,5 +1,4 @@
 import { Hono } from 'hono'
-import { streamSSE } from 'hono/streaming'
 import { db, spaces, spaceMemories, chatSessions, messages } from '../lib/db.ts'
 import { eq, and, ne } from 'drizzle-orm'
 import { zValidator } from '@hono/zod-validator'
@@ -69,6 +68,14 @@ memoriesRouter.delete('/:spaceId/memories/:id', async (c) => {
   return c.json({ ok: true })
 })
 
+memoriesRouter.delete('/:spaceId/memories', async (c) => {
+  const userId = c.get('userId') as string
+  const spaceId = c.req.param('spaceId')
+  if (!await verifySpaceOwner(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
+  await db.delete(spaceMemories).where(eq(spaceMemories.spaceId, spaceId))
+  return c.json({ ok: true })
+})
+
 memoriesRouter.post('/:spaceId/compact', async (c) => {
   const userId = c.get('userId') as string
   const spaceId = c.req.param('spaceId')
@@ -92,17 +99,41 @@ memoriesRouter.post('/:spaceId/recreate-memories', async (c) => {
   const chats = await db.select().from(chatSessions).where(eq(chatSessions.spaceId, spaceId))
   const total = chats.length
 
-  return streamSSE(c, async (stream) => {
+  const encoder = new TextEncoder()
+  let ctrl!: ReadableStreamDefaultController<Uint8Array>
+  const body = new ReadableStream<Uint8Array>({ start(c) { ctrl = c } })
+
+  const send = (obj: object) => ctrl.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`))
+
+  ;(async () => {
+    // 2KB padding comment to flush browser's initial SSE buffer
+    ctrl.enqueue(encoder.encode(': ' + ' '.repeat(2048) + '\n\n'))
+
+    let errors = 0
     for (let i = 0; i < chats.length; i++) {
+      send({ processing: i + 1, total })
       const session = chats[i]
       const msgs = await db.select().from(messages).where(eq(messages.sessionId, session.id))
       const userContent = msgs.filter(m => m.role === 'user').map(m => m.content).join('\n\n')
       const assistantContent = msgs.filter(m => m.role === 'assistant').map(m => m.content).join('\n\n')
       if (userContent.trim()) {
-        await extractMemoriesPostHoc(spaceId, session.id, userContent, assistantContent)
+        try {
+          await extractMemoriesPostHoc(spaceId, session.id, userContent, assistantContent)
+        } catch (e) {
+          console.error(`  [recreate] extraction failed for session ${session.id.slice(0, 8)}:`, e)
+          errors++
+        }
       }
-      await stream.writeSSE({ data: JSON.stringify({ processed: i + 1, total }) })
     }
-    await stream.writeSSE({ data: JSON.stringify({ done: true, total }) })
+    send({ done: true, total, errors })
+    ctrl.close()
+  })().catch(e => { console.error('[recreate] stream error:', e); ctrl.close() })
+
+  return new Response(body, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'X-Accel-Buffering': 'no',
+    },
   })
 })

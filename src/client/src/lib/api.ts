@@ -228,6 +228,10 @@ export async function updateAdminSettings(s: { memoryTokenBudget?: number; dream
   })
 }
 
+export async function clearSpaceMemories(spaceId: string): Promise<void> {
+  await fetch(`${BASE}/spaces/${spaceId}/memories`, { method: 'DELETE' })
+}
+
 export async function compactSpaceMemories(spaceId: string): Promise<{ before: number; after: number; compacted: boolean }> {
   const res = await fetch(`${BASE}/spaces/${spaceId}/compact`, { method: 'POST' })
   return res.json()
@@ -236,7 +240,7 @@ export async function compactSpaceMemories(spaceId: string): Promise<{ before: n
 export async function* recreateAllSpaceMemories(
   spaceId: string,
   signal?: AbortSignal,
-): AsyncGenerator<{ processed?: number; total?: number; done?: boolean }> {
+): AsyncGenerator<{ processing?: number; total?: number; done?: boolean; errors?: number }> {
   const res = await fetch(`${BASE}/spaces/${spaceId}/recreate-memories`, { method: 'POST', signal })
   if (!res.ok || !res.body) throw new Error('Recreate failed')
   const reader = res.body.getReader()

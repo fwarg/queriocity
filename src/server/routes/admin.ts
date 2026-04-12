@@ -7,6 +7,7 @@ import { eq } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { authMiddleware, adminMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { getChatModel, getSmallModel, getThinkingModel, getEmbeddingModel } from '../lib/llm.ts'
+import { rerank, rerankEnabled } from '../lib/reranker.ts'
 
 export const adminRouter = new Hono<AppEnv>()
 
@@ -110,6 +111,7 @@ adminRouter.get('/models-test', async (c) => {
   const smallModel = process.env.SMALL_MODEL ?? chatModel
   const thinkingModel = process.env.THINKING_MODEL
   const embedModel = process.env.EMBED_MODEL ?? 'nomic-embed-text'
+  const rerankModel = process.env.RERANK_MODEL
 
   await testChat('chat', chatModel, getChatModel)
   await testChat('small', smallModel, getSmallModel)
@@ -119,6 +121,20 @@ adminRouter.get('/models-test', async (c) => {
     results.push({ role: 'thinking', model: '(not configured — uses chat)', ok: true, ms: 0, info: 'skipped' })
   }
   await testEmbed(embedModel)
+
+  if (rerankEnabled && rerankModel) {
+    const t = performance.now()
+    try {
+      const docs = ['Paris is the capital of France', 'Berlin is the capital of Germany']
+      const indices = await rerank('capital of France', docs, 2)
+      const ok = indices[0] === 0
+      results.push({ role: 'rerank', model: rerankModel, ok, ms: Math.round(performance.now() - t), info: ok ? `top result correct` : `unexpected order: ${indices}` })
+    } catch (e: any) {
+      results.push({ role: 'rerank', model: rerankModel, ok: false, ms: Math.round(performance.now() - t), info: String(e?.message ?? e).slice(0, 120) })
+    }
+  } else {
+    results.push({ role: 'rerank', model: '(not configured)', ok: true, ms: 0, info: 'skipped' })
+  }
 
   return c.json(results)
 })
