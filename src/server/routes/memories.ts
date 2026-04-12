@@ -1,11 +1,12 @@
 import { Hono } from 'hono'
-import { db, spaces, spaceMemories, spaceFiles, uploadedFiles, chatSessions, messages } from '../lib/db.ts'
-import { eq, and, ne } from 'drizzle-orm'
+import { db, sqlite, spaces, spaceMemories, spaceFiles, uploadedFiles, chatSessions, messages } from '../lib/db.ts'
+import { eq, and, ne, sql } from 'drizzle-orm'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { getSpaceMemories, saveMemory, compactSpaceMemories, extractMemoriesPostHoc } from '../lib/memory.ts'
 import { getAppSetting } from '../lib/db.ts'
+import { indexSession } from '../lib/chat-indexer.ts'
 
 export const memoriesRouter = new Hono<AppEnv>()
 
@@ -23,6 +24,47 @@ memoriesRouter.get('/:spaceId/memories', async (c) => {
   if (!await verifySpaceOwner(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
   const memories = await getSpaceMemories(spaceId)
   return c.json({ memories })
+})
+
+memoriesRouter.get('/:spaceId/chat-index-status', async (c) => {
+  const userId = c.get('userId') as string
+  const spaceId = c.req.param('spaceId')
+  if (!await verifySpaceOwner(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
+  const total = (await db.select({ count: sql<number>`count(*)` }).from(chatSessions)
+    .where(eq(chatSessions.spaceId, spaceId)).get())?.count ?? 0
+  const { indexed } = sqlite.prepare(`
+    SELECT COUNT(DISTINCT ccm.session_id) AS indexed
+    FROM chat_chunk_meta ccm
+    JOIN chat_sessions cs ON cs.id = ccm.session_id
+    WHERE cs.space_id = ?
+  `).get(spaceId) as { indexed: number }
+  return c.json({ indexed, total })
+})
+
+memoriesRouter.post('/:spaceId/rebuild-chat-index', async (c) => {
+  const userId = c.get('userId') as string
+  const spaceId = c.req.param('spaceId')
+  if (!await verifySpaceOwner(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
+  const chats = await db.select().from(chatSessions).where(eq(chatSessions.spaceId, spaceId))
+  const total = chats.length
+  const encoder = new TextEncoder()
+  let ctrl!: ReadableStreamDefaultController<Uint8Array>
+  const body = new ReadableStream<Uint8Array>({ start(c) { ctrl = c } })
+  const send = (obj: object) => ctrl.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`))
+  ;(async () => {
+    ctrl.enqueue(encoder.encode(': ' + ' '.repeat(2048) + '\n\n'))
+    let errors = 0
+    for (let i = 0; i < chats.length; i++) {
+      send({ processing: i + 1, total })
+      try { await indexSession(chats[i].id) }
+      catch (e) { console.error(`[chat-index] failed for ${chats[i].id.slice(0, 8)}:`, e); errors++ }
+    }
+    send({ done: true, total, errors })
+    ctrl.close()
+  })().catch(e => { console.error('[rebuild-chat-index]', e); ctrl.close() })
+  return new Response(body, {
+    headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no' },
+  })
 })
 
 memoriesRouter.post('/:spaceId/memories', zValidator('json', z.object({

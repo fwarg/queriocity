@@ -282,6 +282,34 @@ export async function* recreateAllSpaceMemories(
   }
 }
 
+export async function fetchChatIndexStatus(spaceId: string): Promise<{ indexed: number; total: number }> {
+  const res = await fetch(`${BASE}/spaces/${spaceId}/chat-index-status`)
+  return res.json()
+}
+
+export async function* rebuildChatIndex(
+  spaceId: string,
+  signal?: AbortSignal,
+): AsyncGenerator<{ processing?: number; total?: number; done?: boolean; errors?: number }> {
+  const res = await fetch(`${BASE}/spaces/${spaceId}/rebuild-chat-index`, { method: 'POST', signal })
+  if (!res.ok || !res.body) throw new Error('Rebuild failed')
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() ?? ''
+      for (const line of lines) {
+        if (line.startsWith('data: ')) { try { yield JSON.parse(line.slice(6)) } catch {} }
+      }
+    }
+  } finally { reader.releaseLock() }
+}
+
 export async function fetchSpaceMemories(spaceId: string): Promise<{ memories: SpaceMemory[] }> {
   const res = await fetch(`${BASE}/spaces/${spaceId}/memories`)
   return res.json()

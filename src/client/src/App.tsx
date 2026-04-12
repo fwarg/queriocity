@@ -10,6 +10,7 @@ import {
   fetchFiles, deleteFile, uploadFile, getMe, hasUsers, logout,
   fetchSpaces, createSpace, updateSpace, deleteSpace, assignChatToSpace, recreateChatMemories,
   fetchSpaceMemories, createSpaceMemory, updateSpaceMemory, deleteSpaceMemory, compactSpaceMemories, recreateAllSpaceMemories, clearSpaceMemories,
+  fetchChatIndexStatus, rebuildChatIndex,
   fetchSpaceFiles, tagFileToSpace, untagFileFromSpace,
 } from './lib/api.ts'
 import type { AuthUser, Message, Space, SpaceMemory, SpaceFile } from './lib/api.ts'
@@ -64,6 +65,9 @@ export default function App() {
   const [newMemoryDraft, setNewMemoryDraft] = useState('')
   const [memorySectionOpen, setMemorySectionOpen] = useState(false)
   const [taggedFiles, setTaggedFiles] = useState<SpaceFile[]>([])
+  const [chatIndexStatus, setChatIndexStatus] = useState<{ indexed: number; total: number } | null>(null)
+  const [rebuildingIndex, setRebuildingIndex] = useState(false)
+  const [rebuildIndexProgress, setRebuildIndexProgress] = useState<string | null>(null)
   const [filesSectionOpen, setFilesSectionOpen] = useState(false)
   const [allUserFiles, setAllUserFiles] = useState<Array<{ id: string; filename: string; size: number }>>([])
   const [filePickerOpen, setFilePickerOpen] = useState(false)
@@ -128,9 +132,11 @@ export default function App() {
     if (currentSpaceId) {
       fetchSpaceMemories(currentSpaceId).then(({ memories }) => { setSpaceMemories(memories) }).catch(() => {})
       fetchSpaceFiles(currentSpaceId).then(setTaggedFiles).catch(() => {})
+      fetchChatIndexStatus(currentSpaceId).then(setChatIndexStatus).catch(() => {})
     } else {
       setSpaceMemories([])
       setTaggedFiles([])
+      setChatIndexStatus(null)
     }
     setMemorySectionOpen(false)
     setFilesSectionOpen(false)
@@ -769,6 +775,38 @@ export default function App() {
                   </div>
                 ))}
               </div>
+
+              {chatIndexStatus !== null && (
+                <div className="border border-gray-800 rounded-lg p-3 flex items-center justify-between gap-2">
+                  <span className="text-xs text-gray-500">
+                    Chat index: {chatIndexStatus.indexed}/{chatIndexStatus.total} sessions
+                    {chatIndexStatus.indexed < chatIndexStatus.total && (
+                      <span className="text-amber-500/80"> ⚠</span>
+                    )}
+                  </span>
+                  <button
+                    onClick={async () => {
+                      setRebuildingIndex(true)
+                      setRebuildIndexProgress(null)
+                      try {
+                        for await (const ev of rebuildChatIndex(currentSpaceId!)) {
+                          if (ev.processing !== undefined) setRebuildIndexProgress(`${ev.processing}/${ev.total}`)
+                          if (ev.done) fetchChatIndexStatus(currentSpaceId!).then(setChatIndexStatus).catch(() => {})
+                        }
+                      } finally {
+                        setRebuildingIndex(false)
+                        setRebuildIndexProgress(null)
+                      }
+                    }}
+                    disabled={rebuildingIndex}
+                    className="text-xs text-gray-500 hover:text-gray-300 disabled:opacity-50 whitespace-nowrap"
+                  >
+                    {rebuildingIndex
+                      ? (rebuildIndexProgress ? `Indexing (${rebuildIndexProgress})` : 'Starting…')
+                      : 'Rebuild index'}
+                  </button>
+                </div>
+              )}
 
               {(() => {
                 const spaceChats = sessions.filter(s => s.spaceId === currentSpaceId)
