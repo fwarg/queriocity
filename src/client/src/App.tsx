@@ -8,7 +8,7 @@ import { AdminPanel } from './components/AdminPanel.tsx'
 import {
   fetchHistory, fetchSession, deleteSession, updateSessionTitle,
   fetchFiles, deleteFile, uploadFile, getMe, hasUsers, logout,
-  fetchSpaces, createSpace, updateSpace, deleteSpace, assignChatToSpace,
+  fetchSpaces, createSpace, updateSpace, deleteSpace, assignChatToSpace, recreateChatMemories,
   fetchSpaceMemories, createSpaceMemory, updateSpaceMemory, deleteSpaceMemory,
 } from './lib/api.ts'
 import type { AuthUser, Message, Space, SpaceMemory } from './lib/api.ts'
@@ -48,6 +48,7 @@ export default function App() {
   const [memoryDraft, setMemoryDraft] = useState('')
   const [newMemoryOpen, setNewMemoryOpen] = useState(false)
   const [newMemoryDraft, setNewMemoryDraft] = useState('')
+  const [memorySectionOpen, setMemorySectionOpen] = useState(false)
   const [view, setView] = useState<MainView>('chat')
   const [showSettings, setShowSettings] = useState(false)
   const [showAdmin, setShowAdmin] = useState(false)
@@ -104,6 +105,8 @@ export default function App() {
   useEffect(() => {
     if (currentSpaceId) fetchSpaceMemories(currentSpaceId).then(setSpaceMemories).catch(() => {})
     else setSpaceMemories([])
+    setMemorySectionOpen(false)
+    setNewMemoryOpen(false)
   }, [currentSpaceId])
 
   useEffect(() => {
@@ -223,6 +226,9 @@ export default function App() {
 
   function handleDeleteSpace(id: string, e: React.MouseEvent) {
     e.stopPropagation()
+    const sp = spaces.find(s => s.id === id)
+    const label = sp ? `"${sp.name}"` : 'this space'
+    if (!confirm(`Delete ${label}? This will permanently delete all its memories. Chats will be unassigned but not deleted.`)) return
     deleteSpace(id).then(() => {
       setSpaces(prev => prev.filter(s => s.id !== id))
       setSessions(prev => prev.map(s => s.spaceId === id ? { ...s, spaceId: null } : s))
@@ -529,13 +535,19 @@ export default function App() {
               </div>
               {/* Memory section */}
               <div className="border border-gray-800 rounded-lg p-3">
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-sm font-medium text-gray-400">Memory ({spaceMemories.length})</h3>
-                  {!newMemoryOpen && (
+                <div className="flex items-center justify-between">
+                  <button
+                    onClick={() => setMemorySectionOpen(o => !o)}
+                    className="flex items-center gap-1.5 text-sm font-medium text-gray-400 hover:text-gray-200"
+                  >
+                    <span>{memorySectionOpen ? '▾' : '▸'}</span>
+                    Memory ({spaceMemories.length})
+                  </button>
+                  {memorySectionOpen && !newMemoryOpen && (
                     <button onClick={() => setNewMemoryOpen(true)} className="text-xs text-blue-400 hover:text-blue-300">+ Add</button>
                   )}
                 </div>
-                {newMemoryOpen && (
+                {memorySectionOpen && newMemoryOpen && (
                   <div className="mb-2">
                     <input
                       autoFocus
@@ -549,9 +561,9 @@ export default function App() {
                     />
                   </div>
                 )}
-                {spaceMemories.length === 0 && !newMemoryOpen ? (
-                  <p className="text-xs text-gray-600">No memories yet. The assistant will save noteworthy facts from conversations in this space.</p>
-                ) : spaceMemories.map(m => (
+                {memorySectionOpen && spaceMemories.length === 0 && !newMemoryOpen ? (
+                  <p className="text-xs text-gray-600 mt-2">No memories yet. The assistant will save noteworthy facts from conversations in this space.</p>
+                ) : memorySectionOpen && spaceMemories.map(m => (
                   <div key={m.id} className="flex items-start gap-1.5 group py-1">
                     {editingMemoryId === m.id ? (
                       <input
@@ -572,6 +584,15 @@ export default function App() {
                       </span>
                     )}
                     <span className="text-[10px] text-gray-600 shrink-0 mt-0.5">{m.source === 'tool' ? 'auto' : m.source === 'extraction' ? 'extracted' : 'manual'}</span>
+                    {editingMemoryId !== m.id && (
+                      <button
+                        onClick={() => { setMemoryDraft(m.content); setEditingMemoryId(m.id) }}
+                        className="text-gray-700 hover:text-gray-400 text-xs shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                        aria-label="Edit"
+                      >
+                        ✎
+                      </button>
+                    )}
                     <button
                       onClick={() => handleDeleteMemory(m.id)}
                       className="text-gray-700 hover:text-red-400 text-xs shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
@@ -609,7 +630,7 @@ export default function App() {
                     <div className="relative shrink-0">
                       <button
                         onClick={(e) => { e.stopPropagation(); setSpacePickerOpen(prev => prev === s.id ? null : s.id) }}
-                        className="px-2 py-1 rounded text-xs text-indigo-400 bg-indigo-900/40 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
+                        className="px-2 py-1 rounded text-xs text-indigo-400 bg-indigo-900/40"
                         title="Move to space"
                       >
                         {spaceName}
@@ -626,8 +647,14 @@ export default function App() {
                             </button>
                           ))}
                           <button
+                            onClick={() => { recreateChatMemories(s.id).catch(() => {}); setSpacePickerOpen(null) }}
+                            className="w-full text-left px-3 py-1.5 text-xs text-gray-400 hover:bg-gray-700 hover:text-gray-200 border-t border-gray-700 mt-1 pt-1"
+                          >
+                            Recreate memories
+                          </button>
+                          <button
                             onClick={() => handleAssignToSpace(s.id, null)}
-                            className="w-full text-left px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-700 hover:text-red-400 border-t border-gray-700 mt-1 pt-1"
+                            className="w-full text-left px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-700 hover:text-red-400"
                           >
                             Remove from space
                           </button>
@@ -762,13 +789,22 @@ export default function App() {
                         const spaceName = session?.spaceId ? spaces.find(sp => sp.id === session.spaceId)?.name : null
                         const pickerId = `heading-${sessionId}`
                         return (
-                          <div className="relative shrink-0">
+                          <div className="relative shrink-0 flex items-center gap-1">
+                            {spaceName && session?.spaceId && (
+                              <button
+                                onClick={() => { setCurrentSpaceId(session.spaceId!); setView('spaces') }}
+                                className="text-xs px-2 py-0.5 rounded text-indigo-400 bg-indigo-900/40 hover:bg-indigo-800/60"
+                                title={`Go to space: ${spaceName}`}
+                              >
+                                {spaceName} ↗
+                              </button>
+                            )}
                             <button
                               onClick={() => setSpacePickerOpen(prev => prev === pickerId ? null : pickerId)}
-                              className={`text-xs px-2 py-0.5 rounded ${spaceName ? 'text-indigo-400 bg-indigo-900/40' : 'text-gray-600 hover:text-gray-400'}`}
+                              className="text-xs px-1.5 py-0.5 rounded text-gray-600 hover:text-gray-400"
                               title="Assign to space"
                             >
-                              {spaceName ?? '⊡'}
+                              ⊡
                             </button>
                             {spacePickerOpen === pickerId && (
                               <div className="absolute right-0 top-full mt-1 z-10 bg-gray-800 border border-gray-700 rounded shadow-lg min-w-36 py-1">

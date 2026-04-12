@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { db, spaces, chatSessions, spaceMemories } from '../lib/db.ts'
-import { eq, and, sql } from 'drizzle-orm'
+import { eq, and, sql, count } from 'drizzle-orm'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
@@ -12,17 +12,31 @@ spacesRouter.use('*', authMiddleware)
 
 spacesRouter.get('/', async (c) => {
   const userId = c.get('userId') as string
+
+  const chatCountSq = db.select({ spaceId: chatSessions.spaceId, chatN: count().as('chat_n') })
+    .from(chatSessions)
+    .groupBy(chatSessions.spaceId)
+    .as('cc')
+
+  const memCountSq = db.select({ spaceId: spaceMemories.spaceId, memN: count().as('mem_n') })
+    .from(spaceMemories)
+    .groupBy(spaceMemories.spaceId)
+    .as('mc')
+
   const rows = await db
     .select({
       id: spaces.id,
       name: spaces.name,
       createdAt: spaces.createdAt,
-      chatCount: sql<number>`(SELECT count(*) FROM chat_sessions WHERE space_id = ${spaces.id})`,
-      memoryCount: sql<number>`(SELECT count(*) FROM space_memories WHERE space_id = ${spaces.id})`,
+      chatCount: sql<number>`coalesce(${chatCountSq.chatN}, 0)`,
+      memoryCount: sql<number>`coalesce(${memCountSq.memN}, 0)`,
     })
     .from(spaces)
+    .leftJoin(chatCountSq, eq(spaces.id, chatCountSq.spaceId))
+    .leftJoin(memCountSq, eq(spaces.id, memCountSq.spaceId))
     .where(eq(spaces.userId, userId))
     .orderBy(spaces.createdAt)
+
   return c.json(rows.map(r => ({ ...r, createdAt: r.createdAt instanceof Date ? Math.floor(r.createdAt.getTime() / 1000) : r.createdAt })))
 })
 

@@ -211,6 +211,10 @@ export async function assignChatToSpace(chatId: string, spaceId: string | null):
   })
 }
 
+export async function recreateChatMemories(chatId: string): Promise<void> {
+  await fetch(`${BASE}/history/${chatId}/recreate-memories`, { method: 'POST' })
+}
+
 export async function fetchSpaceMemories(spaceId: string): Promise<SpaceMemory[]> {
   const res = await fetch(`${BASE}/spaces/${spaceId}/memories`)
   return res.json()
