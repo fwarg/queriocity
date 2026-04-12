@@ -6,6 +6,18 @@ import { extractImageText } from './image.ts'
 
 const CHUNK_SIZE = 1000 // chars
 
+export const ACCEPTED_MIME_TYPES = new Set([
+  'application/pdf',
+  'text/plain',
+  'text/markdown',
+  'text/csv',
+  'text/html',
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+])
+
 function chunkText(text: string): string[] {
   const chunks: string[] = []
   for (let i = 0; i < text.length; i += CHUNK_SIZE) {
@@ -13,6 +25,13 @@ function chunkText(text: string): string[] {
     if (chunk) chunks.push(chunk)
   }
   return chunks
+}
+
+/** Returns false if text is too short or contains too many non-printable characters. */
+export function isUsableText(text: string): boolean {
+  if (text.trim().length < 50) return false
+  const nonPrintable = (text.match(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\ufffd]/g) ?? []).length
+  return nonPrintable / text.length < 0.15
 }
 
 /** Extract full text from any supported file type without storing anything. */
@@ -32,10 +51,17 @@ export async function ingestFile(
   mimeType: string,
   userId: string,
 ): Promise<string> {
+  if (!ACCEPTED_MIME_TYPES.has(mimeType)) {
+    throw new Error(`Unsupported file type: ${mimeType}. Accepted types: PDF, plain text, images.`)
+  }
+
   const fileId = randomUUID()
 
   // 1. Extract text chunks
   const fullText = await extractFileText(buffer, mimeType)
+  if (!isUsableText(fullText)) {
+    throw new Error('Could not extract readable text from this file. It may be corrupted or in an unsupported encoding.')
+  }
   const rawChunks = chunkText(fullText)
 
   // 2. Embed all chunks

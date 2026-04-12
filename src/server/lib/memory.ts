@@ -1,8 +1,10 @@
 import { generateText } from 'ai'
 import { randomUUID } from 'crypto'
-import { db, spaceMemories, getAppSetting } from './db.ts'
+import { db, spaceMemories, sqlite, getAppSetting } from './db.ts'
 import { eq, desc } from 'drizzle-orm'
 import { getSmallModel } from './llm.ts'
+import { embedText } from './embeddings.ts'
+import { searchSpaceFiles, spaceHasTaggedFiles } from './files/uploads-search.ts'
 
 export interface SpaceMemory {
   id: string
@@ -21,8 +23,13 @@ export async function getSpaceMemories(spaceId: string) {
     .orderBy(desc(spaceMemories.createdAt))
 }
 
-/** Build a formatted memory block for system prompt injection. */
-export async function buildMemoryBlock(spaceId: string, tokenBudget = 1000): Promise<string> {
+/** Build a formatted memory block for system prompt injection, with optional RAG layer. */
+export async function buildMemoryBlock(
+  spaceId: string,
+  tokenBudget = 1000,
+  ragBudget = 0,
+  query?: string,
+): Promise<string> {
   const memories = await getSpaceMemories(spaceId)
   if (!memories.length) return ''
 
@@ -40,8 +47,75 @@ export async function buildMemoryBlock(spaceId: string, tokenBudget = 1000): Pro
   }
 
   if (!lines.length) return ''
-  const block = header + '\n' + lines.join('\n')
-  console.log(`  [memory] injecting ${lines.length} memories (~${Math.ceil(block.length / 4)} tokens) for space ${spaceId.slice(0, 8)}`)
+  let block = header + '\n' + lines.join('\n')
+  let ragInjected = 0
+
+  if (ragBudget > 0 && query?.trim()) {
+    let ragRemaining = ragBudget
+    const hasTaggedFiles = spaceHasTaggedFiles(spaceId)
+
+    // Embed query once — reused for both memory RAG and file RAG
+    let embedding: number[] | null = null
+    try {
+      embedding = await embedText(query)
+    } catch (e) {
+      console.error('  [memory] RAG embed failed:', e)
+    }
+
+    if (embedding) {
+      // Chat RAG: retrieve relevant message chunks from this space's chats
+      try {
+        const ragRows = sqlite.prepare(`
+          SELECT ccm.chunk_id, ccm.content
+          FROM chat_chunks cc
+          JOIN chat_chunk_meta ccm ON ccm.chunk_id = cc.chunk_id
+          JOIN chat_sessions cs ON cs.id = ccm.session_id
+          WHERE cc.embedding MATCH ?
+            AND cs.space_id = ?
+            AND k = 10
+          ORDER BY cc.distance
+        `).all(JSON.stringify(embedding), spaceId) as Array<{ chunk_id: string; content: string }>
+
+        const ragLines: string[] = []
+        for (const row of ragRows) {
+          const cost = Math.ceil(row.content.length / 4)
+          if (cost > ragRemaining) break
+          ragRemaining -= cost
+          ragLines.push(row.content)
+          ragInjected++
+          console.log(`    [rag:chat] ${row.content.length} chars: ${JSON.stringify(row.content.slice(0, 60))}`)
+        }
+        if (ragLines.length) {
+          block += '\n\n## Relevant past conversations\n' + ragLines.map(l => `> ${l}`).join('\n\n')
+        }
+      } catch (e) {
+        console.error('  [memory] chat RAG search failed:', e)
+      }
+
+      // Space file RAG: only if files are actually tagged (avoids reranker call when not needed)
+      if (ragRemaining > 0 && hasTaggedFiles) {
+        try {
+          const fileChunks = await searchSpaceFiles(spaceId, query, embedding, 5, true)
+          const fileLines: string[] = []
+          for (const chunk of fileChunks) {
+            const cost = Math.ceil(chunk.content.length / 4)
+            if (cost > ragRemaining) break
+            ragRemaining -= cost
+            fileLines.push(chunk.content)
+            ragInjected++
+            console.log(`    [rag:file] ${chunk.content.length} chars: ${JSON.stringify(chunk.content.slice(0, 60))}`)
+          }
+          if (fileLines.length) {
+            block += '\n\n## Relevant document excerpts\n' + fileLines.map(l => `> ${l}`).join('\n\n')
+          }
+        } catch (e) {
+          console.error('  [memory] space file RAG failed:', e)
+        }
+      }
+    }
+  }
+
+  console.log(`  [memory] injecting ${lines.length} memories + ${ragInjected} RAG (~${Math.ceil(block.length / 4)} tokens, ${block.length} chars) for space ${spaceId.slice(0, 8)}`)
   return block
 }
 
@@ -149,16 +223,16 @@ Target: approximately ${targetTokens * 4} characters total.`,
   }
 
   const now = new Date()
+  const newMemories: Array<{ id: string; content: string }> = newFacts.map(content => ({ id: randomUUID(), content }))
   await db.transaction(async tx => {
     await tx.delete(spaceMemories).where(eq(spaceMemories.spaceId, spaceId))
-    for (const content of newFacts) {
+    for (const { id, content } of newMemories) {
       await tx.insert(spaceMemories).values({
-        id: randomUUID(), spaceId, content, source: 'compact',
+        id, spaceId, content, source: 'compact',
         sessionId: null, createdAt: now, updatedAt: now,
       })
     }
   })
-
   console.log(`  [compact] ${memories.length} → ${newFacts.length} memories in ${Math.round(performance.now() - t0)}ms for space ${spaceId.slice(0, 8)}`)
   return true
 }

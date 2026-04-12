@@ -22,6 +22,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   const [extractCharsDraft, setExtractCharsDraft] = useState('6000')
   const [rerankTopNDraft, setRerankTopNDraft] = useState('15')
   const [attachmentCharsDraft, setAttachmentCharsDraft] = useState('20000')
+  const [spaceRagBudgetDraft, setSpaceRagBudgetDraft] = useState('500')
   const [savingBudget, setSavingBudget] = useState(false)
   const [budgetSaved, setBudgetSaved] = useState(false)
   const [modelResults, setModelResults] = useState<ModelTestResult[] | null>(null)
@@ -43,6 +44,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
       setExtractCharsDraft(String(s.memoryExtractChars))
       setRerankTopNDraft(String(s.rerankTopN))
       setAttachmentCharsDraft(String(s.attachmentChars))
+      setSpaceRagBudgetDraft(String(s.spaceRagBudget))
     }).catch(() => setError('Failed to load settings.'))
   }, [])
 
@@ -60,6 +62,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     const extractChars = parseInt(extractCharsDraft)
     const rerankTopN = parseInt(rerankTopNDraft)
     const attachmentChars = parseInt(attachmentCharsDraft)
+    const spaceRagBudget = parseInt(spaceRagBudgetDraft)
     if (isNaN(budget) || budget < 100 || budget > 10000) return
     if (isNaN(dreamHour) || dreamHour < -1 || dreamHour > 23) return
     if (isNaN(dreamThreshold) || dreamThreshold < 100) return
@@ -67,12 +70,13 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     if (isNaN(extractChars) || extractChars < 500) return
     if (isNaN(rerankTopN) || rerankTopN < 1) return
     if (isNaN(attachmentChars) || attachmentChars < 1000) return
+    if (isNaN(spaceRagBudget) || spaceRagBudget < 0) return
     if (dreamTarget > dreamThreshold) { setError('Dream target must be ≤ dream threshold.'); return }
     if (dreamThreshold > budget) { setError('Dream threshold must be ≤ memory token budget.'); return }
     setError('')
     setSavingBudget(true)
     try {
-      await updateAdminSettings({ memoryTokenBudget: budget, dreamHour, dreamThreshold, dreamTarget, memoryExtractChars: extractChars, rerankTopN, attachmentChars })
+      await updateAdminSettings({ memoryTokenBudget: budget, dreamHour, dreamThreshold, dreamTarget, memoryExtractChars: extractChars, rerankTopN, attachmentChars, spaceRagBudget })
 
       onBudgetChange?.(budget)
       setBudgetSaved(true)
@@ -185,6 +189,13 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                 <p className="text-xs text-gray-500">Max total characters fed to the small model when extracting memories from a chat. The most recent content is kept. Reduce if the model errors on long chats.</p>
                 <input type="number" min={500} max={100000} step={500} value={extractCharsDraft}
                   onChange={e => setExtractCharsDraft(e.target.value)}
+                  className="w-32 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
+              </div>
+              <div className="flex flex-col gap-1.5 border-t border-gray-800/60 pt-3">
+                <p className="text-xs text-gray-400 font-medium">RAG context budget (tokens)</p>
+                <p className="text-xs text-gray-500">Extra tokens injected via semantic search: relevant past memories not in the fixed block, plus excerpts from files tagged to the space. Set to 0 to disable. Memory RAG is prioritised over file excerpts.</p>
+                <input type="number" min={0} max={10000} step={100} value={spaceRagBudgetDraft}
+                  onChange={e => setSpaceRagBudgetDraft(e.target.value)}
                   className="w-32 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
               </div>
             </div>

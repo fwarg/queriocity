@@ -13,6 +13,7 @@ const settingsSchema = z.object({
   customPrompt: z.string().max(2000).optional(),
   showThinking: z.object({ balanced: z.boolean(), thorough: z.boolean() }).optional(),
   useThinking: z.boolean().optional(),
+  useSpaceRag: z.boolean().optional(),
   fontSize: z.number().min(12).max(22).optional(),
 })
 

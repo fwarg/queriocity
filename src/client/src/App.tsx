@@ -10,8 +10,10 @@ import {
   fetchFiles, deleteFile, uploadFile, getMe, hasUsers, logout,
   fetchSpaces, createSpace, updateSpace, deleteSpace, assignChatToSpace, recreateChatMemories,
   fetchSpaceMemories, createSpaceMemory, updateSpaceMemory, deleteSpaceMemory, compactSpaceMemories, recreateAllSpaceMemories, clearSpaceMemories,
+  fetchChatIndexStatus, rebuildChatIndex,
+  fetchSpaceFiles, tagFileToSpace, untagFileFromSpace,
 } from './lib/api.ts'
-import type { AuthUser, Message, Space, SpaceMemory } from './lib/api.ts'
+import type { AuthUser, Message, Space, SpaceMemory, SpaceFile } from './lib/api.ts'
 import { useChat } from './hooks/useChat.ts'
 
 type AuthView = 'loading' | 'login' | 'register'
@@ -62,6 +64,13 @@ export default function App() {
   const [newMemoryOpen, setNewMemoryOpen] = useState(false)
   const [newMemoryDraft, setNewMemoryDraft] = useState('')
   const [memorySectionOpen, setMemorySectionOpen] = useState(false)
+  const [taggedFiles, setTaggedFiles] = useState<SpaceFile[]>([])
+  const [chatIndexStatus, setChatIndexStatus] = useState<{ indexed: number; total: number } | null>(null)
+  const [rebuildingIndex, setRebuildingIndex] = useState(false)
+  const [rebuildIndexProgress, setRebuildIndexProgress] = useState<string | null>(null)
+  const [filesSectionOpen, setFilesSectionOpen] = useState(false)
+  const [allUserFiles, setAllUserFiles] = useState<Array<{ id: string; filename: string; size: number }>>([])
+  const [filePickerOpen, setFilePickerOpen] = useState(false)
   const [compacting, setCompacting] = useState(false)
   const [compactResult, setCompactResult] = useState<string | null>(null)
   const [recreating, setRecreating] = useState(false)
@@ -120,9 +129,18 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (currentSpaceId) fetchSpaceMemories(currentSpaceId).then(setSpaceMemories).catch(() => {})
-    else setSpaceMemories([])
+    if (currentSpaceId) {
+      fetchSpaceMemories(currentSpaceId).then(({ memories }) => { setSpaceMemories(memories) }).catch(() => {})
+      fetchSpaceFiles(currentSpaceId).then(setTaggedFiles).catch(() => {})
+      fetchChatIndexStatus(currentSpaceId).then(setChatIndexStatus).catch(() => {})
+    } else {
+      setSpaceMemories([])
+      setTaggedFiles([])
+      setChatIndexStatus(null)
+    }
     setMemorySectionOpen(false)
+    setFilesSectionOpen(false)
+    setFilePickerOpen(false)
     setNewMemoryOpen(false)
     setCompactResult(null)
     setRecreateProgress(null)
@@ -355,9 +373,10 @@ export default function App() {
           customPrompt={currentUser.settings?.customPrompt ?? ''}
           showThinking={currentUser.settings?.showThinking ?? { balanced: false, thorough: false }}
           useThinking={currentUser.settings?.useThinking ?? false}
+          useSpaceRag={currentUser.settings?.useSpaceRag !== false}
           fontSize={currentUser.settings?.fontSize ?? 16}
           onClose={() => setShowSettings(false)}
-          onSave={(cp, st, ut, fs) => setCurrentUser(u => u ? { ...u, settings: { ...u.settings, customPrompt: cp, showThinking: st, useThinking: ut, fontSize: fs } } : u)}
+          onSave={(cp, st, ut, sr, fs) => setCurrentUser(u => u ? { ...u, settings: { ...u.settings, customPrompt: cp, showThinking: st, useThinking: ut, useSpaceRag: sr, fontSize: fs } } : u)}
         />
       )}
       {showAdmin && currentUser && (
@@ -575,7 +594,7 @@ export default function App() {
                             setCompactResult(null)
                             try {
                               const { before, after, compacted } = await compactSpaceMemories(currentSpaceId!)
-                              if (compacted) fetchSpaceMemories(currentSpaceId!).then(setSpaceMemories).catch(() => {})
+                              if (compacted) fetchSpaceMemories(currentSpaceId!).then(({ memories }) => { setSpaceMemories(memories) }).catch(() => {})
                               setCompactResult(compacted ? `${before} → ${after}` : 'Already within target')
                               setTimeout(() => setCompactResult(null), 4000)
                             } finally {
@@ -599,7 +618,7 @@ export default function App() {
                             for await (const ev of recreateAllSpaceMemories(currentSpaceId!)) {
                               if (ev.processing !== undefined) setRecreateProgress(`${ev.processing}/${ev.total}`)
                               if (ev.done) {
-                                fetchSpaceMemories(currentSpaceId!).then(setSpaceMemories).catch(() => {})
+                                fetchSpaceMemories(currentSpaceId!).then(({ memories }) => { setSpaceMemories(memories) }).catch(() => {})
                                 if (ev.errors) {
                                   setCompactResult(`${ev.errors} chat${ev.errors > 1 ? 's' : ''} failed — reduce extraction context in settings`)
                                   setTimeout(() => setCompactResult(null), 6000)
@@ -694,6 +713,100 @@ export default function App() {
                   </div>
                 ))}
               </div>
+
+              {/* Tagged files section */}
+              <div className="border border-gray-800 rounded-lg p-3">
+                <div className="flex items-center justify-between">
+                  <button
+                    onClick={() => setFilesSectionOpen(o => !o)}
+                    className="flex items-center gap-1.5 text-sm font-medium text-gray-400 hover:text-gray-200"
+                  >
+                    <span>{filesSectionOpen ? '▾' : '▸'}</span>
+                    Tagged files ({taggedFiles.length})
+                  </button>
+                  {filesSectionOpen && (
+                    <button
+                      onClick={async () => {
+                        const all = await fetchFiles()
+                        setAllUserFiles(all.filter(f => !taggedFiles.some(t => t.id === f.id)))
+                        setFilePickerOpen(o => !o)
+                      }}
+                      className="text-xs text-gray-500 hover:text-gray-300"
+                    >
+                      + Tag file
+                    </button>
+                  )}
+                </div>
+                {filesSectionOpen && filePickerOpen && allUserFiles.length > 0 && (
+                  <div className="mt-2 flex flex-col gap-1 border border-gray-700 rounded p-2 bg-gray-900">
+                    {allUserFiles.map(f => (
+                      <button
+                        key={f.id}
+                        onClick={async () => {
+                          await tagFileToSpace(currentSpaceId!, f.id)
+                          fetchSpaceFiles(currentSpaceId!).then(setTaggedFiles).catch(() => {})
+                          setFilePickerOpen(false)
+                        }}
+                        className="text-left text-xs text-gray-300 hover:text-white px-1 py-0.5 hover:bg-gray-800 rounded truncate"
+                      >
+                        {f.filename}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {filesSectionOpen && filePickerOpen && allUserFiles.length === 0 && (
+                  <p className="text-xs text-gray-600 mt-2">No untagged files available.</p>
+                )}
+                {filesSectionOpen && taggedFiles.length === 0 && !filePickerOpen && (
+                  <p className="text-xs text-gray-600 mt-2">No files tagged. Tag library files to inject relevant excerpts into the space context.</p>
+                )}
+                {filesSectionOpen && taggedFiles.map(f => (
+                  <div key={f.id} className="flex items-center justify-between group py-1">
+                    <span className="text-xs text-gray-300 truncate min-w-0">{f.filename}</span>
+                    <button
+                      onClick={async () => {
+                        await untagFileFromSpace(currentSpaceId!, f.id)
+                        setTaggedFiles(prev => prev.filter(t => t.id !== f.id))
+                      }}
+                      className="text-gray-700 hover:text-red-400 text-xs shrink-0 opacity-0 group-hover:opacity-100 transition-opacity ml-2"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {chatIndexStatus !== null && (
+                <div className="border border-gray-800 rounded-lg p-3 flex items-center justify-between gap-2">
+                  <span className="text-xs text-gray-500">
+                    Chat index: {chatIndexStatus.indexed}/{chatIndexStatus.total} sessions
+                    {chatIndexStatus.indexed < chatIndexStatus.total && (
+                      <span className="text-amber-500/80"> ⚠</span>
+                    )}
+                  </span>
+                  <button
+                    onClick={async () => {
+                      setRebuildingIndex(true)
+                      setRebuildIndexProgress(null)
+                      try {
+                        for await (const ev of rebuildChatIndex(currentSpaceId!)) {
+                          if (ev.processing !== undefined) setRebuildIndexProgress(`${ev.processing}/${ev.total}`)
+                          if (ev.done) fetchChatIndexStatus(currentSpaceId!).then(setChatIndexStatus).catch(() => {})
+                        }
+                      } finally {
+                        setRebuildingIndex(false)
+                        setRebuildIndexProgress(null)
+                      }
+                    }}
+                    disabled={rebuildingIndex}
+                    className="text-xs text-gray-500 hover:text-gray-300 disabled:opacity-50 whitespace-nowrap"
+                  >
+                    {rebuildingIndex
+                      ? (rebuildIndexProgress ? `Indexing (${rebuildIndexProgress})` : 'Starting…')
+                      : 'Rebuild index'}
+                  </button>
+                </div>
+              )}
 
               {(() => {
                 const spaceChats = sessions.filter(s => s.spaceId === currentSpaceId)

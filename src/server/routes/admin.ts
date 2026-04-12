@@ -15,7 +15,7 @@ adminRouter.use('*', authMiddleware)
 adminRouter.use('*', adminMiddleware)
 
 adminRouter.get('/settings', async (c) => {
-  const [memoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, memoryExtractChars, rerankTopN, attachmentChars] = await Promise.all([
+  const [memoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, memoryExtractChars, rerankTopN, attachmentChars, spaceRagBudget] = await Promise.all([
     getAppSetting('memory_token_budget', '1000').then(Number),
     getAppSetting('dream_hour', '-1').then(Number),
     getAppSetting('dream_threshold', '1500').then(Number),
@@ -23,8 +23,9 @@ adminRouter.get('/settings', async (c) => {
     getAppSetting('memory_extract_chars', '6000').then(Number),
     getAppSetting('rerank_top_n', '15').then(Number),
     getAppSetting('attachment_chars', '20000').then(Number),
+    getAppSetting('space_rag_budget', '500').then(Number),
   ])
-  return c.json({ memoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, memoryExtractChars, rerankTopN, attachmentChars })
+  return c.json({ memoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, memoryExtractChars, rerankTopN, attachmentChars, spaceRagBudget })
 })
 
 adminRouter.patch('/settings', zValidator('json', z.object({
@@ -35,6 +36,7 @@ adminRouter.patch('/settings', zValidator('json', z.object({
   memoryExtractChars: z.number().int().min(500).max(100000).optional(),
   rerankTopN: z.number().int().min(1).max(100).optional(),
   attachmentChars: z.number().int().min(1000).max(500000).optional(),
+  spaceRagBudget: z.number().int().min(0).max(10000).optional(),
 })), async (c) => {
   const body = c.req.valid('json')
   if (body.dreamTarget != null && body.dreamThreshold != null && body.dreamTarget > body.dreamThreshold)
@@ -49,6 +51,7 @@ adminRouter.patch('/settings', zValidator('json', z.object({
   if (body.memoryExtractChars != null) ops.push(setAppSetting('memory_extract_chars', String(body.memoryExtractChars)))
   if (body.rerankTopN != null) ops.push(setAppSetting('rerank_top_n', String(body.rerankTopN)))
   if (body.attachmentChars != null) ops.push(setAppSetting('attachment_chars', String(body.attachmentChars)))
+  if (body.spaceRagBudget != null) ops.push(setAppSetting('space_rag_budget', String(body.spaceRagBudget)))
   await Promise.all(ops)
   return c.json({ ok: true })
 })

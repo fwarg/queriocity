@@ -1,11 +1,12 @@
 import { Hono } from 'hono'
-import { db, spaces, spaceMemories, chatSessions, messages } from '../lib/db.ts'
-import { eq, and, ne } from 'drizzle-orm'
+import { db, sqlite, spaces, spaceMemories, spaceFiles, uploadedFiles, chatSessions, messages } from '../lib/db.ts'
+import { eq, and, ne, sql } from 'drizzle-orm'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { getSpaceMemories, saveMemory, compactSpaceMemories, extractMemoriesPostHoc } from '../lib/memory.ts'
 import { getAppSetting } from '../lib/db.ts'
+import { indexSession } from '../lib/chat-indexer.ts'
 
 export const memoriesRouter = new Hono<AppEnv>()
 
@@ -22,7 +23,48 @@ memoriesRouter.get('/:spaceId/memories', async (c) => {
   const spaceId = c.req.param('spaceId')
   if (!await verifySpaceOwner(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
   const memories = await getSpaceMemories(spaceId)
-  return c.json(memories)
+  return c.json({ memories })
+})
+
+memoriesRouter.get('/:spaceId/chat-index-status', async (c) => {
+  const userId = c.get('userId') as string
+  const spaceId = c.req.param('spaceId')
+  if (!await verifySpaceOwner(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
+  const total = (await db.select({ count: sql<number>`count(*)` }).from(chatSessions)
+    .where(eq(chatSessions.spaceId, spaceId)).get())?.count ?? 0
+  const { indexed } = sqlite.prepare(`
+    SELECT COUNT(DISTINCT ccm.session_id) AS indexed
+    FROM chat_chunk_meta ccm
+    JOIN chat_sessions cs ON cs.id = ccm.session_id
+    WHERE cs.space_id = ?
+  `).get(spaceId) as { indexed: number }
+  return c.json({ indexed, total })
+})
+
+memoriesRouter.post('/:spaceId/rebuild-chat-index', async (c) => {
+  const userId = c.get('userId') as string
+  const spaceId = c.req.param('spaceId')
+  if (!await verifySpaceOwner(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
+  const chats = await db.select().from(chatSessions).where(eq(chatSessions.spaceId, spaceId))
+  const total = chats.length
+  const encoder = new TextEncoder()
+  let ctrl!: ReadableStreamDefaultController<Uint8Array>
+  const body = new ReadableStream<Uint8Array>({ start(c) { ctrl = c } })
+  const send = (obj: object) => ctrl.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`))
+  ;(async () => {
+    ctrl.enqueue(encoder.encode(': ' + ' '.repeat(2048) + '\n\n'))
+    let errors = 0
+    for (let i = 0; i < chats.length; i++) {
+      send({ processing: i + 1, total })
+      try { await indexSession(chats[i].id) }
+      catch (e) { console.error(`[chat-index] failed for ${chats[i].id.slice(0, 8)}:`, e); errors++ }
+    }
+    send({ done: true, total, errors })
+    ctrl.close()
+  })().catch(e => { console.error('[rebuild-chat-index]', e); ctrl.close() })
+  return new Response(body, {
+    headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no' },
+  })
 })
 
 memoriesRouter.post('/:spaceId/memories', zValidator('json', z.object({
@@ -49,7 +91,8 @@ memoriesRouter.patch('/:spaceId/memories/:id', zValidator('json', z.object({
     .where(and(eq(spaceMemories.id, id), eq(spaceMemories.spaceId, spaceId))).get()
   if (!memory) return c.json({ error: 'Not found' }, 404)
 
-  await db.update(spaceMemories).set({ content: c.req.valid('json').content, updatedAt: new Date() })
+  const { content } = c.req.valid('json')
+  await db.update(spaceMemories).set({ content, updatedAt: new Date() })
     .where(eq(spaceMemories.id, id))
   return c.json({ ok: true })
 })
@@ -136,4 +179,41 @@ memoriesRouter.post('/:spaceId/recreate-memories', async (c) => {
       'X-Accel-Buffering': 'no',
     },
   })
+})
+
+memoriesRouter.get('/:spaceId/files', async (c) => {
+  const userId = c.get('userId') as string
+  const spaceId = c.req.param('spaceId')
+  if (!await verifySpaceOwner(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
+  const rows = await db.select({
+    id: uploadedFiles.id,
+    filename: uploadedFiles.filename,
+    size: uploadedFiles.size,
+    createdAt: uploadedFiles.createdAt,
+  })
+    .from(spaceFiles)
+    .innerJoin(uploadedFiles, eq(spaceFiles.fileId, uploadedFiles.id))
+    .where(eq(spaceFiles.spaceId, spaceId))
+  return c.json(rows)
+})
+
+memoriesRouter.post('/:spaceId/files', zValidator('json', z.object({ fileId: z.string() })), async (c) => {
+  const userId = c.get('userId') as string
+  const spaceId = c.req.param('spaceId')
+  const { fileId } = c.req.valid('json')
+  if (!await verifySpaceOwner(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
+  const file = await db.select().from(uploadedFiles)
+    .where(and(eq(uploadedFiles.id, fileId), eq(uploadedFiles.userId, userId))).get()
+  if (!file) return c.json({ error: 'File not found' }, 404)
+  await db.insert(spaceFiles).values({ spaceId, fileId }).onConflictDoNothing()
+  return c.json({ ok: true })
+})
+
+memoriesRouter.delete('/:spaceId/files/:fileId', async (c) => {
+  const userId = c.get('userId') as string
+  const spaceId = c.req.param('spaceId')
+  const fileId = c.req.param('fileId')
+  if (!await verifySpaceOwner(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
+  await db.delete(spaceFiles).where(and(eq(spaceFiles.spaceId, spaceId), eq(spaceFiles.fileId, fileId)))
+  return c.json({ ok: true })
 })
