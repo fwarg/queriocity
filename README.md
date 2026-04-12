@@ -151,28 +151,49 @@ Open `http://localhost:3000`. The first user to register becomes an admin.
 
 ## Spaces and memory
 
-**Spaces** are named workspaces that group related chats together. Each space has its own persistent **memory store** — a set of facts extracted from conversations that are automatically injected into the system prompt for all future chats in that space.
+**Spaces** are named workspaces that group related chats together. Each space has:
+
+- A persistent **memory store** — facts extracted from conversations, injected into future system prompts
+- A **chat history index** — full message content embedded for semantic retrieval
+- **Tagged files** — library documents linked to the space for contextual retrieval
 
 ### How memory works
 
-- After each assistant response, the small model extracts noteworthy facts, preferences, and decisions from the exchange and saves them to the space.
-- Memories are injected into the system prompt up to the configured token budget (newest first), so the model is aware of established context without re-reading full history.
+- After each assistant response, the small model extracts noteworthy facts, preferences, and decisions and saves them to the space.
+- Memories are injected into the system prompt up to the configured token budget (newest first).
 - You can view, add, edit, and delete individual memories in the space detail view.
+
+### RAG (retrieval-augmented generation)
+
+When a space has a RAG budget configured (Admin > System settings), each request performs semantic retrieval on top of the fixed memory block:
+
+- **Chat history RAG** — past messages in the space are chunked and embedded. The chunks most relevant to the current query are injected as `## Relevant past conversations` in the system prompt, surfacing details that weren't captured by memory extraction.
+- **Tagged file RAG** — if library files are tagged to the space (see below), relevant excerpts are injected as `## Relevant document excerpts`. The model can also call the `uploads_search` tool on demand for the full personal library.
+
+RAG can be toggled per user in **Settings > Use space RAG**.
+
+#### Chat index
+
+For RAG over chat history to work, messages must be indexed. New messages are indexed automatically after each response. When a chat is first assigned to a space its history is indexed retroactively. The space sidebar shows **Chat index: N/M sessions** — click **Rebuild index** to (re-)index all chats at any time.
 
 ### Memory compaction and management
 
-As a space accumulates memories over time, older or redundant facts can be consolidated. The memory panel header exposes several actions:
+The memory panel header exposes several actions:
 
-- **Compact** — feeds all memories to the small model, which merges near-duplicates and removes redundant entries. No-ops if already within the target token budget, with feedback either way.
-- **Recreate all** — clears all auto-extracted memories for the space and re-runs extraction across all chats sequentially. Manual memories are preserved. Shows live `Processing (x/y)` progress per chat.
-- **Clear all** — deletes all memories in the space (with confirmation). Useful for starting completely fresh.
-- **Dream** — optional nightly scheduled pass. Configured in Admin > System settings (hour, threshold, target). Compacts any space whose memories exceed the threshold down to the target.
+- **Compact** — feeds all memories to the small model, which merges near-duplicates and removes redundant entries. No-ops if already within the target token budget.
+- **Recreate all** — clears all auto-extracted memories and re-runs extraction across all chats. Manual memories are preserved. Shows live `Processing (x/y)` progress.
+- **Clear all** — deletes all memories in the space (with confirmation).
+- **Dream** — optional nightly scheduled pass. Configured in Admin > System settings (hour, threshold, target). Compacts any space whose memories exceed the threshold.
 
-Individual chats in a space also have a **Recreate memories** action that removes and re-extracts memories for that chat only.
+Individual chats in a space also have a **Recreate memories** action that re-extracts memories for that chat only.
+
+### Tagged files
+
+Any file in your library can be tagged to a space from the space detail view. Tagged files are searched semantically on every request in that space (within the RAG budget), injecting relevant excerpts as additional context. This is useful for persistent reference material — specs, style guides, background documents — that should inform all conversations in the space.
 
 ### Assigning chats to spaces
 
-Chats can be assigned or reassigned to spaces from the chat header or space detail view. When a chat is first assigned to a space, memories are retroactively extracted from its full history. Auto-extracted memories follow the chat if it is moved or removed.
+Chats can be assigned or reassigned to spaces from the chat header or space detail view. When a chat is first assigned to a space, memories are retroactively extracted and the chat history is indexed for RAG. Auto-extracted memories follow the chat if it is moved or removed.
 
 ---
 
@@ -182,7 +203,8 @@ The **Admin panel > System settings** tab exposes runtime-configurable parameter
 
 | Section | Setting | Default | Description |
 |---|---|---|---|
-| Memory | Token budget | 1000 | Max tokens of space memory injected into each request |
+| Memory | Token budget | 1000 | Max tokens of fixed space memory injected into each request |
+| Memory | RAG budget | 500 | Additional tokens reserved for RAG results (chat history + tagged files); 0 disables RAG |
 | Memory | Dream hour | Disabled | Server hour (0–23) to run nightly compaction, or disabled |
 | Memory | Dream threshold | 1500 | Compaction triggers when space memory exceeds this many tokens |
 | Memory | Dream target | 700 | Token target after compaction |
@@ -586,7 +608,8 @@ Hono server (Bun)
         └── SQLite + sqlite-vec   (queriocity.db)
              ├── chat sessions & messages
              ├── space memories (extracted, manual, compacted)
-             ├── uploaded file chunks + embeddings
+             ├── chat message chunks + embeddings  (space RAG)
+             ├── uploaded file chunks + embeddings (library + space file RAG)
              └── app_settings (runtime-configurable parameters)
 ```
 
