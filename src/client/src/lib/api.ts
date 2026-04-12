@@ -5,7 +5,7 @@ export interface AuthUser {
   email: string
   name: string | null
   role: 'user' | 'admin'
-  settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; fontSize?: number }
+  settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; useSpaceRag?: boolean; fontSize?: number }
   memoryTokenBudget: number
 }
 
@@ -66,7 +66,7 @@ export async function logout(): Promise<void> {
   await fetch(`${BASE}/auth/logout`, { method: 'POST' })
 }
 
-export async function updateSettings(settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; fontSize?: number }): Promise<void> {
+export async function updateSettings(settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; useSpaceRag?: boolean; fontSize?: number }): Promise<void> {
   await fetch(`${BASE}/users/settings`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -216,11 +216,29 @@ export async function recreateChatMemories(chatId: string): Promise<void> {
   await fetch(`${BASE}/history/${chatId}/recreate-memories`, { method: 'POST' })
 }
 
-export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; memoryExtractChars: number; rerankTopN: number; attachmentChars: number }> {
+export interface SpaceFile { id: string; filename: string; size: number; createdAt: number }
+
+export async function fetchSpaceFiles(spaceId: string): Promise<SpaceFile[]> {
+  return fetch(`${BASE}/spaces/${spaceId}/files`).then(r => r.json())
+}
+
+export async function tagFileToSpace(spaceId: string, fileId: string): Promise<void> {
+  await fetch(`${BASE}/spaces/${spaceId}/files`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fileId }),
+  })
+}
+
+export async function untagFileFromSpace(spaceId: string, fileId: string): Promise<void> {
+  await fetch(`${BASE}/spaces/${spaceId}/files/${fileId}`, { method: 'DELETE' })
+}
+
+export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; memoryExtractChars: number; rerankTopN: number; attachmentChars: number; spaceRagBudget: number }> {
   return fetch(`${BASE}/admin/settings`).then(r => r.json())
 }
 
-export async function updateAdminSettings(s: { memoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; memoryExtractChars?: number; rerankTopN?: number; attachmentChars?: number }): Promise<void> {
+export async function updateAdminSettings(s: { memoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; memoryExtractChars?: number; rerankTopN?: number; attachmentChars?: number; spaceRagBudget?: number }): Promise<void> {
   await fetch(`${BASE}/admin/settings`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -264,8 +282,13 @@ export async function* recreateAllSpaceMemories(
   }
 }
 
-export async function fetchSpaceMemories(spaceId: string): Promise<SpaceMemory[]> {
+export async function fetchSpaceMemories(spaceId: string): Promise<{ memories: SpaceMemory[]; embedded: number }> {
   const res = await fetch(`${BASE}/spaces/${spaceId}/memories`)
+  return res.json()
+}
+
+export async function rebuildSpaceEmbeddings(spaceId: string): Promise<{ rebuilt: number }> {
+  const res = await fetch(`${BASE}/spaces/${spaceId}/rebuild-embeddings`, { method: 'POST' })
   return res.json()
 }
 

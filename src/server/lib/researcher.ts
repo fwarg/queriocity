@@ -61,9 +61,10 @@ export function runResearcher({ messages, focusMode, userId, model, abortSignal,
   const start = performance.now()
   console.log(`  [chat] model=${(model as LanguageModel & { modelId?: string }).modelId ?? String(model)} focusMode=${focusMode} maxSteps=${maxSteps}`)
 
-  let system = `Today's date is ${new Date().toISOString().split('T')[0]}.\n\n` + SYSTEM_PROMPTS[focusMode]
-  if (customPrompt?.trim()) system += `\n\nAdditional instructions from the user:\n${customPrompt.trim()}`
+  let system = `Today's date is ${new Date().toISOString().split('T')[0]}.`
   if (memoryBlock) system += '\n\n' + memoryBlock
+  system += '\n\n' + SYSTEM_PROMPTS[focusMode]
+  if (customPrompt?.trim()) system += `\n\nAdditional instructions from the user:\n${customPrompt.trim()}`
   if (spaceId) system += `\n\nYou have a save_to_memory tool. Use it when the user expresses a preference, makes a decision, or shares context that would be useful in future conversations. Do not save trivial or ephemeral details.`
 
   // Inject pre-executed search results as a fake tool exchange so the model
@@ -138,6 +139,9 @@ export function runResearcher({ messages, focusMode, userId, model, abortSignal,
   }
 
   return streamText({
+    onError: ({ error }) => {
+      console.error('  [chat] streamText error:', error)
+    },
     onFinish: ({ usage }) => {
       const ms = (performance.now() - start).toFixed(0)
       const fmt = (n: number | undefined) => (n != null && !isNaN(n)) ? String(n) : '?'

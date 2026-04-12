@@ -21,6 +21,21 @@ through a single Bun process.
 | [SearXNG](https://docs.searxng.org/) | Private meta-search backend |
 | Ollama or any OpenAI-compatible API  | Language model serving      |
 
+## Contents
+
+- [Installation](#installation)
+- [User management](#user-management)
+- [Spaces and memory](#spaces-and-memory)
+- [Admin settings](#admin-settings)
+- [Research modes](#research-modes)
+- [Attaching files](#attaching-files)
+- [Custom instructions](#custom-instructions)
+- [Docker](#docker)
+- [Practical setup guide](#practical-setup-guide)
+- [Architecture overview](#architecture-overview)
+- [Dependencies and licenses](#dependencies-and-licenses)
+- [License](#license)
+
 ---
 
 ## Installation

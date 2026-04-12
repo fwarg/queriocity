@@ -13,15 +13,17 @@ interface Props {
   customPrompt: string
   showThinking: { balanced: boolean; thorough: boolean }
   useThinking: boolean
+  useSpaceRag: boolean
   fontSize: number
   onClose: () => void
-  onSave: (customPrompt: string, showThinking: { balanced: boolean; thorough: boolean }, useThinking: boolean, fontSize: number) => void
+  onSave: (customPrompt: string, showThinking: { balanced: boolean; thorough: boolean }, useThinking: boolean, useSpaceRag: boolean, fontSize: number) => void
 }
 
-export function SettingsPanel({ customPrompt: initial, showThinking: initialShowThinking, useThinking: initialUseThinking, fontSize: initialFontSize, onClose, onSave }: Props) {
+export function SettingsPanel({ customPrompt: initial, showThinking: initialShowThinking, useThinking: initialUseThinking, useSpaceRag: initialUseSpaceRag, fontSize: initialFontSize, onClose, onSave }: Props) {
   const [customPrompt, setCustomPrompt] = useState(initial)
   const [showThinking, setShowThinking] = useState(initialShowThinking)
   const [useThinking, setUseThinking] = useState(initialUseThinking)
+  const [useSpaceRag, setUseSpaceRag] = useState(initialUseSpaceRag)
   const [fontSize, setFontSize] = useState(initialFontSize)
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -30,8 +32,8 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
     e.preventDefault()
     setBusy(true)
     try {
-      await updateSettings({ customPrompt, showThinking, useThinking, fontSize })
-      onSave(customPrompt, showThinking, useThinking, fontSize)
+      await updateSettings({ customPrompt, showThinking, useThinking, useSpaceRag, fontSize })
+      onSave(customPrompt, showThinking, useThinking, useSpaceRag, fontSize)
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } finally {
@@ -91,6 +93,22 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
                 className="accent-blue-500"
               />
               Enable model thinking
+            </label>
+          </div>
+          <div className="border-t border-gray-800" />
+          <div className="flex flex-col gap-2">
+            <label className="text-xs text-gray-400 font-medium">Space RAG</label>
+            <p className="text-xs text-gray-500">
+              When chatting in a space, retrieve relevant memories and document excerpts based on your query (in addition to the fixed memory block).
+            </p>
+            <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={useSpaceRag}
+                onChange={e => setUseSpaceRag(e.target.checked)}
+                className="accent-blue-500"
+              />
+              Enable space RAG
             </label>
           </div>
           <div className="border-t border-gray-800" />

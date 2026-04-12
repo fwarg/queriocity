@@ -2,7 +2,7 @@ import { Database } from 'bun:sqlite'
 import * as sqliteVec from 'sqlite-vec'
 import { drizzle } from 'drizzle-orm/bun-sqlite'
 import { eq } from 'drizzle-orm'
-import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core'
+import { sqliteTable, text, integer, primaryKey } from 'drizzle-orm/sqlite-core'
 
 const DB_PATH = process.env.DB_PATH ?? 'queriocity.db'
 
@@ -90,6 +90,11 @@ export const uploadedFiles = sqliteTable('uploaded_files', {
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 
+export const spaceFiles = sqliteTable('space_files', {
+  spaceId: text('space_id').notNull().references(() => spaces.id, { onDelete: 'cascade' }),
+  fileId: text('file_id').notNull().references(() => uploadedFiles.id, { onDelete: 'cascade' }),
+}, (t) => ({ pk: primaryKey({ columns: [t.spaceId, t.fileId] }) }))
+
 // --- Init ---
 
 export const EMBED_DIMS = parseInt(process.env.EMBED_DIMENSIONS ?? '1536')
@@ -104,6 +109,15 @@ function initSchema() {
     sqlite.run('DROP TABLE IF EXISTS file_chunks')
     sqlite.run('DELETE FROM file_chunk_meta')
     sqlite.run('DELETE FROM uploaded_files')
+  }
+
+  // Recreate memory_chunks if the embedding dimension changed
+  const existingMem = sqlite.query(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='memory_chunks'"
+  ).get() as { sql: string } | null
+  if (existingMem && !existingMem.sql.includes(`FLOAT[${EMBED_DIMS}]`)) {
+    console.log(`[db] Embedding dimension changed → recreating memory_chunks (${EMBED_DIMS} dims)`)
+    sqlite.run('DROP TABLE IF EXISTS memory_chunks')
   }
 
   sqlite.run(`
@@ -184,6 +198,15 @@ function initSchema() {
     file_id  TEXT NOT NULL,
     content  TEXT NOT NULL
   )`)
+  sqlite.run(`CREATE VIRTUAL TABLE IF NOT EXISTS memory_chunks USING vec0(
+    memory_id TEXT PRIMARY KEY,
+    embedding FLOAT[${EMBED_DIMS}]
+  )`)
+  sqlite.run(`CREATE TABLE IF NOT EXISTS space_files (
+    space_id TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+    file_id  TEXT NOT NULL REFERENCES uploaded_files(id) ON DELETE CASCADE,
+    PRIMARY KEY (space_id, file_id)
+  )`)
 
   // Migration: add space_id column if it doesn't exist yet
   try {
@@ -213,6 +236,7 @@ function initSchema() {
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_uploaded_files_user_id ON uploaded_files(user_id)`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_file_chunk_meta_file_id ON file_chunk_meta(file_id)`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_space_memories_space_id ON space_memories(space_id)`)
+  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_space_files_space_id ON space_files(space_id)`)
 }
 
 initSchema()

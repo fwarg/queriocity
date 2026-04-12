@@ -57,12 +57,16 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
   }
 
   if (focusMode === 'flash') {
-    const [userRow, memoryBudget] = await Promise.all([
+    const [userRow, memoryBudget, ragBudget] = await Promise.all([
       db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get(),
-      spaceId ? getAppSetting('memory_token_budget', '1000').then(v => parseInt(v)) : Promise.resolve(1000),
+      spaceId ? getAppSetting('memory_token_budget', '1000').then(Number) : Promise.resolve(1000),
+      spaceId ? getAppSetting('space_rag_budget', '500').then(Number) : Promise.resolve(0),
     ])
-    const resolvedMemoryBlock = spaceId ? await buildMemoryBlock(spaceId, memoryBudget) : ''
-    const customPrompt: string | undefined = userRow ? (parseSettings(userRow.settings).customPrompt as string | undefined) : undefined
+    const userQuery = lastUser?.content ?? ''
+    const parsedFlashSettings = parseSettings(userRow?.settings ?? '{}')
+    const effectiveRag = (parsedFlashSettings.useSpaceRag !== false) ? ragBudget : 0
+    const resolvedMemoryBlock = spaceId ? await buildMemoryBlock(spaceId, memoryBudget, effectiveRag, userQuery) : ''
+    const customPrompt: string | undefined = parsedFlashSettings.customPrompt as string | undefined
     const t0 = Date.now()
     let fullContent = ''
     return streamSSE(c, async (stream) => {
@@ -82,7 +86,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
         }
       }
       console.log(`  [flash] done in ${Date.now() - t0}ms, ${fullContent.length} chars`)
-      setCached(ck, fullContent)
+      if (fullContent.length >= 50) setCached(ck, fullContent)
       const { title: sessionTitle } = await persistMessage(sid, userId, msgs, fullContent, [], spaceId)
       await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title: sessionTitle, elapsedMs: Date.now() - t0 }) })
       if (spaceId) extractMemoriesPostHoc(spaceId, sid, lastUser?.content ?? '', fullContent).catch(e => console.error('[memory]', e))
@@ -102,14 +106,17 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
   const t0 = Date.now()
 
   // Fetch user settings + file count + reformulate/pre-search + memory in parallel
-  const [userRow, fileCountRow, { initialQueries, initialResults }, memoryBudget] = await Promise.all([
+  const [userRow, fileCountRow, { initialQueries, initialResults }, memoryBudget, ragBudget] = await Promise.all([
     db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get(),
     db.select({ count: sql<number>`count(*)` }).from(uploadedFiles).where(eq(uploadedFiles.userId, userId)).get(),
     runReformulateAndPreSearch(msgsForReformulate, focusMode as 'fast' | 'balanced' | 'thorough', hasAttachment),
-    spaceId ? getAppSetting('memory_token_budget', '1000').then(v => parseInt(v)) : Promise.resolve(1000),
+    spaceId ? getAppSetting('memory_token_budget', '1000').then(Number) : Promise.resolve(1000),
+    spaceId ? getAppSetting('space_rag_budget', '500').then(Number) : Promise.resolve(0),
   ])
-  const memoryBlock = spaceId ? await buildMemoryBlock(spaceId, memoryBudget) : ''
+  const userQuery = lastUser?.content ?? ''
   const parsedSettings = parseSettings(userRow?.settings ?? '{}')
+  const effectiveRag = (parsedSettings.useSpaceRag !== false) ? ragBudget : 0
+  const memoryBlock = spaceId ? await buildMemoryBlock(spaceId, memoryBudget, effectiveRag, userQuery) : ''
   const customPrompt = parsedSettings.customPrompt as string | undefined
   const showThinkingSettings = (parsedSettings.showThinking ?? { balanced: false, thorough: false }) as { balanced: boolean; thorough: boolean }
   const showThinking = focusMode === 'balanced' ? showThinkingSettings.balanced
@@ -251,12 +258,13 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
       })
     }
 
+    if (fullContent.length < 50) console.log(`  [debug] short content: ${JSON.stringify(fullContent)}`)
     console.log(`  [${focusMode}] done in ${Date.now() - t0}ms, ${fullContent.length} chars`)
 
     // Persist to DB
     const { title: sessionTitle } = await persistMessage(sid, userId, msgs, fullContent, sources, spaceId)
 
-    setCached(ck, fullContent)
+    if (fullContent.length >= 50) setCached(ck, fullContent)
     await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title: sessionTitle, elapsedMs: Date.now() - t0 }) })
     if (spaceId) extractMemoriesPostHoc(spaceId, sid, lastUser?.content ?? '', fullContent).catch(e => console.error('[memory]', e))
   })
@@ -285,9 +293,12 @@ async function drainResearcherStream(
   const emitThinking = (delta: string) =>
     stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta }) })
 
+  let textDeltaCount = 0, reasoningCount = 0, finishReason = 'unknown'
   for await (const _part of researcherResult.fullStream) {
-    const part = _part as { type: string; toolName?: string; args?: { queries?: string[]; query?: string }; result?: unknown; textDelta?: string; error?: unknown }
-    if (part.type === 'tool-call' && part.toolName === 'web_search') {
+    const part = _part as { type: string; toolName?: string; args?: { queries?: string[]; query?: string }; result?: unknown; textDelta?: string; error?: unknown; finishReason?: string }
+    if (part.type === 'finish' || part.type === 'step-finish') {
+      if (part.finishReason) finishReason = part.finishReason
+    } else if (part.type === 'tool-call' && part.toolName === 'web_search') {
       await emitSearchStatus(part.args ?? {})
       if (showThinking) {
         const queries: string[] = part.args?.queries ?? (part.args?.query ? [part.args.query] : [])
@@ -305,8 +316,10 @@ async function drainResearcherStream(
         await emitThinking(snippets + '\n\n')
       }
     } else if (part.type === 'reasoning') {
+      reasoningCount++
       if (showThinking) await emitThinking(part.textDelta ?? '')
     } else if (part.type === 'text-delta') {
+      textDeltaCount++
       if (extractor) {
         const { text, thinking } = extractor.process(part.textDelta ?? '')
         if (thinking && showThinking) await emitThinking(thinking)
@@ -330,6 +343,7 @@ async function drainResearcherStream(
       await onText(text)
     }
   }
+  console.log(`  [drain] textDelta=${textDeltaCount} reasoning=${reasoningCount} finishReason=${finishReason}`)
 }
 
 async function runReformulateAndPreSearch(
