@@ -1,6 +1,7 @@
 import { Database } from 'bun:sqlite'
 import * as sqliteVec from 'sqlite-vec'
 import { drizzle } from 'drizzle-orm/bun-sqlite'
+import { eq } from 'drizzle-orm'
 import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core'
 
 const DB_PATH = process.env.DB_PATH ?? 'queriocity.db'
@@ -39,6 +40,11 @@ export const invites = sqliteTable('invites', {
   usedAt: integer('used_at', { mode: 'timestamp' }),
 })
 
+export const appSettings = sqliteTable('app_settings', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+})
+
 export const spaces = sqliteTable('spaces', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
@@ -54,6 +60,16 @@ export const chatSessions = sqliteTable('chat_sessions', {
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   spaceId: text('space_id').references(() => spaces.id, { onDelete: 'set null' }),
+})
+
+export const spaceMemories = sqliteTable('space_memories', {
+  id: text('id').primaryKey(),
+  spaceId: text('space_id').notNull().references(() => spaces.id, { onDelete: 'cascade' }),
+  content: text('content').notNull(),
+  source: text('source', { enum: ['tool', 'extraction', 'manual', 'compact'] }).notNull().default('tool'),
+  sessionId: text('session_id').references(() => chatSessions.id, { onDelete: 'set null' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 })
 
 export const messages = sqliteTable('messages', {
@@ -145,6 +161,19 @@ function initSchema() {
       size       INTEGER NOT NULL,
       created_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS space_memories (
+      id         TEXT PRIMARY KEY,
+      space_id   TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+      content    TEXT NOT NULL,
+      source     TEXT NOT NULL DEFAULT 'tool' CHECK(source IN ('tool','extraction','manual')),
+      session_id TEXT REFERENCES chat_sessions(id) ON DELETE SET NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
   `)
   sqlite.run(`CREATE VIRTUAL TABLE IF NOT EXISTS file_chunks USING vec0(
     chunk_id TEXT PRIMARY KEY,
@@ -161,12 +190,29 @@ function initSchema() {
     sqlite.run(`ALTER TABLE chat_sessions ADD COLUMN space_id TEXT REFERENCES spaces(id) ON DELETE SET NULL`)
   } catch {}
 
+  // Migration: add 'compact' to space_memories source CHECK constraint
+  try {
+    sqlite.run(`CREATE TABLE IF NOT EXISTS space_memories_v2 (
+      id         TEXT PRIMARY KEY,
+      space_id   TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+      content    TEXT NOT NULL,
+      source     TEXT NOT NULL DEFAULT 'tool' CHECK(source IN ('tool','extraction','manual','compact')),
+      session_id TEXT REFERENCES chat_sessions(id) ON DELETE SET NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`)
+    sqlite.run(`INSERT OR IGNORE INTO space_memories_v2 SELECT * FROM space_memories`)
+    sqlite.run(`DROP TABLE space_memories`)
+    sqlite.run(`ALTER TABLE space_memories_v2 RENAME TO space_memories`)
+  } catch {}
+
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_spaces_user_id ON spaces(user_id)`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_id ON chat_sessions(user_id)`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_chat_sessions_space_id ON chat_sessions(space_id)`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_uploaded_files_user_id ON uploaded_files(user_id)`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_file_chunk_meta_file_id ON file_chunk_meta(file_id)`)
+  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_space_memories_space_id ON space_memories(space_id)`)
 }
 
 initSchema()
@@ -176,4 +222,14 @@ export { sqlite }
 /** Safely parse a user's settings JSON, returning {} on malformed data. */
 export function parseSettings(s: string): Record<string, unknown> {
   try { return JSON.parse(s) } catch { return {} }
+}
+
+export async function getAppSetting(key: string, fallback: string): Promise<string> {
+  const row = await db.select().from(appSettings).where(eq(appSettings.key, key)).get()
+  return row?.value ?? fallback
+}
+
+export async function setAppSetting(key: string, value: string): Promise<void> {
+  await db.insert(appSettings).values({ key, value })
+    .onConflictDoUpdate({ target: appSettings.key, set: { value } })
 }

@@ -8,9 +8,10 @@ import { AdminPanel } from './components/AdminPanel.tsx'
 import {
   fetchHistory, fetchSession, deleteSession, updateSessionTitle,
   fetchFiles, deleteFile, uploadFile, getMe, hasUsers, logout,
-  fetchSpaces, createSpace, updateSpace, deleteSpace, assignChatToSpace,
+  fetchSpaces, createSpace, updateSpace, deleteSpace, assignChatToSpace, recreateChatMemories,
+  fetchSpaceMemories, createSpaceMemory, updateSpaceMemory, deleteSpaceMemory, compactSpaceMemories, recreateAllSpaceMemories, clearSpaceMemories,
 } from './lib/api.ts'
-import type { AuthUser, Message, Space } from './lib/api.ts'
+import type { AuthUser, Message, Space, SpaceMemory } from './lib/api.ts'
 import { useChat } from './hooks/useChat.ts'
 
 type AuthView = 'loading' | 'login' | 'register'
@@ -23,6 +24,19 @@ function formatSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+const MEMORY_HEADER_TOKENS = 30
+
+function countOverflowMemories(memories: SpaceMemory[], budget: number): number {
+  let acc = MEMORY_HEADER_TOKENS
+  let injected = 0
+  for (const m of memories) {
+    acc += Math.ceil(m.content.length / 4)
+    if (acc > budget) break
+    injected++
+  }
+  return Math.max(0, memories.length - injected)
 }
 
 export default function App() {
@@ -42,6 +56,16 @@ export default function App() {
   const [newSpaceOpen, setNewSpaceOpen] = useState(false)
   const [newSpaceDraft, setNewSpaceDraft] = useState('')
   const [spacePickerOpen, setSpacePickerOpen] = useState<string | null>(null)
+  const [spaceMemories, setSpaceMemories] = useState<SpaceMemory[]>([])
+  const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null)
+  const [memoryDraft, setMemoryDraft] = useState('')
+  const [newMemoryOpen, setNewMemoryOpen] = useState(false)
+  const [newMemoryDraft, setNewMemoryDraft] = useState('')
+  const [memorySectionOpen, setMemorySectionOpen] = useState(false)
+  const [compacting, setCompacting] = useState(false)
+  const [compactResult, setCompactResult] = useState<string | null>(null)
+  const [recreating, setRecreating] = useState(false)
+  const [recreateProgress, setRecreateProgress] = useState<string | null>(null)
   const [view, setView] = useState<MainView>('chat')
   const [showSettings, setShowSettings] = useState(false)
   const [showAdmin, setShowAdmin] = useState(false)
@@ -50,12 +74,18 @@ export default function App() {
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
 
+  const activeSpaceId = sessionId
+    ? sessions.find(s => s.id === sessionId)?.spaceId ?? null
+    : currentSpaceId
+
   const { messages, setMessages, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, cancel, reset } = useChat({
     sessionId,
     focusMode,
+    spaceId: activeSpaceId ?? undefined,
     onSessionCreated: (id, title) => {
       setSessionId(id)
-      setSessions(prev => prev.some(s => s.id === id) ? prev : [{ id, title, spaceId: null }, ...prev])
+      setSessions(prev => prev.some(s => s.id === id) ? prev : [{ id, title, spaceId: activeSpaceId }, ...prev])
+      if (activeSpaceId) setSpaces(sps => sps.map(sp => sp.id === activeSpaceId ? { ...sp, chatCount: sp.chatCount + 1 } : sp))
     },
   })
 
@@ -88,6 +118,15 @@ export default function App() {
       }
     })
   }, [])
+
+  useEffect(() => {
+    if (currentSpaceId) fetchSpaceMemories(currentSpaceId).then(setSpaceMemories).catch(() => {})
+    else setSpaceMemories([])
+    setMemorySectionOpen(false)
+    setNewMemoryOpen(false)
+    setCompactResult(null)
+    setRecreateProgress(null)
+  }, [currentSpaceId])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -125,10 +164,11 @@ export default function App() {
     })
   }
 
-  function newChat() {
+  function newChat(inSpaceId?: string) {
     setSessionId(undefined)
     setEditingTitle(false)
     reset()
+    setCurrentSpaceId(inSpaceId ?? null)
     setView('chat')
   }
 
@@ -205,6 +245,9 @@ export default function App() {
 
   function handleDeleteSpace(id: string, e: React.MouseEvent) {
     e.stopPropagation()
+    const sp = spaces.find(s => s.id === id)
+    const label = sp ? `"${sp.name}"` : 'this space'
+    if (!confirm(`Delete ${label}? This will permanently delete all its memories. Chats will be unassigned but not deleted.`)) return
     deleteSpace(id).then(() => {
       setSpaces(prev => prev.filter(s => s.id !== id))
       setSessions(prev => prev.map(s => s.spaceId === id ? { ...s, spaceId: null } : s))
@@ -232,6 +275,31 @@ export default function App() {
     assignChatToSpace(chatId, spaceId).catch(() => {})
   }
 
+  function handleCreateMemory() {
+    const content = newMemoryDraft.trim()
+    if (!content || !currentSpaceId) { setNewMemoryOpen(false); return }
+    createSpaceMemory(currentSpaceId, content).then(m => {
+      setSpaceMemories(prev => [m, ...prev])
+      setNewMemoryDraft('')
+      setNewMemoryOpen(false)
+    }).catch(() => {})
+  }
+
+  function handleDeleteMemory(id: string) {
+    if (!currentSpaceId) return
+    deleteSpaceMemory(currentSpaceId, id).then(() => {
+      setSpaceMemories(prev => prev.filter(m => m.id !== id))
+    }).catch(() => {})
+  }
+
+  function handleMemorySave(id: string) {
+    const content = memoryDraft.trim()
+    setEditingMemoryId(null)
+    if (!content || !currentSpaceId) return
+    setSpaceMemories(prev => prev.map(m => m.id === id ? { ...m, content } : m))
+    updateSpaceMemory(currentSpaceId, id, content).catch(() => {})
+  }
+
   const kbFileRef = useRef<HTMLInputElement>(null)
   const [kbUploadStatus, setKbUploadStatus] = useState<'idle' | 'uploading' | 'ok' | 'error'>('idle')
   const [kbUploadMsg, setKbUploadMsg] = useState('')
@@ -247,9 +315,9 @@ export default function App() {
       setKbUploadMsg(`"${file.name}" added to knowledge base`)
       fetchFiles().then(setFiles).catch(() => {})
       setTimeout(() => setKbUploadStatus('idle'), 3000)
-    } catch (err: any) {
+    } catch (err: unknown) {
       setKbUploadStatus('error')
-      setKbUploadMsg(err.message ?? 'Upload failed')
+      setKbUploadMsg(err instanceof Error ? err.message : 'Upload failed')
       setTimeout(() => setKbUploadStatus('idle'), 4000)
     } finally {
       e.target.value = ''
@@ -293,7 +361,11 @@ export default function App() {
         />
       )}
       {showAdmin && currentUser && (
-        <AdminPanel currentUserId={currentUser.id} onClose={() => setShowAdmin(false)} />
+        <AdminPanel
+          currentUserId={currentUser.id}
+          onClose={() => setShowAdmin(false)}
+          onBudgetChange={budget => setCurrentUser(prev => prev ? { ...prev, memoryTokenBudget: budget } : prev)}
+        />
       )}
 
       {/* Sidebar — overlay on mobile, static on md+ */}
@@ -477,7 +549,152 @@ export default function App() {
                     </button>
                   </h2>
                 )}
+                <button
+                  onClick={() => newChat(currentSpaceId!)}
+                  className="ml-auto px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-sm font-medium whitespace-nowrap"
+                >
+                  + New chat
+                </button>
               </div>
+              {/* Memory section */}
+              <div className="border border-gray-800 rounded-lg p-3">
+                <div className="flex items-center justify-between">
+                  <button
+                    onClick={() => setMemorySectionOpen(o => !o)}
+                    className="flex items-center gap-1.5 text-sm font-medium text-gray-400 hover:text-gray-200"
+                  >
+                    <span>{memorySectionOpen ? '▾' : '▸'}</span>
+                    Memory ({spaceMemories.length})
+                  </button>
+                  {memorySectionOpen && !newMemoryOpen && (
+                    <div className="flex items-center gap-2">
+                      {spaceMemories.length > 1 && (
+                        <button
+                          onClick={async () => {
+                            setCompacting(true)
+                            setCompactResult(null)
+                            try {
+                              const { before, after, compacted } = await compactSpaceMemories(currentSpaceId!)
+                              if (compacted) fetchSpaceMemories(currentSpaceId!).then(setSpaceMemories).catch(() => {})
+                              setCompactResult(compacted ? `${before} → ${after}` : 'Already within target')
+                              setTimeout(() => setCompactResult(null), 4000)
+                            } finally {
+                              setCompacting(false)
+                            }
+                          }}
+                          disabled={compacting}
+                          className="text-xs text-gray-500 hover:text-gray-300 disabled:opacity-50"
+                        >
+                          {compacting ? 'Compacting…' : 'Compact'}
+                        </button>
+                      )}
+                      {compactResult && <span className="text-xs text-gray-500">{compactResult}</span>}
+                      <button
+                        onClick={async () => {
+                          if (!confirm('Clear all auto-extracted memories and re-extract from all chats? Manual memories will be kept.')) return
+                          setRecreating(true)
+                          setRecreateProgress(null)
+                          setCompactResult(null)
+                          try {
+                            for await (const ev of recreateAllSpaceMemories(currentSpaceId!)) {
+                              if (ev.processing !== undefined) setRecreateProgress(`${ev.processing}/${ev.total}`)
+                              if (ev.done) {
+                                fetchSpaceMemories(currentSpaceId!).then(setSpaceMemories).catch(() => {})
+                                if (ev.errors) {
+                                  setCompactResult(`${ev.errors} chat${ev.errors > 1 ? 's' : ''} failed — reduce extraction context in settings`)
+                                  setTimeout(() => setCompactResult(null), 6000)
+                                }
+                              }
+                            }
+                          } finally {
+                            setRecreating(false)
+                            setRecreateProgress(null)
+                          }
+                        }}
+                        disabled={compacting || recreating}
+                        className="text-xs text-gray-500 hover:text-gray-300 disabled:opacity-50"
+                      >
+                        {recreating ? (recreateProgress ? `Processing (${recreateProgress})` : 'Starting…') : 'Recreate all'}
+                      </button>
+                      <button
+                        onClick={async () => {
+                          if (!confirm('Delete all memories in this space? This cannot be undone.')) return
+                          await clearSpaceMemories(currentSpaceId!)
+                          setSpaceMemories([])
+                        }}
+                        disabled={compacting || recreating}
+                        className="text-xs text-gray-500 hover:text-red-400 disabled:opacity-50"
+                      >
+                        Clear all
+                      </button>
+                      <button onClick={() => setNewMemoryOpen(true)} className="text-xs text-blue-400 hover:text-blue-300">+ Add</button>
+                    </div>
+                  )}
+                </div>
+                {memorySectionOpen && (() => {
+                  const overflow = countOverflowMemories(spaceMemories, currentUser?.memoryTokenBudget ?? 1000)
+                  return overflow > 0 ? (
+                    <p className="text-xs text-amber-500/80 mt-1">
+                      {overflow} {overflow === 1 ? 'memory exceeds' : 'memories exceed'} the token budget and won't be injected.
+                    </p>
+                  ) : null
+                })()}
+                {memorySectionOpen && newMemoryOpen && (
+                  <div className="mb-2">
+                    <input
+                      autoFocus
+                      type="text"
+                      value={newMemoryDraft}
+                      onChange={e => setNewMemoryDraft(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') handleCreateMemory(); if (e.key === 'Escape') { setNewMemoryOpen(false); setNewMemoryDraft('') } }}
+                      onBlur={handleCreateMemory}
+                      placeholder="Add a fact…"
+                      className="w-full px-2 py-1.5 rounded bg-gray-800 border border-gray-700 text-xs text-gray-200 focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                )}
+                {memorySectionOpen && spaceMemories.length === 0 && !newMemoryOpen ? (
+                  <p className="text-xs text-gray-600 mt-2">No memories yet. The assistant will save noteworthy facts from conversations in this space.</p>
+                ) : memorySectionOpen && spaceMemories.map(m => (
+                  <div key={m.id} className="flex items-start gap-1.5 group py-1">
+                    {editingMemoryId === m.id ? (
+                      <input
+                        autoFocus
+                        type="text"
+                        value={memoryDraft}
+                        onChange={e => setMemoryDraft(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') handleMemorySave(m.id); if (e.key === 'Escape') setEditingMemoryId(null) }}
+                        onBlur={() => handleMemorySave(m.id)}
+                        className="flex-1 px-2 py-0.5 rounded bg-gray-800 border border-gray-700 text-xs text-gray-200 focus:outline-none focus:border-blue-500"
+                      />
+                    ) : (
+                      <span
+                        onClick={() => { setMemoryDraft(m.content); setEditingMemoryId(m.id) }}
+                        className="flex-1 text-xs text-gray-300 cursor-pointer hover:text-gray-100"
+                      >
+                        {m.content}
+                      </span>
+                    )}
+                    <span className="text-[10px] text-gray-600 shrink-0 mt-0.5">{m.source === 'tool' ? 'auto' : m.source === 'extraction' ? 'extracted' : m.source === 'compact' ? 'compact' : 'manual'}</span>
+                    {editingMemoryId !== m.id && (
+                      <button
+                        onClick={() => { setMemoryDraft(m.content); setEditingMemoryId(m.id) }}
+                        className="text-gray-700 hover:text-gray-400 text-xs shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                        aria-label="Edit"
+                      >
+                        ✎
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleDeleteMemory(m.id)}
+                      className="text-gray-700 hover:text-red-400 text-xs shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+
               {(() => {
                 const spaceChats = sessions.filter(s => s.spaceId === currentSpaceId)
                 const filtered = spaceChats.filter(s => !sessionSearch || s.title.toLowerCase().includes(sessionSearch.toLowerCase()))
@@ -505,7 +722,7 @@ export default function App() {
                     <div className="relative shrink-0">
                       <button
                         onClick={(e) => { e.stopPropagation(); setSpacePickerOpen(prev => prev === s.id ? null : s.id) }}
-                        className="px-2 py-1 rounded text-xs text-indigo-400 bg-indigo-900/40 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
+                        className="px-2 py-1 rounded text-xs text-indigo-400 bg-indigo-900/40"
                         title="Move to space"
                       >
                         {spaceName}
@@ -522,8 +739,14 @@ export default function App() {
                             </button>
                           ))}
                           <button
+                            onClick={() => { recreateChatMemories(s.id).catch(() => {}); setSpacePickerOpen(null) }}
+                            className="w-full text-left px-3 py-1.5 text-xs text-gray-400 hover:bg-gray-700 hover:text-gray-200 border-t border-gray-700 mt-1 pt-1"
+                          >
+                            Recreate memories
+                          </button>
+                          <button
                             onClick={() => handleAssignToSpace(s.id, null)}
-                            className="w-full text-left px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-700 hover:text-red-400 border-t border-gray-700 mt-1 pt-1"
+                            className="w-full text-left px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-700 hover:text-red-400"
                           >
                             Remove from space
                           </button>
@@ -573,7 +796,7 @@ export default function App() {
                     className="flex-1 text-left px-4 py-3 rounded-lg bg-gray-800 hover:bg-gray-700 text-sm text-gray-100"
                   >
                     {sp.name}
-                    <span className="ml-2 text-xs text-gray-500">{sp.chatCount} chat{sp.chatCount !== 1 ? 's' : ''}</span>
+                    <span className="ml-2 text-xs text-gray-500">{sp.chatCount} chat{sp.chatCount !== 1 ? 's' : ''}{sp.memoryCount > 0 ? ` · ${sp.memoryCount} memor${sp.memoryCount !== 1 ? 'ies' : 'y'}` : ''}</span>
                   </button>
                   <button
                     onClick={(e) => handleDeleteSpace(sp.id, e)}
@@ -658,13 +881,22 @@ export default function App() {
                         const spaceName = session?.spaceId ? spaces.find(sp => sp.id === session.spaceId)?.name : null
                         const pickerId = `heading-${sessionId}`
                         return (
-                          <div className="relative shrink-0">
+                          <div className="relative shrink-0 flex items-center gap-1">
+                            {spaceName && session?.spaceId && (
+                              <button
+                                onClick={() => { setCurrentSpaceId(session.spaceId!); setView('spaces') }}
+                                className="text-xs px-2 py-0.5 rounded text-indigo-400 bg-indigo-900/40 hover:bg-indigo-800/60"
+                                title={`Go to space: ${spaceName}`}
+                              >
+                                {spaceName} ↗
+                              </button>
+                            )}
                             <button
                               onClick={() => setSpacePickerOpen(prev => prev === pickerId ? null : pickerId)}
-                              className={`text-xs px-2 py-0.5 rounded ${spaceName ? 'text-indigo-400 bg-indigo-900/40' : 'text-gray-600 hover:text-gray-400'}`}
+                              className="text-xs px-1.5 py-0.5 rounded text-gray-600 hover:text-gray-400"
                               title="Assign to space"
                             >
-                              {spaceName ?? '⊡'}
+                              ⊡
                             </button>
                             {spacePickerOpen === pickerId && (
                               <div className="absolute right-0 top-full mt-1 z-10 bg-gray-800 border border-gray-700 rounded shadow-lg min-w-36 py-1">

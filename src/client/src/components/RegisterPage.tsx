@@ -24,8 +24,8 @@ export function RegisterPage({ onRegister, inviteToken: initialToken, showLoginL
     try {
       const user = await register(email, password, name || undefined, token || undefined)
       onRegister(user)
-    } catch (err: any) {
-      setError(err.message)
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Registration failed')
     } finally {
       setBusy(false)
     }

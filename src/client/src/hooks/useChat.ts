@@ -5,10 +5,11 @@ import type { Message } from '../lib/api.ts'
 interface UseChatOptions {
   sessionId: string | undefined
   focusMode: 'flash' | 'fast' | 'balanced' | 'thorough'
+  spaceId?: string
   onSessionCreated: (id: string, title: string) => void
 }
 
-export function useChat({ sessionId, focusMode, onSessionCreated }: UseChatOptions) {
+export function useChat({ sessionId, focusMode, spaceId, onSessionCreated }: UseChatOptions) {
   const [messages, setMessages] = useState<Message[]>([])
   const [streaming, setStreaming] = useState('')
   const [streamingThinking, setStreamingThinking] = useState('')
@@ -40,7 +41,7 @@ export function useChat({ sessionId, focusMode, onSessionCreated }: UseChatOptio
     const sources: Array<{ title: string; url: string }> = []
 
     try {
-      for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal)) {
+      for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId)) {
         if (chunk.type === 'text') {
           accumulated += chunk.delta as string
           cancelAnimationFrame(rafRef.current)
@@ -59,8 +60,8 @@ export function useChat({ sessionId, focusMode, onSessionCreated }: UseChatOptio
           onSessionCreated(chunk.sessionId as string, (chunk.title as string | undefined) ?? text.slice(0, 60))
         }
       }
-    } catch (err: any) {
-      if (err.name !== 'AbortError') {
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name !== 'AbortError') {
         setStatus(err.message || 'Request failed. Check your connection.')
       }
     } finally {

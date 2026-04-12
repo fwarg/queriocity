@@ -21,8 +21,8 @@ export function LoginPage({ onLogin, showRegisterLink, onRegister }: Props) {
     try {
       const user = await login(email, password)
       onLogin(user)
-    } catch (err: any) {
-      setError(err.message)
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Login failed')
     } finally {
       setBusy(false)
     }

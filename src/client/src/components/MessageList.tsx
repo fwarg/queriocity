@@ -1,4 +1,4 @@
-import { useState, useCallback, memo } from 'react'
+import React, { useState, useCallback, memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -22,9 +22,11 @@ function insertCitationLinks(content: string, sources: Array<{ url: string }>) {
   })
 }
 
+type C = { children?: React.ReactNode }
+
 function makeMdComponents(highlightedSource: number | null, onCitationClick: (n: number) => void) {
   return {
-  a: ({ href, children }: any) => {
+  a: ({ href, children }: { href?: string; children?: React.ReactNode }) => {
     const match = /^\[(\d+)\]$/.exec(String(children))
     const num = match ? parseInt(match[1]) : null
     const isHighlighted = num !== null && num === highlightedSource
@@ -47,15 +49,15 @@ function makeMdComponents(highlightedSource: number | null, onCitationClick: (n:
       </a>
     )
   },
-  p: ({ children }: any) => <p className="mb-2 last:mb-0">{children}</p>,
-  ul: ({ children }: any) => <ul className="list-disc pl-4 mb-2 space-y-0.5">{children}</ul>,
-  ol: ({ children }: any) => <ol className="list-decimal pl-4 mb-2 space-y-0.5">{children}</ol>,
-  li: ({ children }: any) => <li>{children}</li>,
-  strong: ({ children }: any) => <strong className="font-semibold text-white">{children}</strong>,
-  h1: ({ children }: any) => <h1 className="text-base font-semibold text-white mb-1 mt-2">{children}</h1>,
-  h2: ({ children }: any) => <h2 className="text-sm font-semibold text-white mb-1 mt-2">{children}</h2>,
-  h3: ({ children }: any) => <h3 className="text-sm font-medium text-white mb-1 mt-1">{children}</h3>,
-  code: ({ children, className }: any) => {
+  p: ({ children }: C) => <p className="mb-2 last:mb-0">{children}</p>,
+  ul: ({ children }: C) => <ul className="list-disc pl-4 mb-2 space-y-0.5">{children}</ul>,
+  ol: ({ children }: C) => <ol className="list-decimal pl-4 mb-2 space-y-0.5">{children}</ol>,
+  li: ({ children }: C) => <li>{children}</li>,
+  strong: ({ children }: C) => <strong className="font-semibold text-white">{children}</strong>,
+  h1: ({ children }: C) => <h1 className="text-base font-semibold text-white mb-1 mt-2">{children}</h1>,
+  h2: ({ children }: C) => <h2 className="text-sm font-semibold text-white mb-1 mt-2">{children}</h2>,
+  h3: ({ children }: C) => <h3 className="text-sm font-medium text-white mb-1 mt-1">{children}</h3>,
+  code: ({ children, className }: { children?: React.ReactNode; className?: string }) => {
     const match = /language-(\w+)/.exec(className || '')
     if (match) {
       return (
@@ -71,18 +73,18 @@ function makeMdComponents(highlightedSource: number | null, onCitationClick: (n:
     }
     return <code className="bg-gray-700 text-gray-100 rounded px-1 py-0.5 text-xs font-mono">{children}</code>
   },
-  pre: ({ children }: any) => <>{children}</>,
-  blockquote: ({ children }: any) => <blockquote className="border-l-2 border-gray-600 pl-3 text-gray-400 italic my-2">{children}</blockquote>,
-  del: ({ children }: any) => <del className="text-gray-500">{children}</del>,
-  input: ({ type, checked }: any) => type === 'checkbox'
+  pre: ({ children }: C) => <>{children}</>,
+  blockquote: ({ children }: C) => <blockquote className="border-l-2 border-gray-600 pl-3 text-gray-400 italic my-2">{children}</blockquote>,
+  del: ({ children }: C) => <del className="text-gray-500">{children}</del>,
+  input: ({ type, checked }: { type?: string; checked?: boolean }) => type === 'checkbox'
     ? <input type="checkbox" checked={checked} readOnly className="mr-2 accent-blue-400" />
     : null,
-  table: ({ children }: any) => <div className="overflow-x-auto mb-2"><table className="text-xs border-collapse">{children}</table></div>,
-  thead: ({ children }: any) => <thead className="text-gray-300">{children}</thead>,
-  tbody: ({ children }: any) => <tbody>{children}</tbody>,
-  tr: ({ children }: any) => <tr className="border-b border-gray-700">{children}</tr>,
-  th: ({ children }: any) => <th className="px-3 py-1 text-left font-semibold border-r border-gray-700 last:border-r-0">{children}</th>,
-  td: ({ children }: any) => <td className="px-3 py-1 border-r border-gray-700 last:border-r-0">{children}</td>,
+  table: ({ children }: C) => <div className="overflow-x-auto mb-2"><table className="text-xs border-collapse">{children}</table></div>,
+  thead: ({ children }: C) => <thead className="text-gray-300">{children}</thead>,
+  tbody: ({ children }: C) => <tbody>{children}</tbody>,
+  tr: ({ children }: C) => <tr className="border-b border-gray-700">{children}</tr>,
+  th: ({ children }: C) => <th className="px-3 py-1 text-left font-semibold border-r border-gray-700 last:border-r-0">{children}</th>,
+  td: ({ children }: C) => <td className="px-3 py-1 border-r border-gray-700 last:border-r-0">{children}</td>,
 }}
 
 interface SourceListProps {
