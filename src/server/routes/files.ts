@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { db, uploadedFiles } from '../lib/db.ts'
+import { db, uploadedFiles, getAppSetting } from '../lib/db.ts'
 import { eq } from 'drizzle-orm'
 import { ingestFile, extractFileText } from '../lib/files/ingest.ts'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
@@ -26,18 +26,17 @@ filesRouter.post('/upload', async (c) => {
   return c.json({ fileId, filename: file.name })
 })
 
-const MAX_CONTEXT_CHARS = parseInt(process.env.MAX_ATTACHMENT_CHARS ?? '20000')
-
 filesRouter.post('/extract', async (c) => {
   const body = await c.req.parseBody()
   const file = body['file'] as File | undefined
   if (!file) return c.json({ error: 'No file provided' }, 400)
   if (file.size > MAX_SIZE) return c.json({ error: 'File too large (max 50 MB)' }, 413)
+  const maxChars = parseInt(await getAppSetting('attachment_chars', '20000'))
   const buffer = await file.arrayBuffer()
   console.log(`\n━━━ [extract] "${file.name}"  type=${file.type}  size=${(file.size / 1024).toFixed(0)}KB`)
   const text = await extractFileText(buffer, file.type)
   console.log(`  [extract] done → ${text.length} chars`)
-  return c.json({ filename: file.name, content: text.slice(0, MAX_CONTEXT_CHARS) })
+  return c.json({ filename: file.name, content: text.slice(0, maxChars) })
 })
 
 filesRouter.get('/', async (c) => {

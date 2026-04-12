@@ -6,12 +6,13 @@ export interface AuthUser {
   name: string | null
   role: 'user' | 'admin'
   settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; fontSize?: number }
+  memoryTokenBudget: number
 }
 
 export interface Space { id: string; name: string; chatCount: number; memoryCount: number; createdAt: number }
 
 export interface SpaceMemory {
-  id: string; content: string; source: 'tool' | 'extraction' | 'manual'
+  id: string; content: string; source: 'tool' | 'extraction' | 'manual' | 'compact'
   sessionId: string | null; createdAt: number
 }
 
@@ -213,6 +214,50 @@ export async function assignChatToSpace(chatId: string, spaceId: string | null):
 
 export async function recreateChatMemories(chatId: string): Promise<void> {
   await fetch(`${BASE}/history/${chatId}/recreate-memories`, { method: 'POST' })
+}
+
+export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; memoryExtractChars: number; rerankTopN: number; attachmentChars: number }> {
+  return fetch(`${BASE}/admin/settings`).then(r => r.json())
+}
+
+export async function updateAdminSettings(s: { memoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; memoryExtractChars?: number; rerankTopN?: number; attachmentChars?: number }): Promise<void> {
+  await fetch(`${BASE}/admin/settings`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(s),
+  })
+}
+
+export async function compactSpaceMemories(spaceId: string): Promise<{ before: number; after: number; compacted: boolean }> {
+  const res = await fetch(`${BASE}/spaces/${spaceId}/compact`, { method: 'POST' })
+  return res.json()
+}
+
+export async function* recreateAllSpaceMemories(
+  spaceId: string,
+  signal?: AbortSignal,
+): AsyncGenerator<{ processed?: number; total?: number; done?: boolean }> {
+  const res = await fetch(`${BASE}/spaces/${spaceId}/recreate-memories`, { method: 'POST', signal })
+  if (!res.ok || !res.body) throw new Error('Recreate failed')
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() ?? ''
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try { yield JSON.parse(line.slice(6)) } catch {}
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock()
+  }
 }
 
 export async function fetchSpaceMemories(spaceId: string): Promise<SpaceMemory[]> {

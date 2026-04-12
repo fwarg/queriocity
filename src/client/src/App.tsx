@@ -9,7 +9,7 @@ import {
   fetchHistory, fetchSession, deleteSession, updateSessionTitle,
   fetchFiles, deleteFile, uploadFile, getMe, hasUsers, logout,
   fetchSpaces, createSpace, updateSpace, deleteSpace, assignChatToSpace, recreateChatMemories,
-  fetchSpaceMemories, createSpaceMemory, updateSpaceMemory, deleteSpaceMemory,
+  fetchSpaceMemories, createSpaceMemory, updateSpaceMemory, deleteSpaceMemory, compactSpaceMemories, recreateAllSpaceMemories,
 } from './lib/api.ts'
 import type { AuthUser, Message, Space, SpaceMemory } from './lib/api.ts'
 import { useChat } from './hooks/useChat.ts'
@@ -24,6 +24,19 @@ function formatSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+const MEMORY_HEADER_TOKENS = 30
+
+function countOverflowMemories(memories: SpaceMemory[], budget: number): number {
+  let acc = MEMORY_HEADER_TOKENS
+  let injected = 0
+  for (const m of memories) {
+    acc += Math.ceil(m.content.length / 4)
+    if (acc > budget) break
+    injected++
+  }
+  return Math.max(0, memories.length - injected)
 }
 
 export default function App() {
@@ -49,6 +62,10 @@ export default function App() {
   const [newMemoryOpen, setNewMemoryOpen] = useState(false)
   const [newMemoryDraft, setNewMemoryDraft] = useState('')
   const [memorySectionOpen, setMemorySectionOpen] = useState(false)
+  const [compacting, setCompacting] = useState(false)
+  const [compactResult, setCompactResult] = useState<string | null>(null)
+  const [recreating, setRecreating] = useState(false)
+  const [recreateProgress, setRecreateProgress] = useState<string | null>(null)
   const [view, setView] = useState<MainView>('chat')
   const [showSettings, setShowSettings] = useState(false)
   const [showAdmin, setShowAdmin] = useState(false)
@@ -107,6 +124,8 @@ export default function App() {
     else setSpaceMemories([])
     setMemorySectionOpen(false)
     setNewMemoryOpen(false)
+    setCompactResult(null)
+    setRecreateProgress(null)
   }, [currentSpaceId])
 
   useEffect(() => {
@@ -342,7 +361,11 @@ export default function App() {
         />
       )}
       {showAdmin && currentUser && (
-        <AdminPanel currentUserId={currentUser.id} onClose={() => setShowAdmin(false)} />
+        <AdminPanel
+          currentUserId={currentUser.id}
+          onClose={() => setShowAdmin(false)}
+          onBudgetChange={budget => setCurrentUser(prev => prev ? { ...prev, memoryTokenBudget: budget } : prev)}
+        />
       )}
 
       {/* Sidebar — overlay on mobile, static on md+ */}
@@ -544,9 +567,61 @@ export default function App() {
                     Memory ({spaceMemories.length})
                   </button>
                   {memorySectionOpen && !newMemoryOpen && (
-                    <button onClick={() => setNewMemoryOpen(true)} className="text-xs text-blue-400 hover:text-blue-300">+ Add</button>
+                    <div className="flex items-center gap-2">
+                      {spaceMemories.length > 1 && (
+                        <button
+                          onClick={async () => {
+                            setCompacting(true)
+                            setCompactResult(null)
+                            try {
+                              const { before, after, compacted } = await compactSpaceMemories(currentSpaceId!)
+                              if (compacted) fetchSpaceMemories(currentSpaceId!).then(setSpaceMemories).catch(() => {})
+                              setCompactResult(compacted ? `${before} → ${after}` : 'Already within target')
+                              setTimeout(() => setCompactResult(null), 4000)
+                            } finally {
+                              setCompacting(false)
+                            }
+                          }}
+                          disabled={compacting}
+                          className="text-xs text-gray-500 hover:text-gray-300 disabled:opacity-50"
+                        >
+                          {compacting ? 'Compacting…' : 'Compact'}
+                        </button>
+                      )}
+                      {compactResult && <span className="text-xs text-gray-500">{compactResult}</span>}
+                      <button
+                        onClick={async () => {
+                          if (!confirm('Clear all auto-extracted memories and re-extract from all chats? Manual memories will be kept.')) return
+                          setRecreating(true)
+                          setRecreateProgress(null)
+                          setCompactResult(null)
+                          try {
+                            for await (const ev of recreateAllSpaceMemories(currentSpaceId!)) {
+                              if (ev.processed !== undefined) setRecreateProgress(`${ev.processed}/${ev.total}`)
+                              if (ev.done) fetchSpaceMemories(currentSpaceId!).then(setSpaceMemories).catch(() => {})
+                            }
+                          } finally {
+                            setRecreating(false)
+                            setRecreateProgress(null)
+                          }
+                        }}
+                        disabled={compacting || recreating}
+                        className="text-xs text-gray-500 hover:text-gray-300 disabled:opacity-50"
+                      >
+                        {recreating ? (recreateProgress ? `${recreateProgress}…` : 'Starting…') : 'Recreate all'}
+                      </button>
+                      <button onClick={() => setNewMemoryOpen(true)} className="text-xs text-blue-400 hover:text-blue-300">+ Add</button>
+                    </div>
                   )}
                 </div>
+                {memorySectionOpen && (() => {
+                  const overflow = countOverflowMemories(spaceMemories, currentUser?.memoryTokenBudget ?? 1000)
+                  return overflow > 0 ? (
+                    <p className="text-xs text-amber-500/80 mt-1">
+                      {overflow} {overflow === 1 ? 'memory exceeds' : 'memories exceed'} the token budget and won't be injected.
+                    </p>
+                  ) : null
+                })()}
                 {memorySectionOpen && newMemoryOpen && (
                   <div className="mb-2">
                     <input
@@ -583,7 +658,7 @@ export default function App() {
                         {m.content}
                       </span>
                     )}
-                    <span className="text-[10px] text-gray-600 shrink-0 mt-0.5">{m.source === 'tool' ? 'auto' : m.source === 'extraction' ? 'extracted' : 'manual'}</span>
+                    <span className="text-[10px] text-gray-600 shrink-0 mt-0.5">{m.source === 'tool' ? 'auto' : m.source === 'extraction' ? 'extracted' : m.source === 'compact' ? 'compact' : 'manual'}</span>
                     {editingMemoryId !== m.id && (
                       <button
                         onClick={() => { setMemoryDraft(m.content); setEditingMemoryId(m.id) }}

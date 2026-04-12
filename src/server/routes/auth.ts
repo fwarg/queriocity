@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie'
-import { db, users, authCredentials, invites, parseSettings } from '../lib/db.ts'
+import { db, users, authCredentials, invites, parseSettings, getAppSetting } from '../lib/db.ts'
 import { eq, count } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import {
@@ -114,11 +114,15 @@ authRouter.get('/me', async (c) => {
   if (!token) return c.json({ error: 'Unauthorized' }, 401)
   try {
     const { userId } = await verifyToken(token)
-    const user = await db.select().from(users).where(eq(users.id, userId)).get()
+    const [user, memoryTokenBudget] = await Promise.all([
+      db.select().from(users).where(eq(users.id, userId)).get(),
+      getAppSetting('memory_token_budget', '1000').then(v => parseInt(v)),
+    ])
     if (!user) return c.json({ error: 'User not found' }, 404)
     return c.json({
       id: user.id, email: user.email, name: user.name,
       role: user.role, settings: parseSettings(user.settings),
+      memoryTokenBudget,
     })
   } catch {
     return c.json({ error: 'Invalid token' }, 401)

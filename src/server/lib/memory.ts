@@ -1,6 +1,6 @@
 import { generateText } from 'ai'
 import { randomUUID } from 'crypto'
-import { db, spaceMemories } from './db.ts'
+import { db, spaceMemories, getAppSetting } from './db.ts'
 import { eq, desc } from 'drizzle-orm'
 import { getSmallModel } from './llm.ts'
 
@@ -89,10 +89,12 @@ export async function extractMemoriesPostHoc(
   if (!userContent.trim()) return
   const t0 = performance.now()
 
+  const maxChars = parseInt(await getAppSetting('memory_extract_chars', '6000'))
+  const combined = `User: ${userContent}\n\nAssistant: ${assistantContent}`
   const result = await generateText({
     model: getSmallModel(),
     system: `Extract noteworthy facts, preferences, or decisions from this conversation that would be useful to remember for future conversations. Output one fact per line, prefixed with "- ". Only extract genuinely useful long-term facts, not ephemeral details. If there are no noteworthy facts, output "NONE".`,
-    prompt: `User: ${userContent}\n\nAssistant: ${assistantContent.slice(0, 2000)}`,
+    prompt: combined.slice(-maxChars),
     maxTokens: 300,
   })
 
@@ -104,4 +106,59 @@ export async function extractMemoriesPostHoc(
     await saveMemory(spaceId, fact, 'extraction', sessionId)
   }
   console.log(`  [memory] post-hoc extracted ${lines.length} facts in ${Math.round(performance.now() - t0)}ms (small model)`)
+}
+
+/**
+ * Compact all memories for a space using the small LLM.
+ * Merges near-duplicates and removes redundant entries.
+ * No-ops if totalTokens <= triggerTokens (defaults to targetTokens for manual use).
+ */
+export async function compactSpaceMemories(
+  spaceId: string,
+  targetTokens: number,
+  triggerTokens = targetTokens,
+): Promise<boolean> {
+  const memories = await getSpaceMemories(spaceId)
+  if (memories.length < 2) return false
+
+  const totalTokens = memories.reduce((n, m) => n + Math.ceil(m.content.length / 4), 0)
+  if (totalTokens <= triggerTokens) return false
+
+  const t0 = performance.now()
+  const input = memories.map(m => `- ${m.content}`).join('\n')
+
+  const result = await generateText({
+    model: getSmallModel(),
+    system: `You are a memory compactor. Given a list of facts from a user's space memory:
+1. Merge near-duplicate or redundant facts into one
+2. Remove facts that are subsets of others
+3. Preserve all unique information
+Output ONLY the final list, one fact per line, prefixed with "- ". No other text. No preamble.
+Target: approximately ${targetTokens * 4} characters total.`,
+    prompt: input,
+    maxTokens: targetTokens,
+  })
+
+  const newFacts = result.text.split('\n')
+    .map(l => l.replace(/^-\s*/, '').trim())
+    .filter(l => l.length > 5 && l.length < 500)
+
+  if (!newFacts.length) {
+    console.log(`  [compact] aborted — LLM returned no facts for space ${spaceId.slice(0, 8)}`)
+    return false
+  }
+
+  const now = new Date()
+  await db.transaction(async tx => {
+    await tx.delete(spaceMemories).where(eq(spaceMemories.spaceId, spaceId))
+    for (const content of newFacts) {
+      await tx.insert(spaceMemories).values({
+        id: randomUUID(), spaceId, content, source: 'compact',
+        sessionId: null, createdAt: now, updatedAt: now,
+      })
+    }
+  })
+
+  console.log(`  [compact] ${memories.length} → ${newFacts.length} memories in ${Math.round(performance.now() - t0)}ms for space ${spaceId.slice(0, 8)}`)
+  return true
 }

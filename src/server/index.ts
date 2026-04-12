@@ -10,7 +10,8 @@ import { authRouter } from './routes/auth.ts'
 import { adminRouter } from './routes/admin.ts'
 import { usersRouter } from './routes/users.ts'
 import { memoriesRouter } from './routes/memories.ts'
-import { sqlite } from './lib/db.ts'
+import { sqlite, db, spaces, getAppSetting, setAppSetting } from './lib/db.ts'
+import { compactSpaceMemories } from './lib/memory.ts'
 
 const app = new Hono()
 
@@ -70,5 +71,31 @@ async function preflight() {
 }
 
 preflight().catch(() => {})
+
+async function runDream() {
+  const [threshold, target] = await Promise.all([
+    getAppSetting('dream_threshold', '1500').then(Number),
+    getAppSetting('dream_target', '700').then(Number),
+  ])
+  const allSpaces = await db.select({ id: spaces.id }).from(spaces)
+  console.log(`  [dream] checking ${allSpaces.length} spaces (threshold=${threshold}, target=${target})`)
+  for (const sp of allSpaces) {
+    await compactSpaceMemories(sp.id, target, threshold)
+  }
+  console.log(`  [dream] done`)
+}
+
+setInterval(async () => {
+  const hour = parseInt(await getAppSetting('dream_hour', '-1'))
+  if (hour < 0) return
+  const now = new Date()
+  if (now.getHours() !== hour) return
+  const todayKey = now.toISOString().split('T')[0]
+  const lastRun = await getAppSetting('dream_last_run', '')
+  if (lastRun === todayKey) return
+  await setAppSetting('dream_last_run', todayKey)
+  console.log(`  [dream] starting nightly compaction`)
+  runDream().catch(e => console.error('[dream] failed:', e))
+}, 5 * 60 * 1000)
 
 export default { port: PORT, fetch: app.fetch, idleTimeout: 255 }

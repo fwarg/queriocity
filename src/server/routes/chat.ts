@@ -7,7 +7,7 @@ import { runResearcher } from '../lib/researcher.ts'
 import { runWriter } from '../lib/writer.ts'
 import { reformulateSpeed, reformulateLLM } from '../lib/reformulate.ts'
 import { cacheKey, getCached, setCached } from '../lib/cache.ts'
-import { db, chatSessions, messages, users, uploadedFiles, parseSettings } from '../lib/db.ts'
+import { db, chatSessions, messages, users, uploadedFiles, parseSettings, getAppSetting } from '../lib/db.ts'
 import { eq, sql } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
@@ -57,10 +57,11 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
   }
 
   if (focusMode === 'flash') {
-    const [userRow, memoryBlock] = await Promise.all([
+    const [userRow, memoryBudget] = await Promise.all([
       db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get(),
-      spaceId ? buildMemoryBlock(spaceId) : Promise.resolve(''),
+      spaceId ? getAppSetting('memory_token_budget', '1000').then(v => parseInt(v)) : Promise.resolve(1000),
     ])
+    const resolvedMemoryBlock = spaceId ? await buildMemoryBlock(spaceId, memoryBudget) : ''
     const customPrompt: string | undefined = userRow ? (parseSettings(userRow.settings).customPrompt as string | undefined) : undefined
     const t0 = Date.now()
     let fullContent = ''
@@ -70,7 +71,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
         abortSignal,
         system: FLASH_SYSTEM
           + (customPrompt ? `\n\nAdditional instructions:\n${customPrompt}` : '')
-          + (memoryBlock ? '\n\n' + memoryBlock : ''),
+          + (resolvedMemoryBlock ? '\n\n' + resolvedMemoryBlock : ''),
         messages: msgs,
         maxTokens: FLASH_MAX_TOKENS,
       })
@@ -101,12 +102,13 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
   const t0 = Date.now()
 
   // Fetch user settings + file count + reformulate/pre-search + memory in parallel
-  const [userRow, fileCountRow, { initialQueries, initialResults }, memoryBlock] = await Promise.all([
+  const [userRow, fileCountRow, { initialQueries, initialResults }, memoryBudget] = await Promise.all([
     db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get(),
     db.select({ count: sql<number>`count(*)` }).from(uploadedFiles).where(eq(uploadedFiles.userId, userId)).get(),
     runReformulateAndPreSearch(msgsForReformulate, focusMode as 'fast' | 'balanced' | 'thorough', hasAttachment),
-    spaceId ? buildMemoryBlock(spaceId) : Promise.resolve(''),
+    spaceId ? getAppSetting('memory_token_budget', '1000').then(v => parseInt(v)) : Promise.resolve(1000),
   ])
+  const memoryBlock = spaceId ? await buildMemoryBlock(spaceId, memoryBudget) : ''
   const parsedSettings = parseSettings(userRow?.settings ?? '{}')
   const customPrompt = parsedSettings.customPrompt as string | undefined
   const showThinkingSettings = (parsedSettings.showThinking ?? { balanced: false, thorough: false }) as { balanced: boolean; thorough: boolean }
