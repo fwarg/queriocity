@@ -92,8 +92,8 @@ adminRouter.get('/models-test', async (c) => {
         maxTokens,
       })
       results.push({ role, model: modelName, ok: true, ms: Math.round(performance.now() - t), info: text.trim().slice(0, 80) })
-    } catch (e: any) {
-      results.push({ role, model: modelName, ok: false, ms: Math.round(performance.now() - t), info: String(e?.message ?? e).slice(0, 120) })
+    } catch (e: unknown) {
+      results.push({ role, model: modelName, ok: false, ms: Math.round(performance.now() - t), info: String(e instanceof Error ? e.message : e).slice(0, 120) })
     }
   }
 
@@ -102,8 +102,8 @@ adminRouter.get('/models-test', async (c) => {
     try {
       const { embedding } = await embed({ model: getEmbeddingModel(), value: 'hello world' })
       results.push({ role: 'embed', model: modelName, ok: true, ms: Math.round(performance.now() - t), info: `dim=${embedding.length}` })
-    } catch (e: any) {
-      results.push({ role: 'embed', model: modelName, ok: false, ms: Math.round(performance.now() - t), info: String(e?.message ?? e).slice(0, 120) })
+    } catch (e: unknown) {
+      results.push({ role: 'embed', model: modelName, ok: false, ms: Math.round(performance.now() - t), info: String(e instanceof Error ? e.message : e).slice(0, 120) })
     }
   }
 
@@ -129,8 +129,8 @@ adminRouter.get('/models-test', async (c) => {
       const indices = await rerank('capital of France', docs, 2)
       const ok = indices[0] === 0
       results.push({ role: 'rerank', model: rerankModel, ok, ms: Math.round(performance.now() - t), info: ok ? `top result correct` : `unexpected order: ${indices}` })
-    } catch (e: any) {
-      results.push({ role: 'rerank', model: rerankModel, ok: false, ms: Math.round(performance.now() - t), info: String(e?.message ?? e).slice(0, 120) })
+    } catch (e: unknown) {
+      results.push({ role: 'rerank', model: rerankModel, ok: false, ms: Math.round(performance.now() - t), info: String(e instanceof Error ? e.message : e).slice(0, 120) })
     }
   } else {
     results.push({ role: 'rerank', model: '(not configured)', ok: true, ms: 0, info: 'skipped' })

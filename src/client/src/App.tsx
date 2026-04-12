@@ -315,9 +315,9 @@ export default function App() {
       setKbUploadMsg(`"${file.name}" added to knowledge base`)
       fetchFiles().then(setFiles).catch(() => {})
       setTimeout(() => setKbUploadStatus('idle'), 3000)
-    } catch (err: any) {
+    } catch (err: unknown) {
       setKbUploadStatus('error')
-      setKbUploadMsg(err.message ?? 'Upload failed')
+      setKbUploadMsg(err instanceof Error ? err.message : 'Upload failed')
       setTimeout(() => setKbUploadStatus('idle'), 4000)
     } finally {
       e.target.value = ''

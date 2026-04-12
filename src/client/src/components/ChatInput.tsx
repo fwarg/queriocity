@@ -67,9 +67,9 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
       const att = await extractFileForContext(file)
       setAttachments(prev => [...prev, att])
       setExtractStatus('idle')
-    } catch (err: any) {
+    } catch (err: unknown) {
       setExtractStatus('error')
-      setExtractError(err.message ?? 'Failed to read file')
+      setExtractError(err instanceof Error ? err.message : 'Failed to read file')
       setTimeout(() => setExtractStatus('idle'), 4000)
     } finally {
       e.target.value = ''

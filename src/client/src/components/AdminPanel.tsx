@@ -15,7 +15,6 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   const [tab, setTab] = useState<Tab>('settings')
 
   // Settings tab state
-  const [memoryTokenBudget, setMemoryTokenBudget] = useState(1000)
   const [budgetDraft, setBudgetDraft] = useState('1000')
   const [dreamHourDraft, setDreamHourDraft] = useState('-1')
   const [dreamThresholdDraft, setDreamThresholdDraft] = useState('1500')
@@ -37,7 +36,6 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
 
   useEffect(() => {
     fetchAdminSettings().then(s => {
-      setMemoryTokenBudget(s.memoryTokenBudget)
       setBudgetDraft(String(s.memoryTokenBudget))
       setDreamHourDraft(String(s.dreamHour))
       setDreamThresholdDraft(String(s.dreamThreshold))
@@ -75,7 +73,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     setSavingBudget(true)
     try {
       await updateAdminSettings({ memoryTokenBudget: budget, dreamHour, dreamThreshold, dreamTarget, memoryExtractChars: extractChars, rerankTopN, attachmentChars })
-      setMemoryTokenBudget(budget)
+
       onBudgetChange?.(budget)
       setBudgetSaved(true)
       setTimeout(() => setBudgetSaved(false), 2000)
@@ -127,7 +125,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     }
   }
 
-  const tabBtn = (t: Tab, label: string) =>
+  const tabBtn = (t: Tab, _label: string) =>
     `px-4 py-2 text-sm font-medium border-b-2 transition-colors ${tab === t ? 'border-indigo-500 text-gray-100' : 'border-transparent text-gray-500 hover:text-gray-300'}`
 
   return (

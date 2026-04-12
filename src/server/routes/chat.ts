@@ -125,7 +125,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
     const emitStatus = (text: string) =>
       stream.writeSSE({ data: JSON.stringify({ type: 'status', text }) })
 
-    const emitSearchStatus = (args: any) => {
+    const emitSearchStatus = (args: { queries?: string[]; query?: string }) => {
       const queries: string[] = args.queries ?? (args.query ? [args.query] : [])
       if (queries.length) emitStatus(`Searching: ${queries.map(q => `"${q}"`).join(', ')}`)
     }
@@ -200,8 +200,8 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
           }
         } else if (part.type === 'reasoning' && showThinking) {
           await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: part.textDelta }) })
-        } else if ((part as any).type === 'error') {
-          console.error('  [writer] stream error:', (part as any).error)
+        } else if ((part as { type: string }).type === 'error') {
+          console.error('  [writer] stream error:', (part as { error: unknown }).error)
         }
       }
       const { text: wt, thinking: wth } = writerExtractor.flush()
@@ -269,13 +269,13 @@ type SSEStream = { writeSSE: (opts: { data: string }) => Promise<void> }
  *  onSources receives web_search tool results.
  *  Set emitTextAsThinking=true (thorough researcher) to mirror text into the thinking channel. */
 async function drainResearcherStream(
-  researcherResult: { fullStream: AsyncIterable<any> },
+  researcherResult: { fullStream: AsyncIterable<unknown> },
   {
     stream, showThinking, emitSearchStatus, extractor, onText, onSources, emitTextAsThinking = false,
   }: {
     stream: SSEStream
     showThinking: boolean
-    emitSearchStatus: (args: any) => void | Promise<void>
+    emitSearchStatus: (args: { queries?: string[]; query?: string }) => void | Promise<void>
     extractor: ThinkExtractor | null
     onText: (text: string) => void | Promise<void>
     onSources: (results: SearchResult[]) => void | Promise<void>
@@ -285,17 +285,18 @@ async function drainResearcherStream(
   const emitThinking = (delta: string) =>
     stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta }) })
 
-  for await (const part of researcherResult.fullStream as AsyncIterable<any>) {
+  for await (const _part of researcherResult.fullStream) {
+    const part = _part as { type: string; toolName?: string; args?: { queries?: string[]; query?: string }; result?: unknown; textDelta?: string; error?: unknown }
     if (part.type === 'tool-call' && part.toolName === 'web_search') {
-      await emitSearchStatus(part.args)
+      await emitSearchStatus(part.args ?? {})
       if (showThinking) {
-        const queries: string[] = part.args.queries ?? (part.args.query ? [part.args.query] : [])
+        const queries: string[] = part.args?.queries ?? (part.args?.query ? [part.args.query] : [])
         await emitThinking(`🔍 Searching: ${queries.map((q: string) => `"${q}"`).join(', ')}\n`)
       }
     } else if (part.type === 'tool-call' && part.toolName === 'save_to_memory') {
       await stream.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Saving to memory…' }) })
     } else if (part.type === 'tool-result' && part.toolName === 'web_search') {
-      const results = part.result as SearchResult[]
+      const results = (part.result ?? []) as SearchResult[]
       await onSources(results)
       if (showThinking) {
         const snippets = results.slice(0, 3)
@@ -304,18 +305,18 @@ async function drainResearcherStream(
         await emitThinking(snippets + '\n\n')
       }
     } else if (part.type === 'reasoning') {
-      if (showThinking) await emitThinking(part.textDelta)
+      if (showThinking) await emitThinking(part.textDelta ?? '')
     } else if (part.type === 'text-delta') {
       if (extractor) {
-        const { text, thinking } = extractor.process(part.textDelta)
+        const { text, thinking } = extractor.process(part.textDelta ?? '')
         if (thinking && showThinking) await emitThinking(thinking)
         if (text) {
           if (emitTextAsThinking && showThinking) await emitThinking(text)
           await onText(text)
         }
       } else {
-        if (emitTextAsThinking && showThinking) await emitThinking(part.textDelta)
-        await onText(part.textDelta)
+        if (emitTextAsThinking && showThinking) await emitThinking(part.textDelta ?? '')
+        await onText(part.textDelta ?? '')
       }
     } else if (part.type === 'error') {
       console.error('  [researcher] stream error:', part.error)

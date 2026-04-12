@@ -60,8 +60,8 @@ export function useChat({ sessionId, focusMode, spaceId, onSessionCreated }: Use
           onSessionCreated(chunk.sessionId as string, (chunk.title as string | undefined) ?? text.slice(0, 60))
         }
       }
-    } catch (err: any) {
-      if (err.name !== 'AbortError') {
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name !== 'AbortError') {
         setStatus(err.message || 'Request failed. Check your connection.')
       }
     } finally {

@@ -1,6 +1,6 @@
 import { streamText, tool } from 'ai'
 import { z } from 'zod'
-import type { LanguageModel } from 'ai'
+import type { LanguageModel, CoreMessage } from 'ai'
 import { webSearch, webSearchMulti, type SearchResult } from './searxng.ts'
 import { searchUploads } from './files/uploads-search.ts'
 import { saveMemory } from './memory.ts'
@@ -59,7 +59,7 @@ export interface ResearchOptions {
 export function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, customPrompt, hasFiles, spaceId, sessionId, memoryBlock }: ResearchOptions) {
   const { maxSteps, count } = MODE_CONFIG[focusMode]
   const start = performance.now()
-  console.log(`  [chat] model=${(model as any).modelId ?? model} focusMode=${focusMode} maxSteps=${maxSteps}`)
+  console.log(`  [chat] model=${(model as LanguageModel & { modelId?: string }).modelId ?? String(model)} focusMode=${focusMode} maxSteps=${maxSteps}`)
 
   let system = `Today's date is ${new Date().toISOString().split('T')[0]}.\n\n` + SYSTEM_PROMPTS[focusMode]
   if (customPrompt?.trim()) system += `\n\nAdditional instructions from the user:\n${customPrompt.trim()}`
@@ -74,7 +74,7 @@ export function runResearcher({ messages, focusMode, userId, model, abortSignal,
       ? { ...m, content: typeof m.content === 'string' ? m.content.replace(/\[\d+\]/g, '') : m.content }
       : m
   )
-  let augmentedMessages: any[] = cleanMessages
+  let augmentedMessages: CoreMessage[] = cleanMessages
   if (initialResults?.length && initialQueries?.length) {
     system += `\n\nNote: an initial search has already been performed and the results are in the conversation. Use different, more specific queries for your follow-up search.`
     const args = focusMode === 'fast'
