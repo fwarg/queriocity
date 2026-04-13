@@ -297,6 +297,12 @@ ALLOWED_ORIGIN=http://localhost:3000        # CORS allowed origin; defaults to *
 # the small model's context short for latency. (~4 chars ≈ 1 token)
 REFORMULATE_USER_CTX=400                  # max chars of prior user turns
 REFORMULATE_ASSISTANT_CTX=1000            # max chars of prior assistant turns
+
+# ── Chat context window ───────────────────────────────────────────────────────
+# Context window size of the chat/thinking model in tokens. When a conversation
+# grows beyond 80 % of this limit, the oldest messages are dropped so the
+# request always fits. Set to match your model. (~4 chars ≈ 1 token)
+# CONTEXT_TOKEN_LIMIT=32768               # default: 8192
 ```
 
 ## Running
