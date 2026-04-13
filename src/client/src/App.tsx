@@ -94,7 +94,10 @@ export default function App() {
     onSessionCreated: (id, title) => {
       setSessionId(id)
       setSessions(prev => prev.some(s => s.id === id) ? prev : [{ id, title, spaceId: activeSpaceId }, ...prev])
-      if (activeSpaceId) setSpaces(sps => sps.map(sp => sp.id === activeSpaceId ? { ...sp, chatCount: sp.chatCount + 1 } : sp))
+      if (activeSpaceId) {
+        setSpaces(sps => sps.map(sp => sp.id === activeSpaceId ? { ...sp, chatCount: sp.chatCount + 1 } : sp))
+        fetchSpaceMemories(activeSpaceId).then(({ memories }) => setSpaceMemories(memories)).catch(() => {})
+      }
     },
   })
 

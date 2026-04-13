@@ -5,6 +5,7 @@ import { eq, desc } from 'drizzle-orm'
 import { getSmallModel } from './llm.ts'
 import { embedText } from './embeddings.ts'
 import { searchSpaceFiles, spaceHasTaggedFiles } from './files/uploads-search.ts'
+import { rerank, rerankEnabled } from './reranker.ts'
 
 export interface SpaceMemory {
   id: string
@@ -63,53 +64,86 @@ export async function buildMemoryBlock(
     }
 
     if (embedding) {
-      // Chat RAG: retrieve relevant message chunks from this space's chats
+      // Fetch candidates from both sources
+      let chatRows: Array<{ chunk_id: string; content: string }> = []
       try {
-        const ragRows = sqlite.prepare(`
+        chatRows = sqlite.prepare(`
           SELECT ccm.chunk_id, ccm.content
           FROM chat_chunks cc
           JOIN chat_chunk_meta ccm ON ccm.chunk_id = cc.chunk_id
           JOIN chat_sessions cs ON cs.id = ccm.session_id
           WHERE cc.embedding MATCH ?
             AND cs.space_id = ?
-            AND k = 10
+            AND k = 15
           ORDER BY cc.distance
         `).all(JSON.stringify(embedding), spaceId) as Array<{ chunk_id: string; content: string }>
-
-        const ragLines: string[] = []
-        for (const row of ragRows) {
-          const cost = Math.ceil(row.content.length / 4)
-          if (cost > ragRemaining) break
-          ragRemaining -= cost
-          ragLines.push(row.content)
-          ragInjected++
-          console.log(`    [rag:chat] ${row.content.length} chars: ${JSON.stringify(row.content.slice(0, 60))}`)
-        }
-        if (ragLines.length) {
-          block += '\n\n## Relevant past conversations\n' + ragLines.map(l => `> ${l}`).join('\n\n')
-        }
       } catch (e) {
         console.error('  [memory] chat RAG search failed:', e)
       }
 
-      // Space file RAG: only if files are actually tagged (avoids reranker call when not needed)
-      if (ragRemaining > 0 && hasTaggedFiles) {
+      let fileRows: Array<{ content: string }> = []
+      if (hasTaggedFiles) {
         try {
-          const fileChunks = await searchSpaceFiles(spaceId, query, embedding, 5, true)
+          fileRows = await searchSpaceFiles(spaceId, query, embedding, 15, true)
+        } catch (e) {
+          console.error('  [memory] space file RAG failed:', e)
+        }
+      }
+
+      if (rerankEnabled && (chatRows.length + fileRows.length) > 0) {
+        // Joint rerank: cross-encoder scores let chat and file chunks compete fairly
+        console.log(`  [rag:rerank] joint reranking ${chatRows.length} chat + ${fileRows.length} file candidates`)
+        const combined = [
+          ...chatRows.map(r => ({ content: r.content, source: 'chat' as const })),
+          ...fileRows.map(r => ({ content: r.content, source: 'file' as const })),
+        ]
+        const indices = await rerank(query, combined.map(r => r.content), combined.length)
+        const chatLines: string[] = []
+        const fileLines: string[] = []
+        for (const idx of indices) {
+          const item = combined[idx]
+          const cost = Math.ceil(item.content.length / 4)
+          if (cost > ragRemaining) continue
+          ragRemaining -= cost
+          if (item.source === 'chat') {
+            chatLines.push(item.content)
+            console.log(`    [rag:chat] ${item.content.length} chars: ${JSON.stringify(item.content.slice(0, 60))}`)
+          } else {
+            fileLines.push(item.content)
+            console.log(`    [rag:file] ${item.content.length} chars: ${JSON.stringify(item.content.slice(0, 60))}`)
+          }
+          ragInjected++
+          if (ragRemaining <= 0) break
+        }
+        if (chatLines.length) block += '\n\n## Relevant past conversations\n' + chatLines.map(l => `> ${l}`).join('\n\n')
+        if (fileLines.length) block += '\n\n## Relevant document excerpts\n' + fileLines.map(l => `> ${l}`).join('\n\n')
+      } else {
+        // No reranker: 50/50 budget split so files are never fully crowded out
+        let chatRemaining = Math.floor(ragBudget / 2)
+        let fileRemaining = ragBudget - chatRemaining
+
+        const chatLines: string[] = []
+        for (const row of chatRows) {
+          const cost = Math.ceil(row.content.length / 4)
+          if (cost > chatRemaining) break
+          chatRemaining -= cost
+          chatLines.push(row.content)
+          ragInjected++
+          console.log(`    [rag:chat] ${row.content.length} chars: ${JSON.stringify(row.content.slice(0, 60))}`)
+        }
+        if (chatLines.length) block += '\n\n## Relevant past conversations\n' + chatLines.map(l => `> ${l}`).join('\n\n')
+
+        if (fileRows.length && fileRemaining > 0) {
           const fileLines: string[] = []
-          for (const chunk of fileChunks) {
+          for (const chunk of fileRows) {
             const cost = Math.ceil(chunk.content.length / 4)
-            if (cost > ragRemaining) break
-            ragRemaining -= cost
+            if (cost > fileRemaining) break
+            fileRemaining -= cost
             fileLines.push(chunk.content)
             ragInjected++
             console.log(`    [rag:file] ${chunk.content.length} chars: ${JSON.stringify(chunk.content.slice(0, 60))}`)
           }
-          if (fileLines.length) {
-            block += '\n\n## Relevant document excerpts\n' + fileLines.map(l => `> ${l}`).join('\n\n')
-          }
-        } catch (e) {
-          console.error('  [memory] space file RAG failed:', e)
+          if (fileLines.length) block += '\n\n## Relevant document excerpts\n' + fileLines.map(l => `> ${l}`).join('\n\n')
         }
       }
     }
