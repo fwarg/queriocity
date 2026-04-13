@@ -65,6 +65,7 @@ export function runResearcher({ messages, focusMode, userId, model, abortSignal,
   if (memoryBlock) system += '\n\n' + memoryBlock
   system += '\n\n' + SYSTEM_PROMPTS[focusMode]
   if (customPrompt?.trim()) system += `\n\nAdditional instructions from the user:\n${customPrompt.trim()}`
+  if (hasFiles) system += `\n\nYou have an uploads_search tool to search the user's uploaded documents. When the query might be answered by personal, domain-specific, or proprietary documents, call uploads_search before or alongside web_search.`
   if (spaceId) system += `\n\nYou have a save_to_memory tool. Use it when the user expresses a preference, makes a decision, or shares context that would be useful in future conversations. Do not save trivial or ephemeral details.`
 
   // Inject pre-executed search results as a fake tool exchange so the model

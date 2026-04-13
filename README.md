@@ -13,6 +13,203 @@ through a single Bun process.
 
 ---
 
+## Contents
+
+- [User guide](#user-guide)
+  - [What is Queriocity](#what-is-queriocity)
+  - [Chats](#chats)
+  - [Research modes](#research-modes)
+  - [Files](#files)
+  - [Custom instructions](#custom-instructions)
+  - [Spaces](#spaces)
+- [Installation guide](#installation-guide)
+  - [Requirements](#requirements)
+  - [Installation](#installation)
+  - [Environment variables](#environment-variables)
+  - [Running](#running)
+  - [Docker](#docker)
+  - [Example deployment](#example-deployment)
+- [Admin guide](#admin-guide)
+  - [User management](#user-management)
+  - [System settings](#system-settings)
+- [Architecture overview](#architecture-overview)
+- [Dependencies and licenses](#dependencies-and-licenses)
+- [License](#license)
+
+---
+
+# User guide
+
+## What is Queriocity
+
+Queriocity is a private research assistant you run on your own hardware. It is designed for:
+
+- **Research questions** — ask anything and get a cited answer backed by live web search
+- **Document Q&A** — attach PDFs, images, or text files and interrogate them in conversation
+- **Persistent knowledge base** — upload documents to your library so the assistant can draw on them across many conversations
+- **Contextual workspaces** — group related chats into spaces with shared memory and file references
+
+## Chats
+
+Start a chat from the sidebar. Type a question and choose a [research mode](#research-modes) before sending. Follow-up questions resolve pronouns and references automatically ("When was it founded?" after asking about a company works as expected). Chats can be assigned to a [space](#spaces) at any time from the chat header.
+
+## Research modes
+
+Queriocity runs every chat request in one of four modes, selectable per message in the chat input bar.
+
+### Flash
+
+Bypasses all search infrastructure entirely. The model answers directly from its training
+knowledge with no web search, no query reformulation, and no tool calls. Responses are
+capped at ~5 sentences. Use this for quick factual questions where latency matters
+and web freshness is not needed. Attachments are disabled in this mode. Query length is
+capped at 200 characters.
+
+The model used in flash mode can be overridden via `FLASH_MODEL=small` to use the 
+small/reformulation model instead of the main chat model.
+
+### Fast
+
+A single pre-search query using the chat question directly is fired
+and the results are injected before the model starts. The model streams its answer
+directly and may issue one additional search if needed. A regex heuristic resolves (english only) 
+pronouns in follow-up questions before searching — e.g. "When
+was it founded?" after asking about a company becomes "When was [company] founded?" — so
+the pre-search query is self-contained. Best for quick factual questions where you value
+speed over depth.
+
+Responses are always in the same language as the user's question.
+
+- 1 pre-search query, 6 results
+- Up to 2 LLM steps (think → answer)
+- Model may call `web_search` once more if the pre-fetched results are insufficient
+
+### Balanced *(default)*
+
+A small model first rewrites the user's question into an optimized search query, which is
+executed before the main model starts. For example, "what's the latest on the mars mission?"
+might become `NASA Mars mission 2026 latest news`. The main model then
+receives pre-fetched results and may issue one more round of searches (up to 2 queries at a
+time) before answering. Answers include inline citations `[1][2]` and are always in the same
+language as the user's question.
+
+- 1 LLM-reformulated query pre-fetched
+- Up to 3 LLM steps; up to 2 parallel search queries per step
+- 8 results per web-search query
+
+### Thorough
+
+A two-phase pipeline. Phase 1 is a dedicated **researcher** run: the model explores the
+topic from multiple angles, calling `web_search` (up to 3 queries per call) up to 5 times
+in total, finishing by calling a `done` tool. Phase 2 is a separate **writer** pass
+that receives all deduplicated sources and synthesises a final, well-structured answer.
+Slower, but significantly more comprehensive. Responses are always in the same language as
+the user's question.
+
+- Up to 3 pre-fetched queries (10 results each)
+- Up to 5 LLM steps in the researcher; up to 3 search queries per step
+- Separate writer model pass for the final answer
+- If `RERANK_MODEL` is configured, accumulated sources are reranked by relevance before the writer pass, improving synthesis quality
+
+
+
+---
+
+## Files
+
+There are two distinct ways to bring file content into a conversation.
+
+### Chat attachment (ephemeral)
+
+Click the **paperclip** icon next to the message box and pick a file. The file is sent to
+the server, its text is extracted (PDF text layer, OCR for images, plain text for
+everything else), and up to the configured character limit (default 20 000, ~5 000 tokens) of that text are injected into the message
+you are about to send. The file is **not stored** — it lives only in that one message.
+
+The character limit is configurable in **Admin > System settings > Attachments**.
+
+Use this when you want to ask a one-off question about a document: *"Summarise this
+contract"*, *"What are the key findings in this paper?"*
+
+Supported: PDF, plain text, and images (via vision LLM with Tesseract OCR fallback)
+
+> When a file is attached to the message, reformulation and pre-search are skipped entirely
+> in all research modes. The model reads the file content directly and decides autonomously whether
+> any web search is needed.
+
+### Library upload (persistent, vector-searchable)
+
+Open the **Files** view in the sidebar. Upload a file there and it is ingested into the
+library: the text is chunked, each chunk is embedded with the configured embedding model,
+and the chunks + embeddings are stored in SQLite (via the `sqlite-vec` extension).
+
+In fast, balanced, and thorough modes, if you have files in your library, relevant excerpts are automatically retrieved and injected as context (see also 'spaces' where the behaviour is a bit different). The model also has access to an `uploads_search` tool in every conversation and can semantically search your library at any time — even without you mentioning the file
+explicitly.
+
+The library is useful for building a personal knowledge base of PDFs, notes, or research papers that the assistant can draw on across many conversations.
+
+Max upload size: 50 MB.
+
+---
+
+## Custom instructions
+
+In **Settings** you can add a custom prompt that is appended to the system prompt for every
+request. Use this to set a persona, preferred language, citation style, or any standing
+instruction.
+
+---
+
+## Spaces
+
+**Spaces** are named workspaces that group related chats together. Each space has:
+
+- A persistent **memory store** — facts extracted from conversations, injected into future system prompts
+- A **chat history index** — full message content embedded for semantic retrieval
+- **Tagged files** — library documents linked to the space for contextual retrieval
+
+### Assigning chats to spaces
+
+Chats can be assigned or reassigned to spaces from the chat header or space detail view. When a chat is first assigned to a space, memories are retroactively extracted and the chat history is indexed for RAG. Auto-extracted memories follow the chat if it is moved or removed.
+
+### RAG (retrieval-augmented generation)
+
+When a space has a RAG budget configured (Admin > System settings), each request performs semantic retrieval on top of the fixed memory block:
+
+- **Chat history RAG** — past messages in the space are chunked and embedded. The chunks most relevant to the current query are injected as `## Relevant past conversations` in the system prompt, surfacing details that weren't captured by memory extraction.
+- **Tagged file RAG** — if library files are tagged to the space (see below), relevant excerpts are injected as `## Relevant document excerpts`. The model can also call the `uploads_search` tool on demand for the full personal library.
+
+RAG can be toggled per user in **Settings > Use space RAG**.
+
+#### Chat index
+
+For RAG over chat history to work, messages must be indexed. New messages are indexed automatically after each response. When a chat is first assigned to a space its history is indexed retroactively. The space sidebar shows **Chat index: N/M sessions** — click **Rebuild index** to (re-)index all chats at any time.
+
+### Tagged files
+
+Any file in your library can be tagged to a space from the space detail view. Tagged files are searched semantically on every request in that space (within the RAG budget), injecting relevant excerpts as additional context. This is useful for persistent reference material — specs, style guides, background documents — that should inform all conversations in the space.
+
+### How memory works
+
+- After each assistant response, the small model extracts noteworthy facts, preferences, and decisions and saves them to the space.
+- Memories are injected into the system prompt up to the configured token budget (newest first).
+- You can view, add, edit, and delete individual memories in the space detail view.
+
+### Memory compaction and management
+
+The memory panel header exposes several actions:
+
+- **Compact** — feeds all memories to the small model, which merges near-duplicates and removes redundant entries. No-ops if already within the target token budget.
+- **Recreate all** — clears all auto-extracted memories and re-runs extraction across all chats. Manual memories are preserved. Shows live `Processing (x/y)` progress.
+- **Clear all** — deletes all memories in the space (with confirmation).
+- **Dream** — optional nightly scheduled pass. Configured by an administrator in Admin > System settings (hour, threshold, target). This mode either compacts any space whose memories exceed the size threshold, or (in deep dream mode) recreates memories from chats using a more capable thinking model for increased memory quality.
+
+Individual chats in a space also have a **Recreate memories** action that re-extracts memories for that chat only.
+
+---
+
+# Installation guide
+
 ## Requirements
 
 | Dependency                           | Purpose                     |
@@ -20,23 +217,6 @@ through a single Bun process.
 | [Bun](https://bun.sh) ≥ 1.1          | Runtime & package manager   |
 | [SearXNG](https://docs.searxng.org/) | Private meta-search backend |
 | Ollama or any OpenAI-compatible API  | Language model serving      |
-
-## Contents
-
-- [Installation](#installation)
-- [User management](#user-management)
-- [Spaces and memory](#spaces-and-memory)
-- [Admin settings](#admin-settings)
-- [Research modes](#research-modes)
-- [Attaching files](#attaching-files)
-- [Custom instructions](#custom-instructions)
-- [Docker](#docker)
-- [Practical setup guide](#practical-setup-guide)
-- [Architecture overview](#architecture-overview)
-- [Dependencies and licenses](#dependencies-and-licenses)
-- [License](#license)
-
----
 
 ## Installation
 
@@ -53,7 +233,7 @@ bun run db:generate   # generate migrations from schema
 bun run db:migrate    # apply migrations (creates queriocity.db)
 ```
 
-### Environment
+## Environment variables
 
 Create a `.env` file (or set variables in your shell):
 
@@ -119,7 +299,7 @@ REFORMULATE_USER_CTX=400                  # max chars of prior user turns
 REFORMULATE_ASSISTANT_CTX=1000            # max chars of prior assistant turns
 ```
 
-### Running
+## Running
 
 **Development** (hot-reload server + Vite dev server):
 
@@ -138,186 +318,6 @@ bun run serve         # serve API + static files on a single port
 ```
 
 Open `http://localhost:3000`. The first user to register becomes an admin.
-
----
-
-## User management
-
-- Registration requires an **invite link** generated by an admin in the Admin panel > Users tab.
-- Invites can optionally be scoped to a specific email address and expire after a set time.
-- Admins can view all users and manage roles.
-
----
-
-## Spaces and memory
-
-**Spaces** are named workspaces that group related chats together. Each space has:
-
-- A persistent **memory store** — facts extracted from conversations, injected into future system prompts
-- A **chat history index** — full message content embedded for semantic retrieval
-- **Tagged files** — library documents linked to the space for contextual retrieval
-
-### How memory works
-
-- After each assistant response, the small model extracts noteworthy facts, preferences, and decisions and saves them to the space.
-- Memories are injected into the system prompt up to the configured token budget (newest first).
-- You can view, add, edit, and delete individual memories in the space detail view.
-
-### RAG (retrieval-augmented generation)
-
-When a space has a RAG budget configured (Admin > System settings), each request performs semantic retrieval on top of the fixed memory block:
-
-- **Chat history RAG** — past messages in the space are chunked and embedded. The chunks most relevant to the current query are injected as `## Relevant past conversations` in the system prompt, surfacing details that weren't captured by memory extraction.
-- **Tagged file RAG** — if library files are tagged to the space (see below), relevant excerpts are injected as `## Relevant document excerpts`. The model can also call the `uploads_search` tool on demand for the full personal library.
-
-RAG can be toggled per user in **Settings > Use space RAG**.
-
-#### Chat index
-
-For RAG over chat history to work, messages must be indexed. New messages are indexed automatically after each response. When a chat is first assigned to a space its history is indexed retroactively. The space sidebar shows **Chat index: N/M sessions** — click **Rebuild index** to (re-)index all chats at any time.
-
-### Memory compaction and management
-
-The memory panel header exposes several actions:
-
-- **Compact** — feeds all memories to the small model, which merges near-duplicates and removes redundant entries. No-ops if already within the target token budget.
-- **Recreate all** — clears all auto-extracted memories and re-runs extraction across all chats. Manual memories are preserved. Shows live `Processing (x/y)` progress.
-- **Clear all** — deletes all memories in the space (with confirmation).
-- **Dream** — optional nightly scheduled pass. Configured in Admin > System settings (hour, threshold, target). Compacts any space whose memories exceed the threshold.
-
-Individual chats in a space also have a **Recreate memories** action that re-extracts memories for that chat only.
-
-### Tagged files
-
-Any file in your library can be tagged to a space from the space detail view. Tagged files are searched semantically on every request in that space (within the RAG budget), injecting relevant excerpts as additional context. This is useful for persistent reference material — specs, style guides, background documents — that should inform all conversations in the space.
-
-### Assigning chats to spaces
-
-Chats can be assigned or reassigned to spaces from the chat header or space detail view. When a chat is first assigned to a space, memories are retroactively extracted and the chat history is indexed for RAG. Auto-extracted memories follow the chat if it is moved or removed.
-
----
-
-## Admin settings
-
-The **Admin panel > System settings** tab exposes runtime-configurable parameters without requiring a server restart. Changes take effect immediately.
-
-| Section | Setting | Default | Description |
-|---|---|---|---|
-| Memory | Token budget | 1000 | Max tokens of fixed space memory injected into each request |
-| Memory | RAG budget | 500 | Additional tokens reserved for RAG results (chat history + tagged files); 0 disables RAG |
-| Memory | Dream hour | Disabled | Server hour (0–23) to run nightly compaction, or disabled |
-| Memory | Dream threshold | 1500 | Compaction triggers when space memory exceeds this many tokens |
-| Memory | Dream target | 700 | Token target after compaction |
-| Memory | Extraction context | 6000 | Max characters of conversation fed to the small model when extracting memories |
-| Reranking | Top N | 15 | Results kept after reranking (requires `RERANK_MODEL`) |
-| Attachments | Max context chars | 20000 | Max characters extracted from an attached file and sent as context |
-
-The **Users** tab lets admins manage accounts, roles, and invite links.
-
----
-
-## Research modes
-
-Queriocity runs every chat request in one of four modes, selectable per message in the chat input bar.
-
-### Flash
-
-Bypasses all search infrastructure entirely. The model answers directly from its training
-knowledge with no web search, no query reformulation, and no tool calls. Responses are
-capped at ~5 sentences. Use this for quick factual questions where latency matters
-and web freshness is not needed. Attachments are disabled in this mode. Query length is
-capped at 200 characters.
-
-The model used in flash mode can be overridden via `FLASH_MODEL=small` to use the 
-small/reformulation model instead of the main chat model.
-
-### Fast
-
-A single pre-search query using the chat question directly is fired
-and the results are injected before the model starts. The model streams its answer
-directly and may issue one additional search if needed. A regex heuristic resolves (english only) 
-pronouns in follow-up questions before searching — e.g. "When
-was it founded?" after asking about a company becomes "When was [company] founded?" — so
-the pre-search query is self-contained. Best for quick factual questions where you value
-speed over depth.
-
-Responses are always in the same language as the user's question.
-
-- 1 pre-search query, 6 results
-- Up to 2 LLM steps (think → answer)
-- Model may call `web_search` once more if the pre-fetched results are insufficient
-
-### Balanced *(default)*
-
-A small model first rewrites the user's question into an optimized search query, which is
-executed before the main model starts. For example, "what's the latest on the mars mission?"
-might become `NASA Mars mission 2026 latest news`. The main model then
-receives pre-fetched results and may issue one more round of searches (up to 2 queries at a
-time) before answering. Answers include inline citations `[1][2]` and are always in the same
-language as the user's question.
-
-- 1 LLM-reformulated query pre-fetched
-- Up to 3 LLM steps; up to 2 parallel search queries per step
-- 8 results per web-search query
-
-### Thorough
-
-A two-phase pipeline. Phase 1 is a dedicated **researcher** run: the model explores the
-topic from multiple angles, calling `web_search` (up to 3 queries per call) up to 5 times
-in total, finishing by calling a `done` tool. Phase 2 is a separate **writer** pass
-that receives all deduplicated sources and synthesises a final, well-structured answer.
-Slower, but significantly more comprehensive. Responses are always in the same language as
-the user's question.
-
-- Up to 3 pre-fetched queries (10 results each)
-- Up to 5 LLM steps in the researcher; up to 3 search queries per step
-- Separate writer model pass for the final answer
-- If `RERANK_MODEL` is configured, accumulated sources are reranked by relevance before the writer pass, improving synthesis quality
-
-> When a file is attached to the message, reformulation and pre-search are skipped entirely
-> in all modes. The model reads the file content directly and decides autonomously whether
-> any web search is needed.
-
----
-
-## Attaching files
-
-There are two distinct ways to bring file content into a conversation.
-
-### Chat attachment (ephemeral)
-
-Click the **paperclip** icon next to the message box and pick a file. The file is sent to
-the server, its text is extracted (PDF text layer, OCR for images, plain text for
-everything else), and up to the configured character limit (default 20 000, ~5 000 tokens) of that text are injected into the message
-you are about to send. The file is **not stored** — it lives only in that one message.
-
-The character limit is configurable in **Admin > System settings > Attachments**.
-
-Use this when you want to ask a one-off question about a document: *"Summarise this
-contract"*, *"What are the key findings in this paper?"*
-
-Supported: PDF, plain text, and images (via vision LLM with Tesseract OCR fallback)
-
-### Library upload (persistent, vector-searchable)
-
-Open the **Files** view in the sidebar. Upload a file there and it is ingested into the
-library: the text is chunked, each chunk is embedded with the configured embedding model,
-and the chunks + embeddings are stored in SQLite (via the `sqlite-vec` extension).
-
-The model has access to an `uploads_search` tool in every conversation and can
-semantically search your library at any time — even without you mentioning the file
-explicitly. This is useful for building a personal knowledge base of PDFs, notes, or
-research papers that the assistant can draw on across many conversations.
-
-Max upload size: 50 MB.
-
----
-
-## Custom instructions
-
-In **Settings** you can add a custom prompt that is appended to the system prompt for every
-request. Use this to set a persona, preferred language, citation style, or any standing
-instruction.
 
 ---
 
@@ -398,7 +398,7 @@ The schema is created automatically on first start — no separate migration ste
 
 ---
 
-## Practical setup guide
+## Example deployment
 
 Queriocity needs three external services: a **web search backend** (SearXNG), and one or more **model servers** (an openai compatible such as llama.cpp or ollama for local use).
 
@@ -550,7 +550,7 @@ JWT_SECRET=                         # generate with: openssl rand -base64 32
 DB_PATH=./queriocity.db
 ```
 
-See the [Environment](#environment) section for the full reference.
+See the [Environment variables](#environment-variables) section for the full reference.
 
 > **Note:** Some tuning parameters (attachment character limit, reranker top-N, memory budget, dream compaction settings) are configurable at runtime in **Admin > System settings** without restarting the server.
 
@@ -584,6 +584,36 @@ Then set in your Queriocity env:
 RERANK_BASE_URL=http://localhost:8000/v1   # via LiteLLM
 RERANK_MODEL=my-reranker-model
 ```
+
+---
+
+# Admin guide
+
+## User management
+
+- Registration requires an **invite link** generated by an admin in the Admin panel > Users tab.
+- Invites can optionally be scoped to a specific email address and expire after a set time.
+- Admins can view all users and manage roles.
+
+---
+
+## System settings
+
+The **Admin panel > System settings** tab exposes runtime-configurable parameters without requiring a server restart. Changes take effect immediately.
+
+| Section | Setting | Default | Description |
+|---|---|---|---|
+| Memory | Token budget | 1000 | Max tokens of fixed space memory injected into each request |
+| Memory | RAG budget | 500 | Additional tokens reserved for RAG results (chat history + tagged files); 0 disables RAG |
+| Memory | Dream hour | Disabled | Server hour (0–23) to run nightly compaction, or disabled |
+| Memory | Dream threshold | 1500 | Compaction triggers when space memory exceeds this many tokens |
+| Memory | Dream target | 700 | Token target after compaction |
+| Memory | Dream deep | Off | Re-extract memories from source conversations using the thinking model during the dream pass |
+| Memory | Extraction context | 6000 | Max characters of conversation fed to the small model when extracting memories |
+| Reranking | Top N | 15 | Results kept after reranking (requires `RERANK_MODEL`) |
+| Attachments | Max context chars | 20000 | Max characters extracted from an attached file and sent as context |
+
+The **Users** tab lets admins manage accounts, roles, and invite links.
 
 ---
 

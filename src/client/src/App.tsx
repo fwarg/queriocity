@@ -377,9 +377,10 @@ export default function App() {
           showThinking={currentUser.settings?.showThinking ?? { balanced: false, thorough: false }}
           useThinking={currentUser.settings?.useThinking ?? false}
           useSpaceRag={currentUser.settings?.useSpaceRag !== false}
+          useChatRag={currentUser.settings?.useChatRag !== false}
           fontSize={currentUser.settings?.fontSize ?? 16}
           onClose={() => setShowSettings(false)}
-          onSave={(cp, st, ut, sr, fs) => setCurrentUser(u => u ? { ...u, settings: { ...u.settings, customPrompt: cp, showThinking: st, useThinking: ut, useSpaceRag: sr, fontSize: fs } } : u)}
+          onSave={(cp, st, ut, sr, cr, fs) => setCurrentUser(u => u ? { ...u, settings: { ...u.settings, customPrompt: cp, showThinking: st, useThinking: ut, useSpaceRag: sr, useChatRag: cr, fontSize: fs } } : u)}
         />
       )}
       {showAdmin && currentUser && (

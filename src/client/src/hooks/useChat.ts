@@ -39,6 +39,7 @@ export function useChat({ sessionId, focusMode, spaceId, onSessionCreated }: Use
     let accumulated = ''
     let thinkingAccumulated = ''
     const sources: Array<{ title: string; url: string }> = []
+    const fileSources: Array<{ title: string; url: string }> = []
 
     try {
       for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId)) {
@@ -55,6 +56,8 @@ export function useChat({ sessionId, focusMode, spaceId, onSessionCreated }: Use
           setStatus(chunk.text as string)
         } else if (chunk.type === 'sources') {
           sources.push(...(chunk.sources as Array<{ title: string; url: string }>))
+        } else if (chunk.type === 'file_sources') {
+          fileSources.push(...(chunk.sources as Array<{ title: string; url: string }>))
         } else if (chunk.type === 'done') {
           if (chunk.elapsedMs) setAnswerTime(`Answered in ${(chunk.elapsedMs as number / 1000).toFixed(1)} seconds.`)
           onSessionCreated(chunk.sessionId as string, (chunk.title as string | undefined) ?? text.slice(0, 60))
@@ -71,6 +74,7 @@ export function useChat({ sessionId, focusMode, spaceId, onSessionCreated }: Use
         role: 'assistant',
         content: accumulated,
         sources,
+        fileSources: fileSources.length > 0 ? fileSources : undefined,
         thinking: thinkingAccumulated || undefined,
       }])
       setStreaming('')

@@ -15,7 +15,7 @@ import { webSearch, webSearchMulti, type SearchResult } from '../lib/searxng.ts'
 import { getFlashModel, getChatModel, getThinkingModelOrFallback } from '../lib/llm.ts'
 import { ThinkExtractor } from '../lib/think-extractor.ts'
 import { rerank, rerankEnabled } from '../lib/reranker.ts'
-import { buildMemoryBlock, extractMemoriesPostHoc } from '../lib/memory.ts'
+import { buildMemoryBlock, buildChatFileBlock, extractMemoriesPostHoc } from '../lib/memory.ts'
 import { indexContents } from '../lib/chat-indexer.ts'
 
 const FLASH_SYSTEM = `Answer in at most 5 sentences using only your training knowledge. Be direct and factual.
@@ -66,11 +66,12 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
     const userQuery = lastUser?.content ?? ''
     const parsedFlashSettings = parseSettings(userRow?.settings ?? '{}')
     const effectiveRag = (parsedFlashSettings.useSpaceRag !== false) ? ragBudget : 0
-    const resolvedMemoryBlock = spaceId ? await buildMemoryBlock(spaceId, memoryBudget, effectiveRag, userQuery) : ''
+    const { block: resolvedMemoryBlock, fileSources: flashFileSources } = spaceId ? await buildMemoryBlock(spaceId, memoryBudget, effectiveRag, userQuery) : { block: '', fileSources: [] }
     const customPrompt: string | undefined = parsedFlashSettings.customPrompt as string | undefined
     const t0 = Date.now()
     let fullContent = ''
     return streamSSE(c, async (stream) => {
+      if (flashFileSources.length > 0) await stream.writeSSE({ data: JSON.stringify({ type: 'file_sources', sources: flashFileSources }) })
       const result = streamText({
         model: getFlashModel(),
         abortSignal,
@@ -116,23 +117,29 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
     db.select({ count: sql<number>`count(*)` }).from(uploadedFiles).where(eq(uploadedFiles.userId, userId)).get(),
     runReformulateAndPreSearch(msgsForReformulate, focusMode as 'fast' | 'balanced' | 'thorough', hasAttachment),
     spaceId ? getAppSetting('memory_token_budget', '1000').then(Number) : Promise.resolve(1000),
-    spaceId ? getAppSetting('space_rag_budget', '500').then(Number) : Promise.resolve(0),
+    getAppSetting('space_rag_budget', '500').then(Number),
   ])
   const userQuery = lastUser?.content ?? ''
   const parsedSettings = parseSettings(userRow?.settings ?? '{}')
+  const hasFiles = (fileCountRow?.count ?? 0) > 0
   const effectiveRag = (parsedSettings.useSpaceRag !== false) ? ragBudget : 0
-  const memoryBlock = spaceId ? await buildMemoryBlock(spaceId, memoryBudget, effectiveRag, userQuery) : ''
+  const { block: memoryBlock, fileSources } = spaceId
+    ? await buildMemoryBlock(spaceId, memoryBudget, effectiveRag, userQuery)
+    : (hasFiles && parsedSettings.useChatRag !== false)
+      ? await buildChatFileBlock(userId, userQuery, ragBudget)
+      : { block: '', fileSources: [] }
   const customPrompt = parsedSettings.customPrompt as string | undefined
   const showThinkingSettings = (parsedSettings.showThinking ?? { balanced: false, thorough: false }) as { balanced: boolean; thorough: boolean }
   const showThinking = focusMode === 'balanced' ? showThinkingSettings.balanced
                      : focusMode === 'thorough'  ? showThinkingSettings.thorough
                      : false
   const useThinking: boolean = !!(parsedSettings.useThinking) && focusMode === 'thorough'
-  const hasFiles = (fileCountRow?.count ?? 0) > 0
 
   return streamSSE(c, async (stream) => {
     let fullContent = ''
     const sources: unknown[] = []
+
+    if (fileSources.length > 0) await stream.writeSSE({ data: JSON.stringify({ type: 'file_sources', sources: fileSources }) })
 
     const emitStatus = (text: string) =>
       stream.writeSSE({ data: JSON.stringify({ type: 'status', text }) })
@@ -313,6 +320,11 @@ async function drainResearcherStream(
         const queries: string[] = part.args?.queries ?? (part.args?.query ? [part.args.query] : [])
         await emitThinking(`🔍 Searching: ${queries.map((q: string) => `"${q}"`).join(', ')}\n`)
       }
+    } else if (part.type === 'tool-call' && part.toolName === 'uploads_search') {
+      console.log(`  [uploads_search] query: ${JSON.stringify(part.args?.query ?? '')}`)
+    } else if (part.type === 'tool-result' && part.toolName === 'uploads_search') {
+      const results = part.result as Array<{ filename?: string; content?: string }> | undefined
+      console.log(`  [uploads_search] returned ${results?.length ?? 0} chunks`)
     } else if (part.type === 'tool-call' && part.toolName === 'save_to_memory') {
       await stream.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Saving to memory…' }) })
     } else if (part.type === 'tool-result' && part.toolName === 'web_search') {

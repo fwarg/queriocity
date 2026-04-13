@@ -19,6 +19,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   const [dreamHourDraft, setDreamHourDraft] = useState('-1')
   const [dreamThresholdDraft, setDreamThresholdDraft] = useState('1500')
   const [dreamTargetDraft, setDreamTargetDraft] = useState('700')
+  const [dreamDeepDraft, setDreamDeepDraft] = useState(false)
   const [extractCharsDraft, setExtractCharsDraft] = useState('6000')
   const [rerankTopNDraft, setRerankTopNDraft] = useState('15')
   const [attachmentCharsDraft, setAttachmentCharsDraft] = useState('20000')
@@ -41,6 +42,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
       setDreamHourDraft(String(s.dreamHour))
       setDreamThresholdDraft(String(s.dreamThreshold))
       setDreamTargetDraft(String(s.dreamTarget))
+      setDreamDeepDraft(s.dreamDeep)
       setExtractCharsDraft(String(s.memoryExtractChars))
       setRerankTopNDraft(String(s.rerankTopN))
       setAttachmentCharsDraft(String(s.attachmentChars))
@@ -76,7 +78,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     setError('')
     setSavingBudget(true)
     try {
-      await updateAdminSettings({ memoryTokenBudget: budget, dreamHour, dreamThreshold, dreamTarget, memoryExtractChars: extractChars, rerankTopN, attachmentChars, spaceRagBudget })
+      await updateAdminSettings({ memoryTokenBudget: budget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, attachmentChars, spaceRagBudget })
 
       onBudgetChange?.(budget)
       setBudgetSaved(true)
@@ -183,6 +185,11 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                       className="px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
                   </div>
                 </div>
+                <label className="flex items-center gap-2 mt-1 cursor-pointer w-fit">
+                  <input type="checkbox" checked={dreamDeepDraft} onChange={e => setDreamDeepDraft(e.target.checked)}
+                    className="accent-blue-500 w-3.5 h-3.5" />
+                  <span className="text-xs text-gray-400">Deep dream — re-extract from source conversations using the thinking model</span>
+                </label>
               </div>
               <div className="flex flex-col gap-1.5 border-t border-gray-800/60 pt-3">
                 <p className="text-xs text-gray-400 font-medium">Extraction context</p>
