@@ -16,6 +16,7 @@ import { getFlashModel, getChatModel, getThinkingModelOrFallback } from '../lib/
 import { ThinkExtractor } from '../lib/think-extractor.ts'
 import { rerank, rerankEnabled } from '../lib/reranker.ts'
 import { buildMemoryBlock, buildChatFileBlock, extractMemoriesPostHoc } from '../lib/memory.ts'
+import { trimMessages } from '../lib/trim-messages.ts'
 import { indexContents } from '../lib/chat-indexer.ts'
 
 const FLASH_SYSTEM = `Answer in at most 5 sentences using only your training knowledge. Be direct and factual.
@@ -72,13 +73,15 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
     let fullContent = ''
     return streamSSE(c, async (stream) => {
       if (flashFileSources.length > 0) await stream.writeSSE({ data: JSON.stringify({ type: 'file_sources', sources: flashFileSources }) })
+      const flashSystem = FLASH_SYSTEM
+        + (customPrompt ? `\n\nAdditional instructions:\n${customPrompt}` : '')
+        + (resolvedMemoryBlock ? '\n\n' + resolvedMemoryBlock : '')
+      const ctxLimit = parseInt(process.env.CONTEXT_TOKEN_LIMIT ?? '8192')
       const result = streamText({
         model: getFlashModel(),
         abortSignal,
-        system: FLASH_SYSTEM
-          + (customPrompt ? `\n\nAdditional instructions:\n${customPrompt}` : '')
-          + (resolvedMemoryBlock ? '\n\n' + resolvedMemoryBlock : ''),
-        messages: msgs,
+        system: flashSystem,
+        messages: trimMessages(msgs, ctxLimit - Math.floor(ctxLimit * 0.2), flashSystem),
         maxTokens: FLASH_MAX_TOKENS,
       })
       for await (const part of result.fullStream) {

@@ -4,6 +4,7 @@ import type { LanguageModel, CoreMessage } from 'ai'
 import { webSearch, webSearchMulti, type SearchResult } from './searxng.ts'
 import { searchUploads } from './files/uploads-search.ts'
 import { saveMemory } from './memory.ts'
+import { trimMessages } from './trim-messages.ts'
 
 
 export const SYSTEM_PROMPTS = {
@@ -88,6 +89,9 @@ export function runResearcher({ messages, focusMode, userId, model, abortSignal,
       { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'pre-0', toolName: 'web_search', result: initialResults }] },
     ]
   }
+
+  const ctxLimit = parseInt(process.env.CONTEXT_TOKEN_LIMIT ?? '8192')
+  augmentedMessages = trimMessages(augmentedMessages, ctxLimit - Math.floor(ctxLimit * 0.2), system)
 
   const webSearchTool = focusMode === 'fast'
     ? tool({
