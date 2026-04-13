@@ -14,6 +14,7 @@ const settingsSchema = z.object({
   showThinking: z.object({ balanced: z.boolean(), thorough: z.boolean() }).optional(),
   useThinking: z.boolean().optional(),
   useSpaceRag: z.boolean().optional(),
+  useChatRag: z.boolean().optional(),
   fontSize: z.number().min(12).max(22).optional(),
 })
 

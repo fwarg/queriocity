@@ -5,7 +5,7 @@ import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
-import { ExternalLink } from 'lucide-react'
+import { ExternalLink, FileText } from 'lucide-react'
 import type { Message } from '../lib/api.ts'
 
 interface Props {
@@ -90,12 +90,14 @@ function makeMdComponents(highlightedSource: number | null, onCitationClick: (n:
 interface SourceListProps {
   content: string
   sources: Array<{ title: string; url: string }>
+  fileSources?: Array<{ title: string; url: string }>
   highlightedSource: number | null
   onSourceClick: (n: number) => void
 }
 
-function SourceList({ content, sources, highlightedSource, onSourceClick }: SourceListProps) {
+function SourceList({ content, sources, fileSources, highlightedSource, onSourceClick }: SourceListProps) {
   const [showUnused, setShowUnused] = useState(false)
+
   const cited = new Set(
     [...content.matchAll(/\[(\d+)\]/g)].map(m => parseInt(m[1]))
   )
@@ -140,6 +142,17 @@ function SourceList({ content, sources, highlightedSource, onSourceClick }: Sour
           ))}
         </>
       )}
+      {fileSources && fileSources.length > 0 && (
+        <div className={`flex flex-col gap-0.5 ${sources.length > 0 ? 'mt-1 pt-1 border-t border-gray-800' : ''}`}>
+          <span className="text-xs text-gray-600">Document context</span>
+          {fileSources.map(s => (
+            <span key={s.url} className="flex items-center gap-1.5 text-xs text-gray-500">
+              <FileText size={10} className="shrink-0" />
+              <span className="truncate min-w-0">{s.title}</span>
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -180,8 +193,8 @@ function MessageItem({ msg }: { msg: Message }) {
           </>
         ) : msg.content}
       </div>
-      {msg.sources && msg.sources.length > 0 && (
-        <SourceList content={msg.content} sources={msg.sources} highlightedSource={highlightedSource} onSourceClick={toggleSource} />
+      {(msg.sources && msg.sources.length > 0 || msg.fileSources && msg.fileSources.length > 0) && (
+        <SourceList content={msg.content} sources={msg.sources ?? []} fileSources={msg.fileSources} highlightedSource={highlightedSource} onSourceClick={toggleSource} />
       )}
     </div>
   )

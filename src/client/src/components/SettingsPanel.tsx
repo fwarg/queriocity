@@ -14,16 +14,18 @@ interface Props {
   showThinking: { balanced: boolean; thorough: boolean }
   useThinking: boolean
   useSpaceRag: boolean
+  useChatRag: boolean
   fontSize: number
   onClose: () => void
-  onSave: (customPrompt: string, showThinking: { balanced: boolean; thorough: boolean }, useThinking: boolean, useSpaceRag: boolean, fontSize: number) => void
+  onSave: (customPrompt: string, showThinking: { balanced: boolean; thorough: boolean }, useThinking: boolean, useSpaceRag: boolean, useChatRag: boolean, fontSize: number) => void
 }
 
-export function SettingsPanel({ customPrompt: initial, showThinking: initialShowThinking, useThinking: initialUseThinking, useSpaceRag: initialUseSpaceRag, fontSize: initialFontSize, onClose, onSave }: Props) {
+export function SettingsPanel({ customPrompt: initial, showThinking: initialShowThinking, useThinking: initialUseThinking, useSpaceRag: initialUseSpaceRag, useChatRag: initialUseChatRag, fontSize: initialFontSize, onClose, onSave }: Props) {
   const [customPrompt, setCustomPrompt] = useState(initial)
   const [showThinking, setShowThinking] = useState(initialShowThinking)
   const [useThinking, setUseThinking] = useState(initialUseThinking)
   const [useSpaceRag, setUseSpaceRag] = useState(initialUseSpaceRag)
+  const [useChatRag, setUseChatRag] = useState(initialUseChatRag)
   const [fontSize, setFontSize] = useState(initialFontSize)
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -32,8 +34,8 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
     e.preventDefault()
     setBusy(true)
     try {
-      await updateSettings({ customPrompt, showThinking, useThinking, useSpaceRag, fontSize })
-      onSave(customPrompt, showThinking, useThinking, useSpaceRag, fontSize)
+      await updateSettings({ customPrompt, showThinking, useThinking, useSpaceRag, useChatRag, fontSize })
+      onSave(customPrompt, showThinking, useThinking, useSpaceRag, useChatRag, fontSize)
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } finally {
@@ -109,6 +111,22 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
                 className="accent-blue-500"
               />
               Enable space RAG
+            </label>
+          </div>
+          <div className="border-t border-gray-800" />
+          <div className="flex flex-col gap-2">
+            <label className="text-xs text-gray-400 font-medium">Chat RAG</label>
+            <p className="text-xs text-gray-500">
+              When chatting outside a space, automatically retrieve relevant excerpts from your uploaded files and inject them into the context.
+            </p>
+            <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={useChatRag}
+                onChange={e => setUseChatRag(e.target.checked)}
+                className="accent-blue-500"
+              />
+              Enable chat RAG
             </label>
           </div>
           <div className="border-t border-gray-800" />

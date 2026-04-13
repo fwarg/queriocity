@@ -15,17 +15,18 @@ adminRouter.use('*', authMiddleware)
 adminRouter.use('*', adminMiddleware)
 
 adminRouter.get('/settings', async (c) => {
-  const [memoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, memoryExtractChars, rerankTopN, attachmentChars, spaceRagBudget] = await Promise.all([
+  const [memoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, attachmentChars, spaceRagBudget] = await Promise.all([
     getAppSetting('memory_token_budget', '1000').then(Number),
     getAppSetting('dream_hour', '-1').then(Number),
     getAppSetting('dream_threshold', '1500').then(Number),
     getAppSetting('dream_target', '700').then(Number),
+    getAppSetting('dream_deep', 'false').then(v => v === 'true'),
     getAppSetting('memory_extract_chars', '6000').then(Number),
     getAppSetting('rerank_top_n', '15').then(Number),
     getAppSetting('attachment_chars', '20000').then(Number),
     getAppSetting('space_rag_budget', '500').then(Number),
   ])
-  return c.json({ memoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, memoryExtractChars, rerankTopN, attachmentChars, spaceRagBudget })
+  return c.json({ memoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, attachmentChars, spaceRagBudget })
 })
 
 adminRouter.patch('/settings', zValidator('json', z.object({
@@ -33,6 +34,7 @@ adminRouter.patch('/settings', zValidator('json', z.object({
   dreamHour: z.number().int().min(-1).max(23).optional(),
   dreamThreshold: z.number().int().min(100).max(50000).optional(),
   dreamTarget: z.number().int().min(100).max(50000).optional(),
+  dreamDeep: z.boolean().optional(),
   memoryExtractChars: z.number().int().min(500).max(100000).optional(),
   rerankTopN: z.number().int().min(1).max(100).optional(),
   attachmentChars: z.number().int().min(1000).max(500000).optional(),
@@ -48,6 +50,7 @@ adminRouter.patch('/settings', zValidator('json', z.object({
   if (body.dreamHour != null) ops.push(setAppSetting('dream_hour', String(body.dreamHour)))
   if (body.dreamThreshold != null) ops.push(setAppSetting('dream_threshold', String(body.dreamThreshold)))
   if (body.dreamTarget != null) ops.push(setAppSetting('dream_target', String(body.dreamTarget)))
+  if (body.dreamDeep != null) ops.push(setAppSetting('dream_deep', String(body.dreamDeep)))
   if (body.memoryExtractChars != null) ops.push(setAppSetting('memory_extract_chars', String(body.memoryExtractChars)))
   if (body.rerankTopN != null) ops.push(setAppSetting('rerank_top_n', String(body.rerankTopN)))
   if (body.attachmentChars != null) ops.push(setAppSetting('attachment_chars', String(body.attachmentChars)))

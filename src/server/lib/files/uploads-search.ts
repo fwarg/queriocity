@@ -5,6 +5,7 @@ import { rerank, rerankEnabled } from '../reranker.ts'
 export interface ChunkResult {
   chunkId: string
   fileId: string
+  filename: string
   content: string
   distance: number
 }
@@ -18,10 +19,11 @@ export function spaceHasTaggedFiles(spaceId: string): boolean {
 /** Search file chunks for a space using a pre-computed embedding vector. */
 export async function searchSpaceFiles(spaceId: string, query: string, embedding: number[], limit = 5, skipRerank = false): Promise<ChunkResult[]> {
   const rows = sqlite.prepare(`
-    SELECT m.chunk_id, m.file_id, m.content, v.distance
+    SELECT m.chunk_id AS chunkId, m.file_id AS fileId, f.filename, m.content, v.distance
     FROM file_chunks v
     JOIN file_chunk_meta m ON m.chunk_id = v.chunk_id
     JOIN space_files sf    ON sf.file_id = m.file_id
+    JOIN uploaded_files f  ON f.id = m.file_id
     WHERE v.embedding MATCH ?
       AND sf.space_id = ?
       AND k = ?
@@ -39,7 +41,7 @@ export async function searchUploads(query: string, userId: string, limit = 5): P
 
   // sqlite-vec KNN query joined with metadata + user ownership check
   const rows = sqlite.prepare(`
-    SELECT m.chunk_id, m.file_id, m.content, v.distance
+    SELECT m.chunk_id AS chunkId, m.file_id AS fileId, f.filename, m.content, v.distance
     FROM file_chunks v
     JOIN file_chunk_meta m ON m.chunk_id = v.chunk_id
     JOIN uploaded_files f  ON f.id = m.file_id
