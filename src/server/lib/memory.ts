@@ -408,7 +408,6 @@ Tasks:
 Output ONLY the final fact list, one per line, prefixed with "- ".
 Target: approximately ${targetChars} characters total.`,
     prompt: inputLines,
-    maxTokens: targetTokens + 200,
   })
 
   const newFacts = synthesis.text.split('\n')
