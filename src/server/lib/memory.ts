@@ -406,7 +406,7 @@ Tasks:
 4. Preserve all unique constraints, decisions, and preferences
 
 Output ONLY the final fact list, one per line, prefixed with "- ".
-Target: approximately ${targetChars} characters total.`,
+Be ruthless: if in doubt, cut. Total output MUST NOT exceed ${targetChars} characters.`,
     prompt: inputLines,
   })
 
