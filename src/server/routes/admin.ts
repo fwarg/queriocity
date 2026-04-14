@@ -8,6 +8,7 @@ import { randomUUID } from 'crypto'
 import { authMiddleware, adminMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { getChatModel, getSmallModel, getThinkingModel, getEmbeddingModel } from '../lib/llm.ts'
 import { rerank, rerankEnabled } from '../lib/reranker.ts'
+import { runDream } from '../lib/memory.ts'
 
 export const adminRouter = new Hono<AppEnv>()
 
@@ -82,6 +83,12 @@ adminRouter.delete('/users/:id', async (c) => {
   const { id } = c.req.param()
   if (id === c.get('userId')) return c.json({ error: 'Cannot delete yourself' }, 400)
   await db.delete(users).where(eq(users.id, id))
+  return c.json({ ok: true })
+})
+
+adminRouter.post('/dream/run', async (c) => {
+  console.log(`  [dream] manual trigger by user ${c.get('userId')}`)
+  runDream().catch(e => console.error('[dream] failed:', e))
   return c.json({ ok: true })
 })
 

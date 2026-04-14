@@ -247,6 +247,10 @@ export async function updateAdminSettings(s: { memoryTokenBudget?: number; dream
   })
 }
 
+export async function triggerDream(): Promise<void> {
+  await fetch(`${BASE}/admin/dream/run`, { method: 'POST' })
+}
+
 export async function clearSpaceMemories(spaceId: string): Promise<void> {
   await fetch(`${BASE}/spaces/${spaceId}/memories`, { method: 'DELETE' })
 }

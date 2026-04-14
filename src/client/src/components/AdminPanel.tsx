@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { listUsers, setUserRole, deleteUser, createInvite, testModels, fetchAdminSettings, updateAdminSettings, type ModelTestResult } from '../lib/api.ts'
+import { listUsers, setUserRole, deleteUser, createInvite, testModels, fetchAdminSettings, updateAdminSettings, triggerDream, type ModelTestResult } from '../lib/api.ts'
 import { Modal } from './Modal.tsx'
 
 interface Props {
@@ -26,6 +26,8 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   const [spaceRagBudgetDraft, setSpaceRagBudgetDraft] = useState('500')
   const [savingBudget, setSavingBudget] = useState(false)
   const [budgetSaved, setBudgetSaved] = useState(false)
+  const [dreamRunning, setDreamRunning] = useState(false)
+  const [dreamTriggered, setDreamTriggered] = useState(false)
   const [modelResults, setModelResults] = useState<ModelTestResult[] | null>(null)
   const [testingModels, setTestingModels] = useState(false)
 
@@ -97,6 +99,17 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
       setModelResults(await testModels())
     } finally {
       setTestingModels(false)
+    }
+  }
+
+  async function handleRunDream() {
+    setDreamRunning(true)
+    try {
+      await triggerDream()
+      setDreamTriggered(true)
+      setTimeout(() => setDreamTriggered(false), 3000)
+    } finally {
+      setDreamRunning(false)
     }
   }
 
@@ -190,6 +203,10 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                     className="accent-blue-500 w-3.5 h-3.5" />
                   <span className="text-xs text-gray-400">Deep dream — re-extract from source conversations using the thinking model</span>
                 </label>
+                <button onClick={handleRunDream} disabled={dreamRunning}
+                  className="mt-1 w-fit px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-xs text-gray-200 transition-colors">
+                  {dreamRunning ? 'Starting…' : dreamTriggered ? 'Started' : 'Run now'}
+                </button>
               </div>
               <div className="flex flex-col gap-1.5 border-t border-gray-800/60 pt-3">
                 <p className="text-xs text-gray-400 font-medium">Extraction context</p>

@@ -1,7 +1,7 @@
 import { generateText } from 'ai'
 import { randomUUID } from 'crypto'
-import { db, spaceMemories, chatSessions, messages, sqlite, getAppSetting } from './db.ts'
-import { eq, desc, asc, ne, and } from 'drizzle-orm'
+import { db, spaceMemories, chatSessions, messages, spaces, sqlite, getAppSetting, setAppSetting } from './db.ts'
+import { eq, desc, asc, ne, and, gt } from 'drizzle-orm'
 import { getSmallModel, getThinkingModelOrFallback } from './llm.ts'
 import { embedText } from './embeddings.ts'
 import { searchSpaceFiles, searchUploads, spaceHasTaggedFiles, type ChunkResult } from './files/uploads-search.ts'
@@ -349,8 +349,6 @@ export async function deepDreamSpace(
   targetTokens: number,
 ): Promise<boolean> {
   const existing = await getSpaceMemories(spaceId)
-  if (existing.length < 1) return false
-
   const t0 = performance.now()
 
   // Stage 1: re-extract from source conversations (oldest first for recency ordering in synthesis)
@@ -375,7 +373,6 @@ export async function deepDreamSpace(
 - Recurring topics that indicate ongoing interest
 Output one fact per line prefixed with "- ". Skip ephemeral details. If nothing worth keeping: output "NONE".`,
       prompt: conversation,
-      maxTokens: 400,
     })
     const facts = result.text.split('\n')
       .map(l => l.replace(/^-\s*/, '').trim())
@@ -446,4 +443,31 @@ Target: approximately ${targetChars} characters total.`,
   }
 
   return true
+}
+
+export async function runDream() {
+  const [threshold, target, deep] = await Promise.all([
+    getAppSetting('dream_threshold', '1500').then(Number),
+    getAppSetting('dream_target', '700').then(Number),
+    getAppSetting('dream_deep', 'false').then(v => v === 'true'),
+  ])
+  const allSpaces = await db.select({ id: spaces.id }).from(spaces)
+  console.log(`  [dream] checking ${allSpaces.length} spaces (threshold=${threshold}, target=${target}, deep=${deep})`)
+  for (const sp of allSpaces) {
+    if (deep) {
+      const key = `deep_dream_at_${sp.id}`
+      const lastRunAt = new Date(parseInt(await getAppSetting(key, '0')))
+      const hasNew = await db.select({ id: chatSessions.id })
+        .from(chatSessions)
+        .where(and(eq(chatSessions.spaceId, sp.id), gt(chatSessions.createdAt, lastRunAt)))
+        .limit(1)
+      if (hasNew.length > 0) {
+        const ran = await deepDreamSpace(sp.id, target)
+        if (ran) await setAppSetting(key, String(Date.now()))
+      }
+    } else {
+      await compactSpaceMemories(sp.id, target, threshold)
+    }
+  }
+  console.log(`  [dream] done`)
 }
