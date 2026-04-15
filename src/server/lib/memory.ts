@@ -2,7 +2,7 @@ import { generateText } from 'ai'
 import { randomUUID } from 'crypto'
 import { db, spaceMemories, chatSessions, messages, spaces, sqlite, getAppSetting, setAppSetting } from './db.ts'
 import { eq, desc, asc, ne, and, gt } from 'drizzle-orm'
-import { getSmallModel, getThinkingModelOrFallback } from './llm.ts'
+import { getSmallModel, getChatModel, getThinkingModelOrFallback } from './llm.ts'
 import { embedText } from './embeddings.ts'
 import { searchSpaceFiles, searchUploads, spaceHasTaggedFiles, type ChunkResult } from './files/uploads-search.ts'
 import { rerank, rerankEnabled } from './reranker.ts'
@@ -365,13 +365,11 @@ export async function deepDreamSpace(
     if (!msgs.length) continue
     const conversation = msgs.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n\n')
     const result = await generateText({
-      model: getThinkingModelOrFallback(),
-      system: `Extract long-term valuable facts from this conversation. Focus on:
-- Preferences and dislikes explicitly stated or strongly implied
-- Decisions made (what was chosen and why)
-- Constraints the user operates under (time, tools, team, budget)
-- Recurring topics that indicate ongoing interest
-Output one fact per line prefixed with "- ". Skip ephemeral details. If nothing worth keeping: output "NONE".`,
+      model: getChatModel(),
+      system: `Extract long-term valuable facts from this conversation. Include both:
+- User context: preferences, decisions, constraints, recurring interests
+- Research findings: key facts, conclusions, standards, tools, or sources surfaced by the assistant that would be useful to recall in future conversations on this topic
+Output one fact per line prefixed with "- ". Be specific — capture the actual finding, not just the topic. Skip ephemeral details. If nothing worth keeping: output "NONE".`,
       prompt: conversation,
     })
     const facts = result.text.split('\n')
