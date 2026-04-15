@@ -17,7 +17,7 @@ Always respond in the same language the user used.`,
   balanced: `You are a research assistant. For each query:
 1. Review the search results you already have.
 2. Before answering, ALWAYS call web_search at least once more with targeted follow-up queries to fill gaps or verify key claims. Do NOT skip this step.
-3. After the follow-up search, write your answer with inline [N] citations (e.g. [1][2]). Do NOT use markdown hyperlinks. Do NOT include a reference list or source list at the end.
+3. After the follow-up search, write your answer with inline [N] citations where N is the exact \`index\` value of that result (e.g. [1][2]). Do NOT use markdown hyperlinks. Do NOT include a reference list or source list at the end. NEVER invent your own numbering — only use index values that appear in the search results.
 4. Only cite [N] when the specific fact is directly supported by that result's content. Skip irrelevant results.
 5. NEVER use [N] citations for information from your training knowledge. If results are irrelevant, answer without any [N] citations.
 Use web_search with up to 2 queries at a time.
@@ -59,6 +59,7 @@ export interface ResearchOptions {
 
 export function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, customPrompt, hasFiles, spaceId, sessionId, memoryBlock }: ResearchOptions) {
   const { maxSteps, count } = MODE_CONFIG[focusMode]
+  let nextIndex = 1
   const start = performance.now()
   console.log(`  [chat] model=${(model as LanguageModel & { modelId?: string }).modelId ?? String(model)} focusMode=${focusMode} maxSteps=${maxSteps}`)
 
@@ -83,10 +84,11 @@ export function runResearcher({ messages, focusMode, userId, model, abortSignal,
     const args = focusMode === 'fast'
       ? { query: initialQueries[0] }
       : { queries: initialQueries }
+    const indexedInitial = initialResults.map(r => ({ ...r, index: nextIndex++ }))
     augmentedMessages = [
       ...cleanMessages,
       { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'pre-0', toolName: 'web_search', args }] },
-      { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'pre-0', toolName: 'web_search', result: initialResults }] },
+      { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'pre-0', toolName: 'web_search', result: indexedInitial }] },
     ]
   }
 
@@ -99,15 +101,20 @@ export function runResearcher({ messages, focusMode, userId, model, abortSignal,
         parameters: z.object({
           query: z.string().describe('Search query'),
         }),
-        execute: async ({ query }) => webSearch(query, count),
+        execute: async ({ query }) => {
+          const results = await webSearch(query, count)
+          return results.map(r => ({ ...r, index: nextIndex++ }))
+        },
       })
     : tool({
         description: `Search the web. Provide up to ${focusMode === 'thorough' ? 3 : 2} queries covering different angles.`,
         parameters: z.object({
           queries: z.array(z.string()).describe('Search queries'),
         }),
-        execute: async ({ queries }) =>
-          webSearchMulti(queries.slice(0, focusMode === 'thorough' ? 3 : 2), count),
+        execute: async ({ queries }) => {
+          const results = await webSearchMulti(queries.slice(0, focusMode === 'thorough' ? 3 : 2), count)
+          return results.map(r => ({ ...r, index: nextIndex++ }))
+        },
       })
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
