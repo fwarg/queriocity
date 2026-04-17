@@ -10,9 +10,8 @@ import { authRouter } from './routes/auth.ts'
 import { adminRouter } from './routes/admin.ts'
 import { usersRouter } from './routes/users.ts'
 import { memoriesRouter } from './routes/memories.ts'
-import { sqlite, db, spaces, chatSessions, getAppSetting, setAppSetting } from './lib/db.ts'
-import { eq, and, gt } from 'drizzle-orm'
-import { compactSpaceMemories, deepDreamSpace } from './lib/memory.ts'
+import { sqlite, getAppSetting, setAppSetting } from './lib/db.ts'
+import { runDream } from './lib/memory.ts'
 
 const app = new Hono()
 
@@ -72,33 +71,6 @@ async function preflight() {
 }
 
 preflight().catch(() => {})
-
-async function runDream() {
-  const [threshold, target, deep] = await Promise.all([
-    getAppSetting('dream_threshold', '1500').then(Number),
-    getAppSetting('dream_target', '700').then(Number),
-    getAppSetting('dream_deep', 'false').then(v => v === 'true'),
-  ])
-  const allSpaces = await db.select({ id: spaces.id }).from(spaces)
-  console.log(`  [dream] checking ${allSpaces.length} spaces (threshold=${threshold}, target=${target}, deep=${deep})`)
-  for (const sp of allSpaces) {
-    if (deep) {
-      const key = `deep_dream_at_${sp.id}`
-      const lastRunAt = new Date(parseInt(await getAppSetting(key, '0')))
-      const hasNew = await db.select({ id: chatSessions.id })
-        .from(chatSessions)
-        .where(and(eq(chatSessions.spaceId, sp.id), gt(chatSessions.createdAt, lastRunAt)))
-        .limit(1)
-      if (hasNew.length > 0) {
-        const ran = await deepDreamSpace(sp.id, target)
-        if (ran) await setAppSetting(key, String(Date.now()))
-      }
-    } else {
-      await compactSpaceMemories(sp.id, target, threshold)
-    }
-  }
-  console.log(`  [dream] done`)
-}
 
 setInterval(async () => {
   const hour = parseInt(await getAppSetting('dream_hour', '-1'))
