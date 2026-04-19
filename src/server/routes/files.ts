@@ -17,7 +17,7 @@ filesRouter.post('/upload', async (c) => {
 
   if (!file) return c.json({ error: 'No file provided' }, 400)
   if (file.size > MAX_SIZE) return c.json({ error: 'File too large (max 50 MB)' }, 413)
-  if (!ACCEPTED_MIME_TYPES.has(file.type)) {
+  if (!ACCEPTED_MIME_TYPES.has(file.type.split(';')[0].trim())) {
     return c.json({ error: `Unsupported file type: ${file.type}. Accepted types: PDF, plain text, images.` }, 400)
   }
 
@@ -39,7 +39,7 @@ filesRouter.post('/extract', async (c) => {
   const file = body['file'] as File | undefined
   if (!file) return c.json({ error: 'No file provided' }, 400)
   if (file.size > MAX_SIZE) return c.json({ error: 'File too large (max 50 MB)' }, 413)
-  if (!ACCEPTED_MIME_TYPES.has(file.type)) {
+  if (!ACCEPTED_MIME_TYPES.has(file.type.split(';')[0].trim())) {
     return c.json({ error: `Unsupported file type: ${file.type}. Accepted types: PDF, plain text, images.` }, 400)
   }
   const maxChars = parseInt(await getAppSetting('attachment_chars', '20000'))

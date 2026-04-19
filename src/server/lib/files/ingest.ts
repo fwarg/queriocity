@@ -51,7 +51,7 @@ export async function ingestFile(
   mimeType: string,
   userId: string,
 ): Promise<string> {
-  if (!ACCEPTED_MIME_TYPES.has(mimeType)) {
+  if (!ACCEPTED_MIME_TYPES.has(mimeType.split(';')[0].trim())) {
     throw new Error(`Unsupported file type: ${mimeType}. Accepted types: PDF, plain text, images.`)
   }
 

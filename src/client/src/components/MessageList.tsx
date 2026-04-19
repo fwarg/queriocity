@@ -5,13 +5,19 @@ import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
-import { ExternalLink, FileText } from 'lucide-react'
+import { ExternalLink, FileText, Download } from 'lucide-react'
 import type { Message } from '../lib/api.ts'
 
 interface Props {
   messages: Message[]
   streaming?: string
   streamingThinking?: string
+}
+
+/** Normalize SVG blocks: unwrap any existing ```svg fences, then rewrap consistently. */
+function wrapSvgBlocks(content: string): string {
+  const unwrapped = content.replace(/```svg\s*\n(<svg[\s\S]*?<\/svg>)\s*\n```/gi, '$1')
+  return unwrapped.replace(/(<svg[\s\S]*?<\/svg>)/gi, (_m, svg) => `\`\`\`svg\n${svg}\n\`\`\``)
 }
 
 /** Replace [N] with markdown links [[N]](url) so react-markdown renders them as links. */
@@ -23,6 +29,28 @@ function insertCitationLinks(content: string, sources: Array<{ url: string }>) {
 }
 
 type C = { children?: React.ReactNode }
+
+function SvgBlock({ svg }: { svg: string }) {
+  const dataUri = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+  const handleDownload = () => {
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }))
+    a.download = 'image.svg'
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }
+  return (
+    <div className="my-2">
+      <img src={dataUri} alt="SVG output" className="max-w-full rounded border border-gray-700 bg-white" />
+      <button
+        onClick={handleDownload}
+        className="mt-1 flex items-center gap-1 text-xs text-gray-400 hover:text-gray-200"
+      >
+        <Download size={12} /> Download SVG
+      </button>
+    </div>
+  )
+}
 
 function makeMdComponents(highlightedSource: number | null, onCitationClick: (n: number) => void) {
   return {
@@ -60,6 +88,8 @@ function makeMdComponents(highlightedSource: number | null, onCitationClick: (n:
   code: ({ children, className }: { children?: React.ReactNode; className?: string }) => {
     const match = /language-(\w+)/.exec(className || '')
     if (match) {
+      const src = String(children).replace(/\n$/, '')
+      if (match[1] === 'svg') return <SvgBlock svg={src} />
       return (
         <SyntaxHighlighter
           style={oneDark}
@@ -67,7 +97,7 @@ function makeMdComponents(highlightedSource: number | null, onCitationClick: (n:
           PreTag="div"
           customStyle={{ margin: '0 0 0.5rem', borderRadius: '0.375rem', padding: '0.75rem', fontSize: '0.75rem' }}
         >
-          {String(children).replace(/\n$/, '')}
+          {src}
         </SyntaxHighlighter>
       )
     }
@@ -188,7 +218,7 @@ function MessageItem({ msg }: { msg: Message }) {
           <>
             {msg.thinking && <ThinkingBlock content={msg.thinking} />}
             <ReactMarkdown components={mdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
-              {msg.sources?.length ? insertCitationLinks(msg.content, msg.sources) : msg.content}
+              {wrapSvgBlocks(msg.sources?.length ? insertCitationLinks(msg.content, msg.sources) : msg.content)}
             </ReactMarkdown>
           </>
         ) : msg.content}
@@ -212,7 +242,7 @@ export const MessageList = memo(function MessageList({ messages, streaming, stre
             {streamingThinking && <ThinkingBlock content={streamingThinking} open />}
             {streaming && (
               <>
-                <ReactMarkdown components={baseMdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{streaming}</ReactMarkdown>
+                <ReactMarkdown components={baseMdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{wrapSvgBlocks(streaming)}</ReactMarkdown>
                 <span className="animate-pulse">▋</span>
               </>
             )}
