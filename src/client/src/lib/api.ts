@@ -22,7 +22,7 @@ export interface Message {
   sources?: Array<{ title: string; url: string }>
   fileSources?: Array<{ title: string; url: string }>
   thinking?: string
-  images?: Array<{ data: string; alt: string }>
+  images?: Array<{ url: string; alt: string }>
 }
 
 // Auth — cookies are sent automatically by the browser

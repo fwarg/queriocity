@@ -10,6 +10,7 @@ import { cacheKey, getCached, setCached } from '../lib/cache.ts'
 import { db, chatSessions, messages, users, uploadedFiles, parseSettings, getAppSetting } from '../lib/db.ts'
 import { eq, sql } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { webSearch, webSearchMulti, type SearchResult } from '../lib/searxng.ts'
 import { getFlashModel, getChatModel, getThinkingModelOrFallback } from '../lib/llm.ts'
@@ -84,18 +85,24 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
             if (size) body.size = size
             if (steps) body.steps = steps
             if (process.env.IMAGE_MODEL) body.model = process.env.IMAGE_MODEL
+            console.log(`  [image] → ${imageBaseUrl}  prompt="${prompt}"  size=${size ?? 'default'}  steps=${steps ?? 'default'}`)
             const res = await fetch(`${imageBaseUrl}/v1/images/generations`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(body),
             })
-            if (!res.ok) return { error: `Image server returned ${res.status}` }
+            if (!res.ok) return { success: false, error: `Image server returned ${res.status}`, prompt }
             const json = await res.json()
-            const b64 = json.data?.[0]?.b64_json
-            if (!b64) return { error: 'No image data in response' }
-            return { b64_json: b64 as string, prompt }
+            const b64: string = json.data?.[0]?.b64_json
+            if (!b64) return { success: false, error: 'No image data in response', prompt }
+            const imagesDir = './data/images'
+            await mkdir(imagesDir, { recursive: true })
+            const filename = `${randomUUID()}.png`
+            await writeFile(`${imagesDir}/${filename}`, Buffer.from(b64, 'base64'))
+            console.log(`  [image] saved ${filename}`)
+            return { success: true, url: `/images/${filename}`, prompt }
           } catch (e) {
-            return { error: String(e) }
+            return { success: false, error: String(e), prompt }
           }
         },
       }),
@@ -127,11 +134,11 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
         } else if (part.type === 'tool-call' && part.toolName === 'generate_image') {
           await stream.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Generating image…' }) })
         } else if (part.type === 'tool-result' && part.toolName === 'generate_image') {
-          const r = part.result as { b64_json?: string; prompt?: string; error?: string }
-          if (r.b64_json) {
+          const r = part.result as { success?: boolean; url?: string; prompt?: string; error?: string }
+          if (r.success && r.url) {
             hasImage = true
-            await stream.writeSSE({ data: JSON.stringify({ type: 'image', data: r.b64_json, alt: r.prompt ?? '' }) })
-            fullContent += `[Generated image: ${r.prompt ?? ''}]`
+            await stream.writeSSE({ data: JSON.stringify({ type: 'image', url: r.url, alt: r.prompt ?? '' }) })
+            fullContent += `\n\n![${r.prompt ?? ''}](${r.url})`
           }
         }
       }

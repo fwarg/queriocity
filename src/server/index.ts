@@ -30,6 +30,9 @@ app.route('/api/admin', adminRouter)
 app.route('/api/users', usersRouter)
 app.route('/api/images', imagesRouter)
 
+// Serve generated images from persistent data directory
+app.use('/images/*', serveStatic({ root: './data' }))
+
 // Serve built client in production
 app.use('*', serveStatic({ root: './dist/client' }))
 app.get('*', serveStatic({ path: './dist/client/index.html' }))
