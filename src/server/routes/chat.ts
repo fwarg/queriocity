@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { streamSSE } from 'hono/streaming'
-import { streamText } from 'ai'
+import { streamText, tool } from 'ai'
 import { runResearcher } from '../lib/researcher.ts'
 import { runWriter } from '../lib/writer.ts'
 import { reformulateSpeed, reformulateLLM } from '../lib/reformulate.ts'
@@ -69,6 +69,37 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
     const effectiveRag = (parsedFlashSettings.useSpaceRag !== false) ? ragBudget : 0
     const { block: resolvedMemoryBlock, fileSources: flashFileSources } = spaceId ? await buildMemoryBlock(spaceId, memoryBudget, effectiveRag, userQuery) : { block: '', fileSources: [] }
     const customPrompt: string | undefined = parsedFlashSettings.customPrompt as string | undefined
+    const imageBaseUrl = process.env.IMAGE_BASE_URL?.trim() || undefined
+    const imageTools = imageBaseUrl ? {
+      generate_image: tool({
+        description: 'Generate an image from a text description using a local diffusion model.',
+        parameters: z.object({
+          prompt: z.string().describe('Detailed visual description for image generation'),
+          size: z.string().optional().describe('Image dimensions e.g. "512x512", "1024x1024", "1024x576"'),
+          steps: z.number().int().optional().describe('Inference steps: ~15 draft, ~25 balanced, ~40 high quality'),
+        }),
+        execute: async ({ prompt, size, steps }) => {
+          try {
+            const body: Record<string, unknown> = { prompt, n: 1, response_format: 'b64_json' }
+            if (size) body.size = size
+            if (steps) body.steps = steps
+            if (process.env.IMAGE_MODEL) body.model = process.env.IMAGE_MODEL
+            const res = await fetch(`${imageBaseUrl}/v1/images/generations`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            })
+            if (!res.ok) return { error: `Image server returned ${res.status}` }
+            const json = await res.json()
+            const b64 = json.data?.[0]?.b64_json
+            if (!b64) return { error: 'No image data in response' }
+            return { b64_json: b64 as string, prompt }
+          } catch (e) {
+            return { error: String(e) }
+          }
+        },
+      }),
+    } : undefined
     const t0 = Date.now()
     let fullContent = ''
     return streamSSE(c, async (stream) => {
@@ -76,22 +107,34 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
       const flashSystem = FLASH_SYSTEM
         + (customPrompt ? `\n\nAdditional instructions:\n${customPrompt}` : '')
         + (resolvedMemoryBlock ? '\n\n' + resolvedMemoryBlock : '')
+        + (imageBaseUrl ? '\nWhen asked to draw or generate an image, call generate_image. Pass size and steps only when the user specifies them.' : '')
       const ctxLimit = parseInt(process.env.CONTEXT_TOKEN_LIMIT ?? '8192')
+      let hasImage = false
       const result = streamText({
         model: getFlashModel(),
         abortSignal,
         system: flashSystem,
         messages: trimMessages(msgs, ctxLimit - Math.floor(ctxLimit * 0.2), flashSystem),
         maxTokens: FLASH_MAX_TOKENS,
+        ...(imageTools && { tools: imageTools, maxSteps: 2 }),
       })
       for await (const part of result.fullStream) {
         if (part.type === 'text-delta') {
           fullContent += part.textDelta
           await stream.writeSSE({ data: JSON.stringify({ type: 'text', delta: part.textDelta }) })
+        } else if (part.type === 'tool-call' && part.toolName === 'generate_image') {
+          await stream.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Generating image…' }) })
+        } else if (part.type === 'tool-result' && part.toolName === 'generate_image') {
+          const r = part.result as { b64_json?: string; prompt?: string; error?: string }
+          if (r.b64_json) {
+            hasImage = true
+            await stream.writeSSE({ data: JSON.stringify({ type: 'image', data: r.b64_json, alt: r.prompt ?? '' }) })
+            fullContent += `[Generated image: ${r.prompt ?? ''}]`
+          }
         }
       }
       console.log(`  [flash] done in ${Date.now() - t0}ms, ${fullContent.length} chars`)
-      if (fullContent.length >= 50) setCached(ck, fullContent)
+      if (!hasImage && fullContent.length >= 50) setCached(ck, fullContent)
       const { title: sessionTitle } = await persistMessage(sid, userId, msgs, fullContent, [], spaceId)
       await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title: sessionTitle, elapsedMs: Date.now() - t0 }) })
       if (spaceId) {

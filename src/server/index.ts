@@ -10,6 +10,7 @@ import { authRouter } from './routes/auth.ts'
 import { adminRouter } from './routes/admin.ts'
 import { usersRouter } from './routes/users.ts'
 import { memoriesRouter } from './routes/memories.ts'
+import { imagesRouter } from './routes/images.ts'
 import { sqlite, getAppSetting, setAppSetting } from './lib/db.ts'
 import { runDream } from './lib/memory.ts'
 
@@ -27,6 +28,7 @@ app.route('/api/spaces', spacesRouter)
 app.route('/api/spaces', memoriesRouter)
 app.route('/api/admin', adminRouter)
 app.route('/api/users', usersRouter)
+app.route('/api/images', imagesRouter)
 
 // Serve built client in production
 app.use('*', serveStatic({ root: './dist/client' }))
@@ -42,6 +44,9 @@ console.log(`  small:  ${process.env.SMALL_PROVIDER ?? process.env.CHAT_PROVIDER
 console.log(`  thinking: ${process.env.THINKING_PROVIDER ?? process.env.CHAT_PROVIDER ?? _defaultProvider}  ${process.env.THINKING_BASE_URL ?? process.env.CHAT_BASE_URL ?? _defaultBase}  model=${process.env.THINKING_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2'}`)
 console.log(`  embed:  ${process.env.EMBED_PROVIDER ?? process.env.CHAT_PROVIDER ?? _defaultProvider}  ${process.env.EMBED_BASE_URL ?? process.env.CHAT_BASE_URL ?? _defaultBase}  model=${process.env.EMBED_MODEL ?? 'nomic-embed-text'}  dims=${process.env.EMBED_DIMENSIONS ?? '1536'}`)
 console.log(`  searxng: ${process.env.SEARXNG_URL ?? 'http://localhost:4000'}`)
+if (process.env.IMAGE_BASE_URL) {
+  console.log(`  image:  ${process.env.IMAGE_BASE_URL}  model=${process.env.IMAGE_MODEL ?? 'default'}`)
+}
 
 function shutdown() {
   try { sqlite.close() } catch {}

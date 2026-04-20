@@ -40,6 +40,7 @@ export function useChat({ sessionId, focusMode, spaceId, onSessionCreated }: Use
     let thinkingAccumulated = ''
     const sources: Array<{ title: string; url: string }> = []
     const fileSources: Array<{ title: string; url: string }> = []
+    const images: Array<{ data: string; alt: string }> = []
 
     try {
       for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId)) {
@@ -48,6 +49,9 @@ export function useChat({ sessionId, focusMode, spaceId, onSessionCreated }: Use
           cancelAnimationFrame(rafRef.current)
           const snap = accumulated
           rafRef.current = requestAnimationFrame(() => setStreaming(snap))
+          setStatus('')
+        } else if (chunk.type === 'image') {
+          images.push({ data: chunk.data as string, alt: chunk.alt as string })
           setStatus('')
         } else if (chunk.type === 'thinking') {
           thinkingAccumulated += chunk.delta as string
@@ -76,6 +80,7 @@ export function useChat({ sessionId, focusMode, spaceId, onSessionCreated }: Use
         sources,
         fileSources: fileSources.length > 0 ? fileSources : undefined,
         thinking: thinkingAccumulated || undefined,
+        images: images.length > 0 ? images : undefined,
       }])
       setStreaming('')
       setStreamingThinking('')

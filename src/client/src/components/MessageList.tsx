@@ -30,6 +30,27 @@ function insertCitationLinks(content: string, sources: Array<{ url: string }>) {
 
 type C = { children?: React.ReactNode }
 
+function ImageBlock({ data, alt }: { data: string; alt: string }) {
+  const src = `data:image/png;base64,${data}`
+  const handleDownload = () => {
+    const a = document.createElement('a')
+    a.href = src
+    a.download = 'image.png'
+    a.click()
+  }
+  return (
+    <div className="my-2">
+      <img src={src} alt={alt} className="max-w-full rounded border border-gray-700" />
+      <button
+        onClick={handleDownload}
+        className="mt-1 flex items-center gap-1 text-xs text-gray-400 hover:text-gray-200"
+      >
+        <Download size={12} /> Download PNG
+      </button>
+    </div>
+  )
+}
+
 function SvgBlock({ svg }: { svg: string }) {
   const dataUri = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
   const handleDownload = () => {
@@ -217,9 +238,10 @@ function MessageItem({ msg }: { msg: Message }) {
         {msg.role === 'assistant' ? (
           <>
             {msg.thinking && <ThinkingBlock content={msg.thinking} />}
-            <ReactMarkdown components={mdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
+            {msg.content && <ReactMarkdown components={mdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
               {wrapSvgBlocks(msg.sources?.length ? insertCitationLinks(msg.content, msg.sources) : msg.content)}
-            </ReactMarkdown>
+            </ReactMarkdown>}
+            {msg.images?.map((img, i) => <ImageBlock key={i} data={img.data} alt={img.alt} />)}
           </>
         ) : msg.content}
       </div>

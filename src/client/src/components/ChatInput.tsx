@@ -1,6 +1,7 @@
 import { useState, useRef, type FormEvent, type KeyboardEvent } from 'react'
-import { Send, Paperclip, X, Square } from 'lucide-react'
+import { Send, Paperclip, X, Square, LayoutGrid } from 'lucide-react'
 import { extractFileForContext } from '../lib/api.ts'
+import { TemplateSelector } from './TemplateSelector.tsx'
 
 type FocusMode = 'flash' | 'fast' | 'balanced' | 'thorough'
 
@@ -31,6 +32,7 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [extractStatus, setExtractStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [extractError, setExtractError] = useState('')
+  const [showTemplates, setShowTemplates] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const isFlash = focusMode === 'flash'
@@ -77,7 +79,17 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-2 p-4 border-t border-gray-800">
+    <form onSubmit={handleSubmit} className="relative flex flex-col gap-2 p-4 border-t border-gray-800">
+      {showTemplates && (
+        <TemplateSelector
+          onSelect={(text, mode) => {
+            setValue(text)
+            onFocusModeChange(mode)
+            setShowTemplates(false)
+          }}
+          onClose={() => setShowTemplates(false)}
+        />
+      )}
       <div className="flex items-center gap-2 text-xs">
         {(['flash', 'fast', 'balanced', 'thorough'] as const).map(m => (
           <button
@@ -132,6 +144,15 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
           disabled={disabled}
         />
         <div className="flex flex-col gap-2">
+          <button
+            type="button"
+            onClick={() => setShowTemplates(v => !v)}
+            className={`p-2 rounded ${showTemplates ? 'bg-blue-700 hover:bg-blue-600' : 'bg-gray-800 hover:bg-gray-700'}`}
+            title="Use a prompt template"
+            aria-label="Prompt templates"
+          >
+            <LayoutGrid size={16} />
+          </button>
           <button
             type="button"
             onClick={() => fileRef.current?.click()}
