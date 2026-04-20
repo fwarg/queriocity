@@ -104,10 +104,13 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
     let fullContent = ''
     return streamSSE(c, async (stream) => {
       if (flashFileSources.length > 0) await stream.writeSSE({ data: JSON.stringify({ type: 'file_sources', sources: flashFileSources }) })
-      const flashSystem = FLASH_SYSTEM
+      const imagePrefix = imageBaseUrl
+        ? 'You have a generate_image tool. When the user asks to draw, create, illustrate, or generate an image, call generate_image immediately. Extract size from resolutions like "512x512" and steps from quality hints (draft→15, balanced→25, high→40). Do not say you cannot generate images.\n\n'
+        : ''
+      const flashSystem = imagePrefix
+        + (imageBaseUrl ? FLASH_SYSTEM.replace('using only your training knowledge', 'using your knowledge and available tools') : FLASH_SYSTEM)
         + (customPrompt ? `\n\nAdditional instructions:\n${customPrompt}` : '')
         + (resolvedMemoryBlock ? '\n\n' + resolvedMemoryBlock : '')
-        + (imageBaseUrl ? '\nWhen asked to draw or generate an image, call generate_image. Pass size and steps only when the user specifies them.' : '')
       const ctxLimit = parseInt(process.env.CONTEXT_TOKEN_LIMIT ?? '8192')
       let hasImage = false
       const result = streamText({
@@ -115,8 +118,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
         abortSignal,
         system: flashSystem,
         messages: trimMessages(msgs, ctxLimit - Math.floor(ctxLimit * 0.2), flashSystem),
-        maxTokens: FLASH_MAX_TOKENS,
-        ...(imageTools && { tools: imageTools, maxSteps: 2 }),
+        ...(imageTools ? { tools: imageTools, maxSteps: 2 } : { maxTokens: FLASH_MAX_TOKENS }),
       })
       for await (const part of result.fullStream) {
         if (part.type === 'text-delta') {
