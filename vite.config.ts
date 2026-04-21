@@ -37,6 +37,7 @@ export default defineConfig(({ mode }) => {
       host: true,
       proxy: {
         '/api': { target: `http://localhost:${port}`, changeOrigin: true },
+        '/images': { target: `http://localhost:${port}`, changeOrigin: true },
       },
     },
   }

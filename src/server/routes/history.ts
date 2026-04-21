@@ -5,6 +5,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { extractMemoriesPostHoc } from '../lib/memory.ts'
+import { deleteSessionImages } from '../lib/image-store.ts'
 import { deindexSession, indexSession } from '../lib/chat-indexer.ts'
 
 export const historyRouter = new Hono<AppEnv>()
@@ -120,9 +121,11 @@ historyRouter.delete('/:id', async (c) => {
 
   if (!session) return c.json({ error: 'Not found' }, 404)
 
+  const msgs = await db.select({ content: messages.content }).from(messages).where(eq(messages.sessionId, id))
   deindexSession(id)
   await db.delete(spaceMemories).where(and(eq(spaceMemories.sessionId, id), ne(spaceMemories.source, 'manual')))
   await db.delete(chatSessions).where(eq(chatSessions.id, id))
+  deleteSessionImages(msgs.map(m => m.content)).catch(e => console.error('[image] cleanup failed:', e))
 
   return c.json({ ok: true })
 })

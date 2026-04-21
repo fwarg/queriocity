@@ -19,6 +19,8 @@ import { rerank, rerankEnabled } from '../lib/reranker.ts'
 import { buildMemoryBlock, buildChatFileBlock, extractMemoriesPostHoc } from '../lib/memory.ts'
 import { trimMessages } from '../lib/trim-messages.ts'
 import { indexContents } from '../lib/chat-indexer.ts'
+import { IMAGE_STORAGE_DIR } from '../lib/image-store.ts'
+const _createdImageDirs = new Set<string>()
 
 const FLASH_SYSTEM = `Answer in at most 5 sentences using only your training knowledge. Be direct and factual.
 Do not search the web. If you cannot answer confidently, say so briefly.
@@ -71,6 +73,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
     const { block: resolvedMemoryBlock, fileSources: flashFileSources } = spaceId ? await buildMemoryBlock(spaceId, memoryBudget, effectiveRag, userQuery) : { block: '', fileSources: [] }
     const customPrompt: string | undefined = parsedFlashSettings.customPrompt as string | undefined
     const imageBaseUrl = process.env.IMAGE_BASE_URL?.trim() || undefined
+    let pendingImageUrl: string | undefined
     const imageTools = imageBaseUrl ? {
       generate_image: tool({
         description: 'Generate an image from a text description using a local diffusion model.',
@@ -91,17 +94,28 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(body),
             })
-            if (!res.ok) return { success: false, error: `Image server returned ${res.status}`, prompt }
+            if (!res.ok) {
+              console.error(`  [image] diffusion server error ${res.status}`)
+              return { success: false, error: `Image server returned ${res.status}`, prompt }
+            }
             const json = await res.json()
             const b64: string = json.data?.[0]?.b64_json
-            if (!b64) return { success: false, error: 'No image data in response', prompt }
-            const imagesDir = './data/images'
-            await mkdir(imagesDir, { recursive: true })
+            if (!b64) {
+              console.error(`  [image] no b64_json in response:`, JSON.stringify(json).slice(0, 200))
+              return { success: false, error: 'No image data in response', prompt }
+            }
+            const imagesDir = `${IMAGE_STORAGE_DIR}/${userId}`
+            if (!_createdImageDirs.has(imagesDir)) {
+              await mkdir(imagesDir, { recursive: true })
+              _createdImageDirs.add(imagesDir)
+            }
             const filename = `${randomUUID()}.png`
             await writeFile(`${imagesDir}/${filename}`, Buffer.from(b64, 'base64'))
-            console.log(`  [image] saved ${filename}`)
-            return { success: true, url: `/images/${filename}`, prompt }
+            console.log(`  [image] saved ${userId}/${filename}`)
+            pendingImageUrl = `/images/${userId}/${filename}`
+            return { success: true, prompt }
           } catch (e) {
+            console.error(`  [image] error:`, e)
             return { success: false, error: String(e), prompt }
           }
         },
@@ -134,11 +148,12 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
         } else if (part.type === 'tool-call' && part.toolName === 'generate_image') {
           await stream.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Generating image…' }) })
         } else if (part.type === 'tool-result' && part.toolName === 'generate_image') {
-          const r = part.result as { success?: boolean; url?: string; prompt?: string; error?: string }
-          if (r.success && r.url) {
+          const r = part.result as { success?: boolean; prompt?: string; error?: string }
+          if (r.success && pendingImageUrl) {
             hasImage = true
-            await stream.writeSSE({ data: JSON.stringify({ type: 'image', url: r.url, alt: r.prompt ?? '' }) })
-            fullContent += `\n\n![${r.prompt ?? ''}](${r.url})`
+            await stream.writeSSE({ data: JSON.stringify({ type: 'image', url: pendingImageUrl, alt: r.prompt ?? '' }) })
+            fullContent += `\n\n![${r.prompt ?? ''}](${pendingImageUrl})`
+            pendingImageUrl = undefined
           }
         }
       }

@@ -31,21 +31,15 @@ function insertCitationLinks(content: string, sources: Array<{ url: string }>) {
 type C = { children?: React.ReactNode }
 
 function ImageBlock({ url, alt }: { url: string; alt: string }) {
-  const handleDownload = () => {
-    const a = document.createElement('a')
-    a.href = url
-    a.download = url.split('/').pop() ?? 'image.png'
-    a.click()
-  }
   return (
     <div className="my-2">
       <img src={url} alt={alt} className="max-w-full rounded border border-gray-700" />
-      <button
-        onClick={handleDownload}
+      <a
+        href={`${url}?dl=1`}
         className="mt-1 flex items-center gap-1 text-xs text-gray-400 hover:text-gray-200"
       >
         <Download size={12} /> Download PNG
-      </button>
+      </a>
     </div>
   )
 }
