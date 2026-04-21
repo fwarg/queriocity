@@ -36,6 +36,9 @@ function ImageBlock({ url, alt }: { url: string; alt: string }) {
       <img src={url} alt={alt} className="max-w-full rounded border border-gray-700" />
       <a
         href={`${url}?dl=1`}
+        download
+        target="_blank"
+        rel="noopener noreferrer"
         className="mt-1 flex items-center gap-1 text-xs text-gray-400 hover:text-gray-200"
       >
         <Download size={12} /> Download PNG
@@ -232,9 +235,11 @@ function MessageItem({ msg }: { msg: Message }) {
         {msg.role === 'assistant' ? (
           <>
             {msg.thinking && <ThinkingBlock content={msg.thinking} />}
-            {msg.content && <ReactMarkdown components={mdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
-              {wrapSvgBlocks(msg.sources?.length ? insertCitationLinks(msg.content, msg.sources) : msg.content)}
-            </ReactMarkdown>}
+            {msg.content && (() => {
+              const cited = msg.sources?.length ? insertCitationLinks(msg.content, msg.sources) : msg.content
+              const cleaned = msg.images?.length ? cited.replace(/!\[.*?\]\([^)]+\.png\)/g, '') : cited
+              return <ReactMarkdown components={mdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{wrapSvgBlocks(cleaned)}</ReactMarkdown>
+            })()}
             {msg.images?.map((img, i) => <ImageBlock key={i} url={img.url} alt={img.alt} />)}
           </>
         ) : msg.content}

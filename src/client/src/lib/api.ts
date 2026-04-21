@@ -121,7 +121,17 @@ export async function* streamChat(
   const res = await fetch(`${BASE}/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messages, focusMode, sessionId, spaceId }),
+    body: JSON.stringify({
+      messages: messages.map(m => ({
+        role: m.role,
+        content: m.images?.length
+          ? m.content + m.images.map(img => `\n\n![${img.alt}](${img.url})`).join('')
+          : m.content,
+      })),
+      focusMode,
+      sessionId,
+      spaceId,
+    }),
     signal,
   })
 

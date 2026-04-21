@@ -15,6 +15,9 @@ export default defineConfig(({ mode }) => {
       react(),
       VitePWA({
         registerType: 'autoUpdate',
+        workbox: {
+          navigateFallbackDenylist: [/^\/images\//, /^\/api\//],
+        },
         manifest: {
           name: 'Queriocity',
           short_name: 'Queriocity',

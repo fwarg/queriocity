@@ -10,7 +10,7 @@ import { cacheKey, getCached, setCached } from '../lib/cache.ts'
 import { db, chatSessions, messages, users, uploadedFiles, parseSettings, getAppSetting } from '../lib/db.ts'
 import { eq, sql } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { webSearch, webSearchMulti, type SearchResult } from '../lib/searxng.ts'
 import { getFlashModel, getChatModel, getThinkingModelOrFallback } from '../lib/llm.ts'
@@ -74,6 +74,12 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
     const customPrompt: string | undefined = parsedFlashSettings.customPrompt as string | undefined
     const imageBaseUrl = process.env.IMAGE_BASE_URL?.trim() || undefined
     let pendingImageUrl: string | undefined
+    // Seed from history so the LLM gets the authoritative URL without reading context
+    const IMAGE_MD_RE = /!\[.*?\]\((\/images\/[\w-]+\/[\w-]+\.png)\)/g
+    let lastGeneratedImageUrl: string | undefined
+    for (const m of msgs) {
+      for (const [, url] of (m.content as string).matchAll(IMAGE_MD_RE)) lastGeneratedImageUrl = url
+    }
     const imageTools = imageBaseUrl ? {
       generate_image: tool({
         description: 'Generate an image from a text description using a local diffusion model.',
@@ -113,9 +119,65 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
             await writeFile(`${imagesDir}/${filename}`, Buffer.from(b64, 'base64'))
             console.log(`  [image] saved ${userId}/${filename}`)
             pendingImageUrl = `/images/${userId}/${filename}`
+            lastGeneratedImageUrl = pendingImageUrl
             return { success: true, prompt }
           } catch (e) {
             console.error(`  [image] error:`, e)
+            return { success: false, error: String(e), prompt }
+          }
+        },
+      }),
+      edit_image: tool({
+        description: 'Modify a previously generated image. Use when the user asks to change, edit, or iterate on an image.',
+        parameters: z.object({
+          image_url: z.string().describe('The /images/... URL of the image to edit (from chat history)'),
+          prompt: z.string().describe('Full description of the desired result, including unchanged aspects'),
+          strength: z.number().min(0).max(1).optional()
+            .describe('How much to change (0.0=unchanged, 1.0=completely new). Default 0.75.'),
+          size: z.string().optional().describe('Output dimensions e.g. "512x512". Defaults to source size.'),
+          steps: z.number().int().optional().describe('Inference steps: ~15 draft, ~25 balanced, ~40 high'),
+        }),
+        execute: async ({ image_url, prompt, strength, size, steps }) => {
+          try {
+            if (!image_url.startsWith(`/images/${userId}/`)) {
+              return { success: false, error: 'Invalid image reference', prompt }
+            }
+            const relPath = image_url.slice('/images/'.length)
+            const imageBuffer = await readFile(`${IMAGE_STORAGE_DIR}/${relPath}`)
+            const form = new FormData()
+            form.append('image', new Blob([imageBuffer], { type: 'image/png' }), 'image.png')
+            form.append('prompt', prompt)
+            form.append('n', '1')
+            form.append('response_format', 'b64_json')
+            if (strength !== undefined) form.append('strength', String(strength))
+            if (size) form.append('size', size)
+            if (steps) form.append('steps', String(steps))
+            if (process.env.IMAGE_MODEL) form.append('model', process.env.IMAGE_MODEL)
+            console.log(`  [image] edit → ${imageBaseUrl}  prompt="${prompt}"  strength=${strength ?? 0.75}`)
+            const res = await fetch(`${imageBaseUrl}/v1/images/edits`, { method: 'POST', body: form })
+            if (!res.ok) {
+              console.error(`  [image] edit server error ${res.status}`)
+              return { success: false, error: `Image server returned ${res.status}`, prompt }
+            }
+            const json = await res.json()
+            const b64: string = json.data?.[0]?.b64_json
+            if (!b64) {
+              console.error(`  [image] no b64_json in edit response:`, JSON.stringify(json).slice(0, 200))
+              return { success: false, error: 'No image data in response', prompt }
+            }
+            const imagesDir = `${IMAGE_STORAGE_DIR}/${userId}`
+            if (!_createdImageDirs.has(imagesDir)) {
+              await mkdir(imagesDir, { recursive: true })
+              _createdImageDirs.add(imagesDir)
+            }
+            const filename = `${randomUUID()}.png`
+            await writeFile(`${imagesDir}/${filename}`, Buffer.from(b64, 'base64'))
+            console.log(`  [image] saved edited ${userId}/${filename}`)
+            pendingImageUrl = `/images/${userId}/${filename}`
+            lastGeneratedImageUrl = pendingImageUrl
+            return { success: true, prompt }
+          } catch (e) {
+            console.error(`  [image] edit error:`, e)
             return { success: false, error: String(e), prompt }
           }
         },
@@ -126,7 +188,9 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
     return streamSSE(c, async (stream) => {
       if (flashFileSources.length > 0) await stream.writeSSE({ data: JSON.stringify({ type: 'file_sources', sources: flashFileSources }) })
       const imagePrefix = imageBaseUrl
-        ? 'You have a generate_image tool. When the user asks to draw, create, illustrate, or generate an image, call generate_image immediately. Extract size from resolutions like "512x512" and steps from quality hints (draft→15, balanced→25, high→40). Do not say you cannot generate images.\n\n'
+        ? 'You have generate_image and edit_image tools. When asked to draw/create/illustrate/generate an image, call generate_image. When asked to edit, modify, or change a previously generated image, call edit_image.'
+          + (lastGeneratedImageUrl ? ` The most recently generated image is at ${lastGeneratedImageUrl}.` : ' Use the image_url from the most recent ![...](...) in the conversation.')
+          + ' Extract size from resolution strings and steps from quality hints (draft→15, balanced→25, high→40). Do not say you cannot generate or edit images.\n\n'
         : ''
       const flashSystem = imagePrefix
         + (imageBaseUrl ? FLASH_SYSTEM.replace('using only your training knowledge', 'using your knowledge and available tools') : FLASH_SYSTEM)
@@ -145,9 +209,10 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
         if (part.type === 'text-delta') {
           fullContent += part.textDelta
           await stream.writeSSE({ data: JSON.stringify({ type: 'text', delta: part.textDelta }) })
-        } else if (part.type === 'tool-call' && part.toolName === 'generate_image') {
-          await stream.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Generating image…' }) })
-        } else if (part.type === 'tool-result' && part.toolName === 'generate_image') {
+        } else if (part.type === 'tool-call' && (part.toolName === 'generate_image' || part.toolName === 'edit_image')) {
+          const statusText = part.toolName === 'edit_image' ? 'Editing image…' : 'Generating image…'
+          await stream.writeSSE({ data: JSON.stringify({ type: 'status', text: statusText }) })
+        } else if (part.type === 'tool-result' && (part.toolName === 'generate_image' || part.toolName === 'edit_image')) {
           const r = part.result as { success?: boolean; prompt?: string; error?: string }
           if (r.success && pendingImageUrl) {
             hasImage = true
