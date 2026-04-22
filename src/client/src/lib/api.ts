@@ -189,8 +189,9 @@ export async function deleteSession(id: string): Promise<void> {
   await fetch(`${BASE}/history/${id}`, { method: 'DELETE' })
 }
 
-export async function fetchHistory(): Promise<Array<{ id: string; title: string; spaceId: string | null }>> {
-  const res = await fetch(`${BASE}/history`)
+export async function fetchHistory(sort?: 'updated' | 'created'): Promise<Array<{ id: string; title: string; spaceId: string | null }>> {
+  const params = sort ? `?sort=${sort}` : ''
+  const res = await fetch(`${BASE}/history${params}`)
   return res.json()
 }
 

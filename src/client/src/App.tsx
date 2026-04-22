@@ -80,6 +80,7 @@ export default function App() {
   const [showAdmin, setShowAdmin] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
+  const [chatSort, setChatSort] = useState<'updated' | 'created'>('updated')
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
 
@@ -107,6 +108,10 @@ export default function App() {
   useEffect(() => {
     document.documentElement.style.fontSize = `${fontSize}px`
   }, [fontSize])
+
+  useEffect(() => {
+    if (currentUser) fetchHistory(chatSort).then(setSessions).catch(() => {})
+  }, [chatSort])
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -484,7 +489,14 @@ export default function App() {
         </div>
         {view === 'chats' ? (
           <div className="flex flex-col flex-1 overflow-y-auto p-6 gap-3" onClick={() => setSpacePickerOpen(null)}>
-            <h2 className="text-lg font-semibold text-gray-200 mb-2">Chats</h2>
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-lg font-semibold text-gray-200">Chats</h2>
+              <div className="flex items-center gap-1 text-xs">
+                <button onClick={() => setChatSort('updated')} className={chatSort === 'updated' ? 'text-indigo-400' : 'text-gray-500 hover:text-gray-300'}>Active</button>
+                <span className="text-gray-700">·</span>
+                <button onClick={() => setChatSort('created')} className={chatSort === 'created' ? 'text-indigo-400' : 'text-gray-500 hover:text-gray-300'}>Created</button>
+              </div>
+            </div>
             {sessions.length === 0 ? (
               <p className="text-gray-500 text-sm">No saved chats yet.</p>
             ) : sessions.map(s => {

@@ -16,9 +16,11 @@ historyRouter.get('/', async (c) => {
   const userId = c.get('userId') as string
   const limit = Math.min(parseInt(c.req.query('limit') ?? '50'), 200)
   const offset = parseInt(c.req.query('offset') ?? '0')
+  const sort = c.req.query('sort') === 'created' ? 'created' : 'updated'
+  const orderCol = sort === 'created' ? chatSessions.createdAt : chatSessions.updatedAt
   const sessions = await db.select().from(chatSessions)
     .where(eq(chatSessions.userId, userId))
-    .orderBy(desc(chatSessions.updatedAt))
+    .orderBy(desc(orderCol))
     .limit(limit)
     .offset(offset)
   return c.json(sessions)
