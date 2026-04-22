@@ -238,7 +238,7 @@ function MessageItem({ msg }: { msg: Message }) {
             {msg.content && (() => {
               const cited = msg.sources?.length ? insertCitationLinks(msg.content, msg.sources) : msg.content
               const cleaned = msg.images?.length ? cited.replace(/!\[.*?\]\([^)]+\.png\)/g, '') : cited
-              return <ReactMarkdown components={mdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{wrapSvgBlocks(cleaned)}</ReactMarkdown>
+              return cleaned.trim() ? <ReactMarkdown components={mdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{wrapSvgBlocks(cleaned)}</ReactMarkdown> : null
             })()}
             {msg.images?.map((img, i) => <ImageBlock key={i} url={img.url} alt={img.alt} />)}
           </>
@@ -263,7 +263,7 @@ export const MessageList = memo(function MessageList({ messages, streaming, stre
             {streamingThinking && <ThinkingBlock content={streamingThinking} open />}
             {streaming && (
               <>
-                <ReactMarkdown components={baseMdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{wrapSvgBlocks(streaming)}</ReactMarkdown>
+                <ReactMarkdown components={baseMdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{wrapSvgBlocks(streaming.replace(/!\[.*?\]\([^)]+\.png\)/g, ''))}</ReactMarkdown>
                 <span className="animate-pulse">▋</span>
               </>
             )}
