@@ -15,6 +15,9 @@ export default defineConfig(({ mode }) => {
       react(),
       VitePWA({
         registerType: 'autoUpdate',
+        workbox: {
+          navigateFallbackDenylist: [/^\/images\//, /^\/api\//],
+        },
         manifest: {
           name: 'Queriocity',
           short_name: 'Queriocity',
@@ -37,6 +40,7 @@ export default defineConfig(({ mode }) => {
       host: true,
       proxy: {
         '/api': { target: `http://localhost:${port}`, changeOrigin: true },
+        '/images': { target: `http://localhost:${port}`, changeOrigin: true },
       },
     },
   }

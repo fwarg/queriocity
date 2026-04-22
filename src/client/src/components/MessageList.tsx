@@ -30,6 +30,23 @@ function insertCitationLinks(content: string, sources: Array<{ url: string }>) {
 
 type C = { children?: React.ReactNode }
 
+function ImageBlock({ url, alt }: { url: string; alt: string }) {
+  return (
+    <div className="my-2">
+      <img src={url} alt={alt} className="max-w-full rounded border border-gray-700" />
+      <a
+        href={`${url}?dl=1`}
+        download
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mt-1 flex items-center gap-1 text-xs text-gray-400 hover:text-gray-200"
+      >
+        <Download size={12} /> Download PNG
+      </a>
+    </div>
+  )
+}
+
 function SvgBlock({ svg }: { svg: string }) {
   const dataUri = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
   const handleDownload = () => {
@@ -103,6 +120,7 @@ function makeMdComponents(highlightedSource: number | null, onCitationClick: (n:
     }
     return <code className="bg-gray-700 text-gray-100 rounded px-1 py-0.5 text-xs font-mono">{children}</code>
   },
+  img: ({ src, alt }: { src?: string; alt?: string }) => src ? <ImageBlock url={src} alt={alt ?? ''} /> : null,
   pre: ({ children }: C) => <>{children}</>,
   blockquote: ({ children }: C) => <blockquote className="border-l-2 border-gray-600 pl-3 text-gray-400 italic my-2">{children}</blockquote>,
   del: ({ children }: C) => <del className="text-gray-500">{children}</del>,
@@ -217,9 +235,12 @@ function MessageItem({ msg }: { msg: Message }) {
         {msg.role === 'assistant' ? (
           <>
             {msg.thinking && <ThinkingBlock content={msg.thinking} />}
-            <ReactMarkdown components={mdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
-              {wrapSvgBlocks(msg.sources?.length ? insertCitationLinks(msg.content, msg.sources) : msg.content)}
-            </ReactMarkdown>
+            {msg.content && (() => {
+              const cited = msg.sources?.length ? insertCitationLinks(msg.content, msg.sources) : msg.content
+              const cleaned = msg.images?.length ? cited.replace(/!\[.*?\]\([^)]+\.png\)/g, '') : cited
+              return cleaned.trim() ? <ReactMarkdown components={mdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{wrapSvgBlocks(cleaned)}</ReactMarkdown> : null
+            })()}
+            {msg.images?.map((img, i) => <ImageBlock key={i} url={img.url} alt={img.alt} />)}
           </>
         ) : msg.content}
       </div>
@@ -242,7 +263,7 @@ export const MessageList = memo(function MessageList({ messages, streaming, stre
             {streamingThinking && <ThinkingBlock content={streamingThinking} open />}
             {streaming && (
               <>
-                <ReactMarkdown components={baseMdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{wrapSvgBlocks(streaming)}</ReactMarkdown>
+                <ReactMarkdown components={baseMdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{wrapSvgBlocks(streaming.replace(/!\[.*?\]\([^)]+\.png\)/g, ''))}</ReactMarkdown>
                 <span className="animate-pulse">▋</span>
               </>
             )}

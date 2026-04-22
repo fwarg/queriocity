@@ -22,6 +22,7 @@ export interface Message {
   sources?: Array<{ title: string; url: string }>
   fileSources?: Array<{ title: string; url: string }>
   thinking?: string
+  images?: Array<{ url: string; alt: string }>
 }
 
 // Auth — cookies are sent automatically by the browser
@@ -120,7 +121,17 @@ export async function* streamChat(
   const res = await fetch(`${BASE}/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messages, focusMode, sessionId, spaceId }),
+    body: JSON.stringify({
+      messages: messages.map(m => ({
+        role: m.role,
+        content: m.images?.length
+          ? m.content + m.images.map(img => `\n\n![${img.alt}](${img.url})`).join('')
+          : m.content,
+      })),
+      focusMode,
+      sessionId,
+      spaceId,
+    }),
     signal,
   })
 
@@ -155,11 +166,15 @@ export async function* streamChat(
 export async function fetchSession(id: string): Promise<Message[]> {
   const res = await fetch(`${BASE}/history/${id}`)
   const { messages } = await res.json()
-  return (messages as Array<{ role: 'user' | 'assistant'; content: string; sources?: string }>).map(m => ({
-    role: m.role,
-    content: m.content,
-    sources: m.sources ? JSON.parse(m.sources) : undefined,
-  }))
+  const FIRST_PNG_RE = /!\[([^\]]*)\]\(([^)]+\.png)\)/
+  return (messages as Array<{ role: 'user' | 'assistant'; content: string; sources?: string }>).map(m => {
+    const sources = m.sources ? JSON.parse(m.sources) : undefined
+    if (m.role === 'assistant') {
+      const match = FIRST_PNG_RE.exec(m.content)
+      return { role: m.role, content: m.content, sources, images: match ? [{ alt: match[1], url: match[2] }] : undefined }
+    }
+    return { role: m.role, content: m.content, sources }
+  })
 }
 
 export async function updateSessionTitle(id: string, title: string): Promise<void> {

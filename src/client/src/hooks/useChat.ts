@@ -40,6 +40,7 @@ export function useChat({ sessionId, focusMode, spaceId, onSessionCreated }: Use
     let thinkingAccumulated = ''
     const sources: Array<{ title: string; url: string }> = []
     const fileSources: Array<{ title: string; url: string }> = []
+    const images: Array<{ url: string; alt: string }> = []
 
     try {
       for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId)) {
@@ -48,6 +49,9 @@ export function useChat({ sessionId, focusMode, spaceId, onSessionCreated }: Use
           cancelAnimationFrame(rafRef.current)
           const snap = accumulated
           rafRef.current = requestAnimationFrame(() => setStreaming(snap))
+          setStatus('')
+        } else if (chunk.type === 'image') {
+          images.push({ url: chunk.url as string, alt: chunk.alt as string })
           setStatus('')
         } else if (chunk.type === 'thinking') {
           thinkingAccumulated += chunk.delta as string
@@ -59,7 +63,10 @@ export function useChat({ sessionId, focusMode, spaceId, onSessionCreated }: Use
         } else if (chunk.type === 'file_sources') {
           fileSources.push(...(chunk.sources as Array<{ title: string; url: string }>))
         } else if (chunk.type === 'done') {
-          if (chunk.elapsedMs) setAnswerTime(`Answered in ${(chunk.elapsedMs as number / 1000).toFixed(1)} seconds.`)
+          if (chunk.elapsedMs) {
+            const label = images.length > 0 ? 'Generated in' : 'Answered in'
+            setAnswerTime(`${label} ${(chunk.elapsedMs as number / 1000).toFixed(1)} seconds.`)
+          }
           onSessionCreated(chunk.sessionId as string, (chunk.title as string | undefined) ?? text.slice(0, 60))
         }
       }
@@ -76,6 +83,7 @@ export function useChat({ sessionId, focusMode, spaceId, onSessionCreated }: Use
         sources,
         fileSources: fileSources.length > 0 ? fileSources : undefined,
         thinking: thinkingAccumulated || undefined,
+        images: images.length > 0 ? images : undefined,
       }])
       setStreaming('')
       setStreamingThinking('')

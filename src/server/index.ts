@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import { authMiddleware, type AppEnv } from './middleware/auth.ts'
 import { cors } from 'hono/cors'
 import { logger } from 'hono/logger'
 import { serveStatic } from 'hono/bun'
@@ -10,10 +11,13 @@ import { authRouter } from './routes/auth.ts'
 import { adminRouter } from './routes/admin.ts'
 import { usersRouter } from './routes/users.ts'
 import { memoriesRouter } from './routes/memories.ts'
+import { imagesRouter } from './routes/images.ts'
 import { sqlite, getAppSetting, setAppSetting } from './lib/db.ts'
 import { runDream } from './lib/memory.ts'
 
-const app = new Hono()
+import { IMAGE_STORAGE_DIR } from './lib/image-store.ts'
+
+const app = new Hono<AppEnv>()
 
 app.use('*', logger())
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN ?? '*'
@@ -27,6 +31,27 @@ app.route('/api/spaces', spacesRouter)
 app.route('/api/spaces', memoriesRouter)
 app.route('/api/admin', adminRouter)
 app.route('/api/users', usersRouter)
+app.route('/api/images', imagesRouter)
+
+// Serve generated images — auth required, users can only access their own
+app.get('/images/:userId/:filename', authMiddleware, async (c) => {
+  const requestingUserId = c.get('userId')
+  const ownerUserId = c.req.param('userId')
+  const filename = c.req.param('filename')
+  if (!/^[\w-]+$/.test(ownerUserId)) return c.notFound()
+  if (!/^[\w-]+\.png$/.test(filename)) return c.notFound()
+  // Non-admins can only access their own images; return 404 to avoid leaking existence
+  if (c.get('userRole') !== 'admin' && requestingUserId !== ownerUserId) return c.notFound()
+  const dir = IMAGE_STORAGE_DIR
+  const file = Bun.file(`${dir}/${ownerUserId}/${filename}`)
+  if (!await file.exists()) return c.notFound()
+  const disposition = c.req.query('dl') ? `attachment; filename="${filename}"` : 'inline'
+  return new Response(file, { headers: {
+    'Content-Type': 'image/png',
+    'Content-Disposition': disposition,
+    'Cache-Control': 'private, max-age=31536000',
+  }})
+})
 
 // Serve built client in production
 app.use('*', serveStatic({ root: './dist/client' }))
@@ -42,6 +67,10 @@ console.log(`  small:  ${process.env.SMALL_PROVIDER ?? process.env.CHAT_PROVIDER
 console.log(`  thinking: ${process.env.THINKING_PROVIDER ?? process.env.CHAT_PROVIDER ?? _defaultProvider}  ${process.env.THINKING_BASE_URL ?? process.env.CHAT_BASE_URL ?? _defaultBase}  model=${process.env.THINKING_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2'}`)
 console.log(`  embed:  ${process.env.EMBED_PROVIDER ?? process.env.CHAT_PROVIDER ?? _defaultProvider}  ${process.env.EMBED_BASE_URL ?? process.env.CHAT_BASE_URL ?? _defaultBase}  model=${process.env.EMBED_MODEL ?? 'nomic-embed-text'}  dims=${process.env.EMBED_DIMENSIONS ?? '1536'}`)
 console.log(`  searxng: ${process.env.SEARXNG_URL ?? 'http://localhost:4000'}`)
+if (process.env.IMAGE_BASE_URL) {
+  const imageDir = IMAGE_STORAGE_DIR
+  console.log(`  image:  ${process.env.IMAGE_BASE_URL}  model=${process.env.IMAGE_MODEL ?? 'default'}  storage=${imageDir}`)
+}
 
 function shutdown() {
   try { sqlite.close() } catch {}
