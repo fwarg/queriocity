@@ -546,7 +546,7 @@ async function persistMessage(
 
   await db.transaction(async (tx) => {
     await tx.insert(chatSessions).values({ id: sessionId, title, createdAt: now, updatedAt: now, userId, spaceId: spaceId ?? null })
-      .onConflictDoNothing()
+      .onConflictDoUpdate({ target: chatSessions.id, set: { updatedAt: now } })
     if (lastUser) {
       await tx.insert(messages).values({ id: randomUUID(), sessionId, role: 'user', content: lastUser.content, createdAt: now })
     }

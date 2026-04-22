@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { db, chatSessions, messages, spaces, spaceMemories } from '../lib/db.ts'
-import { eq, and, desc, ne } from 'drizzle-orm'
+import { eq, and, desc, ne, count } from 'drizzle-orm'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
@@ -16,12 +16,14 @@ historyRouter.get('/', async (c) => {
   const userId = c.get('userId') as string
   const limit = Math.min(parseInt(c.req.query('limit') ?? '50'), 200)
   const offset = parseInt(c.req.query('offset') ?? '0')
-  const sessions = await db.select().from(chatSessions)
-    .where(eq(chatSessions.userId, userId))
-    .orderBy(desc(chatSessions.updatedAt))
-    .limit(limit)
-    .offset(offset)
-  return c.json(sessions)
+  const sort = c.req.query('sort') === 'created' ? 'created' : 'updated'
+  const orderCol = sort === 'created' ? chatSessions.createdAt : chatSessions.updatedAt
+  const where = eq(chatSessions.userId, userId)
+  const [items, totalRow] = await Promise.all([
+    db.select().from(chatSessions).where(where).orderBy(desc(orderCol)).limit(limit).offset(offset),
+    db.select({ total: count() }).from(chatSessions).where(where).get(),
+  ])
+  return c.json({ items, total: totalRow?.total ?? 0 })
 })
 
 historyRouter.get('/:id', async (c) => {

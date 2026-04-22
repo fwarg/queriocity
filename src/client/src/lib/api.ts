@@ -189,8 +189,14 @@ export async function deleteSession(id: string): Promise<void> {
   await fetch(`${BASE}/history/${id}`, { method: 'DELETE' })
 }
 
-export async function fetchHistory(): Promise<Array<{ id: string; title: string; spaceId: string | null }>> {
-  const res = await fetch(`${BASE}/history`)
+export async function fetchHistory(
+  sort?: 'updated' | 'created',
+  offset = 0,
+): Promise<{ items: Array<{ id: string; title: string; spaceId: string | null }>; total: number }> {
+  const params = new URLSearchParams()
+  if (sort) params.set('sort', sort)
+  if (offset) params.set('offset', String(offset))
+  const res = await fetch(`${BASE}/history?${params}`)
   return res.json()
 }
 
