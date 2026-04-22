@@ -81,6 +81,12 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
   const [chatSort, setChatSort] = useState<'updated' | 'created'>('updated')
+  const [chatTotal, setChatTotal] = useState(0)
+  const [chatHasMore, setChatHasMore] = useState(false)
+  const [chatLoadingMore, setChatLoadingMore] = useState(false)
+  const chatOffsetRef = useRef(0)
+  const sentinelRef = useRef<HTMLDivElement>(null)
+  const sidebarSentinelRef = useRef<HTMLDivElement>(null)
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
 
@@ -109,9 +115,40 @@ export default function App() {
     document.documentElement.style.fontSize = `${fontSize}px`
   }, [fontSize])
 
+  const PAGE_SIZE = 50
+
+  function loadChats(sort: 'updated' | 'created', offset: number, replace: boolean) {
+    setChatLoadingMore(true)
+    fetchHistory(sort, offset)
+      .then(({ items, total }) => {
+        setSessions(prev => replace ? items : [...prev, ...items])
+        setChatTotal(total)
+        chatOffsetRef.current = offset + items.length
+        setChatHasMore(items.length === PAGE_SIZE)
+      })
+      .catch(() => {})
+      .finally(() => setChatLoadingMore(false))
+  }
+
   useEffect(() => {
-    if (currentUser) fetchHistory(chatSort).then(setSessions).catch(() => {})
-  }, [chatSort])
+    if (!currentUser) return
+    chatOffsetRef.current = 0
+    setSessions([])
+    setChatHasMore(false)
+    loadChats(chatSort, 0, true)
+  }, [chatSort, currentUser])
+
+  useEffect(() => {
+    const callback = ([entry]: IntersectionObserverEntry[]) => {
+      if (entry.isIntersecting && !chatLoadingMore && chatHasMore) {
+        loadChats(chatSort, chatOffsetRef.current, false)
+      }
+    }
+    const obs = new IntersectionObserver(callback)
+    if (sentinelRef.current) obs.observe(sentinelRef.current)
+    if (sidebarSentinelRef.current) obs.observe(sidebarSentinelRef.current)
+    return () => obs.disconnect()
+  }, [chatHasMore, chatLoadingMore, chatSort])
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -125,7 +162,6 @@ export default function App() {
       if (user) {
         setCurrentUser(user)
         setAuthView('loading')
-        fetchHistory().then(setSessions).catch(() => {})
         fetchFiles().then(setFiles).catch(() => {})
         fetchSpaces().then(setSpaces).catch(() => {})
       } else if (token) {
@@ -161,7 +197,6 @@ export default function App() {
   function handleAuthSuccess(user: AuthUser) {
     setCurrentUser(user)
     setAuthView('loading')
-    fetchHistory().then(setSessions).catch(() => {})
     fetchFiles().then(setFiles).catch(() => {})
     fetchSpaces().then(setSpaces).catch(() => {})
   }
@@ -404,7 +439,7 @@ export default function App() {
         />
       )}
       <aside className={`
-        fixed inset-y-0 left-0 z-30 w-64 bg-gray-900 border-r border-gray-800 flex flex-col p-3 gap-1 overflow-y-auto
+        fixed inset-y-0 left-0 z-30 w-64 bg-gray-900 border-r border-gray-800 flex flex-col p-3 gap-1
         transform transition-transform duration-200
         ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
         md:relative md:translate-x-0 md:w-56 md:z-auto md:transition-none
@@ -423,7 +458,7 @@ export default function App() {
           onClick={() => { setView(v => v === 'chats' ? 'chat' : 'chats'); setSidebarOpen(false) }}
           className={`w-full text-left px-3 py-2 rounded text-sm font-medium ${view === 'chats' ? 'bg-indigo-700 text-white' : 'text-indigo-400 hover:bg-gray-800'}`}
         >
-          Chats ({sessions.length})
+          Chats ({chatTotal || sessions.length})
         </button>
         <button
           onClick={() => { setView(v => v === 'files' ? 'chat' : 'files'); setSidebarOpen(false) }}
@@ -438,28 +473,33 @@ export default function App() {
           Spaces ({spaces.length})
         </button>
         <div className="border-t border-gray-800 my-1" />
-        {sessions.length > 5 && (
-          <input
-            type="search"
-            placeholder="Search chats…"
-            value={sessionSearch}
-            onChange={e => setSessionSearch(e.target.value)}
-            className="mx-1 px-2 py-1 rounded bg-gray-800 border border-gray-700 text-xs text-gray-300 focus:outline-none focus:border-blue-500"
-          />
-        )}
-        {sessions.filter(s => !sessionSearch || s.title.toLowerCase().includes(sessionSearch.toLowerCase())).map(s => (
-          <div key={s.id} className={`flex items-center rounded hover:bg-gray-800 ${sessionId === s.id && view === 'chat' ? 'bg-gray-800' : ''}`}>
-            <button onClick={() => { loadSession(s.id, s.title); setSidebarOpen(false) }} className="flex-1 text-left px-3 py-2 text-sm truncate">
-              {s.title}
-            </button>
-            <button onClick={(e) => handleDeleteSession(s.id, e)} className="px-2 py-2 text-gray-600 hover:text-red-400 shrink-0" aria-label={`Delete "${s.title}"`}>
-              ×
-            </button>
+        <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-1">
+          {sessions.length > 5 && (
+            <input
+              type="search"
+              placeholder="Search chats…"
+              value={sessionSearch}
+              onChange={e => setSessionSearch(e.target.value)}
+              className="mx-1 px-2 py-1 rounded bg-gray-800 border border-gray-700 text-xs text-gray-300 focus:outline-none focus:border-blue-500"
+            />
+          )}
+          {sessions.filter(s => !sessionSearch || s.title.toLowerCase().includes(sessionSearch.toLowerCase())).map(s => (
+            <div key={s.id} className={`flex items-center rounded hover:bg-gray-800 ${sessionId === s.id && view === 'chat' ? 'bg-gray-800' : ''}`}>
+              <button onClick={() => { loadSession(s.id, s.title); setSidebarOpen(false) }} className="flex-1 text-left px-3 py-2 text-sm truncate">
+                {s.title}
+              </button>
+              <button onClick={(e) => handleDeleteSession(s.id, e)} className="px-2 py-2 text-gray-600 hover:text-red-400 shrink-0" aria-label={`Delete "${s.title}"`}>
+                ×
+              </button>
+            </div>
+          ))}
+          <div ref={sidebarSentinelRef} className="py-1 text-center text-xs text-gray-600">
+            {chatLoadingMore ? 'Loading…' : ''}
           </div>
-        ))}
+        </div>
 
         {/* Bottom user area */}
-        <div className="mt-auto border-t border-gray-800 pt-2 flex flex-col gap-1">
+        <div className="border-t border-gray-800 pt-2 flex flex-col gap-1">
           <button onClick={() => { setShowSettings(true); setSidebarOpen(false) }} className="w-full text-left px-3 py-2 rounded text-xs text-gray-400 hover:bg-gray-800">
             ⚙ Settings
           </button>
@@ -551,6 +591,9 @@ export default function App() {
                 </div>
               )
             })}
+            <div ref={sentinelRef} className="py-1 text-center text-xs text-gray-600">
+              {chatLoadingMore ? 'Loading…' : chatHasMore ? '' : sessions.length > 0 ? '' : ''}
+            </div>
           </div>
         ) : view === 'spaces' ? (
           currentSpaceId ? (

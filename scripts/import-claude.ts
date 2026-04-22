@@ -77,14 +77,25 @@ if (userIdArg) {
 
 const toSec = (iso: string) => Math.floor(new Date(iso).getTime() / 1000)
 
+const SESSION_TITLE_MAX = 60
+
+function titleFor(conv: ClaudeConversation): string {
+  if (conv.name.trim()) return conv.name.trim()
+  const first = conv.chat_messages.find(m => m.text?.trim())
+  return first?.text.trim().slice(0, SESSION_TITLE_MAX) ?? '(untitled)'
+}
+
+const validConvs = conversations.filter(c => c.chat_messages.some(m => m.text?.trim()))
+const skipped = conversations.length - validConvs.length
+
 let totalMsgs = 0
-for (const conv of conversations) {
+for (const conv of validConvs) {
   totalMsgs += conv.chat_messages.filter(m => m.text?.trim()).length
 }
 
 console.log(`\nTo import:`)
 console.log(`  ${projects.length} projects → spaces`)
-console.log(`  ${conversations.length} conversations → chat sessions (all unassigned)`)
+console.log(`  ${validConvs.length} conversations → chat sessions (${skipped} empty skipped, all unassigned)`)
 console.log(`  ${totalMsgs} messages`)
 
 if (dryRun) {
@@ -112,8 +123,8 @@ db.transaction(() => {
     spacesAdded += r.changes
   }
 
-  for (const conv of conversations) {
-    const r = insertSession.run(conv.uuid, conv.name, userId, toSec(conv.created_at), toSec(conv.updated_at))
+  for (const conv of validConvs) {
+    const r = insertSession.run(conv.uuid, titleFor(conv), userId, toSec(conv.created_at), toSec(conv.updated_at))
     chatsAdded += r.changes
 
     for (const msg of conv.chat_messages) {
@@ -128,7 +139,7 @@ db.transaction(() => {
 
 console.log(`\nImported:`)
 console.log(`  ${spacesAdded} spaces  (${projects.length - spacesAdded} already existed)`)
-console.log(`  ${chatsAdded} chats   (${conversations.length - chatsAdded} already existed)`)
+console.log(`  ${chatsAdded} chats   (${validConvs.length - chatsAdded} already existed)`)
 console.log(`  ${msgsAdded} messages (${totalMsgs - msgsAdded} already existed)`)
 console.log(`\nAll chats are unassigned. Move them to spaces via the Queriocity UI.`)
 
