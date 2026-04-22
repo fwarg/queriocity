@@ -200,6 +200,11 @@ export async function fetchHistory(
   return res.json()
 }
 
+export async function searchHistory(q: string): Promise<Array<{ id: string; title: string; spaceId: string | null }>> {
+  const res = await fetch(`${BASE}/history/search?q=${encodeURIComponent(q)}`)
+  return res.json()
+}
+
 export async function fetchSpaces(): Promise<Space[]> {
   const res = await fetch(`${BASE}/spaces`)
   return res.json()
