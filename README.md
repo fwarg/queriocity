@@ -20,7 +20,9 @@ through a single Bun process.
   - [Chats](#chats)
   - [Research modes](#research-modes)
   - [Files](#files)
-  - [Custom instructions](#custom-instructions)
+  - [Prompt templates](#prompt-templates)
+  - [Settings](#settings)
+  - [Image generation](#image-generation)
   - [Spaces](#spaces)
 - [Installation guide](#installation-guide)
   - [Requirements](#requirements)
@@ -152,11 +154,75 @@ Max upload size: 50 MB.
 
 ---
 
-## Custom instructions
+## Prompt templates
 
-In **Settings** you can add a custom prompt that is appended to the system prompt for every
-request. Use this to set a persona, preferred language, citation style, or any standing
-instruction.
+Click the **template icon** (grid icon) in the chat input bar to open the template picker. Templates assemble a structured prompt from a short form — no need to craft the wording yourself. Each template also sets the suggested research mode automatically.
+
+| Template | Suggested mode | Description |
+|---|---|---|
+| Research deep-dive | Thorough | Structured report on a topic from a specific angle |
+| Compare & Analyze | Balanced | Side-by-side comparison with a recommendation |
+| Explain / Teach | Flash | Concept explanation tailored to a chosen audience |
+| Latest news on | Fast | Current developments on a topic with implications |
+| Draw / Illustrate | Flash | Image generation with style, lighting, and quality controls (requires `IMAGE_BASE_URL`) |
+
+Fill in the required fields (marked `*`), adjust optional ones, and click **Use template** to populate the chat input. You can edit the assembled text before sending.
+
+---
+
+## Settings
+
+Open **Settings** from the bottom of the sidebar. Settings are saved per user.
+
+| Setting | Description |
+|---|---|
+| **Custom system prompt** | Text appended to the assistant's instructions on every request. Use it to set a persona, preferred language, citation style, or standing instructions. |
+| **Show search process** | Display search queries and result snippets in a collapsed block before the answer. Toggleable separately for Balanced and Thorough modes. |
+| **Model thinking** | Use the `THINKING_MODEL` for the researcher phase in Thorough mode. Requires a reasoning-capable model (e.g. Qwen3). Falls back to the chat model if `THINKING_MODEL` is not configured. |
+| **Space RAG** | When chatting in a space, retrieve relevant past messages and document excerpts semantically on top of the fixed memory block. |
+| **Chat RAG** | When chatting outside a space, automatically retrieve relevant excerpts from your uploaded file library and inject them as context. |
+| **Font size** | UI font size: Small (14 px), Normal (16 px), Large (18 px), XL (20 px). |
+
+---
+
+## Image generation
+
+When `IMAGE_BASE_URL` is configured, Queriocity can generate and edit images using a local diffusion server. This feature is available in **Flash mode only** and works by giving the model two tools:
+
+- **`generate_image`** — creates a new image from a text description
+- **`edit_image`** — modifies a previously generated image based on a new description
+
+### Usage
+
+Ask for an image in natural language while in Flash mode:
+
+> *"Draw a mountain landscape at sunset"*
+> *"Generate a portrait of a robot reading a book, high quality"*
+> *"Make it raining"* — (edits the most recently generated image)
+
+The model calls the appropriate tool automatically. While the image is being generated, a **"Generating image…"** or **"Editing image…"** status indicator is shown. When done, the image is displayed inline with a **Download PNG** link.
+
+### Quality hints
+
+The model maps quality keywords to inference step counts:
+
+| Hint in your message | Steps |
+|---|---|
+| *draft*, *quick*, *fast* | ~15 |
+| *(none / default)* | ~25 |
+| *high quality*, *detailed*, *best* | ~40 |
+
+You can also request a specific resolution: *"512×512"*, *"1024×576"*, etc.
+
+### Image storage
+
+Generated images are stored on the server (per user) and served via `/images/<user-id>/<filename>.png`. They are tied to the conversation and deleted when the chat is deleted.
+
+### Requirements
+
+A diffusion server that exposes OpenAI-compatible `/v1/images/generations` and `/v1/images/edits` endpoints is required. [ComfyUI](https://github.com/comfyanonymous/ComfyUI) with the openai-compatible API, [A1111](https://github.com/AUTOMATIC1111/stable-diffusion-webui) with the `--api` flag, or any server that implements the OpenAI image API will work.
+
+Set `IMAGE_BASE_URL` in your environment to enable the feature (see [Environment variables](#environment-variables)).
 
 ---
 
@@ -179,7 +245,7 @@ When a space has a RAG budget configured (Admin > System settings), each request
 - **Chat history RAG** — past messages in the space are chunked and embedded. The chunks most relevant to the current query are injected as `## Relevant past conversations` in the system prompt, surfacing details that weren't captured by memory extraction.
 - **Tagged file RAG** — if library files are tagged to the space (see below), relevant excerpts are injected as `## Relevant document excerpts`. The model can also call the `uploads_search` tool on demand for the full personal library.
 
-RAG can be toggled per user in **Settings > Use space RAG**.
+Space RAG can be toggled per user in **Settings** (see [Settings](#settings)).
 
 #### Chat index
 
@@ -279,6 +345,12 @@ EMBED_DIMENSIONS=1536                       # must match the model's output size
 # results. RERANK_BASE_URL defaults to BASE_URL if unset.
 # RERANK_BASE_URL=http://localhost:8097
 RERANK_MODEL=qwen3-reranker
+
+# ── Image generation (optional) ──────────────────────────────────────────────
+# When set, Flash mode gains generate_image and edit_image tools.
+# Point to any OpenAI-compatible diffusion server (ComfyUI, A1111, etc.).
+# IMAGE_BASE_URL=http://localhost:8188   # base URL of diffusion server
+# IMAGE_MODEL=                           # optional model name/alias sent to the server
 
 # ── SearXNG ───────────────────────────────────────────────────────────────────
 SEARXNG_URL=http://localhost:4000  # url to your searxng instance
@@ -636,10 +708,12 @@ Hono server (Bun)
   ├── /api/history   — chat sessions + messages + memory lifecycle
   ├── /api/spaces    — spaces, per-space memories, compact, recreate
   ├── /api/admin     — user/invite management, system settings, model test
+  ├── /api/images    — serve generated images (per-user, auth-gated)
   └── /api/users     — user settings
         │
         ├── SearXNG   (meta-search)
         ├── Ollama / OpenAI-compatible API
+        ├── Diffusion server (optional, image generation/editing)
         ├── Reranker API (optional, cross-encoder)
         └── SQLite + sqlite-vec   (queriocity.db)
              ├── chat sessions & messages
