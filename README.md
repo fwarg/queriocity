@@ -18,6 +18,7 @@ through a single Bun process.
 - [User guide](#user-guide)
   - [What is Queriocity](#what-is-queriocity)
   - [Chats](#chats)
+    - [Searching chats](#searching-chats)
   - [Research modes](#research-modes)
   - [Files](#files)
   - [Prompt templates](#prompt-templates)
@@ -34,6 +35,8 @@ through a single Bun process.
 - [Admin guide](#admin-guide)
   - [User management](#user-management)
   - [System settings](#system-settings)
+  - [Importing from Claude AI](#importing-from-claude-ai)
+  - [Backup](#backup)
 - [Architecture overview](#architecture-overview)
 - [Dependencies and licenses](#dependencies-and-licenses)
 - [License](#license)
@@ -54,6 +57,12 @@ Queriocity is a private research assistant you run on your own hardware. It is d
 ## Chats
 
 Start a chat from the sidebar. Type a question and choose a [research mode](#research-modes) before sending. Follow-up questions resolve pronouns and references automatically ("When was it founded?" after asking about a company works as expected). Chats can be assigned to a [space](#spaces) at any time from the chat header.
+
+The **Chats** view lists all your conversations with infinite scroll. Use the **Active / Created** toggle in the top-right to sort by most recently active or by creation date.
+
+### Searching chats
+
+The search box at the top of the Chats view searches both **chat titles and message content** across your full history. Results appear after a short debounce and are capped at 100 matches. The sidebar also has a quick title-only filter for the currently loaded chats.
 
 ## Research modes
 
@@ -692,6 +701,48 @@ The **Admin panel > System settings** tab exposes runtime-configurable parameter
 | Attachments | Max context chars | 20000 | Max characters extracted from an attached file and sent as context |
 
 The **Users** tab lets admins manage accounts, roles, and invite links.
+
+---
+
+## Importing from Claude AI
+
+If you have a Claude AI data export you can import your projects and conversation history into Queriocity using the bundled script. Projects are imported as spaces; conversations are imported as unassigned chat sessions (assign them to spaces via the UI afterwards).
+
+**Note:** The Claude AI export format does not include the project↔conversation mapping, so all chats land as unassigned regardless of which project they belonged to in Claude. Conversations with no message text are skipped automatically, and blank titles are generated from the first message.
+
+```bash
+# Preview counts without writing anything
+DB_PATH=docker/data/queriocity.db bun run scripts/import-claude.ts \
+  --data-dir /path/to/claude-export --dry-run
+
+# Run the import
+DB_PATH=docker/data/queriocity.db bun run scripts/import-claude.ts \
+  --data-dir /path/to/claude-export
+```
+
+The script prompts you to select a user when multiple accounts exist in the database. Re-running is safe — all inserts use `INSERT OR IGNORE` on the primary key.
+
+---
+
+## Backup
+
+All persistent data lives in a single SQLite file. Use SQLite's `.backup` command to take a live snapshot without stopping the server:
+
+```bash
+sqlite3 /path/to/queriocity.db ".backup /path/to/backup/queriocity-$(date +%Y%m%d).db"
+```
+
+This is safe to run against a live database. A simple daily cron script:
+
+```bash
+#!/bin/bash
+# /etc/cron.daily/queriocity-backup  (chmod 755, no dot in filename)
+sqlite3 /home/user/queriocity/docker/data/queriocity.db \
+  ".backup /home/user/backups/queriocity-$(date +%Y%m%d).db"
+find /home/user/backups -name "queriocity-*.db" -mtime +30 -delete
+```
+
+If you use image generation, also back up the `images/` directory alongside the database file.
 
 ---
 

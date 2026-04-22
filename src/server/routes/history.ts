@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { db, chatSessions, messages, spaces, spaceMemories } from '../lib/db.ts'
+import { db, sqlite, chatSessions, messages, spaces, spaceMemories } from '../lib/db.ts'
 import { eq, and, desc, ne, count } from 'drizzle-orm'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
@@ -24,6 +24,25 @@ historyRouter.get('/', async (c) => {
     db.select({ total: count() }).from(chatSessions).where(where).get(),
   ])
   return c.json({ items, total: totalRow?.total ?? 0 })
+})
+
+historyRouter.get('/search', async (c) => {
+  const userId = c.get('userId') as string
+  const q = (c.req.query('q') ?? '').trim()
+  if (!q) return c.json([])
+  const like = `%${q}%`
+  const results = sqlite.prepare(`
+    SELECT DISTINCT cs.id, cs.title, cs.user_id, cs.space_id, cs.created_at, cs.updated_at
+    FROM chat_sessions cs
+    WHERE cs.user_id = ? AND cs.title LIKE ? COLLATE NOCASE
+    UNION
+    SELECT DISTINCT cs.id, cs.title, cs.user_id, cs.space_id, cs.created_at, cs.updated_at
+    FROM chat_sessions cs
+    JOIN messages m ON m.session_id = cs.id
+    WHERE cs.user_id = ? AND m.content LIKE ? COLLATE NOCASE
+    ORDER BY cs.updated_at DESC LIMIT 100
+  `).all(userId, like, userId, like)
+  return c.json(results)
 })
 
 historyRouter.get('/:id', async (c) => {
