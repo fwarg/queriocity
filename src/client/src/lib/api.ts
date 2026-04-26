@@ -113,7 +113,7 @@ export async function testModels(): Promise<ModelTestResult[]> {
 // Chat
 export async function* streamChat(
   messages: Message[],
-  focusMode: 'flash' | 'fast' | 'balanced' | 'thorough',
+  focusMode: 'flash' | 'fast' | 'balanced' | 'thorough' | 'image',
   sessionId?: string,
   signal?: AbortSignal,
   spaceId?: string,

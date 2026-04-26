@@ -4,7 +4,7 @@ import type { Message } from '../lib/api.ts'
 
 interface UseChatOptions {
   sessionId: string | undefined
-  focusMode: 'flash' | 'fast' | 'balanced' | 'thorough'
+  focusMode: 'flash' | 'fast' | 'balanced' | 'thorough' | 'image'
   spaceId?: string
   onSessionCreated: (id: string, title: string) => void
 }
@@ -41,6 +41,7 @@ export function useChat({ sessionId, focusMode, spaceId, onSessionCreated }: Use
     const sources: Array<{ title: string; url: string }> = []
     const fileSources: Array<{ title: string; url: string }> = []
     const images: Array<{ url: string; alt: string }> = []
+    let wasAborted = false
 
     try {
       for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId)) {
@@ -71,23 +72,28 @@ export function useChat({ sessionId, focusMode, spaceId, onSessionCreated }: Use
         }
       }
     } catch (err: unknown) {
-      if (err instanceof Error && err.name !== 'AbortError') {
-        setStatus(err.message || 'Request failed. Check your connection.')
+      if (err instanceof Error && err.name === 'AbortError') {
+        wasAborted = true
+      } else {
+        setStatus(err instanceof Error ? err.message : 'Request failed. Check your connection.')
       }
     } finally {
       cancelAnimationFrame(rafRef.current)
       abortRef.current = null
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: accumulated,
-        sources,
-        fileSources: fileSources.length > 0 ? fileSources : undefined,
-        thinking: thinkingAccumulated || undefined,
-        images: images.length > 0 ? images : undefined,
-      }])
+      if (accumulated || images.length > 0) {
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: accumulated,
+          sources,
+          fileSources: fileSources.length > 0 ? fileSources : undefined,
+          thinking: thinkingAccumulated || undefined,
+          images: images.length > 0 ? images : undefined,
+        }])
+      }
       setStreaming('')
       setStreamingThinking('')
-      if (!accumulated) setStatus('')
+      if (!accumulated && !wasAborted) setStatus('No response received — search may be temporarily unavailable. Try again.')
+      else if (!accumulated) setStatus('')
       setBusy(false)
     }
   }

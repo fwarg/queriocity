@@ -31,7 +31,10 @@ export async function webSearch(query: string, count = 10): Promise<SearchResult
 
   const start = performance.now()
   const res = await fetch(url.toString())
-  if (!res.ok) throw new Error(`SearXNG error: ${res.status}`)
+  if (!res.ok) {
+    console.error(`  [searxng] error: ${res.status} for query "${query}"`)
+    return []
+  }
   const data = await res.json() as { results?: Array<{ title: string; url: string; content?: string }> }
   const mapped = (data.results ?? []).map(r => ({
     title: r.title ?? '',

@@ -1,4 +1,4 @@
-export type FocusMode = 'flash' | 'fast' | 'balanced' | 'thorough'
+export type FocusMode = 'flash' | 'fast' | 'balanced' | 'thorough' | 'image'
 
 export interface TemplateField {
   id: string
@@ -178,7 +178,7 @@ export const TEMPLATES: Template[] = [
     id: 'draw-image',
     name: 'Draw / Illustrate',
     description: 'Generate an image with a local diffusion model',
-    suggestedMode: 'flash',
+    suggestedMode: 'image',
     fields: [
       {
         id: 'subject',

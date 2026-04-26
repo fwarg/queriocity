@@ -46,7 +46,7 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null)
   const [inviteToken, setInviteToken] = useState<string | undefined>()
 
-  const [focusMode, setFocusMode] = useState<'flash' | 'fast' | 'balanced' | 'thorough'>('balanced')
+  const [focusMode, setFocusMode] = useState<'flash' | 'fast' | 'balanced' | 'thorough' | 'image'>('balanced')
   const [sessionId, setSessionId] = useState<string | undefined>()
   const [sessions, setSessions] = useState<Session[]>([])
   const [sessionSearch, setSessionSearch] = useState('')
