@@ -5,6 +5,7 @@ import { LoginPage } from './components/LoginPage.tsx'
 import { RegisterPage } from './components/RegisterPage.tsx'
 import { SettingsPanel } from './components/SettingsPanel.tsx'
 import { AdminPanel } from './components/AdminPanel.tsx'
+import { MonitorsView } from './components/MonitorsView.tsx'
 import {
   fetchHistory, fetchSession, deleteSession, updateSessionTitle,
   fetchFiles, deleteFile, uploadFile, getMe, hasUsers, logout,
@@ -17,7 +18,7 @@ import type { AuthUser, Message, Space, SpaceMemory, SpaceFile } from './lib/api
 import { useChat } from './hooks/useChat.ts'
 
 type AuthView = 'loading' | 'login' | 'register'
-type MainView = 'chat' | 'chats' | 'files' | 'spaces'
+type MainView = 'chat' | 'chats' | 'files' | 'spaces' | 'monitors'
 type Session = { id: string; title: string; spaceId: string | null }
 
 type UploadedFile = { id: string; filename: string; mimeType: string; size: number; createdAt: number }
@@ -52,6 +53,7 @@ export default function App() {
   const [sessionSearch, setSessionSearch] = useState('')
   const [files, setFiles] = useState<UploadedFile[]>([])
   const [spaces, setSpaces] = useState<Space[]>([])
+  const [monitorCount, setMonitorCount] = useState(0)
   const [currentSpaceId, setCurrentSpaceId] = useState<string | null>(null)
   const [editingSpaceId, setEditingSpaceId] = useState<string | null>(null)
   const [spaceDraft, setSpaceDraft] = useState('')
@@ -223,16 +225,18 @@ export default function App() {
   }
 
 
-  function loadSession(id: string, title: string) {
+  function loadSession(id: string, title: string, addToHistory = true) {
     setSessionId(id)
     setEditingTitle(false)
     reset()
     setView('chat')
     fetchSession(id).then(setMessages).catch(() => {})
-    setSessions(prev => {
-      const existing = prev.find(s => s.id === id)
-      return [{ id, title, spaceId: existing?.spaceId ?? null }, ...prev.filter(s => s.id !== id)]
-    })
+    if (addToHistory) {
+      setSessions(prev => {
+        const existing = prev.find(s => s.id === id)
+        return [{ id, title, spaceId: existing?.spaceId ?? null }, ...prev.filter(s => s.id !== id)]
+      })
+    }
   }
 
   function newChat(inSpaceId?: string) {
@@ -429,8 +433,9 @@ export default function App() {
           useSpaceRag={currentUser.settings?.useSpaceRag !== false}
           useChatRag={currentUser.settings?.useChatRag !== false}
           fontSize={currentUser.settings?.fontSize ?? 16}
+          timezone={currentUser.settings?.timezone ?? ''}
           onClose={() => setShowSettings(false)}
-          onSave={(cp, st, ut, sr, cr, fs) => setCurrentUser(u => u ? { ...u, settings: { ...u.settings, customPrompt: cp, showThinking: st, useThinking: ut, useSpaceRag: sr, useChatRag: cr, fontSize: fs } } : u)}
+          onSave={(cp, st, ut, sr, cr, fs, tz) => setCurrentUser(u => u ? { ...u, settings: { ...u.settings, customPrompt: cp, showThinking: st, useThinking: ut, useSpaceRag: sr, useChatRag: cr, fontSize: fs, timezone: tz } } : u)}
         />
       )}
       {showAdmin && currentUser && (
@@ -481,6 +486,12 @@ export default function App() {
           className={`w-full text-left px-3 py-2 rounded text-sm font-medium ${view === 'spaces' ? 'bg-indigo-700 text-white' : 'text-indigo-400 hover:bg-gray-800'}`}
         >
           Spaces ({spaces.length})
+        </button>
+        <button
+          onClick={() => { setView(v => v === 'monitors' ? 'chat' : 'monitors'); setSidebarOpen(false) }}
+          className={`w-full text-left px-3 py-2 rounded text-sm font-medium ${view === 'monitors' ? 'bg-indigo-700 text-white' : 'text-indigo-400 hover:bg-gray-800'}`}
+        >
+          Monitors ({monitorCount})
         </button>
         <div className="border-t border-gray-800 my-1" />
         <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-1">
@@ -1056,6 +1067,14 @@ export default function App() {
               </div>
             )}
           </div>
+        ) : view === 'monitors' ? (
+          <MonitorsView
+            spaces={spaces}
+            isAdmin={currentUser?.role === 'admin'}
+            timezone={currentUser?.settings?.timezone ?? ''}
+            onCountChange={setMonitorCount}
+            onOpenSession={(id, title) => { loadSession(id, title, false); setSidebarOpen(false) }}
+          />
         ) : (
           <>
             {sessionId && (() => {

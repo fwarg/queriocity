@@ -60,6 +60,8 @@ export function PromptStudio({ initial, onSave, onClose }: Props) {
         mode,
         undefined,
         ctrl.signal,
+        undefined,
+        true,
       )) {
         if (chunk.type === 'text') {
           accumulated += chunk.delta as string

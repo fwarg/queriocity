@@ -55,10 +55,12 @@ export interface ResearchOptions {
   spaceId?: string
   sessionId?: string
   memoryBlock?: string
+  maxStepsOverride?: number
 }
 
-export function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, customPrompt, hasFiles, spaceId, sessionId, memoryBlock }: ResearchOptions) {
-  const { maxSteps, count } = MODE_CONFIG[focusMode]
+export function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, maxStepsOverride }: ResearchOptions) {
+  const { maxSteps: defaultMaxSteps, count } = MODE_CONFIG[focusMode]
+  const maxSteps = maxStepsOverride ?? defaultMaxSteps
   let nextIndex = 1
   const start = performance.now()
   console.log(`  [chat] model=${(model as LanguageModel & { modelId?: string }).modelId ?? String(model)} focusMode=${focusMode} maxSteps=${maxSteps}`)
