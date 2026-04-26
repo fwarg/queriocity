@@ -10,13 +10,15 @@ import { MonitorEditor } from './MonitorEditor.tsx'
 interface Props {
   spaces: Space[]
   isAdmin: boolean
+  timezone?: string
   onOpenSession: (sessionId: string, title: string) => void
 }
 
-function formatInterval(minutes: number): string {
+function formatInterval(minutes: number, preferredHour?: number | null): string {
+  const hourSuffix = preferredHour != null ? ` at ${String(preferredHour).padStart(2, '0')}:00` : ''
   if (minutes % 1440 === 0) {
     const d = minutes / 1440
-    return d === 1 ? 'daily' : `every ${d} days`
+    return (d === 1 ? 'daily' : `every ${d} days`) + hourSuffix
   }
   if (minutes % 60 === 0) {
     const h = minutes / 60
@@ -109,7 +111,7 @@ function MonitorCard({ monitor, onEdit, onDelete, onRun, onOpenSession, isGlobal
             )}
           </div>
           <div className="text-xs text-gray-500 mt-0.5">
-            {formatInterval(monitor.intervalMinutes)}
+            {formatInterval(monitor.intervalMinutes, monitor.preferredHour)}
             {monitor.lastRunAt ? ` · last run ${relativeTime(monitor.lastRunAt)}` : ' · never run'}
             {' · '}next {nextRunLabel(monitor.nextRunAt)}
           </div>
@@ -186,7 +188,7 @@ function MonitorCard({ monitor, onEdit, onDelete, onRun, onOpenSession, isGlobal
   )
 }
 
-export function MonitorsView({ spaces, isAdmin, onOpenSession }: Props) {
+export function MonitorsView({ spaces, isAdmin, timezone, onOpenSession }: Props) {
   const [monitors, setMonitors] = useState<Monitor[]>([])
   const [globalMonitors, setGlobalMonitors] = useState<Monitor[]>([])
   const [editor, setEditor] = useState<'new' | Monitor | null>(null)
@@ -331,7 +333,7 @@ export function MonitorsView({ spaces, isAdmin, onOpenSession }: Props) {
                   <div key={m.id} className="flex items-center gap-2 p-2.5 rounded bg-gray-800 border border-gray-700">
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-medium text-white truncate">{m.name}</div>
-                      <div className="text-xs text-gray-500">{formatInterval(m.intervalMinutes)}</div>
+                      <div className="text-xs text-gray-500">{formatInterval(m.intervalMinutes, m.preferredHour)}</div>
                     </div>
                     {alreadySubscribed ? (
                       <span className="text-xs text-gray-500">Subscribed</span>
@@ -405,6 +407,7 @@ export function MonitorsView({ spaces, isAdmin, onOpenSession }: Props) {
         <MonitorEditor
           initial={editor === 'new' ? undefined : editor as Monitor}
           spaces={spaces}
+          timezone={timezone}
           onSave={handleSave}
           onClose={() => setEditor(null)}
         />

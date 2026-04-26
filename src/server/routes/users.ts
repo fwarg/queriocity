@@ -9,6 +9,8 @@ export const usersRouter = new Hono<AppEnv>()
 
 usersRouter.use('*', authMiddleware)
 
+const VALID_TIMEZONES = new Set(Intl.supportedValuesOf('timeZone'))
+
 const settingsSchema = z.object({
   customPrompt: z.string().max(2000).optional(),
   showThinking: z.object({ balanced: z.boolean(), thorough: z.boolean() }).optional(),
@@ -16,6 +18,7 @@ const settingsSchema = z.object({
   useSpaceRag: z.boolean().optional(),
   useChatRag: z.boolean().optional(),
   fontSize: z.number().min(12).max(22).optional(),
+  timezone: z.string().refine(v => !v || VALID_TIMEZONES.has(v), 'Invalid timezone').optional(),
 })
 
 usersRouter.get('/settings', async (c) => {

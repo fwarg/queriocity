@@ -1,11 +1,11 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
-import { db, monitors, monitorSubscriptions, monitorRuns } from '../lib/db.ts'
+import { db, monitors, monitorSubscriptions, monitorRuns, users, parseSettings } from '../lib/db.ts'
 import { eq, and, or, desc } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
-import { runMonitorNow } from '../lib/monitor-runner.ts'
+import { runMonitorNow, computeNextRunAt } from '../lib/monitor-runner.ts'
 
 export const monitorsRouter = new Hono<AppEnv>()
 
@@ -17,6 +17,7 @@ const monitorBody = z.object({
   focusMode: z.enum(['flash', 'balanced', 'thorough']).default('balanced'),
   intervalMinutes: z.number().int().min(60),
   keepCount: z.number().int().min(1).max(20).default(3),
+  preferredHour: z.number().int().min(0).max(23).nullable().optional(),
   spaceId: z.string().nullable().optional(),
   enabled: z.boolean().default(true),
 })
@@ -34,6 +35,7 @@ function serializeMonitor(m: typeof monitors.$inferSelect, subscribed?: boolean)
     focusMode: m.focusMode,
     intervalMinutes: m.intervalMinutes,
     keepCount: m.keepCount,
+    preferredHour: m.preferredHour ?? null,
     isGlobal: m.isGlobal,
     spaceId: m.spaceId,
     enabled: m.enabled,
@@ -61,7 +63,7 @@ monitorsRouter.post('/global', zValidator('json', monitorBody), async (c) => {
   const body = c.req.valid('json')
   const now = new Date()
   const id = randomUUID()
-  const nextRunAt = new Date(now.getTime() + body.intervalMinutes * 60_000)
+  const nextRunAt = computeNextRunAt(body.intervalMinutes, body.preferredHour, null, now)
 
   await db.insert(monitors).values({
     id,
@@ -71,6 +73,7 @@ monitorsRouter.post('/global', zValidator('json', monitorBody), async (c) => {
     focusMode: body.focusMode,
     intervalMinutes: body.intervalMinutes,
     keepCount: body.keepCount,
+    preferredHour: body.preferredHour ?? null,
     isGlobal: true,
     spaceId: null,
     enabled: body.enabled,
@@ -95,9 +98,10 @@ monitorsRouter.patch('/global/:id', zValidator('json', monitorBody.partial()), a
   if (!monitor) return c.json({ error: 'Not found' }, 404)
 
   const now = new Date()
-  const nextRunAt = body.intervalMinutes && body.intervalMinutes !== monitor.intervalMinutes
-    ? new Date(now.getTime() + body.intervalMinutes * 60_000)
-    : undefined
+  const newInterval = body.intervalMinutes ?? monitor.intervalMinutes
+  const newHour = body.preferredHour !== undefined ? body.preferredHour : monitor.preferredHour
+  const scheduleChanged = body.intervalMinutes !== undefined || body.preferredHour !== undefined
+  const nextRunAt = scheduleChanged ? computeNextRunAt(newInterval, newHour, null, now) : undefined
 
   await db.update(monitors).set({
     ...body,
@@ -153,7 +157,9 @@ monitorsRouter.post('/', zValidator('json', monitorBody), async (c) => {
   const body = c.req.valid('json')
   const now = new Date()
   const id = randomUUID()
-  const nextRunAt = new Date(now.getTime() + body.intervalMinutes * 60_000)
+  const userRow = await db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get()
+  const tz = (parseSettings(userRow?.settings ?? '{}').timezone as string | undefined) ?? null
+  const nextRunAt = computeNextRunAt(body.intervalMinutes, body.preferredHour, tz, now)
 
   await db.insert(monitors).values({
     id,
@@ -163,6 +169,7 @@ monitorsRouter.post('/', zValidator('json', monitorBody), async (c) => {
     focusMode: body.focusMode,
     intervalMinutes: body.intervalMinutes,
     keepCount: body.keepCount,
+    preferredHour: body.preferredHour ?? null,
     isGlobal: false,
     spaceId: body.spaceId ?? null,
     enabled: body.enabled,
@@ -186,9 +193,15 @@ monitorsRouter.patch('/:id', zValidator('json', monitorBody.partial()), async (c
   if (!monitor) return c.json({ error: 'Not found' }, 404)
 
   const now = new Date()
-  const nextRunAt = body.intervalMinutes && body.intervalMinutes !== monitor.intervalMinutes
-    ? new Date(now.getTime() + body.intervalMinutes * 60_000)
-    : undefined
+  const newInterval = body.intervalMinutes ?? monitor.intervalMinutes
+  const newHour = body.preferredHour !== undefined ? body.preferredHour : monitor.preferredHour
+  const scheduleChanged = body.intervalMinutes !== undefined || body.preferredHour !== undefined
+  let nextRunAt: Date | undefined
+  if (scheduleChanged) {
+    const userRow = await db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get()
+    const tz = (parseSettings(userRow?.settings ?? '{}').timezone as string | undefined) ?? null
+    nextRunAt = computeNextRunAt(newInterval, newHour, tz, now)
+  }
 
   await db.update(monitors).set({
     ...body,

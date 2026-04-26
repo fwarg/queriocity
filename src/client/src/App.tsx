@@ -432,8 +432,9 @@ export default function App() {
           useSpaceRag={currentUser.settings?.useSpaceRag !== false}
           useChatRag={currentUser.settings?.useChatRag !== false}
           fontSize={currentUser.settings?.fontSize ?? 16}
+          timezone={currentUser.settings?.timezone ?? ''}
           onClose={() => setShowSettings(false)}
-          onSave={(cp, st, ut, sr, cr, fs) => setCurrentUser(u => u ? { ...u, settings: { ...u.settings, customPrompt: cp, showThinking: st, useThinking: ut, useSpaceRag: sr, useChatRag: cr, fontSize: fs } } : u)}
+          onSave={(cp, st, ut, sr, cr, fs, tz) => setCurrentUser(u => u ? { ...u, settings: { ...u.settings, customPrompt: cp, showThinking: st, useThinking: ut, useSpaceRag: sr, useChatRag: cr, fontSize: fs, timezone: tz } } : u)}
         />
       )}
       {showAdmin && currentUser && (
@@ -1069,6 +1070,7 @@ export default function App() {
           <MonitorsView
             spaces={spaces}
             isAdmin={currentUser?.role === 'admin'}
+            timezone={currentUser?.settings?.timezone ?? ''}
             onOpenSession={(id, title) => { loadSession(id, title, false); setSidebarOpen(false) }}
           />
         ) : (

@@ -5,7 +5,7 @@ export interface AuthUser {
   email: string
   name: string | null
   role: 'user' | 'admin'
-  settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; useSpaceRag?: boolean; useChatRag?: boolean; fontSize?: number }
+  settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; useSpaceRag?: boolean; useChatRag?: boolean; fontSize?: number; timezone?: string }
   memoryTokenBudget: number
 }
 
@@ -68,7 +68,7 @@ export async function logout(): Promise<void> {
   await fetch(`${BASE}/auth/logout`, { method: 'POST' })
 }
 
-export async function updateSettings(settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; useSpaceRag?: boolean; useChatRag?: boolean; fontSize?: number }): Promise<void> {
+export async function updateSettings(settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; useSpaceRag?: boolean; useChatRag?: boolean; fontSize?: number; timezone?: string }): Promise<void> {
   await fetch(`${BASE}/users/settings`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -446,6 +446,7 @@ export interface Monitor {
   focusMode: 'flash' | 'balanced' | 'thorough'
   intervalMinutes: number
   keepCount: number
+  preferredHour?: number | null
   isGlobal: boolean
   spaceId?: string | null
   enabled: boolean

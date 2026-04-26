@@ -1,7 +1,42 @@
-import { db, monitors, monitorSubscriptions, monitorRuns, chatSessions, messages } from './db.ts'
+import { db, monitors, monitorSubscriptions, monitorRuns, chatSessions, messages, users, parseSettings } from './db.ts'
 import { eq, and, lte, desc, count } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { executeChatAndSave } from './chat-executor.ts'
+
+/** Convert a preferred hour in a given IANA timezone on the same calendar day as `near` to UTC. */
+function localHourToUTC(hour: number, tz: string, near: Date): Date {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(near)
+  const y = +parts.find(p => p.type === 'year')!.value
+  const mo = +parts.find(p => p.type === 'month')!.value
+  const d = +parts.find(p => p.type === 'day')!.value
+  const asUTC = new Date(Date.UTC(y, mo - 1, d, hour, 0, 0))
+  const actualHour = +new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, hour: 'numeric', hour12: false, hourCycle: 'h23',
+  }).format(asUTC)
+  return new Date(asUTC.getTime() - (actualHour - hour) * 3600_000)
+}
+
+/** Compute the next scheduled run time, optionally snapping to a preferred hour in a timezone. */
+export function computeNextRunAt(
+  intervalMinutes: number,
+  preferredHour: number | null | undefined,
+  timezone: string | null | undefined,
+  now: Date,
+): Date {
+  const nominalNext = new Date(now.getTime() + intervalMinutes * 60_000)
+  if (preferredHour == null || intervalMinutes < 1440) return nominalNext
+  const tz = timezone || 'UTC'
+  // Find the occurrence of preferredHour:00 closest to nominalNext (within ±12h)
+  const earliest = new Date(nominalNext.getTime() - 12 * 3600_000)
+  for (let dayOffset = 0; dayOffset <= 2; dayOffset++) {
+    const probe = new Date(earliest.getTime() + dayOffset * 86400_000)
+    const candidate = localHourToUTC(preferredHour, tz, probe)
+    if (candidate >= earliest) return candidate
+  }
+  return nominalNext
+}
 
 let running = false
 
@@ -32,7 +67,11 @@ export async function runDueMonitors(): Promise<void> {
           }
         }
 
-        const nextRunAt = new Date(now.getTime() + monitor.intervalMinutes * 60_000)
+        const ownerRow = monitor.userId
+          ? await db.select({ settings: users.settings }).from(users).where(eq(users.id, monitor.userId)).get()
+          : null
+        const ownerTz = ownerRow ? (parseSettings(ownerRow.settings ?? '{}').timezone as string | undefined) : undefined
+        const nextRunAt = computeNextRunAt(monitor.intervalMinutes, monitor.preferredHour, ownerTz, now)
         await db.update(monitors).set({ nextRunAt, lastRunAt: now, updatedAt: now }).where(eq(monitors.id, monitor.id))
       } catch (e) {
         console.error(`[monitor] processing failed for monitor=${monitor.id}:`, e)

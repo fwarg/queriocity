@@ -5,6 +5,7 @@ import type { Monitor, Space } from '../lib/api.ts'
 interface Props {
   initial?: Monitor
   spaces: Space[]
+  timezone?: string
   onSave: (data: Omit<Monitor, 'id' | 'createdAt' | 'isGlobal' | 'subscribed'>) => Promise<void>
   onClose: () => void
   isGlobal?: boolean
@@ -22,7 +23,7 @@ function minutesToUnit(minutes: number): { value: number; unit: 'hours' | 'days'
   return { value: minutes / 60, unit: 'hours' }
 }
 
-export function MonitorEditor({ initial, spaces, onSave, onClose, isGlobal }: Props) {
+export function MonitorEditor({ initial, spaces, timezone, onSave, onClose, isGlobal }: Props) {
   const [name, setName] = useState(initial?.name ?? '')
   const [promptText, setPromptText] = useState(initial?.promptText ?? '')
   const [focusMode, setFocusMode] = useState<'flash' | 'balanced' | 'thorough'>(
@@ -33,11 +34,13 @@ export function MonitorEditor({ initial, spaces, onSave, onClose, isGlobal }: Pr
   const [intervalUnit, setIntervalUnit] = useState<'hours' | 'days'>(initInterval.unit)
   const [keepCount, setKeepCount] = useState(String(initial?.keepCount ?? 3))
   const [spaceId, setSpaceId] = useState<string>(initial?.spaceId ?? '')
+  const [preferredHour, setPreferredHour] = useState<number | null>(initial?.preferredHour ?? null)
   const [enabled, setEnabled] = useState(initial?.enabled ?? true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
   const intervalMinutes = Math.max(60, (parseInt(intervalValue) || 1) * (intervalUnit === 'days' ? 1440 : 60))
+  const showHourPicker = intervalMinutes >= 1440
   const canSave = name.trim().length > 0 && promptText.trim().length > 0 && !saving
 
   function applyPreset(minutes: number) {
@@ -56,6 +59,7 @@ export function MonitorEditor({ initial, spaces, onSave, onClose, isGlobal }: Pr
         focusMode,
         intervalMinutes,
         keepCount: Math.max(1, Math.min(20, parseInt(keepCount) || 3)),
+        preferredHour: showHourPicker ? preferredHour : null,
         spaceId: spaceId || null,
         enabled,
       })
@@ -160,6 +164,25 @@ export function MonitorEditor({ initial, spaces, onSave, onClose, isGlobal }: Pr
             </select>
           </div>
         </div>
+
+        {showHourPicker && (
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Run at</label>
+            <div className="flex items-center gap-2">
+              <select
+                value={preferredHour ?? ''}
+                onChange={e => setPreferredHour(e.target.value === '' ? null : parseInt(e.target.value))}
+                className="rounded bg-gray-800 border border-gray-700 px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500"
+              >
+                <option value="">Any time</option>
+                {Array.from({ length: 24 }, (_, h) => (
+                  <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>
+                ))}
+              </select>
+              <span className="text-xs text-gray-500">{timezone || 'server time'}</span>
+            </div>
+          </div>
+        )}
 
         {!isGlobal && spaces.length > 0 && (
           <div>

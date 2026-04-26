@@ -9,6 +9,17 @@ const FONT_SIZES = [
   { label: 'XL', value: 20 },
 ]
 
+const TIMEZONE_OPTIONS = [
+  'UTC',
+  'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles',
+  'America/Sao_Paulo', 'America/Toronto', 'America/Vancouver',
+  'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'Europe/Stockholm',
+  'Europe/Helsinki', 'Europe/Moscow', 'Europe/Istanbul',
+  'Asia/Dubai', 'Asia/Kolkata', 'Asia/Bangkok', 'Asia/Singapore',
+  'Asia/Shanghai', 'Asia/Tokyo', 'Asia/Seoul',
+  'Australia/Sydney', 'Pacific/Auckland',
+]
+
 interface Props {
   customPrompt: string
   showThinking: { balanced: boolean; thorough: boolean }
@@ -16,17 +27,19 @@ interface Props {
   useSpaceRag: boolean
   useChatRag: boolean
   fontSize: number
+  timezone: string
   onClose: () => void
-  onSave: (customPrompt: string, showThinking: { balanced: boolean; thorough: boolean }, useThinking: boolean, useSpaceRag: boolean, useChatRag: boolean, fontSize: number) => void
+  onSave: (customPrompt: string, showThinking: { balanced: boolean; thorough: boolean }, useThinking: boolean, useSpaceRag: boolean, useChatRag: boolean, fontSize: number, timezone: string) => void
 }
 
-export function SettingsPanel({ customPrompt: initial, showThinking: initialShowThinking, useThinking: initialUseThinking, useSpaceRag: initialUseSpaceRag, useChatRag: initialUseChatRag, fontSize: initialFontSize, onClose, onSave }: Props) {
+export function SettingsPanel({ customPrompt: initial, showThinking: initialShowThinking, useThinking: initialUseThinking, useSpaceRag: initialUseSpaceRag, useChatRag: initialUseChatRag, fontSize: initialFontSize, timezone: initialTimezone, onClose, onSave }: Props) {
   const [customPrompt, setCustomPrompt] = useState(initial)
   const [showThinking, setShowThinking] = useState(initialShowThinking)
   const [useThinking, setUseThinking] = useState(initialUseThinking)
   const [useSpaceRag, setUseSpaceRag] = useState(initialUseSpaceRag)
   const [useChatRag, setUseChatRag] = useState(initialUseChatRag)
   const [fontSize, setFontSize] = useState(initialFontSize)
+  const [timezone, setTimezone] = useState(initialTimezone)
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
 
@@ -34,8 +47,8 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
     e.preventDefault()
     setBusy(true)
     try {
-      await updateSettings({ customPrompt, showThinking, useThinking, useSpaceRag, useChatRag, fontSize })
-      onSave(customPrompt, showThinking, useThinking, useSpaceRag, useChatRag, fontSize)
+      await updateSettings({ customPrompt, showThinking, useThinking, useSpaceRag, useChatRag, fontSize, timezone: timezone || undefined })
+      onSave(customPrompt, showThinking, useThinking, useSpaceRag, useChatRag, fontSize, timezone)
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } finally {
@@ -144,6 +157,19 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
                 </button>
               ))}
             </div>
+          </div>
+          <div className="border-t border-gray-800" />
+          <div className="flex flex-col gap-2">
+            <label className="text-xs text-gray-400 font-medium">Timezone</label>
+            <p className="text-xs text-gray-500">Used for scheduling monitors at a specific hour of the day.</p>
+            <select
+              value={timezone}
+              onChange={e => setTimezone(e.target.value)}
+              className="rounded bg-gray-800 border border-gray-700 px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500"
+            >
+              <option value="">Not set (server default)</option>
+              {TIMEZONE_OPTIONS.map(tz => <option key={tz} value={tz}>{tz}</option>)}
+            </select>
           </div>
           <div className="flex gap-2 justify-end">
             <button type="button" onClick={onClose} className="px-4 py-1.5 rounded text-sm text-gray-400 hover:text-gray-200">
