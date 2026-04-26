@@ -38,7 +38,7 @@ const chatSchema = z.object({
     role: z.enum(['user', 'assistant']),
     content: z.string(),
   })),
-  focusMode: z.enum(['flash', 'fast', 'balanced', 'thorough']).default('balanced'),
+  focusMode: z.enum(['flash', 'fast', 'balanced', 'thorough', 'image']).default('balanced'),
 })
 
 export const chatRouter = new Hono<AppEnv>()
@@ -72,15 +72,66 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
     const effectiveRag = (parsedFlashSettings.useSpaceRag !== false) ? ragBudget : 0
     const { block: resolvedMemoryBlock, fileSources: flashFileSources } = spaceId ? await buildMemoryBlock(spaceId, memoryBudget, effectiveRag, userQuery) : { block: '', fileSources: [] }
     const customPrompt: string | undefined = parsedFlashSettings.customPrompt as string | undefined
+    const t0 = Date.now()
+    let fullContent = ''
+    return streamSSE(c, async (stream) => {
+      if (flashFileSources.length > 0) await stream.writeSSE({ data: JSON.stringify({ type: 'file_sources', sources: flashFileSources }) })
+      const flashSystem = FLASH_SYSTEM
+        + (customPrompt ? `\n\nAdditional instructions:\n${customPrompt}` : '')
+        + (resolvedMemoryBlock ? '\n\n' + resolvedMemoryBlock : '')
+      const ctxLimit = parseInt(process.env.CONTEXT_TOKEN_LIMIT ?? '8192')
+      const result = streamText({
+        model: getFlashModel(),
+        abortSignal,
+        system: flashSystem,
+        messages: trimMessages(msgs, ctxLimit - Math.floor(ctxLimit * 0.2), flashSystem),
+        maxTokens: FLASH_MAX_TOKENS,
+      })
+      for await (const part of result.fullStream) {
+        if (part.type === 'text-delta') {
+          fullContent += part.textDelta
+          await stream.writeSSE({ data: JSON.stringify({ type: 'text', delta: part.textDelta }) })
+        }
+      }
+      console.log(`  [flash] done in ${Date.now() - t0}ms, ${fullContent.length} chars`)
+      if (fullContent.length >= 50) setCached(ck, fullContent)
+      const { title: sessionTitle } = await persistMessage(sid, userId, msgs, fullContent, [], spaceId)
+      await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title: sessionTitle, elapsedMs: Date.now() - t0 }) })
+      if (spaceId) {
+        extractMemoriesPostHoc(spaceId, sid, lastUser?.content ?? '', fullContent).catch(e => console.error('[memory]', e))
+        const newContents = [lastUser?.content, fullContent].filter(Boolean) as string[]
+        indexContents(sid, newContents).catch(e => console.error('[chat-index]', e))
+      }
+    })
+  }
+
+  if (focusMode === 'image') {
     const imageBaseUrl = process.env.IMAGE_BASE_URL?.trim() || undefined
+    if (!imageBaseUrl) {
+      return streamSSE(c, async (stream) => {
+        await stream.writeSSE({ data: JSON.stringify({ type: 'text', delta: 'Image generation is not configured. Set the IMAGE_BASE_URL environment variable to enable it.' }) })
+        const { title: sessionTitle } = await persistMessage(sid, userId, msgs, '', [], spaceId)
+        await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title: sessionTitle, elapsedMs: 0 }) })
+      })
+    }
     let pendingImageUrl: string | undefined
-    // Seed from history so the LLM gets the authoritative URL without reading context
     const IMAGE_MD_RE = /!\[.*?\]\((\/images\/[\w-]+\/[\w-]+\.png)\)/g
     let lastGeneratedImageUrl: string | undefined
     for (const m of msgs) {
       for (const [, url] of (m.content as string).matchAll(IMAGE_MD_RE)) lastGeneratedImageUrl = url
     }
-    const imageTools = imageBaseUrl ? {
+    const imageTools = {
+      web_search: tool({
+        description: 'Search the web for context about a specialized or unfamiliar subject before generating an image.',
+        parameters: z.object({
+          query: z.string(),
+        }),
+        execute: async ({ query }) => {
+          console.log(`  [image] web_search "${query}"`)
+          const results = await webSearch(query)
+          return results.map(r => `${r.title}: ${r.content}`).join('\n\n')
+        },
+      }),
       generate_image: tool({
         description: 'Generate an image from a text description using a local diffusion model.',
         parameters: z.object({
@@ -182,36 +233,39 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
           }
         },
       }),
-    } : undefined
+    }
+    const imageSystem = `You are an image generation assistant.
+- When asked to draw, illustrate, create, or generate an image, call generate_image with a detailed visual prompt.
+- When asked to edit, change, or modify a previously generated image, call edit_image.${lastGeneratedImageUrl ? ` The most recently generated image is at ${lastGeneratedImageUrl}.` : ''}
+- If the subject is specialized, technical, or you are uncertain what it looks like visually, call web_search first to gather context, then use what you learned to write a richer prompt.
+- Extract size from resolution strings and steps from quality hints (draft→15, balanced→25, high→40).
+- If you used web_search, respond with one sentence summarizing what you learned that shaped the prompt. Otherwise output nothing — do not add any text, URLs, or commentary after the image tool call.
+- Always respond in the same language the user used.`
     const t0 = Date.now()
     let fullContent = ''
     return streamSSE(c, async (stream) => {
-      if (flashFileSources.length > 0) await stream.writeSSE({ data: JSON.stringify({ type: 'file_sources', sources: flashFileSources }) })
-      const imagePrefix = imageBaseUrl
-        ? 'You have generate_image and edit_image tools. When asked to draw/create/illustrate/generate an image, call generate_image. When asked to edit, modify, or change a previously generated image, call edit_image.'
-          + (lastGeneratedImageUrl ? ` The most recently generated image is at ${lastGeneratedImageUrl}.` : ' Use the image_url from the most recent ![...](...) in the conversation.')
-          + ' Extract size from resolution strings and steps from quality hints (draft→15, balanced→25, high→40). Do not say you cannot generate or edit images.\n\n'
-        : ''
-      const flashSystem = imagePrefix
-        + (imageBaseUrl ? FLASH_SYSTEM.replace('using only your training knowledge', 'using your knowledge and available tools') : FLASH_SYSTEM)
-        + (customPrompt ? `\n\nAdditional instructions:\n${customPrompt}` : '')
-        + (resolvedMemoryBlock ? '\n\n' + resolvedMemoryBlock : '')
       const ctxLimit = parseInt(process.env.CONTEXT_TOKEN_LIMIT ?? '8192')
       let hasImage = false
       const result = streamText({
         model: getFlashModel(),
         abortSignal,
-        system: flashSystem,
-        messages: trimMessages(msgs, ctxLimit - Math.floor(ctxLimit * 0.2), flashSystem),
-        ...(imageTools ? { tools: imageTools, maxSteps: 2 } : { maxTokens: FLASH_MAX_TOKENS }),
+        system: imageSystem,
+        messages: trimMessages(msgs, ctxLimit - Math.floor(ctxLimit * 0.2), imageSystem),
+        tools: imageTools,
+        maxSteps: 4,
       })
       for await (const part of result.fullStream) {
         if (part.type === 'text-delta') {
           fullContent += part.textDelta
           await stream.writeSSE({ data: JSON.stringify({ type: 'text', delta: part.textDelta }) })
-        } else if (part.type === 'tool-call' && (part.toolName === 'generate_image' || part.toolName === 'edit_image')) {
-          const statusText = part.toolName === 'edit_image' ? 'Editing image…' : 'Generating image…'
-          await stream.writeSSE({ data: JSON.stringify({ type: 'status', text: statusText }) })
+        } else if (part.type === 'tool-call') {
+          if (part.toolName === 'web_search') {
+            await stream.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Researching topic…' }) })
+          } else if (part.toolName === 'generate_image') {
+            await stream.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Generating image…' }) })
+          } else if (part.toolName === 'edit_image') {
+            await stream.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Editing image…' }) })
+          }
         } else if (part.type === 'tool-result' && (part.toolName === 'generate_image' || part.toolName === 'edit_image')) {
           const r = part.result as { success?: boolean; prompt?: string; error?: string }
           if (r.success && pendingImageUrl) {
@@ -222,8 +276,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
           }
         }
       }
-      console.log(`  [flash] done in ${Date.now() - t0}ms, ${fullContent.length} chars`)
-      if (!hasImage && fullContent.length >= 50) setCached(ck, fullContent)
+      console.log(`  [image] done in ${Date.now() - t0}ms, ${fullContent.length} chars`)
       const { title: sessionTitle } = await persistMessage(sid, userId, msgs, fullContent, [], spaceId)
       await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title: sessionTitle, elapsedMs: Date.now() - t0 }) })
       if (spaceId) {

@@ -4,7 +4,7 @@ import type { Message } from '../lib/api.ts'
 
 interface UseChatOptions {
   sessionId: string | undefined
-  focusMode: 'flash' | 'fast' | 'balanced' | 'thorough'
+  focusMode: 'flash' | 'fast' | 'balanced' | 'thorough' | 'image'
   spaceId?: string
   onSessionCreated: (id: string, title: string) => void
 }

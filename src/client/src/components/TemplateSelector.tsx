@@ -12,6 +12,7 @@ const MODE_COLORS: Record<FocusMode, string> = {
   fast: 'bg-green-700 text-green-100',
   balanced: 'bg-blue-700 text-blue-100',
   thorough: 'bg-purple-700 text-purple-100',
+  image: 'bg-pink-700 text-pink-100',
 }
 
 export function TemplateSelector({ onSelect, onClose }: Props) {
