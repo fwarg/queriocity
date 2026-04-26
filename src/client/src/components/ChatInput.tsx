@@ -3,7 +3,7 @@ import { Send, Paperclip, X, Square, LayoutGrid } from 'lucide-react'
 import { extractFileForContext } from '../lib/api.ts'
 import { TemplateSelector } from './TemplateSelector.tsx'
 
-type FocusMode = 'flash' | 'fast' | 'balanced' | 'thorough' | 'image'
+type FocusMode = 'flash' | 'balanced' | 'thorough' | 'image'
 
 interface Props {
   onSubmit: (text: string) => void
@@ -22,8 +22,7 @@ const FLASH_MAX = 200
 
 const MODE_DESCRIPTIONS: Record<FocusMode, string> = {
   flash: 'Direct answer from model knowledge — no web search, max 5 sentences.',
-  fast: 'Fast single-query search, streamed directly — best for simple factual questions.',
-  balanced: 'LLM-reformulated query with a couple of search rounds and inline citations.',
+  balanced: 'LLM-reformulated query with web search and inline citations.',
   thorough: 'Multi-angle research with a dedicated writing pass — slower but more comprehensive.',
   image: 'Generate or edit images — researches unfamiliar topics automatically for better results.',
 }
@@ -92,7 +91,7 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
         />
       )}
       <div className="flex items-center gap-2 text-xs">
-        {(['flash', 'fast', 'balanced', 'thorough', 'image'] as const).map(m => (
+        {(['flash', 'balanced', 'thorough', 'image'] as const).map(m => (
           <button
             key={m}
             type="button"

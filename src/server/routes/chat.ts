@@ -5,7 +5,7 @@ import { streamSSE } from 'hono/streaming'
 import { streamText, tool } from 'ai'
 import { runResearcher } from '../lib/researcher.ts'
 import { runWriter } from '../lib/writer.ts'
-import { reformulateSpeed, reformulateLLM } from '../lib/reformulate.ts'
+import { reformulateLLM } from '../lib/reformulate.ts'
 import { cacheKey, getCached, setCached } from '../lib/cache.ts'
 import { db, chatSessions, messages, users, uploadedFiles, parseSettings, getAppSetting } from '../lib/db.ts'
 import { eq, sql } from 'drizzle-orm'
@@ -38,7 +38,7 @@ const chatSchema = z.object({
     role: z.enum(['user', 'assistant']),
     content: z.string(),
   })),
-  focusMode: z.enum(['flash', 'fast', 'balanced', 'thorough', 'image']).default('balanced'),
+  focusMode: z.enum(['flash', 'balanced', 'thorough', 'image']).default('balanced'),
 })
 
 export const chatRouter = new Hono<AppEnv>()
@@ -301,7 +301,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
   const [userRow, fileCountRow, { initialQueries, initialResults }, memoryBudget, ragBudget] = await Promise.all([
     db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get(),
     db.select({ count: sql<number>`count(*)` }).from(uploadedFiles).where(eq(uploadedFiles.userId, userId)).get(),
-    runReformulateAndPreSearch(msgsForReformulate, focusMode as 'fast' | 'balanced' | 'thorough', hasAttachment),
+    runReformulateAndPreSearch(msgsForReformulate, focusMode as 'balanced' | 'thorough', hasAttachment),
     spaceId ? getAppSetting('memory_token_budget', '1000').then(Number) : Promise.resolve(1000),
     getAppSetting('space_rag_budget', '500').then(Number),
   ])
@@ -555,7 +555,7 @@ async function drainResearcherStream(
 
 async function runReformulateAndPreSearch(
   msgsForReformulate: Array<{ role: string; content: string }>,
-  focusMode: 'fast' | 'balanced' | 'thorough', // flash handled before this point
+  focusMode: 'balanced' | 'thorough',
   hasAttachment: boolean,
 ): Promise<{ initialQueries?: string[]; initialResults?: SearchResult[] }> {
   try {
@@ -563,9 +563,12 @@ async function runReformulateAndPreSearch(
       console.log(`  [chat] attachment detected — skipping reformulation/pre-search`)
       return {}
     }
-    if (focusMode === 'fast') {
-      const q = reformulateSpeed(msgsForReformulate)
+    const queryReformulation = await getAppSetting('query_reformulation', 'true').then(v => v === 'true')
+    if (!queryReformulation) {
+      const lastUser = [...msgsForReformulate].reverse().find(m => m.role === 'user')
+      const q = lastUser?.content ?? ''
       if (!q) return {}
+      console.log(`  [reformulate] disabled — using raw query: ${JSON.stringify(q.slice(0, 80))}`)
       const initialResults = await webSearch(q, 6)
       return { initialQueries: [q], initialResults }
     }

@@ -24,6 +24,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   const [rerankTopNDraft, setRerankTopNDraft] = useState('15')
   const [attachmentCharsDraft, setAttachmentCharsDraft] = useState('20000')
   const [spaceRagBudgetDraft, setSpaceRagBudgetDraft] = useState('500')
+  const [queryReformulationDraft, setQueryReformulationDraft] = useState(true)
   const [savingBudget, setSavingBudget] = useState(false)
   const [budgetSaved, setBudgetSaved] = useState(false)
   const [dreamRunning, setDreamRunning] = useState(false)
@@ -49,6 +50,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
       setRerankTopNDraft(String(s.rerankTopN))
       setAttachmentCharsDraft(String(s.attachmentChars))
       setSpaceRagBudgetDraft(String(s.spaceRagBudget))
+      setQueryReformulationDraft(s.queryReformulation)
     }).catch(() => setError('Failed to load settings.'))
   }, [])
 
@@ -80,7 +82,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     setError('')
     setSavingBudget(true)
     try {
-      await updateAdminSettings({ memoryTokenBudget: budget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, attachmentChars, spaceRagBudget })
+      await updateAdminSettings({ memoryTokenBudget: budget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, attachmentChars, spaceRagBudget, queryReformulation: queryReformulationDraft })
 
       onBudgetChange?.(budget)
       setBudgetSaved(true)
@@ -233,6 +235,20 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                 <input type="number" min={1} max={100} step={1} value={rerankTopNDraft}
                   onChange={e => setRerankTopNDraft(e.target.value)}
                   className="w-24 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
+              </div>
+            </div>
+
+            {/* Search */}
+            <div className="flex flex-col gap-3 border-t border-gray-800 pt-5">
+              <p className="text-xs font-semibold text-gray-300 uppercase tracking-wider">Search</p>
+              <div className="flex flex-col gap-1.5">
+                <p className="text-xs text-gray-400 font-medium">Query reformulation</p>
+                <p className="text-xs text-gray-500">Use a small LLM to rewrite queries before searching. Improves relevance but adds latency. Disable on slow hardware.</p>
+                <label className="flex items-center gap-2 cursor-pointer w-fit">
+                  <input type="checkbox" checked={queryReformulationDraft} onChange={e => setQueryReformulationDraft(e.target.checked)}
+                    className="accent-blue-500 w-3.5 h-3.5" />
+                  <span className="text-xs text-gray-400">Enabled</span>
+                </label>
               </div>
             </div>
 
