@@ -95,6 +95,17 @@ export const spaceFiles = sqliteTable('space_files', {
   fileId: text('file_id').notNull().references(() => uploadedFiles.id, { onDelete: 'cascade' }),
 }, (t) => ({ pk: primaryKey({ columns: [t.spaceId, t.fileId] }) }))
 
+export const customTemplates = sqliteTable('custom_templates', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  description: text('description'),
+  promptText: text('prompt_text').notNull(),
+  suggestedMode: text('suggested_mode').notNull().default('balanced'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+})
+
 // --- Init ---
 
 export const EMBED_DIMS = parseInt(process.env.EMBED_DIMENSIONS ?? '1536')
@@ -247,6 +258,17 @@ function initSchema() {
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_file_chunk_meta_file_id ON file_chunk_meta(file_id)`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_space_memories_space_id ON space_memories(space_id)`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_space_files_space_id ON space_files(space_id)`)
+  sqlite.run(`CREATE TABLE IF NOT EXISTS custom_templates (
+    id             TEXT PRIMARY KEY,
+    user_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name           TEXT NOT NULL,
+    description    TEXT,
+    prompt_text    TEXT NOT NULL,
+    suggested_mode TEXT NOT NULL DEFAULT 'balanced',
+    created_at     INTEGER NOT NULL,
+    updated_at     INTEGER NOT NULL
+  )`)
+  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_custom_templates_user_id ON custom_templates(user_id)`)
 }
 
 initSchema()

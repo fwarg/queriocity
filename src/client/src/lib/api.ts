@@ -113,7 +113,7 @@ export async function testModels(): Promise<ModelTestResult[]> {
 // Chat
 export async function* streamChat(
   messages: Message[],
-  focusMode: 'flash' | 'fast' | 'balanced' | 'thorough' | 'image',
+  focusMode: 'flash' | 'balanced' | 'thorough' | 'image',
   sessionId?: string,
   signal?: AbortSignal,
   spaceId?: string,
@@ -261,11 +261,11 @@ export async function untagFileFromSpace(spaceId: string, fileId: string): Promi
   await fetch(`${BASE}/spaces/${spaceId}/files/${fileId}`, { method: 'DELETE' })
 }
 
-export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; attachmentChars: number; spaceRagBudget: number }> {
+export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; attachmentChars: number; spaceRagBudget: number; queryReformulation: boolean }> {
   return fetch(`${BASE}/admin/settings`).then(r => r.json())
 }
 
-export async function updateAdminSettings(s: { memoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; dreamDeep?: boolean; memoryExtractChars?: number; rerankTopN?: number; attachmentChars?: number; spaceRagBudget?: number }): Promise<void> {
+export async function updateAdminSettings(s: { memoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; dreamDeep?: boolean; memoryExtractChars?: number; rerankTopN?: number; attachmentChars?: number; spaceRagBudget?: number; queryReformulation?: boolean }): Promise<void> {
   await fetch(`${BASE}/admin/settings`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -396,4 +396,43 @@ export async function fetchFiles(): Promise<Array<{ id: string; filename: string
 
 export async function deleteFile(id: string): Promise<void> {
   await fetch(`${BASE}/files/${id}`, { method: 'DELETE' })
+}
+
+export interface CustomTemplate {
+  id: string
+  name: string
+  description?: string
+  promptText: string
+  suggestedMode: 'flash' | 'balanced' | 'thorough' | 'image'
+  createdAt: number
+}
+
+export async function fetchCustomTemplates(): Promise<CustomTemplate[]> {
+  const res = await fetch(`${BASE}/templates`)
+  return res.json()
+}
+
+export async function createCustomTemplate(t: Omit<CustomTemplate, 'id' | 'createdAt'>): Promise<CustomTemplate> {
+  const res = await fetch(`${BASE}/templates`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(t),
+  })
+  if (!res.ok) {
+    const { error } = await res.json().catch(() => ({ error: 'Create failed' }))
+    throw new Error(error ?? 'Create failed')
+  }
+  return res.json()
+}
+
+export async function updateCustomTemplate(id: string, t: Partial<Omit<CustomTemplate, 'id' | 'createdAt'>>): Promise<void> {
+  await fetch(`${BASE}/templates/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(t),
+  })
+}
+
+export async function deleteCustomTemplate(id: string): Promise<void> {
+  await fetch(`${BASE}/templates/${id}`, { method: 'DELETE' })
 }

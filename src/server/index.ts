@@ -12,6 +12,7 @@ import { adminRouter } from './routes/admin.ts'
 import { usersRouter } from './routes/users.ts'
 import { memoriesRouter } from './routes/memories.ts'
 import { imagesRouter } from './routes/images.ts'
+import { templatesRouter } from './routes/templates.ts'
 import { sqlite, getAppSetting, setAppSetting } from './lib/db.ts'
 import { runDream } from './lib/memory.ts'
 
@@ -32,6 +33,7 @@ app.route('/api/spaces', memoriesRouter)
 app.route('/api/admin', adminRouter)
 app.route('/api/users', usersRouter)
 app.route('/api/images', imagesRouter)
+app.route('/api/templates', templatesRouter)
 
 // Serve generated images — auth required, users can only access their own
 app.get('/images/:userId/:filename', authMiddleware, async (c) => {

@@ -1,4 +1,4 @@
-export type FocusMode = 'flash' | 'fast' | 'balanced' | 'thorough' | 'image'
+export type FocusMode = 'flash' | 'balanced' | 'thorough' | 'image'
 
 export interface TemplateField {
   id: string
@@ -140,7 +140,7 @@ export const TEMPLATES: Template[] = [
     id: 'news',
     name: 'Latest news on',
     description: 'Current developments on a topic with implications',
-    suggestedMode: 'fast',
+    suggestedMode: 'balanced',
     fields: [
       {
         id: 'role',
