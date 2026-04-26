@@ -12,6 +12,7 @@ interface Props {
   isAdmin: boolean
   timezone?: string
   onOpenSession: (sessionId: string, title: string) => void
+  onCountChange?: (n: number) => void
 }
 
 function formatInterval(minutes: number, preferredHour?: number | null): string {
@@ -188,7 +189,7 @@ function MonitorCard({ monitor, onEdit, onDelete, onRun, onOpenSession, isGlobal
   )
 }
 
-export function MonitorsView({ spaces, isAdmin, timezone, onOpenSession }: Props) {
+export function MonitorsView({ spaces, isAdmin, timezone, onOpenSession, onCountChange }: Props) {
   const [monitors, setMonitors] = useState<Monitor[]>([])
   const [globalMonitors, setGlobalMonitors] = useState<Monitor[]>([])
   const [editor, setEditor] = useState<'new' | Monitor | null>(null)
@@ -199,6 +200,8 @@ export function MonitorsView({ spaces, isAdmin, timezone, onOpenSession }: Props
   useEffect(() => {
     fetchMonitors().then(setMonitors).catch(() => {})
   }, [])
+
+  useEffect(() => { onCountChange?.(monitors.length) }, [monitors.length, onCountChange])
 
   useEffect(() => {
     if (globalExpanded && globalMonitors.length === 0) {

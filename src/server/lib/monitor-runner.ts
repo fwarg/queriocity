@@ -87,6 +87,8 @@ export async function runMonitorNow(
   userId: string,
 ): Promise<void> {
   await runMonitorForUser(monitor, userId)
+  const now = new Date()
+  await db.update(monitors).set({ lastRunAt: now, updatedAt: now }).where(eq(monitors.id, monitor.id))
 }
 
 async function runMonitorForUser(

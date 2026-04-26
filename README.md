@@ -197,6 +197,7 @@ Open **Settings** from the bottom of the sidebar. Settings are saved per user.
 | **Space RAG** | When chatting in a space, retrieve relevant past messages and document excerpts semantically on top of the fixed memory block. |
 | **Chat RAG** | When chatting outside a space, automatically retrieve relevant excerpts from your uploaded file library and inject them as context. |
 | **Font size** | UI font size: Small (14 px), Normal (16 px), Large (18 px), XL (20 px). |
+| **Timezone** | IANA timezone (e.g. `Europe/Stockholm`) used when scheduling monitors at a specific hour of the day. Defaults to server time (UTC in Docker) if not set. |
 
 ---
 
@@ -301,6 +302,7 @@ Each monitor has:
 - A **prompt** — the query sent to the model on each run
 - A **research mode** — Flash, Balanced, or Thorough
 - A **schedule** — how often to run (e.g. every 6 hours, daily, weekly)
+- An optional **run time** — for daily/weekly monitors, the hour of day to run (e.g. 02:00)
 - A **keep count** — rolling window; older runs are pruned automatically once the limit is reached (default 3)
 - An optional **space** — associates the run with a space so its context and memories are available
 
@@ -312,9 +314,15 @@ Click **New monitor** in the Monitors view. Fill in the prompt, pick a mode and 
 
 Each monitor card shows the last run time and next scheduled run. Click the **›** chevron to expand the run history. Each run is a link that opens the full chat session — you can ask follow-up questions, download the response, or use it like any other chat. Once the keep count is exceeded, the oldest run is deleted permanently.
 
+If you add follow-up messages to a monitor run, that session is kept permanently and graduates to a regular chat — it will no longer be pruned.
+
 ### Schedule
 
-Interval quick-picks (1 hour, 6 hours, daily, weekly) are available, as well as a free-form picker (any number of hours or days, minimum 1 hour). The schedule can be changed at any time — the next run is rescheduled from the moment of the edit.
+Interval quick-picks (1 hour, 6 hours, daily, weekly) are available, as well as a free-form picker (any number of hours or days, minimum 1 hour). For daily and weekly intervals you can additionally pick a **Run at** hour so the monitor fires at a predictable time of day rather than inheriting the creation time.
+
+The run hour is interpreted in your configured timezone (set in **Settings → Timezone**). If no timezone is configured, server time is used (UTC in Docker).
+
+The schedule can be changed at any time — the next run is rescheduled from the moment of the edit.
 
 ### Global monitors
 

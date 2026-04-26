@@ -53,6 +53,7 @@ export default function App() {
   const [sessionSearch, setSessionSearch] = useState('')
   const [files, setFiles] = useState<UploadedFile[]>([])
   const [spaces, setSpaces] = useState<Space[]>([])
+  const [monitorCount, setMonitorCount] = useState(0)
   const [currentSpaceId, setCurrentSpaceId] = useState<string | null>(null)
   const [editingSpaceId, setEditingSpaceId] = useState<string | null>(null)
   const [spaceDraft, setSpaceDraft] = useState('')
@@ -490,7 +491,7 @@ export default function App() {
           onClick={() => { setView(v => v === 'monitors' ? 'chat' : 'monitors'); setSidebarOpen(false) }}
           className={`w-full text-left px-3 py-2 rounded text-sm font-medium ${view === 'monitors' ? 'bg-indigo-700 text-white' : 'text-indigo-400 hover:bg-gray-800'}`}
         >
-          Monitors
+          Monitors ({monitorCount})
         </button>
         <div className="border-t border-gray-800 my-1" />
         <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-1">
@@ -1071,6 +1072,7 @@ export default function App() {
             spaces={spaces}
             isAdmin={currentUser?.role === 'admin'}
             timezone={currentUser?.settings?.timezone ?? ''}
+            onCountChange={setMonitorCount}
             onOpenSession={(id, title) => { loadSession(id, title, false); setSidebarOpen(false) }}
           />
         ) : (
