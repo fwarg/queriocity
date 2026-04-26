@@ -13,8 +13,10 @@ import { usersRouter } from './routes/users.ts'
 import { memoriesRouter } from './routes/memories.ts'
 import { imagesRouter } from './routes/images.ts'
 import { templatesRouter } from './routes/templates.ts'
+import { monitorsRouter } from './routes/monitors.ts'
 import { sqlite, getAppSetting, setAppSetting } from './lib/db.ts'
 import { runDream } from './lib/memory.ts'
+import { runDueMonitors } from './lib/monitor-runner.ts'
 
 import { IMAGE_STORAGE_DIR } from './lib/image-store.ts'
 
@@ -34,6 +36,7 @@ app.route('/api/admin', adminRouter)
 app.route('/api/users', usersRouter)
 app.route('/api/images', imagesRouter)
 app.route('/api/templates', templatesRouter)
+app.route('/api/monitors', monitorsRouter)
 
 // Serve generated images — auth required, users can only access their own
 app.get('/images/:userId/:filename', authMiddleware, async (c) => {
@@ -114,6 +117,7 @@ setInterval(async () => {
   await setAppSetting('dream_last_run', todayKey)
   console.log(`  [dream] starting nightly compaction`)
   runDream().catch(e => console.error('[dream] failed:', e))
+  runDueMonitors().catch(e => console.error('[monitors] run failed:', e))
 }, 5 * 60 * 1000)
 
 export default { port: PORT, fetch: app.fetch, idleTimeout: 255 }

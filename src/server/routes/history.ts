@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
-import { db, sqlite, chatSessions, messages, spaces, spaceMemories } from '../lib/db.ts'
-import { eq, and, desc, ne, count } from 'drizzle-orm'
+import { db, sqlite, chatSessions, messages, spaces, spaceMemories, monitorRuns } from '../lib/db.ts'
+import { eq, and, desc, ne, count, isNull } from 'drizzle-orm'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
@@ -18,10 +18,13 @@ historyRouter.get('/', async (c) => {
   const offset = parseInt(c.req.query('offset') ?? '0')
   const sort = c.req.query('sort') === 'created' ? 'created' : 'updated'
   const orderCol = sort === 'created' ? chatSessions.createdAt : chatSessions.updatedAt
-  const where = eq(chatSessions.userId, userId)
+  const baseQuery = db.select({ id: chatSessions.id, title: chatSessions.title, spaceId: chatSessions.spaceId, createdAt: chatSessions.createdAt, updatedAt: chatSessions.updatedAt })
+    .from(chatSessions)
+    .leftJoin(monitorRuns, eq(chatSessions.id, monitorRuns.sessionId))
+  const where = and(eq(chatSessions.userId, userId), isNull(monitorRuns.id))
   const [items, totalRow] = await Promise.all([
-    db.select().from(chatSessions).where(where).orderBy(desc(orderCol)).limit(limit).offset(offset),
-    db.select({ total: count() }).from(chatSessions).where(where).get(),
+    baseQuery.where(where).orderBy(desc(orderCol)).limit(limit).offset(offset),
+    db.select({ total: count() }).from(chatSessions).leftJoin(monitorRuns, eq(chatSessions.id, monitorRuns.sessionId)).where(where).get(),
   ])
   return c.json({ items, total: totalRow?.total ?? 0 })
 })
@@ -34,12 +37,14 @@ historyRouter.get('/search', async (c) => {
   const results = sqlite.prepare(`
     SELECT DISTINCT cs.id, cs.title, cs.user_id, cs.space_id, cs.created_at, cs.updated_at
     FROM chat_sessions cs
-    WHERE cs.user_id = ? AND cs.title LIKE ? COLLATE NOCASE
+    LEFT JOIN monitor_runs mr ON mr.session_id = cs.id
+    WHERE cs.user_id = ? AND mr.id IS NULL AND cs.title LIKE ? COLLATE NOCASE
     UNION
     SELECT DISTINCT cs.id, cs.title, cs.user_id, cs.space_id, cs.created_at, cs.updated_at
     FROM chat_sessions cs
     JOIN messages m ON m.session_id = cs.id
-    WHERE cs.user_id = ? AND m.content LIKE ? COLLATE NOCASE
+    LEFT JOIN monitor_runs mr ON mr.session_id = cs.id
+    WHERE cs.user_id = ? AND mr.id IS NULL AND m.content LIKE ? COLLATE NOCASE
     ORDER BY cs.updated_at DESC LIMIT 100
   `).all(userId, like, userId, like)
   return c.json(results)

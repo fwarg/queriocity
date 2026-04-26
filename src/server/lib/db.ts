@@ -8,6 +8,7 @@ const DB_PATH = process.env.DB_PATH ?? 'queriocity.db'
 
 const sqlite = new Database(DB_PATH)
 sqlite.loadExtension(sqliteVec.getLoadablePath())
+sqlite.run('PRAGMA foreign_keys = ON')
 
 export const db = drizzle(sqlite)
 
@@ -104,6 +105,36 @@ export const customTemplates = sqliteTable('custom_templates', {
   suggestedMode: text('suggested_mode').notNull().default('balanced'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+})
+
+export const monitors = sqliteTable('monitors', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').references(() => users.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  promptText: text('prompt_text').notNull(),
+  focusMode: text('focus_mode').notNull().default('balanced'),
+  intervalMinutes: integer('interval_minutes').notNull(),
+  keepCount: integer('keep_count').notNull().default(3),
+  isGlobal: integer('is_global', { mode: 'boolean' }).notNull().default(false),
+  spaceId: text('space_id').references(() => spaces.id, { onDelete: 'set null' }),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  nextRunAt: integer('next_run_at', { mode: 'timestamp' }),
+  lastRunAt: integer('last_run_at', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+})
+
+export const monitorSubscriptions = sqliteTable('monitor_subscriptions', {
+  monitorId: text('monitor_id').notNull().references(() => monitors.id, { onDelete: 'cascade' }),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+}, t => ({ pk: primaryKey({ columns: [t.monitorId, t.userId] }) }))
+
+export const monitorRuns = sqliteTable('monitor_runs', {
+  id: text('id').primaryKey(),
+  monitorId: text('monitor_id').notNull().references(() => monitors.id, { onDelete: 'cascade' }),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  sessionId: text('session_id').notNull().references(() => chatSessions.id, { onDelete: 'cascade' }),
+  runAt: integer('run_at', { mode: 'timestamp' }).notNull(),
 })
 
 // --- Init ---
@@ -269,6 +300,38 @@ function initSchema() {
     updated_at     INTEGER NOT NULL
   )`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_custom_templates_user_id ON custom_templates(user_id)`)
+
+  sqlite.run(`CREATE TABLE IF NOT EXISTS monitors (
+    id               TEXT PRIMARY KEY,
+    user_id          TEXT REFERENCES users(id) ON DELETE CASCADE,
+    name             TEXT NOT NULL,
+    prompt_text      TEXT NOT NULL,
+    focus_mode       TEXT NOT NULL DEFAULT 'balanced',
+    interval_minutes INTEGER NOT NULL,
+    keep_count       INTEGER NOT NULL DEFAULT 3,
+    is_global        INTEGER NOT NULL DEFAULT 0,
+    space_id         TEXT REFERENCES spaces(id) ON DELETE SET NULL,
+    enabled          INTEGER NOT NULL DEFAULT 1,
+    next_run_at      INTEGER,
+    last_run_at      INTEGER,
+    created_at       INTEGER NOT NULL,
+    updated_at       INTEGER NOT NULL
+  )`)
+  sqlite.run(`CREATE TABLE IF NOT EXISTS monitor_subscriptions (
+    monitor_id TEXT NOT NULL REFERENCES monitors(id) ON DELETE CASCADE,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    PRIMARY KEY (monitor_id, user_id)
+  )`)
+  sqlite.run(`CREATE TABLE IF NOT EXISTS monitor_runs (
+    id         TEXT PRIMARY KEY,
+    monitor_id TEXT NOT NULL REFERENCES monitors(id) ON DELETE CASCADE,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    session_id TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+    run_at     INTEGER NOT NULL
+  )`)
+  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_monitors_user_id ON monitors(user_id)`)
+  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_monitors_next_run ON monitors(next_run_at)`)
+  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_monitor_runs_monitor_user ON monitor_runs(monitor_id, user_id)`)
 }
 
 initSchema()

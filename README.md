@@ -26,6 +26,7 @@ through a single Bun process.
   - [Settings](#settings)
   - [Image generation](#image-generation)
   - [Spaces](#spaces)
+  - [Monitors](#monitors)
 - [Installation guide](#installation-guide)
   - [Requirements](#requirements)
   - [Installation](#installation)
@@ -288,6 +289,36 @@ The memory panel header exposes several actions:
 - **Dream** — optional nightly scheduled pass. Configured by an administrator in Admin > System settings (hour, threshold, target). This mode either compacts any space whose memories exceed the size threshold, or (in deep dream mode) recreates memories from chats using a more capable thinking model for increased memory quality.
 
 Individual chats in a space also have a **Recreate memories** action that re-extracts memories for that chat only.
+
+---
+
+## Monitors
+
+**Monitors** are scheduled queries that run automatically on a recurring interval and store their results as chat sessions. Open the **Monitors** view from the sidebar to manage them.
+
+Each monitor has:
+
+- A **prompt** — the query sent to the model on each run
+- A **research mode** — Flash, Balanced, or Thorough
+- A **schedule** — how often to run (e.g. every 6 hours, daily, weekly)
+- A **keep count** — rolling window; older runs are pruned automatically once the limit is reached (default 3)
+- An optional **space** — associates the run with a space so its context and memories are available
+
+### Creating a monitor
+
+Click **New monitor** in the Monitors view. Fill in the prompt, pick a mode and interval, and save. The first run fires after one full interval — use **Run now** (▶) to get an immediate result.
+
+### Run history
+
+Each monitor card shows the last run time and next scheduled run. Click the **›** chevron to expand the run history. Each run is a link that opens the full chat session — you can ask follow-up questions, download the response, or use it like any other chat. Once the keep count is exceeded, the oldest run is deleted permanently.
+
+### Schedule
+
+Interval quick-picks (1 hour, 6 hours, daily, weekly) are available, as well as a free-form picker (any number of hours or days, minimum 1 hour). The schedule can be changed at any time — the next run is rescheduled from the moment of the edit.
+
+### Global monitors
+
+Admins can create **global monitors** visible to all users. Users subscribe to them from the "Browse global monitors" section at the bottom of the Monitors view. Each subscriber receives their own independent copy of every run — results are not shared between users. Global monitors are created and managed in the **Monitors** view (admin section at the bottom) or in the **Admin panel**.
 
 ---
 
@@ -770,6 +801,7 @@ Hono server (Bun)
   ├── /api/admin     — user/invite management, system settings, model test
   ├── /api/images     — serve generated images (per-user, auth-gated)
   ├── /api/templates  — custom prompt templates (CRUD, per-user)
+  ├── /api/monitors   — monitors (CRUD, run, subscribe, global)
   └── /api/users      — user settings
         │
         ├── SearXNG   (meta-search)
@@ -782,6 +814,7 @@ Hono server (Bun)
              ├── chat message chunks + embeddings  (space RAG)
              ├── uploaded file chunks + embeddings (library + space file RAG)
              ├── custom_templates (per-user prompt templates)
+             ├── monitors + monitor_subscriptions + monitor_runs
              └── app_settings (runtime-configurable parameters)
 ```
 

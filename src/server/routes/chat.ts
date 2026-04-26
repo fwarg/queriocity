@@ -39,6 +39,7 @@ const chatSchema = z.object({
     content: z.string(),
   })),
   focusMode: z.enum(['flash', 'balanced', 'thorough', 'image']).default('balanced'),
+  ephemeral: z.boolean().optional(),
 })
 
 export const chatRouter = new Hono<AppEnv>()
@@ -47,7 +48,7 @@ chatRouter.use('*', authMiddleware)
 
 chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
   const userId = c.get('userId') as string
-  const { sessionId, spaceId, messages: msgs, focusMode } = c.req.valid('json')
+  const { sessionId, spaceId, messages: msgs, focusMode, ephemeral } = c.req.valid('json')
   const sid = sessionId ?? randomUUID()
 
   const abortSignal = c.req.raw.signal
@@ -95,12 +96,16 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
       }
       console.log(`  [flash] done in ${Date.now() - t0}ms, ${fullContent.length} chars`)
       if (fullContent.length >= 50) setCached(ck, fullContent)
-      const { title: sessionTitle } = await persistMessage(sid, userId, msgs, fullContent, [], spaceId)
-      await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title: sessionTitle, elapsedMs: Date.now() - t0 }) })
-      if (spaceId) {
-        extractMemoriesPostHoc(spaceId, sid, lastUser?.content ?? '', fullContent).catch(e => console.error('[memory]', e))
-        const newContents = [lastUser?.content, fullContent].filter(Boolean) as string[]
-        indexContents(sid, newContents).catch(e => console.error('[chat-index]', e))
+      if (!ephemeral) {
+        const { title: sessionTitle } = await persistMessage(sid, userId, msgs, fullContent, [], spaceId)
+        await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title: sessionTitle, elapsedMs: Date.now() - t0 }) })
+        if (spaceId) {
+          extractMemoriesPostHoc(spaceId, sid, lastUser?.content ?? '', fullContent).catch(e => console.error('[memory]', e))
+          const newContents = [lastUser?.content, fullContent].filter(Boolean) as string[]
+          indexContents(sid, newContents).catch(e => console.error('[chat-index]', e))
+        }
+      } else {
+        await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, elapsedMs: Date.now() - t0 }) })
       }
     })
   }
@@ -275,12 +280,16 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
         }
       }
       console.log(`  [image] done in ${Date.now() - t0}ms, ${fullContent.length} chars`)
-      const { title: sessionTitle } = await persistMessage(sid, userId, msgs, fullContent, [], spaceId)
-      await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title: sessionTitle, elapsedMs: Date.now() - t0 }) })
-      if (spaceId) {
-        extractMemoriesPostHoc(spaceId, sid, lastUser?.content ?? '', fullContent).catch(e => console.error('[memory]', e))
-        const newContents = [lastUser?.content, fullContent].filter(Boolean) as string[]
-        indexContents(sid, newContents).catch(e => console.error('[chat-index]', e))
+      if (!ephemeral) {
+        const { title: sessionTitle } = await persistMessage(sid, userId, msgs, fullContent, [], spaceId)
+        await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title: sessionTitle, elapsedMs: Date.now() - t0 }) })
+        if (spaceId) {
+          extractMemoriesPostHoc(spaceId, sid, lastUser?.content ?? '', fullContent).catch(e => console.error('[memory]', e))
+          const newContents = [lastUser?.content, fullContent].filter(Boolean) as string[]
+          indexContents(sid, newContents).catch(e => console.error('[chat-index]', e))
+        }
+      } else {
+        await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, elapsedMs: Date.now() - t0 }) })
       }
     })
   }
@@ -459,15 +468,17 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
     if (fullContent.length < 50) console.log(`  [debug] short content: ${JSON.stringify(fullContent)}`)
     console.log(`  [${focusMode}] done in ${Date.now() - t0}ms, ${fullContent.length} chars`)
 
-    // Persist to DB
-    const { title: sessionTitle } = await persistMessage(sid, userId, msgs, fullContent, sources, spaceId)
-
     if (fullContent.length >= 50) setCached(ck, fullContent)
-    await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title: sessionTitle, elapsedMs: Date.now() - t0 }) })
-    if (spaceId) {
-      extractMemoriesPostHoc(spaceId, sid, lastUser?.content ?? '', fullContent).catch(e => console.error('[memory]', e))
-      const newContents = [lastUser?.content, fullContent].filter(Boolean) as string[]
-      indexContents(sid, newContents).catch(e => console.error('[chat-index]', e))
+    if (!ephemeral) {
+      const { title: sessionTitle } = await persistMessage(sid, userId, msgs, fullContent, sources, spaceId)
+      await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title: sessionTitle, elapsedMs: Date.now() - t0 }) })
+      if (spaceId) {
+        extractMemoriesPostHoc(spaceId, sid, lastUser?.content ?? '', fullContent).catch(e => console.error('[memory]', e))
+        const newContents = [lastUser?.content, fullContent].filter(Boolean) as string[]
+        indexContents(sid, newContents).catch(e => console.error('[chat-index]', e))
+      }
+    } else {
+      await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, elapsedMs: Date.now() - t0 }) })
     }
   })
 })

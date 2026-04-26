@@ -117,6 +117,7 @@ export async function* streamChat(
   sessionId?: string,
   signal?: AbortSignal,
   spaceId?: string,
+  ephemeral?: boolean,
 ): AsyncGenerator<{ type: string; [k: string]: unknown }> {
   const res = await fetch(`${BASE}/chat`, {
     method: 'POST',
@@ -131,6 +132,7 @@ export async function* streamChat(
       focusMode,
       sessionId,
       spaceId,
+      ...(ephemeral ? { ephemeral: true } : {}),
     }),
     signal,
   })
@@ -435,4 +437,108 @@ export async function updateCustomTemplate(id: string, t: Partial<Omit<CustomTem
 
 export async function deleteCustomTemplate(id: string): Promise<void> {
   await fetch(`${BASE}/templates/${id}`, { method: 'DELETE' })
+}
+
+export interface Monitor {
+  id: string
+  name: string
+  promptText: string
+  focusMode: 'flash' | 'balanced' | 'thorough'
+  intervalMinutes: number
+  keepCount: number
+  isGlobal: boolean
+  spaceId?: string | null
+  enabled: boolean
+  nextRunAt?: number
+  lastRunAt?: number
+  createdAt: number
+  subscribed?: boolean
+}
+
+export interface MonitorRun {
+  id: string
+  monitorId: string
+  sessionId: string
+  runAt: number
+}
+
+export async function fetchMonitors(): Promise<Monitor[]> {
+  const res = await fetch(`${BASE}/monitors`)
+  return res.json()
+}
+
+export async function createMonitor(m: Omit<Monitor, 'id' | 'createdAt' | 'isGlobal'>): Promise<Monitor> {
+  const res = await fetch(`${BASE}/monitors`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(m),
+  })
+  if (!res.ok) {
+    const { error } = await res.json().catch(() => ({ error: 'Create failed' }))
+    throw new Error(error ?? 'Create failed')
+  }
+  return res.json()
+}
+
+export async function updateMonitor(id: string, m: Partial<Omit<Monitor, 'id' | 'createdAt' | 'isGlobal'>>): Promise<void> {
+  await fetch(`${BASE}/monitors/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(m),
+  })
+}
+
+export async function deleteMonitor(id: string): Promise<void> {
+  await fetch(`${BASE}/monitors/${id}`, { method: 'DELETE' })
+}
+
+export async function triggerMonitorRun(id: string): Promise<void> {
+  const res = await fetch(`${BASE}/monitors/${id}/run`, { method: 'POST' })
+  if (!res.ok) {
+    const { error } = await res.json().catch(() => ({ error: 'Run failed' }))
+    throw new Error(error ?? 'Run failed')
+  }
+}
+
+export async function fetchMonitorRuns(id: string): Promise<MonitorRun[]> {
+  const res = await fetch(`${BASE}/monitors/${id}/runs`)
+  return res.json()
+}
+
+export async function subscribeMonitor(id: string): Promise<void> {
+  await fetch(`${BASE}/monitors/${id}/subscribe`, { method: 'POST' })
+}
+
+export async function unsubscribeMonitor(id: string): Promise<void> {
+  await fetch(`${BASE}/monitors/${id}/subscribe`, { method: 'DELETE' })
+}
+
+export async function fetchGlobalMonitors(): Promise<Monitor[]> {
+  const res = await fetch(`${BASE}/monitors/global`)
+  return res.json()
+}
+
+export async function createGlobalMonitor(m: Omit<Monitor, 'id' | 'createdAt' | 'isGlobal' | 'subscribed'>): Promise<Monitor> {
+  const res = await fetch(`${BASE}/monitors/global`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(m),
+  })
+  if (!res.ok) {
+    const { error } = await res.json().catch(() => ({ error: 'Create failed' }))
+    throw new Error(error ?? 'Create failed')
+  }
+  return res.json()
+}
+
+export async function updateGlobalMonitor(id: string, m: Partial<Omit<Monitor, 'id' | 'createdAt' | 'isGlobal'>>): Promise<void> {
+  await fetch(`${BASE}/monitors/global/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(m),
+  })
+}
+
+export async function deleteGlobalMonitor(id: string): Promise<void> {
+  await fetch(`${BASE}/monitors/global/${id}`, { method: 'DELETE' })
 }
