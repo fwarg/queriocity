@@ -245,7 +245,6 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
     let fullContent = ''
     return streamSSE(c, async (stream) => {
       const ctxLimit = parseInt(process.env.CONTEXT_TOKEN_LIMIT ?? '8192')
-      let hasImage = false
       const result = streamText({
         model: getFlashModel(),
         abortSignal,
@@ -269,7 +268,6 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
         } else if (part.type === 'tool-result' && (part.toolName === 'generate_image' || part.toolName === 'edit_image')) {
           const r = part.result as { success?: boolean; prompt?: string; error?: string }
           if (r.success && pendingImageUrl) {
-            hasImage = true
             await stream.writeSSE({ data: JSON.stringify({ type: 'image', url: pendingImageUrl, alt: r.prompt ?? '' }) })
             fullContent += `\n\n![${r.prompt ?? ''}](${pendingImageUrl})`
             pendingImageUrl = undefined
