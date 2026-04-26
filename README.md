@@ -22,6 +22,7 @@ through a single Bun process.
   - [Research modes](#research-modes)
   - [Files](#files)
   - [Prompt templates](#prompt-templates)
+    - [Prompt Studio](#prompt-studio)
   - [Settings](#settings)
   - [Image generation](#image-generation)
   - [Spaces](#spaces)
@@ -66,7 +67,7 @@ The search box at the top of the Chats view searches both **chat titles and mess
 
 ## Research modes
 
-Queriocity runs every chat request in one of four modes, selectable per message in the chat input bar.
+Queriocity runs every chat request in one of four modes, selectable per message in the chat input bar. A fifth **Image** mode is available when `IMAGE_BASE_URL` is configured — see [Image generation](#image-generation).
 
 ### Flash
 
@@ -79,22 +80,6 @@ capped at 200 characters.
 The model used in flash mode can be overridden via `FLASH_MODEL=small` to use the 
 small/reformulation model instead of the main chat model.
 
-### Fast
-
-A single pre-search query using the chat question directly is fired
-and the results are injected before the model starts. The model streams its answer
-directly and may issue one additional search if needed. A regex heuristic resolves (english only) 
-pronouns in follow-up questions before searching — e.g. "When
-was it founded?" after asking about a company becomes "When was [company] founded?" — so
-the pre-search query is self-contained. Best for quick factual questions where you value
-speed over depth.
-
-Responses are always in the same language as the user's question.
-
-- 1 pre-search query, 6 results
-- Up to 2 LLM steps (think → answer)
-- Model may call `web_search` once more if the pre-fetched results are insufficient
-
 ### Balanced *(default)*
 
 A small model first rewrites the user's question into an optimized search query, which is
@@ -104,7 +89,9 @@ receives pre-fetched results and may issue one more round of searches (up to 2 q
 time) before answering. Answers include inline citations `[1][2]` and are always in the same
 language as the user's question.
 
-- 1 LLM-reformulated query pre-fetched
+Query reformulation can be disabled in **Admin > System settings > Search** for setups where small-model latency is a concern — the raw user query is then sent directly to search.
+
+- 1 LLM-reformulated pre-fetched query (or raw query when reformulation is disabled)
 - Up to 3 LLM steps; up to 2 parallel search queries per step
 - 8 results per web-search query
 
@@ -154,7 +141,7 @@ Open the **Files** view in the sidebar. Upload a file there and it is ingested i
 library: the text is chunked, each chunk is embedded with the configured embedding model,
 and the chunks + embeddings are stored in SQLite (via the `sqlite-vec` extension).
 
-In fast, balanced, and thorough modes, if you have files in your library, relevant excerpts are automatically retrieved and injected as context (see also 'spaces' where the behaviour is a bit different). The model also has access to an `uploads_search` tool in every conversation and can semantically search your library at any time — even without you mentioning the file
+In balanced and thorough modes, if you have files in your library, relevant excerpts are automatically retrieved and injected as context (see also 'spaces' where the behaviour is a bit different). The model also has access to an `uploads_search` tool in every conversation and can semantically search your library at any time — even without you mentioning the file
 explicitly.
 
 The library is useful for building a personal knowledge base of PDFs, notes, or research papers that the assistant can draw on across many conversations.
@@ -172,10 +159,28 @@ Click the **template icon** (grid icon) in the chat input bar to open the templa
 | Research deep-dive | Thorough | Structured report on a topic from a specific angle |
 | Compare & Analyze | Balanced | Side-by-side comparison with a recommendation |
 | Explain / Teach | Flash | Concept explanation tailored to a chosen audience |
-| Latest news on | Fast | Current developments on a topic with implications |
-| Draw / Illustrate | Flash | Image generation with style, lighting, and quality controls (requires `IMAGE_BASE_URL`) |
+| Latest news on | Balanced | Current developments on a topic with implications |
+| Draw / Illustrate | Image | Image generation with style, lighting, and quality controls (requires `IMAGE_BASE_URL`) |
 
 Fill in the required fields (marked `*`), adjust optional ones, and click **Use template** to populate the chat input. You can edit the assembled text before sending.
+
+Custom templates you create in [Prompt Studio](#prompt-studio) appear below the built-in ones under a **Custom** heading.
+
+### Prompt Studio
+
+Prompt Studio is a built-in editor for creating and iterating on your own prompt templates. Access it from the **"Create custom template"** button at the bottom of the template picker.
+
+**Workflow:**
+
+1. Write a prompt in the editor. Use `{{placeholder}}` syntax to mark variable parts — e.g. `Explain {{concept}} to a {{audience}} in under {{words}} words.`
+2. The Studio automatically detects your placeholders and shows a **Test values** panel with one input per field.
+3. Fill in test values (or leave them blank — unfilled placeholders default to the field name so the run still makes sense), pick a mode, and click **▶ Run** to see the output stream in.
+4. Iterate: edit the prompt, adjust values, run again.
+5. When satisfied, give the template a name and click **Save template**.
+
+Saved templates appear in the template picker under **Custom**. Each card has **Edit** (pencil) and **Delete** (trash) buttons on hover. Editing re-opens Prompt Studio pre-filled with the existing template.
+
+Templates are stored per user in the database and persist across sessions.
 
 ---
 
@@ -196,14 +201,17 @@ Open **Settings** from the bottom of the sidebar. Settings are saved per user.
 
 ## Image generation
 
-When `IMAGE_BASE_URL` is configured, Queriocity can generate and edit images using a local diffusion server. This feature is available in **Flash mode only** and works by giving the model two tools:
+When `IMAGE_BASE_URL` is configured, Queriocity gains a dedicated **Image** mode for generating and editing images using a local diffusion server. The model has three tools:
 
+- **`web_search`** — automatically researches specialized or unfamiliar subjects before generating, so the image prompt can be enriched with accurate visual context
 - **`generate_image`** — creates a new image from a text description
 - **`edit_image`** — modifies a previously generated image based on a new description
 
+The model decides whether to search first based on topic familiarity. If it does, a one-sentence summary of what was learned appears above the image.
+
 ### Usage
 
-Ask for an image in natural language while in Flash mode:
+Select **Image** mode and describe what you want:
 
 > *"Draw a mountain landscape at sunset"*
 > *"Generate a portrait of a robot reading a book, high quality"*
@@ -698,6 +706,7 @@ The **Admin panel > System settings** tab exposes runtime-configurable parameter
 | Memory | Dream deep | Off | Re-extract memories from source conversations using the thinking model during the dream pass |
 | Memory | Extraction context | 6000 | Max characters of conversation fed to the small model when extracting memories |
 | Reranking | Top N | 15 | Results kept after reranking (requires `RERANK_MODEL`) |
+| Search | Query reformulation | On | Use a small LLM to rewrite queries before searching. Improves relevance at the cost of a small model call. Disable on slow hardware. |
 | Attachments | Max context chars | 20000 | Max characters extracted from an attached file and sent as context |
 
 The **Users** tab lets admins manage accounts, roles, and invite links.
@@ -759,8 +768,9 @@ Hono server (Bun)
   ├── /api/history   — chat sessions + messages + memory lifecycle
   ├── /api/spaces    — spaces, per-space memories, compact, recreate
   ├── /api/admin     — user/invite management, system settings, model test
-  ├── /api/images    — serve generated images (per-user, auth-gated)
-  └── /api/users     — user settings
+  ├── /api/images     — serve generated images (per-user, auth-gated)
+  ├── /api/templates  — custom prompt templates (CRUD, per-user)
+  └── /api/users      — user settings
         │
         ├── SearXNG   (meta-search)
         ├── Ollama / OpenAI-compatible API
@@ -771,6 +781,7 @@ Hono server (Bun)
              ├── space memories (extracted, manual, compacted)
              ├── chat message chunks + embeddings  (space RAG)
              ├── uploaded file chunks + embeddings (library + space file RAG)
+             ├── custom_templates (per-user prompt templates)
              └── app_settings (runtime-configurable parameters)
 ```
 
