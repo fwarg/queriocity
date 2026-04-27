@@ -196,7 +196,7 @@ Open **Settings** from the bottom of the sidebar. Settings are saved per user.
 | **Model thinking** | Use the `THINKING_MODEL` for the researcher phase in Thorough mode. Requires a reasoning-capable model (e.g. Qwen3). Falls back to the chat model if `THINKING_MODEL` is not configured. |
 | **Space RAG** | When chatting in a space, retrieve relevant past messages and document excerpts semantically on top of the fixed memory block. |
 | **Chat RAG** | When chatting outside a space, automatically retrieve relevant excerpts from your uploaded file library and inject them as context. |
-| **Font size** | UI font size: Small (14 px), Normal (16 px), Large (18 px), XL (20 px). |
+| **Font size** | UI font size: Small (15 px), Normal (17 px), Large (19 px), XL (21 px). Sizes scale up automatically on narrow viewports. |
 | **Timezone** | IANA timezone (e.g. `Europe/Stockholm`) used when scheduling monitors at a specific hour of the day. Defaults to server time (UTC in Docker) if not set. |
 
 ---
@@ -308,7 +308,19 @@ Each monitor has:
 
 ### Creating a monitor
 
-Click **New monitor** in the Monitors view. Fill in the prompt, pick a mode and interval, and save. The first run fires after one full interval — use **Run now** (▶) to get an immediate result.
+Click **New monitor** in the Monitors view. The editor has two tabs:
+
+**General** — fill in the prompt, pick a mode and interval, and save. The first run fires after one full interval — use **Run now** (▶) to get an immediate result.
+
+**News sources** — optionally select RSS feeds from a curated catalog of global news outlets. Sources are grouped by region (Americas, Europe, Asia, Africa, Middle East, Oceania) and topic (Technology, Finance, Science & Nature, Culture & Arts, Sports). Each source shows its name, topic, type, and ownership. Use the **all / none** shortcuts to select entire groups at once.
+
+When news sources are selected:
+- Feeds are fetched at run time and injected as context, bypassing web search
+- Each article carries metadata (source name, topic, type, ownership, region) which the model can reference in its output
+- The prompt textarea shows a suggested starter prompt; click **↑ Use suggested prompt** to pre-fill it
+- The total volume of feed content is bounded by the **RSS feed character budget** (Admin > System settings); items per feed and content length per item scale automatically to stay within that budget
+
+The news feed catalog is defined in `docker/data/global_news_rss_feeds.json`. Edit that file and rebuild the Docker image to add, remove, or update sources.
 
 ### Run history
 
@@ -746,6 +758,7 @@ The **Admin panel > System settings** tab exposes runtime-configurable parameter
 | Memory | Extraction context | 6000 | Max characters of conversation fed to the small model when extracting memories |
 | Reranking | Top N | 15 | Results kept after reranking (requires `RERANK_MODEL`) |
 | Search | Query reformulation | On | Use a small LLM to rewrite queries before searching. Improves relevance at the cost of a small model call. Disable on slow hardware. |
+| Search | RSS feed character budget | 50000 | Total characters of news content fetched per monitor run when RSS sources are selected. Items per feed and content length per item scale automatically to fill this budget. Increase for large-context models; decrease for small ones (8K context ≈ 20 000 chars). |
 | Attachments | Max context chars | 20000 | Max characters extracted from an attached file and sent as context |
 
 The **Users** tab lets admins manage accounts, roles, and invite links.
@@ -810,9 +823,11 @@ Hono server (Bun)
   ├── /api/images     — serve generated images (per-user, auth-gated)
   ├── /api/templates  — custom prompt templates (CRUD, per-user)
   ├── /api/monitors   — monitors (CRUD, run, subscribe, global)
+  ├── /api/feeds      — RSS feed catalog (served from news_feeds.json)
   └── /api/users      — user settings
         │
         ├── SearXNG   (meta-search)
+        ├── RSS feeds (fetched at monitor run time from news_feeds.json)
         ├── Ollama / OpenAI-compatible API
         ├── Diffusion server (optional, image generation/editing)
         ├── Reranker API (optional, cross-encoder)
