@@ -24,17 +24,16 @@ function minutesToUnit(minutes: number): { value: number; unit: 'hours' | 'days'
   return { value: minutes / 60, unit: 'hours' }
 }
 
-const TYPE_COLORS: Record<string, string> = {
-  'Wire Service': 'bg-blue-900 text-blue-300',
-  'Public Broadcaster': 'bg-green-900 text-green-300',
-  'Newspaper': 'bg-gray-700 text-gray-300',
-  'Financial / News': 'bg-yellow-900 text-yellow-300',
-  'Broadcast / Online': 'bg-purple-900 text-purple-300',
-  'Online / News': 'bg-purple-900 text-purple-300',
-}
-
 function typeColor(type: string): string {
-  return TYPE_COLORS[type] ?? 'bg-gray-800 text-gray-400'
+  if (type.startsWith('Wire Service') || type.includes('News Agency')) return 'bg-blue-900 text-blue-300'
+  if (type.startsWith('Public Broadcaster') || type.startsWith('Public Radio')) return 'bg-green-900 text-green-300'
+  if (type.startsWith('State Broadcaster') || type.startsWith('State News')) return 'bg-rose-900 text-rose-300'
+  if (type.startsWith('Newspaper')) return 'bg-gray-700 text-gray-300'
+  if (type.includes('Financial')) return 'bg-yellow-900 text-yellow-300'
+  if (type.startsWith('Peer-Reviewed')) return 'bg-emerald-900 text-emerald-300'
+  if (type.startsWith('Magazine')) return 'bg-indigo-900 text-indigo-300'
+  if (type.startsWith('Broadcast') || type.startsWith('Online') || type.startsWith('News Magazine') || type.startsWith('News Aggregator')) return 'bg-purple-900 text-purple-300'
+  return 'bg-gray-800 text-gray-400'
 }
 
 export function MonitorEditor({ initial, spaces, timezone, onSave, onClose, isGlobal }: Props) {
@@ -356,7 +355,7 @@ export function MonitorEditor({ initial, spaces, timezone, onSave, onClose, isGl
                                 {source.type}
                               </span>
                             </div>
-                            <p className="text-xs text-gray-500 mt-0.5">{source.country} · {source.ownership}</p>
+                            <p className="text-xs text-gray-500 mt-0.5">{source.country} · {source.topic} · {source.ownership}</p>
                           </div>
                         </label>
                       ))}

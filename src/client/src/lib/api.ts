@@ -548,9 +548,11 @@ export async function deleteGlobalMonitor(id: string): Promise<void> {
 export interface FeedSource {
   name: string
   country: string
+  topic: string
   type: string
   language: string
   ownership: string
+  rss_status: string
   rss: string
 }
 

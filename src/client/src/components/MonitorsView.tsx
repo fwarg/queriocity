@@ -233,11 +233,13 @@ export function MonitorsView({ spaces, isAdmin, timezone, onOpenSession, onCount
   }
 
   async function handleDelete(id: string) {
+    if (!window.confirm('Delete this monitor?')) return
     await deleteMonitor(id)
     setMonitors(prev => prev.filter(m => m.id !== id))
   }
 
   async function handleGlobalDelete(id: string) {
+    if (!window.confirm('Delete this global monitor?')) return
     const { deleteGlobalMonitor } = await import('../lib/api.ts')
     await deleteGlobalMonitor(id)
     setGlobalMonitors(prev => prev.filter(m => m.id !== id))

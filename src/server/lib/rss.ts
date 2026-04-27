@@ -8,9 +8,11 @@ const FETCH_TIMEOUT_MS = 10_000
 export interface FeedSource {
   name: string
   country: string
+  topic: string
   type: string
   language: string
   ownership: string
+  rss_status: string
   rss: string
 }
 
@@ -106,7 +108,7 @@ async function fetchFeedItems(source: FeedSource, region: string, maxItems: numb
       results.push({
         title,
         url,
-        content: `[${source.name} · ${source.type} · ${source.ownership} · ${region}]\n${text}`,
+        content: `[${source.name} · ${source.topic} · ${source.type} · ${source.ownership} · ${region}]\n${text}`,
       })
     }
     console.log(`  [rss] ${source.name}: ${results.length} items`)

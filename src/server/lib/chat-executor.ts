@@ -15,7 +15,7 @@ const FLASH_SYSTEM = `Answer in at most 5 sentences using only your training kno
 Do not search the web. If you cannot answer confidently, say so briefly.
 Always respond in the same language the user used.`
 
-const RESEARCHER_NOTES_CAP = 2000
+const RESEARCHER_NOTES_CAP = 12000
 
 /** Run a single-message chat non-interactively and save the session to DB. */
 export async function executeChatAndSave({

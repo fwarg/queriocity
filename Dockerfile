@@ -10,6 +10,7 @@ WORKDIR /app
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile --production
 COPY src ./src
+COPY docker/data/global_news_rss_feeds.json ./src/server/data/news_feeds.json
 COPY tsconfig.json drizzle.config.ts ./
 COPY --from=builder /app/dist ./dist
 
