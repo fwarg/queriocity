@@ -14,6 +14,7 @@ import { memoriesRouter } from './routes/memories.ts'
 import { imagesRouter } from './routes/images.ts'
 import { templatesRouter } from './routes/templates.ts'
 import { monitorsRouter } from './routes/monitors.ts'
+import { feedsRouter } from './routes/feeds.ts'
 import { sqlite, getAppSetting, setAppSetting } from './lib/db.ts'
 import { runDream } from './lib/memory.ts'
 import { runDueMonitors } from './lib/monitor-runner.ts'
@@ -37,6 +38,7 @@ app.route('/api/users', usersRouter)
 app.route('/api/images', imagesRouter)
 app.route('/api/templates', templatesRouter)
 app.route('/api/monitors', monitorsRouter)
+app.route('/api/feeds', feedsRouter)
 
 // Serve generated images — auth required, users can only access their own
 app.get('/images/:userId/:filename', authMiddleware, async (c) => {

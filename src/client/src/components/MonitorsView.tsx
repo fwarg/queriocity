@@ -204,10 +204,10 @@ export function MonitorsView({ spaces, isAdmin, timezone, onOpenSession, onCount
   useEffect(() => { onCountChange?.(monitors.length) }, [monitors.length, onCountChange])
 
   useEffect(() => {
-    if (globalExpanded && globalMonitors.length === 0) {
+    if ((globalExpanded || adminExpanded) && globalMonitors.length === 0) {
       fetchGlobalMonitors().then(setGlobalMonitors).catch(() => {})
     }
-  }, [globalExpanded])
+  }, [globalExpanded, adminExpanded])
 
   async function handleSave(data: Parameters<typeof createMonitor>[0]) {
     if (editor === 'new') {
@@ -233,11 +233,13 @@ export function MonitorsView({ spaces, isAdmin, timezone, onOpenSession, onCount
   }
 
   async function handleDelete(id: string) {
+    if (!window.confirm('Delete this monitor?')) return
     await deleteMonitor(id)
     setMonitors(prev => prev.filter(m => m.id !== id))
   }
 
   async function handleGlobalDelete(id: string) {
+    if (!window.confirm('Delete this global monitor?')) return
     const { deleteGlobalMonitor } = await import('../lib/api.ts')
     await deleteGlobalMonitor(id)
     setGlobalMonitors(prev => prev.filter(m => m.id !== id))

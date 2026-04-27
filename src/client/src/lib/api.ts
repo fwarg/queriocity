@@ -263,11 +263,11 @@ export async function untagFileFromSpace(spaceId: string, fileId: string): Promi
   await fetch(`${BASE}/spaces/${spaceId}/files/${fileId}`, { method: 'DELETE' })
 }
 
-export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; attachmentChars: number; spaceRagBudget: number; queryReformulation: boolean }> {
+export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; attachmentChars: number; spaceRagBudget: number; queryReformulation: boolean; rssFeedCharsBudget: number }> {
   return fetch(`${BASE}/admin/settings`).then(r => r.json())
 }
 
-export async function updateAdminSettings(s: { memoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; dreamDeep?: boolean; memoryExtractChars?: number; rerankTopN?: number; attachmentChars?: number; spaceRagBudget?: number; queryReformulation?: boolean }): Promise<void> {
+export async function updateAdminSettings(s: { memoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; dreamDeep?: boolean; memoryExtractChars?: number; rerankTopN?: number; attachmentChars?: number; spaceRagBudget?: number; queryReformulation?: boolean; rssFeedCharsBudget?: number }): Promise<void> {
   await fetch(`${BASE}/admin/settings`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -447,6 +447,7 @@ export interface Monitor {
   intervalMinutes: number
   keepCount: number
   preferredHour?: number | null
+  feedSources?: string[] | null
   isGlobal: boolean
   spaceId?: string | null
   enabled: boolean
@@ -542,4 +543,25 @@ export async function updateGlobalMonitor(id: string, m: Partial<Omit<Monitor, '
 
 export async function deleteGlobalMonitor(id: string): Promise<void> {
   await fetch(`${BASE}/monitors/global/${id}`, { method: 'DELETE' })
+}
+
+export interface FeedSource {
+  name: string
+  country: string
+  topic: string
+  type: string
+  language: string
+  ownership: string
+  rss_status: string
+  rss: string
+}
+
+export interface FeedRegion {
+  region: string
+  sources: FeedSource[]
+}
+
+export async function fetchFeeds(): Promise<FeedRegion[]> {
+  const res = await fetch(`${BASE}/feeds`)
+  return res.json()
 }

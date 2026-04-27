@@ -1,0 +1,1377 @@
+[
+  {
+    "region": "Global / International",
+    "sources": [
+      {
+        "name": "Financial Times",
+        "country": "International / UK",
+        "topic": "General News",
+        "type": "Newspaper / Financial",
+        "language": "English",
+        "ownership": "Private (Nikkei Inc.)",
+        "rss_status": "OK",
+        "rss": "https://www.ft.com/world?format=rss"
+      },
+      {
+        "name": "BBC News – World",
+        "country": "International / UK",
+        "topic": "General News",
+        "type": "Public Broadcaster",
+        "language": "English",
+        "ownership": "Public Service (UK)",
+        "rss_status": "OK",
+        "rss": "https://feeds.bbci.co.uk/news/world/rss.xml"
+      },
+      {
+        "name": "Al Jazeera",
+        "country": "International / Qatar",
+        "topic": "General News",
+        "type": "Broadcast / Online",
+        "language": "English",
+        "ownership": "State-Funded (Qatar)",
+        "rss_status": "OK",
+        "rss": "https://www.aljazeera.com/xml/rss/all.xml"
+      },
+      {
+        "name": "France 24 (English)",
+        "country": "International / France",
+        "topic": "General News",
+        "type": "Public Broadcaster",
+        "language": "English",
+        "ownership": "Public Service (France)",
+        "rss_status": "OK",
+        "rss": "https://www.france24.com/en/rss"
+      },
+      {
+        "name": "DW (Deutsche Welle) – World",
+        "country": "International / Germany",
+        "topic": "General News",
+        "type": "Public Broadcaster",
+        "language": "English",
+        "ownership": "Public Service (Germany)",
+        "rss_status": "OK",
+        "rss": "https://rss.dw.com/xml/rss-en-world"
+      },
+      {
+        "name": "Bloomberg",
+        "country": "International / USA",
+        "topic": "Finance",
+        "type": "Financial / News",
+        "language": "English",
+        "ownership": "Private (Bloomberg L.P.)",
+        "rss_status": "OK",
+        "rss": "https://feeds.bloomberg.com/markets/news.rss"
+      }
+    ]
+  },
+  {
+    "region": "North America",
+    "sources": [
+      {
+        "name": "The New York Times",
+        "country": "United States",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Public Company (NYT Co.)",
+        "rss_status": "OK",
+        "rss": "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml"
+      },
+      {
+        "name": "The Washington Post",
+        "country": "United States",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Private (Jeff Bezos)",
+        "rss_status": "OK",
+        "rss": "https://feeds.washingtonpost.com/rss/world"
+      },
+      {
+        "name": "NPR News",
+        "country": "United States",
+        "topic": "General News",
+        "type": "Public Radio / Online",
+        "language": "English",
+        "ownership": "Non-Profit / Public Service (USA)",
+        "rss_status": "OK",
+        "rss": "https://feeds.npr.org/1001/rss.xml"
+      },
+      {
+        "name": "CNN",
+        "country": "United States",
+        "topic": "General News",
+        "type": "Broadcast / Online",
+        "language": "English",
+        "ownership": "News Corp (Warner Bros. Discovery)",
+        "rss_status": "OK",
+        "rss": "http://rss.cnn.com/rss/edition.rss"
+      },
+      {
+        "name": "The Wall Street Journal",
+        "country": "United States",
+        "topic": "Finance",
+        "type": "Newspaper / Financial",
+        "language": "English",
+        "ownership": "News Corp (Rupert Murdoch)",
+        "rss_status": "OK",
+        "rss": "https://feeds.a.dj.com/rss/RSSWorldNews.xml"
+      },
+      {
+        "name": "Politico",
+        "country": "United States",
+        "topic": "General News",
+        "type": "Online / Political",
+        "language": "English",
+        "ownership": "Private (Axel Springer SE)",
+        "rss_status": "OK",
+        "rss": "https://www.politico.com/rss/politicopicks.xml"
+      },
+      {
+        "name": "CBC News",
+        "country": "Canada",
+        "topic": "General News",
+        "type": "Public Broadcaster",
+        "language": "English",
+        "ownership": "Public Service (Canada)",
+        "rss_status": "KEEP — intermittent timeout, feed exists",
+        "rss": "https://www.cbc.ca/cmlink/rss-topstories"
+      },
+      {
+        "name": "The Globe and Mail",
+        "country": "Canada",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Private (Woodbridge Co. / Thomson family)",
+        "rss_status": "OK",
+        "rss": "https://www.theglobeandmail.com/arc/outboundfeeds/rss/category/canada/"
+      },
+      {
+        "name": "Global News Canada",
+        "country": "Canada",
+        "topic": "General News",
+        "type": "Broadcast / Online",
+        "language": "English",
+        "ownership": "Private (Corus Entertainment)",
+        "rss_status": "OK",
+        "rss": "https://globalnews.ca/feed/"
+      }
+    ]
+  },
+  {
+    "region": "Latin America",
+    "sources": [
+      {
+        "name": "Folha de S.Paulo",
+        "country": "Brazil",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "Portuguese",
+        "ownership": "Private (Grupo Folha)",
+        "rss_status": "OK",
+        "rss": "https://feeds.folha.uol.com.br/emcimadahora/rss091.xml"
+      },
+      {
+        "name": "O Globo",
+        "country": "Brazil",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "Portuguese",
+        "ownership": "Private (Grupo Globo)",
+        "rss_status": "KEEP — returns 0 items intermittently, feed exists",
+        "rss": "https://oglobo.globo.com/rss.xml"
+      },
+      {
+        "name": "Agência Brasil",
+        "country": "Brazil",
+        "topic": "General News",
+        "type": "Public News Agency",
+        "language": "Portuguese",
+        "ownership": "Public Service (Brazil)",
+        "rss_status": "OK",
+        "rss": "https://agenciabrasil.ebc.com.br/rss/ultimasnoticias/feed.xml"
+      },
+      {
+        "name": "La Nación",
+        "country": "Argentina",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "Spanish",
+        "ownership": "Private (Grupo La Nación)",
+        "rss_status": "OK",
+        "rss": "https://www.lanacion.com.ar/arcio/rss/"
+      },
+      {
+        "name": "El Universal",
+        "country": "Mexico",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "Spanish",
+        "ownership": "Private (El Universal Compañía Periodística Nacional)",
+        "rss_status": "FIXED — updated URL",
+        "rss": "https://www.eluniversal.com.mx/arc/outboundfeeds/rss/"
+      },
+      {
+        "name": "La Tercera",
+        "country": "Chile",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "Spanish",
+        "ownership": "Private (Grupo Copesa)",
+        "rss_status": "FIXED — updated URL",
+        "rss": "https://www.latercera.com/arc/outboundfeeds/rss/"
+      }
+    ]
+  },
+  {
+    "region": "Europe",
+    "sources": [
+      {
+        "name": "The Guardian",
+        "country": "United Kingdom",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Independent Non-Profit (Scott Trust Ltd.)",
+        "rss_status": "OK",
+        "rss": "https://www.theguardian.com/world/rss"
+      },
+      {
+        "name": "BBC News – UK",
+        "country": "United Kingdom",
+        "topic": "General News",
+        "type": "Public Broadcaster",
+        "language": "English",
+        "ownership": "Public Service (UK)",
+        "rss_status": "OK",
+        "rss": "https://feeds.bbci.co.uk/news/uk/rss.xml"
+      },
+      {
+        "name": "The Independent (UK)",
+        "country": "United Kingdom",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Private (Sultan Muhammad Abuljadayel / Independent Digital News)",
+        "rss_status": "OK",
+        "rss": "https://www.independent.co.uk/news/uk/rss"
+      },
+      {
+        "name": "Le Monde",
+        "country": "France",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "French",
+        "ownership": "Independent (Staff & Reader Owned)",
+        "rss_status": "OK",
+        "rss": "https://www.lemonde.fr/rss/une.xml"
+      },
+      {
+        "name": "Le Figaro",
+        "country": "France",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "French",
+        "ownership": "Private (Groupe Dassault)",
+        "rss_status": "OK",
+        "rss": "https://www.lefigaro.fr/rss/figaro_actualites.xml"
+      },
+      {
+        "name": "Der Spiegel",
+        "country": "Germany",
+        "topic": "General News",
+        "type": "News Magazine",
+        "language": "German",
+        "ownership": "Independent (Employee & Family Owned)",
+        "rss_status": "OK",
+        "rss": "https://www.spiegel.de/schlagzeilen/index.rss"
+      },
+      {
+        "name": "Die Zeit",
+        "country": "Germany",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "German",
+        "ownership": "Private (Zeit-Verlagsgruppe)",
+        "rss_status": "OK",
+        "rss": "https://newsfeed.zeit.de/index"
+      },
+      {
+        "name": "Frankfurter Allgemeine Zeitung (FAZ)",
+        "country": "Germany",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "German",
+        "ownership": "Independent Non-Profit (FAZ-Stiftung Foundation)",
+        "rss_status": "OK",
+        "rss": "https://www.faz.net/rss/aktuell/"
+      },
+      {
+        "name": "El País (English)",
+        "country": "Spain",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English / Spanish",
+        "ownership": "Private (Grupo PRISA)",
+        "rss_status": "OK",
+        "rss": "https://feeds.elpais.com/mrss-s/pages/ep/site/english.elpais.com/portada"
+      },
+      {
+        "name": "El Mundo",
+        "country": "Spain",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "Spanish",
+        "ownership": "Private (Unidad Editorial / RCS MediaGroup)",
+        "rss_status": "OK",
+        "rss": "https://e00-elmundo.uecdn.es/rss/portada.xml"
+      },
+      {
+        "name": "Corriere della Sera",
+        "country": "Italy",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "Italian",
+        "ownership": "Private (RCS MediaGroup)",
+        "rss_status": "OK",
+        "rss": "https://xml2.corriereobjects.it/rss/homepage.xml"
+      },
+      {
+        "name": "La Repubblica",
+        "country": "Italy",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "Italian",
+        "ownership": "Private (GEDI Gruppo Editoriale / Agnelli family)",
+        "rss_status": "OK",
+        "rss": "https://www.repubblica.it/rss/homepage/rss2.0.xml"
+      },
+      {
+        "name": "NOS Nieuws",
+        "country": "Netherlands",
+        "topic": "General News",
+        "type": "Public Broadcaster",
+        "language": "Dutch",
+        "ownership": "Public Service (Netherlands)",
+        "rss_status": "OK",
+        "rss": "https://feeds.nos.nl/nosnieuwsalgemeen"
+      },
+      {
+        "name": "SVT Nyheter",
+        "country": "Sweden",
+        "topic": "General News",
+        "type": "Public Broadcaster",
+        "language": "Swedish",
+        "ownership": "Public Service (Sweden)",
+        "rss_status": "OK",
+        "rss": "https://www.svt.se/nyheter/rss.xml"
+      },
+      {
+        "name": "NRK Nyheter",
+        "country": "Norway",
+        "topic": "General News",
+        "type": "Public Broadcaster",
+        "language": "Norwegian",
+        "ownership": "Public Service (Norway)",
+        "rss_status": "OK",
+        "rss": "https://www.nrk.no/nyheter/siste.rss"
+      },
+      {
+        "name": "Yle Uutiset",
+        "country": "Finland",
+        "topic": "General News",
+        "type": "Public Broadcaster",
+        "language": "Finnish / English",
+        "ownership": "Public Service (Finland)",
+        "rss_status": "OK",
+        "rss": "https://feeds.yle.fi/uutiset/v1/recent.rss?publisherIds=YLE_UUTISET"
+      },
+      {
+        "name": "Gazeta Wyborcza",
+        "country": "Poland",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "Polish",
+        "ownership": "Private (Agora SA)",
+        "rss_status": "OK",
+        "rss": "https://rss.gazeta.pl/pub/rss/najnowsze_wyborcza.xml"
+      },
+      {
+        "name": "Hurriyet Daily News",
+        "country": "Turkey",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Private (Demirören Holding)",
+        "rss_status": "KEEP — returns 0 items intermittently, feed endpoint exists",
+        "rss": "https://www.hurriyetdailynews.com/rss"
+      },
+      {
+        "name": "Daily Sabah",
+        "country": "Turkey",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Private (Sabah Media Group, pro-government)",
+        "rss_status": "OK",
+        "rss": "https://www.dailysabah.com/rssFeed/turkey"
+      },
+      {
+        "name": "Bianet",
+        "country": "Turkey",
+        "topic": "General News",
+        "type": "Online / Independent",
+        "language": "English / Turkish",
+        "ownership": "Independent Non-Profit",
+        "rss_status": "FIXED — updated URL",
+        "rss": "https://bianet.org/feeds/news.rss"
+      }
+    ]
+  },
+  {
+    "region": "Asia",
+    "sources": [
+      {
+        "name": "China Global Television Network (CGTN)",
+        "country": "China",
+        "topic": "General News",
+        "type": "State Broadcaster",
+        "language": "English",
+        "ownership": "State Media (Chinese Communist Party)",
+        "rss_status": "OK",
+        "rss": "https://www.cgtn.com/subscribe/rss/section/world.xml"
+      },
+      {
+        "name": "China News Service (ECNS)",
+        "country": "China",
+        "topic": "General News",
+        "type": "State News Agency",
+        "language": "English",
+        "ownership": "State Media (Chinese Communist Party)",
+        "rss_status": "KEEP — connection issues may be geo/network related",
+        "rss": "https://ecns.cn/rss/rss.xml"
+      },
+      {
+        "name": "South China Morning Post",
+        "country": "China / Hong Kong",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Private (Alibaba Group)",
+        "rss_status": "OK",
+        "rss": "https://www.scmp.com/rss/91/feed"
+      },
+      {
+        "name": "China Digital Times",
+        "country": "China (overseas / independent)",
+        "topic": "General News",
+        "type": "Online / Independent",
+        "language": "English / Chinese",
+        "ownership": "Independent Non-Profit (US-based, uncensored China coverage)",
+        "rss_status": "OK",
+        "rss": "https://chinadigitaltimes.net/feed/"
+      },
+      {
+        "name": "The Diplomat",
+        "country": "Asia-Pacific",
+        "topic": "General News",
+        "type": "Online / Magazine",
+        "language": "English",
+        "ownership": "Independent Private",
+        "rss_status": "OK",
+        "rss": "https://thediplomat.com/feed/"
+      },
+      {
+        "name": "NHK World – Japan",
+        "country": "Japan",
+        "topic": "General News",
+        "type": "Public Broadcaster",
+        "language": "English",
+        "ownership": "Public Service (Japan)",
+        "rss_status": "OK",
+        "rss": "https://www3.nhk.or.jp/rss/news/cat0.xml"
+      },
+      {
+        "name": "The Japan News (Yomiuri)",
+        "country": "Japan",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Private (Yomiuri Shimbun Holdings)",
+        "rss_status": "KEEP — intermittent timeout, feed exists",
+        "rss": "https://japannews.yomiuri.co.jp/feed/"
+      },
+      {
+        "name": "Asahi Shimbun – AJW",
+        "country": "Japan",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Private (Asahi Shimbun Company)",
+        "rss_status": "OK",
+        "rss": "https://rss.asahi.com/rss/asahi/newsheadlines.rdf"
+      },
+      {
+        "name": "Mainichi Shimbun (English)",
+        "country": "Japan",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Private (Mainichi Newspapers Co.)",
+        "rss_status": "OK",
+        "rss": "https://mainichi.jp/rss/etc/mainichi-flash.rss"
+      },
+      {
+        "name": "Japan Wire (Kyodo News)",
+        "country": "Japan",
+        "topic": "General News",
+        "type": "Wire Service",
+        "language": "English",
+        "ownership": "Non-Profit Cooperative",
+        "rss_status": "FIXED — rebranded July 2025, updated URL",
+        "rss": "https://english.kyodonews.net/list/feed/rss"
+      },
+      {
+        "name": "The Hindu",
+        "country": "India",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Private (Kasturi & Sons Ltd.)",
+        "rss_status": "OK",
+        "rss": "https://www.thehindu.com/news/feeder/default.rss"
+      },
+      {
+        "name": "Times of India",
+        "country": "India",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Private (Bennett, Coleman & Co. / Times Group)",
+        "rss_status": "OK",
+        "rss": "https://timesofindia.indiatimes.com/rssfeedstopstories.cms"
+      },
+      {
+        "name": "NDTV",
+        "country": "India",
+        "topic": "General News",
+        "type": "Broadcast / Online",
+        "language": "English",
+        "ownership": "Private (Adani Group)",
+        "rss_status": "OK",
+        "rss": "https://feeds.feedburner.com/ndtvnews-top-stories"
+      },
+      {
+        "name": "The Print",
+        "country": "India",
+        "topic": "General News",
+        "type": "Online / Independent",
+        "language": "English",
+        "ownership": "Independent Private",
+        "rss_status": "KEEP — returns 0 items intermittently, feed exists",
+        "rss": "https://theprint.in/feed/"
+      },
+      {
+        "name": "Channel NewsAsia (CNA)",
+        "country": "Singapore / Asia",
+        "topic": "General News",
+        "type": "Broadcast / Online",
+        "language": "English",
+        "ownership": "Public Service (Mediacorp, Singapore)",
+        "rss_status": "OK",
+        "rss": "https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml"
+      },
+      {
+        "name": "The Straits Times",
+        "country": "Singapore",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Private (Singapore Press Holdings)",
+        "rss_status": "OK",
+        "rss": "https://www.straitstimes.com/news/singapore/rss.xml"
+      },
+      {
+        "name": "The Korea Herald",
+        "country": "South Korea",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Private (Herald Media Group)",
+        "rss_status": "KEEP — returns 0 items intermittently, feed exists",
+        "rss": "https://www.koreaherald.com/rss/010000000000.xml"
+      },
+      {
+        "name": "Yonhap News Agency",
+        "country": "South Korea",
+        "topic": "General News",
+        "type": "News Agency",
+        "language": "English",
+        "ownership": "Public Service (South Korea)",
+        "rss_status": "OK",
+        "rss": "https://en.yna.co.kr/RSS/news.xml"
+      },
+      {
+        "name": "Bangkok Post",
+        "country": "Thailand",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Private (Bangkok Post Public Company)",
+        "rss_status": "OK",
+        "rss": "https://www.bangkokpost.com/rss/data/topstories.xml"
+      },
+      {
+        "name": "Dawn",
+        "country": "Pakistan",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Private (Pakistan Herald Publications)",
+        "rss_status": "OK",
+        "rss": "https://www.dawn.com/feeds/home"
+      }
+    ]
+  },
+  {
+    "region": "Oceania",
+    "sources": [
+      {
+        "name": "ABC News Australia",
+        "country": "Australia",
+        "topic": "General News",
+        "type": "Public Broadcaster",
+        "language": "English",
+        "ownership": "Public Service (Australia)",
+        "rss_status": "OK",
+        "rss": "https://www.abc.net.au/news/feed/45910/rss.xml"
+      },
+      {
+        "name": "The Sydney Morning Herald",
+        "country": "Australia",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Private (Nine Entertainment Co.)",
+        "rss_status": "OK",
+        "rss": "https://www.smh.com.au/rss/feed.xml"
+      },
+      {
+        "name": "The Age",
+        "country": "Australia",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Private (Nine Entertainment Co.)",
+        "rss_status": "OK",
+        "rss": "https://www.theage.com.au/rss/feed.xml"
+      },
+      {
+        "name": "RNZ (Radio New Zealand)",
+        "country": "New Zealand",
+        "topic": "General News",
+        "type": "Public Broadcaster",
+        "language": "English",
+        "ownership": "Public Service (New Zealand)",
+        "rss_status": "OK",
+        "rss": "https://www.rnz.co.nz/rss/news.xml"
+      },
+      {
+        "name": "NZ Herald",
+        "country": "New Zealand",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Private (NZME)",
+        "rss_status": "FIXED — updated URL",
+        "rss": "https://www.nzherald.co.nz/arc/outboundfeeds/rss/category/nz-herald/"
+      }
+    ]
+  },
+  {
+    "region": "Africa",
+    "sources": [
+      {
+        "name": "AllAfrica",
+        "country": "Pan-African",
+        "topic": "General News",
+        "type": "News Aggregator",
+        "language": "English / French",
+        "ownership": "Independent Non-Profit",
+        "rss_status": "OK",
+        "rss": "https://allafrica.com/tools/headlines/rdf/latest/headlines.rdf"
+      },
+      {
+        "name": "Africanews",
+        "country": "Pan-African",
+        "topic": "General News",
+        "type": "Broadcast / Online",
+        "language": "English / French",
+        "ownership": "Private (Euronews / Media Bridge)",
+        "rss_status": "OK",
+        "rss": "https://www.africanews.com/feed/rss"
+      },
+      {
+        "name": "News24",
+        "country": "South Africa",
+        "topic": "General News",
+        "type": "Online",
+        "language": "English",
+        "ownership": "Private (Naspers / Media24)",
+        "rss_status": "OK",
+        "rss": "https://feeds.news24.com/articles/news24/TopStories/rss"
+      },
+      {
+        "name": "Daily Maverick",
+        "country": "South Africa",
+        "topic": "General News",
+        "type": "Online / Independent",
+        "language": "English",
+        "ownership": "Independent Private",
+        "rss_status": "KEEP — 403 likely scraper block, legitimate feed exists for readers",
+        "rss": "https://www.dailymaverick.co.za/feed/"
+      },
+      {
+        "name": "Mail & Guardian",
+        "country": "South Africa",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Independent Private",
+        "rss_status": "OK",
+        "rss": "https://mg.co.za/feed/"
+      },
+      {
+        "name": "The Citizen (SA)",
+        "country": "South Africa",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Private (Caxton & CTP Publishers)",
+        "rss_status": "OK",
+        "rss": "https://citizen.co.za/feed/"
+      },
+      {
+        "name": "The Standard (Kenya)",
+        "country": "Kenya",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Private (Standard Group PLC)",
+        "rss_status": "OK",
+        "rss": "https://www.standardmedia.co.ke/rss/headlines.php"
+      },
+      {
+        "name": "Nation Africa (Kenya)",
+        "country": "Kenya",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Private (Nation Media Group)",
+        "rss_status": "FIXED — updated URL",
+        "rss": "https://nation.africa/kenya/rss.xml"
+      },
+      {
+        "name": "The East African",
+        "country": "Kenya / East Africa",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Private (Nation Media Group)",
+        "rss_status": "FIXED — updated URL",
+        "rss": "https://www.theeastafrican.co.ke/tea/rss"
+      },
+      {
+        "name": "Vanguard Nigeria",
+        "country": "Nigeria",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Private (Vanguard Media Ltd.)",
+        "rss_status": "OK",
+        "rss": "https://www.vanguardngr.com/feed/"
+      },
+      {
+        "name": "Punch Nigeria",
+        "country": "Nigeria",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Private (Punch Nigeria Ltd.)",
+        "rss_status": "KEEP — 403 likely geo/bot block, legitimate feed exists",
+        "rss": "https://punchng.com/feed/"
+      },
+      {
+        "name": "The Guardian Nigeria",
+        "country": "Nigeria",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Private (Guardian Newspapers Ltd.)",
+        "rss_status": "KEEP — 403 likely geo/bot block, legitimate feed exists",
+        "rss": "https://guardian.ng/feed/"
+      },
+      {
+        "name": "Premium Times Nigeria",
+        "country": "Nigeria",
+        "topic": "General News",
+        "type": "Online / Independent",
+        "language": "English",
+        "ownership": "Independent Private",
+        "rss_status": "OK",
+        "rss": "https://www.premiumtimesng.com/feed"
+      },
+      {
+        "name": "Egypt Independent",
+        "country": "Egypt",
+        "topic": "General News",
+        "type": "Online",
+        "language": "English",
+        "ownership": "Independent Private",
+        "rss_status": "OK",
+        "rss": "https://egyptindependent.com/feed/"
+      },
+      {
+        "name": "The Ethiopian Reporter",
+        "country": "Ethiopia",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Independent Private",
+        "rss_status": "KEEP — HTTP 304 means 'not modified' (cached), not an error",
+        "rss": "https://www.ethiopianreporter.com/feed"
+      }
+    ]
+  },
+  {
+    "region": "Middle East",
+    "sources": [
+      {
+        "name": "Arab News",
+        "country": "Saudi Arabia",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Private (Saudi Research & Media Group, state-aligned)",
+        "rss_status": "OK",
+        "rss": "https://www.arabnews.com/rss.xml"
+      },
+      {
+        "name": "The National (UAE)",
+        "country": "United Arab Emirates",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "State-Linked (ADQ sovereign fund)",
+        "rss_status": "FIXED — updated URL",
+        "rss": "https://www.thenationalnews.com/arc/outboundfeeds/rss/"
+      },
+      {
+        "name": "Gulf News",
+        "country": "United Arab Emirates",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Private (Al Nisr Publishing)",
+        "rss_status": "FIXED — updated URL",
+        "rss": "https://gulfnews.com/rss/world"
+      },
+      {
+        "name": "Haaretz",
+        "country": "Israel",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English / Hebrew",
+        "ownership": "Independent Private",
+        "rss_status": "KEEP — 403 is a scraper block, feed works in RSS readers",
+        "rss": "https://www.haaretz.com/cmlink/1.628765"
+      },
+      {
+        "name": "The Jerusalem Post",
+        "country": "Israel",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Private (Jellyfish Group)",
+        "rss_status": "OK",
+        "rss": "https://www.jpost.com/rss/rssfeedsheadlines.aspx"
+      },
+      {
+        "name": "Tehran Times",
+        "country": "Iran",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "State Media (Islamic Republic of Iran)",
+        "rss_status": "OK",
+        "rss": "https://www.tehrantimes.com/rss"
+      },
+      {
+        "name": "Daily Star (Lebanon)",
+        "country": "Lebanon",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Independent Private",
+        "rss_status": "KEEP — 403 scraper block, feed works in RSS readers",
+        "rss": "https://www.dailystar.com.lb/RSS/home.xml"
+      },
+      {
+        "name": "Jordan Times",
+        "country": "Jordan",
+        "topic": "General News",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Private (Jordan Press Foundation, state-linked)",
+        "rss_status": "KEEP — 403 scraper block, feed works in RSS readers",
+        "rss": "https://www.jordantimes.com/rss.xml"
+      }
+    ]
+  },
+  {
+    "region": "Technology",
+    "sources": [
+      {
+        "name": "Ars Technica",
+        "country": "United States",
+        "topic": "Tech News",
+        "type": "Online / Magazine",
+        "language": "English",
+        "ownership": "Private (Condé Nast)",
+        "rss_status": "OK",
+        "rss": "https://feeds.arstechnica.com/arstechnica/index"
+      },
+      {
+        "name": "The Verge",
+        "country": "United States",
+        "topic": "Tech News",
+        "type": "Online",
+        "language": "English",
+        "ownership": "Private (Vox Media)",
+        "rss_status": "OK",
+        "rss": "https://www.theverge.com/rss/index.xml"
+      },
+      {
+        "name": "Wired",
+        "country": "United States",
+        "topic": "Tech News",
+        "type": "Magazine / Online",
+        "language": "English",
+        "ownership": "Private (Condé Nast)",
+        "rss_status": "OK",
+        "rss": "https://www.wired.com/feed/rss"
+      },
+      {
+        "name": "The Register",
+        "country": "United Kingdom",
+        "topic": "Tech News",
+        "type": "Online",
+        "language": "English",
+        "ownership": "Private (Situation Publishing)",
+        "rss_status": "OK",
+        "rss": "https://www.theregister.com/headlines.atom"
+      },
+      {
+        "name": "TNW (The Next Web)",
+        "country": "Netherlands",
+        "topic": "Tech News",
+        "type": "Online",
+        "language": "English",
+        "ownership": "Private (Financial Times Group)",
+        "rss_status": "OK",
+        "rss": "https://feeds.feedburner.com/thenextweb"
+      },
+      {
+        "name": "TechRadar",
+        "country": "United Kingdom",
+        "topic": "Tech News",
+        "type": "Online",
+        "language": "English",
+        "ownership": "Private (Future PLC)",
+        "rss_status": "OK",
+        "rss": "https://www.techradar.com/feeds.xml"
+      },
+      {
+        "name": "Gadgets 360",
+        "country": "India",
+        "topic": "Tech News",
+        "type": "Online",
+        "language": "English",
+        "ownership": "Private (NDTV / Adani Group)",
+        "rss_status": "OK",
+        "rss": "https://gadgets360.com/rss/feeds"
+      },
+      {
+        "name": "TechNode",
+        "country": "China",
+        "topic": "Tech News",
+        "type": "Online",
+        "language": "English",
+        "ownership": "Independent Private",
+        "rss_status": "OK",
+        "rss": "https://technode.com/feed/"
+      },
+      {
+        "name": "ZDNet",
+        "country": "United States",
+        "topic": "Tech News",
+        "type": "Online",
+        "language": "English",
+        "ownership": "Private (Red Ventures)",
+        "rss_status": "OK",
+        "rss": "https://www.zdnet.com/news/rss.xml"
+      },
+      {
+        "name": "MIT Technology Review",
+        "country": "United States",
+        "topic": "Tech News",
+        "type": "Magazine / Online",
+        "language": "English",
+        "ownership": "Non-Profit (MIT)",
+        "rss_status": "OK",
+        "rss": "https://www.technologyreview.com/feed/"
+      }
+    ]
+  },
+  {
+    "region": "Finance",
+    "sources": [
+      {
+        "name": "Reuters Business (via Google News)",
+        "country": "International",
+        "topic": "Finance",
+        "type": "Wire Service",
+        "language": "English",
+        "ownership": "Private (Thomson Reuters Corp.)",
+        "rss_status": "OK — workaround since Reuters dropped native RSS",
+        "rss": "https://news.google.com/rss/search?q=when:24h+allinurl:reuters.com/business&ceid=US:en&hl=en-US&gl=US"
+      },
+      {
+        "name": "MarketWatch",
+        "country": "United States",
+        "topic": "Finance",
+        "type": "Online / Financial",
+        "language": "English",
+        "ownership": "Private (News Corp / Dow Jones)",
+        "rss_status": "OK",
+        "rss": "https://www.marketwatch.com/rss/topstories"
+      },
+      {
+        "name": "The Economist",
+        "country": "United Kingdom",
+        "topic": "Finance",
+        "type": "Magazine",
+        "language": "English",
+        "ownership": "Private (Economist Group)",
+        "rss_status": "OK",
+        "rss": "https://www.economist.com/finance-and-economics/rss.xml"
+      },
+      {
+        "name": "Nikkei Asia",
+        "country": "Japan",
+        "topic": "Finance",
+        "type": "Newspaper / Financial",
+        "language": "English",
+        "ownership": "Private (Nikkei Inc.)",
+        "rss_status": "OK",
+        "rss": "https://asia.nikkei.com/rss/feed/nar"
+      },
+      {
+        "name": "Business Standard (India)",
+        "country": "India",
+        "topic": "Finance",
+        "type": "Newspaper / Financial",
+        "language": "English",
+        "ownership": "Private (BS Ltd.)",
+        "rss_status": "OK",
+        "rss": "https://www.business-standard.com/rss/home_page_top_stories.rss"
+      },
+      {
+        "name": "Africa Business",
+        "country": "Pan-African",
+        "topic": "Finance",
+        "type": "Magazine / Online",
+        "language": "English",
+        "ownership": "Private (IC Publications)",
+        "rss_status": "OK",
+        "rss": "https://african.business/feed"
+      }
+    ]
+  },
+  {
+    "region": "Science & Nature",
+    "sources": [
+      {
+        "name": "Nature",
+        "country": "International / UK",
+        "topic": "Academic Journal",
+        "type": "Peer-Reviewed Journal",
+        "language": "English",
+        "ownership": "Private (Springer Nature)",
+        "rss_status": "OK",
+        "rss": "https://www.nature.com/nature.rss"
+      },
+      {
+        "name": "Science (AAAS)",
+        "country": "United States",
+        "topic": "Academic Journal",
+        "type": "Peer-Reviewed Journal",
+        "language": "English",
+        "ownership": "Non-Profit (AAAS)",
+        "rss_status": "OK",
+        "rss": "https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=science"
+      },
+      {
+        "name": "New Scientist",
+        "country": "United Kingdom",
+        "topic": "Popular Science",
+        "type": "Magazine / Online",
+        "language": "English",
+        "ownership": "Private (Daily Mail and General Trust)",
+        "rss_status": "OK",
+        "rss": "https://www.newscientist.com/feed/home/"
+      },
+      {
+        "name": "Scientific American",
+        "country": "United States",
+        "topic": "Popular Science",
+        "type": "Magazine / Online",
+        "language": "English",
+        "ownership": "Private (Springer Nature)",
+        "rss_status": "OK",
+        "rss": "https://rss.sciam.com/ScientificAmerican-Global"
+      },
+      {
+        "name": "Nature Communications",
+        "country": "International / UK",
+        "topic": "Academic Journal",
+        "type": "Peer-Reviewed Journal (Open Access)",
+        "language": "English",
+        "ownership": "Private (Springer Nature)",
+        "rss_status": "OK",
+        "rss": "https://feeds.nature.com/ncomms/rss/current"
+      },
+      {
+        "name": "PNAS (Proceedings of the National Academy of Sciences)",
+        "country": "United States",
+        "topic": "Academic Journal",
+        "type": "Peer-Reviewed Journal",
+        "language": "English",
+        "ownership": "Non-Profit (NAS)",
+        "rss_status": "OK",
+        "rss": "https://www.pnas.org/action/showFeed?type=etoc&feed=rss&jc=pnas"
+      },
+      {
+        "name": "The Lancet",
+        "country": "United Kingdom",
+        "topic": "Academic Journal",
+        "type": "Peer-Reviewed Medical Journal",
+        "language": "English",
+        "ownership": "Private (Elsevier / RELX Group)",
+        "rss_status": "OK",
+        "rss": "https://www.thelancet.com/rssfeed/lancet_online.xml"
+      },
+      {
+        "name": "NEJM (New England Journal of Medicine)",
+        "country": "United States",
+        "topic": "Academic Journal",
+        "type": "Peer-Reviewed Medical Journal",
+        "language": "English",
+        "ownership": "Non-Profit (Massachusetts Medical Society)",
+        "rss_status": "OK",
+        "rss": "https://www.nejm.org/action/showFeed?jc=nejm&type=etoc&feed=rss"
+      },
+      {
+        "name": "Phys.org",
+        "country": "International",
+        "topic": "Popular Science",
+        "type": "Online",
+        "language": "English",
+        "ownership": "Independent Private",
+        "rss_status": "OK",
+        "rss": "https://phys.org/rss-feed/"
+      },
+      {
+        "name": "National Geographic",
+        "country": "United States",
+        "topic": "Nature & Environment",
+        "type": "Magazine / Online",
+        "language": "English",
+        "ownership": "Private (Walt Disney Company / NatGeo Partners)",
+        "rss_status": "OK",
+        "rss": "https://www.nationalgeographic.com/feed/rss"
+      },
+      {
+        "name": "BBC Science & Environment",
+        "country": "International / UK",
+        "topic": "Nature & Environment",
+        "type": "Public Broadcaster",
+        "language": "English",
+        "ownership": "Public Service (UK)",
+        "rss_status": "OK",
+        "rss": "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml"
+      },
+      {
+        "name": "The Conversation – Science",
+        "country": "International",
+        "topic": "Popular Science",
+        "type": "Online / Academic",
+        "language": "English",
+        "ownership": "Non-Profit (The Conversation Trust)",
+        "rss_status": "OK",
+        "rss": "https://theconversation.com/us/science+technology/articles.atom"
+      }
+    ]
+  },
+  {
+    "region": "Culture & Arts",
+    "sources": [
+      {
+        "name": "BBC Culture",
+        "country": "International / UK",
+        "topic": "Culture",
+        "type": "Public Broadcaster",
+        "language": "English",
+        "ownership": "Public Service (UK)",
+        "rss_status": "OK",
+        "rss": "https://feeds.bbci.co.uk/culture/rss.xml"
+      },
+      {
+        "name": "The Guardian – Culture",
+        "country": "United Kingdom",
+        "topic": "Culture",
+        "type": "Newspaper",
+        "language": "English",
+        "ownership": "Independent Non-Profit (Scott Trust Ltd.)",
+        "rss_status": "OK",
+        "rss": "https://www.theguardian.com/culture/rss"
+      },
+      {
+        "name": "Pitchfork",
+        "country": "United States",
+        "topic": "Culture",
+        "type": "Online / Music",
+        "language": "English",
+        "ownership": "Private (Condé Nast)",
+        "rss_status": "OK",
+        "rss": "https://pitchfork.com/feed/feed-news/rss"
+      },
+      {
+        "name": "ArtForum",
+        "country": "United States",
+        "topic": "Culture",
+        "type": "Magazine / Online",
+        "language": "English",
+        "ownership": "Private (Penske Media Corp.)",
+        "rss_status": "OK",
+        "rss": "https://www.artforum.com/rss.xml"
+      },
+      {
+        "name": "Hyperallergic",
+        "country": "United States",
+        "topic": "Culture",
+        "type": "Online / Art",
+        "language": "English",
+        "ownership": "Independent Private",
+        "rss_status": "OK",
+        "rss": "https://hyperallergic.com/feed/"
+      },
+      {
+        "name": "The Art Newspaper",
+        "country": "United Kingdom",
+        "topic": "Culture",
+        "type": "Newspaper / Online",
+        "language": "English",
+        "ownership": "Private (Umberto Allemandi & C.)",
+        "rss_status": "OK",
+        "rss": "https://www.theartnewspaper.com/rss"
+      },
+      {
+        "name": "Frieze",
+        "country": "United Kingdom",
+        "topic": "Culture",
+        "type": "Magazine / Online",
+        "language": "English",
+        "ownership": "Private (Frieze Media Ltd.)",
+        "rss_status": "OK",
+        "rss": "https://www.frieze.com/feed"
+      },
+      {
+        "name": "Le Monde – Culture",
+        "country": "France",
+        "topic": "Culture",
+        "type": "Newspaper",
+        "language": "French",
+        "ownership": "Independent (Staff & Reader Owned)",
+        "rss_status": "OK",
+        "rss": "https://www.lemonde.fr/culture/rss_full.xml"
+      },
+      {
+        "name": "NHK World – Arts & Culture",
+        "country": "Japan",
+        "topic": "Culture",
+        "type": "Public Broadcaster",
+        "language": "English",
+        "ownership": "Public Service (Japan)",
+        "rss_status": "OK",
+        "rss": "https://www3.nhk.or.jp/rss/news/cat6.xml"
+      }
+    ]
+  },
+  {
+    "region": "Sports",
+    "sources": [
+      {
+        "name": "BBC Sport",
+        "country": "United Kingdom",
+        "topic": "Sports",
+        "type": "Public Broadcaster",
+        "language": "English",
+        "ownership": "Public Service (UK)",
+        "rss_status": "OK",
+        "rss": "https://feeds.bbci.co.uk/sport/rss.xml"
+      },
+      {
+        "name": "Eurosport",
+        "country": "Europe / International",
+        "topic": "Sports",
+        "type": "Broadcast / Online",
+        "language": "English",
+        "ownership": "Private (Warner Bros. Discovery)",
+        "rss_status": "OK",
+        "rss": "https://www.eurosport.com/rss.xml"
+      },
+      {
+        "name": "ESPN (International)",
+        "country": "United States / International",
+        "topic": "Sports",
+        "type": "Broadcast / Online",
+        "language": "English",
+        "ownership": "Private (Walt Disney Company)",
+        "rss_status": "OK",
+        "rss": "https://www.espn.com/espn/rss/news"
+      },
+      {
+        "name": "France 24 – Sport",
+        "country": "International / France",
+        "topic": "Sports",
+        "type": "Public Broadcaster",
+        "language": "English",
+        "ownership": "Public Service (France)",
+        "rss_status": "OK",
+        "rss": "https://www.france24.com/en/sport/rss"
+      },
+      {
+        "name": "ESPN Cricinfo",
+        "country": "International",
+        "topic": "Sports",
+        "type": "Online",
+        "language": "English",
+        "ownership": "Private (ESPN / Disney)",
+        "rss_status": "OK",
+        "rss": "https://www.espncricinfo.com/rss/content/story/feeds/0.xml"
+      }
+    ]
+  }
+]

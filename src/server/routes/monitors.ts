@@ -20,6 +20,7 @@ const monitorBody = z.object({
   preferredHour: z.number().int().min(0).max(23).nullable().optional(),
   spaceId: z.string().nullable().optional(),
   enabled: z.boolean().default(true),
+  feedSources: z.array(z.string()).nullable().optional(),
 })
 
 function toUnix(d: Date | null | undefined): number | undefined {
@@ -36,6 +37,7 @@ function serializeMonitor(m: typeof monitors.$inferSelect, subscribed?: boolean)
     intervalMinutes: m.intervalMinutes,
     keepCount: m.keepCount,
     preferredHour: m.preferredHour ?? null,
+    feedSources: m.feedSources ? JSON.parse(m.feedSources) as string[] : null,
     isGlobal: m.isGlobal,
     spaceId: m.spaceId,
     enabled: m.enabled,
@@ -63,7 +65,7 @@ monitorsRouter.post('/global', zValidator('json', monitorBody), async (c) => {
   const body = c.req.valid('json')
   const now = new Date()
   const id = randomUUID()
-  const nextRunAt = computeNextRunAt(body.intervalMinutes, body.preferredHour, null, now)
+  const nextRunAt = computeNextRunAt(body.intervalMinutes, body.preferredHour, null, now, true)
 
   await db.insert(monitors).values({
     id,
@@ -74,6 +76,7 @@ monitorsRouter.post('/global', zValidator('json', monitorBody), async (c) => {
     intervalMinutes: body.intervalMinutes,
     keepCount: body.keepCount,
     preferredHour: body.preferredHour ?? null,
+    feedSources: body.feedSources?.length ? JSON.stringify(body.feedSources) : null,
     isGlobal: true,
     spaceId: null,
     enabled: body.enabled,
@@ -101,10 +104,12 @@ monitorsRouter.patch('/global/:id', zValidator('json', monitorBody.partial()), a
   const newInterval = body.intervalMinutes ?? monitor.intervalMinutes
   const newHour = body.preferredHour !== undefined ? body.preferredHour : monitor.preferredHour
   const scheduleChanged = body.intervalMinutes !== undefined || body.preferredHour !== undefined
-  const nextRunAt = scheduleChanged ? computeNextRunAt(newInterval, newHour, null, now) : undefined
+  const nextRunAt = scheduleChanged ? computeNextRunAt(newInterval, newHour, null, now, true) : undefined
 
+  const { feedSources: fsSrcG, ...restG } = body
   await db.update(monitors).set({
-    ...body,
+    ...restG,
+    feedSources: fsSrcG !== undefined ? (fsSrcG?.length ? JSON.stringify(fsSrcG) : null) : undefined,
     ...(nextRunAt ? { nextRunAt } : {}),
     updatedAt: now,
   }).where(eq(monitors.id, id))
@@ -159,7 +164,7 @@ monitorsRouter.post('/', zValidator('json', monitorBody), async (c) => {
   const id = randomUUID()
   const userRow = await db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get()
   const tz = (parseSettings(userRow?.settings ?? '{}').timezone as string | undefined) ?? null
-  const nextRunAt = computeNextRunAt(body.intervalMinutes, body.preferredHour, tz, now)
+  const nextRunAt = computeNextRunAt(body.intervalMinutes, body.preferredHour, tz, now, true)
 
   await db.insert(monitors).values({
     id,
@@ -170,6 +175,7 @@ monitorsRouter.post('/', zValidator('json', monitorBody), async (c) => {
     intervalMinutes: body.intervalMinutes,
     keepCount: body.keepCount,
     preferredHour: body.preferredHour ?? null,
+    feedSources: body.feedSources?.length ? JSON.stringify(body.feedSources) : null,
     isGlobal: false,
     spaceId: body.spaceId ?? null,
     enabled: body.enabled,
@@ -200,12 +206,14 @@ monitorsRouter.patch('/:id', zValidator('json', monitorBody.partial()), async (c
   if (scheduleChanged) {
     const userRow = await db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get()
     const tz = (parseSettings(userRow?.settings ?? '{}').timezone as string | undefined) ?? null
-    nextRunAt = computeNextRunAt(newInterval, newHour, tz, now)
+    nextRunAt = computeNextRunAt(newInterval, newHour, tz, now, true)
   }
 
+  const { feedSources: fsSrc, spaceId: spSrc, ...rest } = body
   await db.update(monitors).set({
-    ...body,
-    spaceId: body.spaceId !== undefined ? (body.spaceId ?? null) : undefined,
+    ...rest,
+    spaceId: spSrc !== undefined ? (spSrc ?? null) : undefined,
+    feedSources: fsSrc !== undefined ? (fsSrc?.length ? JSON.stringify(fsSrc) : null) : undefined,
     ...(nextRunAt ? { nextRunAt } : {}),
     updatedAt: now,
   }).where(eq(monitors.id, id))

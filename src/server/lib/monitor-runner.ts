@@ -1,7 +1,9 @@
-import { db, monitors, monitorSubscriptions, monitorRuns, chatSessions, messages, users, parseSettings } from './db.ts'
+import { db, monitors, monitorSubscriptions, monitorRuns, chatSessions, messages, users, parseSettings, getAppSetting } from './db.ts'
 import { eq, and, lte, desc, count } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { executeChatAndSave } from './chat-executor.ts'
+import { fetchSelectedFeeds } from './rss.ts'
+import type { SearchResult } from './searxng.ts'
 
 /** Convert a preferred hour in a given IANA timezone on the same calendar day as `near` to UTC. */
 function localHourToUTC(hour: number, tz: string, near: Date): Date {
@@ -24,12 +26,14 @@ export function computeNextRunAt(
   preferredHour: number | null | undefined,
   timezone: string | null | undefined,
   now: Date,
+  initial = false,
 ): Date {
   const nominalNext = new Date(now.getTime() + intervalMinutes * 60_000)
   if (preferredHour == null || intervalMinutes < 1440) return nominalNext
   const tz = timezone || 'UTC'
-  // Find the occurrence of preferredHour:00 closest to nominalNext (within ±12h)
-  const earliest = new Date(nominalNext.getTime() - 12 * 3600_000)
+  // For initial creation, find the next occurrence from now.
+  // For post-run rescheduling, allow ±12h slack so we stay close to the interval cadence.
+  const earliest = initial ? now : new Date(nominalNext.getTime() - 12 * 3600_000)
   for (let dayOffset = 0; dayOffset <= 2; dayOffset++) {
     const probe = new Date(earliest.getTime() + dayOffset * 86400_000)
     const candidate = localHourToUTC(preferredHour, tz, probe)
@@ -87,8 +91,6 @@ export async function runMonitorNow(
   userId: string,
 ): Promise<void> {
   await runMonitorForUser(monitor, userId)
-  const now = new Date()
-  await db.update(monitors).set({ lastRunAt: now, updatedAt: now }).where(eq(monitors.id, monitor.id))
 }
 
 async function runMonitorForUser(
@@ -99,6 +101,17 @@ async function runMonitorForUser(
   const sessionId = randomUUID()
   const focusMode = monitor.focusMode as 'flash' | 'balanced' | 'thorough'
 
+  let feedItems: SearchResult[] | undefined
+  if (monitor.feedSources) {
+    const selectedNames = JSON.parse(monitor.feedSources) as string[]
+    if (selectedNames.length > 0) {
+      console.log(`  [monitor] fetching ${selectedNames.length} RSS feeds`)
+      const charsBudget = await getAppSetting('rss_feed_chars_budget', '50000').then(Number)
+      feedItems = await fetchSelectedFeeds(selectedNames, charsBudget)
+      console.log(`  [monitor] got ${feedItems.length} feed items total`)
+    }
+  }
+
   await executeChatAndSave({
     sessionId,
     userId,
@@ -106,6 +119,7 @@ async function runMonitorForUser(
     promptText: monitor.promptText,
     focusMode: ['flash', 'balanced', 'thorough'].includes(focusMode) ? focusMode : 'balanced',
     spaceId: monitor.spaceId ?? undefined,
+    feedItems,
   })
 
   const now = new Date()
@@ -116,6 +130,7 @@ async function runMonitorForUser(
     sessionId,
     runAt: now,
   })
+  await db.update(monitors).set({ lastRunAt: now, updatedAt: now }).where(eq(monitors.id, monitor.id))
 
   await pruneRuns(monitor.id, userId, monitor.keepCount)
 }

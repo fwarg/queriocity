@@ -3,10 +3,10 @@ import { updateSettings } from '../lib/api.ts'
 import { Modal } from './Modal.tsx'
 
 const FONT_SIZES = [
-  { label: 'Small', value: 14 },
-  { label: 'Normal', value: 16 },
-  { label: 'Large', value: 18 },
-  { label: 'XL', value: 20 },
+  { label: 'Small', value: 15 },
+  { label: 'Normal', value: 17 },
+  { label: 'Large', value: 19 },
+  { label: 'XL', value: 21 },
 ]
 
 const TIMEZONE_OPTIONS = [
