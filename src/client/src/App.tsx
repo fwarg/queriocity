@@ -13,6 +13,7 @@ import {
   fetchSpaceMemories, createSpaceMemory, updateSpaceMemory, deleteSpaceMemory, compactSpaceMemories, recreateAllSpaceMemories, clearSpaceMemories,
   fetchChatIndexStatus, rebuildChatIndex, searchHistory,
   fetchSpaceFiles, tagFileToSpace, untagFileFromSpace,
+  fetchMonitors,
 } from './lib/api.ts'
 import type { AuthUser, Message, Space, SpaceMemory, SpaceFile } from './lib/api.ts'
 import { useChat } from './hooks/useChat.ts'
@@ -176,6 +177,7 @@ export default function App() {
         setAuthView('loading')
         fetchFiles().then(setFiles).catch(() => {})
         fetchSpaces().then(setSpaces).catch(() => {})
+        fetchMonitors().then(ms => setMonitorCount(ms.length)).catch(() => {})
       } else if (token) {
         setAuthView('register')
       } else {
@@ -211,6 +213,7 @@ export default function App() {
     setAuthView('loading')
     fetchFiles().then(setFiles).catch(() => {})
     fetchSpaces().then(setSpaces).catch(() => {})
+    fetchMonitors().then(ms => setMonitorCount(ms.length)).catch(() => {})
   }
 
   async function handleLogout() {
@@ -221,6 +224,7 @@ export default function App() {
     setSpaces([])
     setMessages([])
     setCurrentSpaceId(null)
+    setMonitorCount(0)
     setAuthView('login')
   }
 
