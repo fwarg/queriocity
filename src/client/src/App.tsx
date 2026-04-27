@@ -115,9 +115,11 @@ export default function App() {
 
   const bottomRef = useRef<HTMLDivElement>(null)
 
-  const fontSize = currentUser?.settings?.fontSize ?? 16
+  const fontSize = currentUser?.settings?.fontSize ?? 17
   useEffect(() => {
-    document.documentElement.style.fontSize = `${fontSize}px`
+    const boost = 2
+    document.documentElement.style.fontSize =
+      `clamp(${fontSize}px, calc(${fontSize}px + ${boost} * (1440px - 100vw) / 1065), ${fontSize + boost}px)`
   }, [fontSize])
 
   const PAGE_SIZE = 50
@@ -436,7 +438,7 @@ export default function App() {
           useThinking={currentUser.settings?.useThinking ?? false}
           useSpaceRag={currentUser.settings?.useSpaceRag !== false}
           useChatRag={currentUser.settings?.useChatRag !== false}
-          fontSize={currentUser.settings?.fontSize ?? 16}
+          fontSize={currentUser.settings?.fontSize ?? 17}
           timezone={currentUser.settings?.timezone ?? ''}
           onClose={() => setShowSettings(false)}
           onSave={(cp, st, ut, sr, cr, fs, tz) => setCurrentUser(u => u ? { ...u, settings: { ...u.settings, customPrompt: cp, showThinking: st, useThinking: ut, useSpaceRag: sr, useChatRag: cr, fontSize: fs, timezone: tz } } : u)}
