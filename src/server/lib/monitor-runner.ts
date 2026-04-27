@@ -24,12 +24,14 @@ export function computeNextRunAt(
   preferredHour: number | null | undefined,
   timezone: string | null | undefined,
   now: Date,
+  initial = false,
 ): Date {
   const nominalNext = new Date(now.getTime() + intervalMinutes * 60_000)
   if (preferredHour == null || intervalMinutes < 1440) return nominalNext
   const tz = timezone || 'UTC'
-  // Find the occurrence of preferredHour:00 closest to nominalNext (within ±12h)
-  const earliest = new Date(nominalNext.getTime() - 12 * 3600_000)
+  // For initial creation, find the next occurrence from now.
+  // For post-run rescheduling, allow ±12h slack so we stay close to the interval cadence.
+  const earliest = initial ? now : new Date(nominalNext.getTime() - 12 * 3600_000)
   for (let dayOffset = 0; dayOffset <= 2; dayOffset++) {
     const probe = new Date(earliest.getTime() + dayOffset * 86400_000)
     const candidate = localHourToUTC(preferredHour, tz, probe)

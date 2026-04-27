@@ -63,7 +63,7 @@ monitorsRouter.post('/global', zValidator('json', monitorBody), async (c) => {
   const body = c.req.valid('json')
   const now = new Date()
   const id = randomUUID()
-  const nextRunAt = computeNextRunAt(body.intervalMinutes, body.preferredHour, null, now)
+  const nextRunAt = computeNextRunAt(body.intervalMinutes, body.preferredHour, null, now, true)
 
   await db.insert(monitors).values({
     id,
@@ -101,7 +101,7 @@ monitorsRouter.patch('/global/:id', zValidator('json', monitorBody.partial()), a
   const newInterval = body.intervalMinutes ?? monitor.intervalMinutes
   const newHour = body.preferredHour !== undefined ? body.preferredHour : monitor.preferredHour
   const scheduleChanged = body.intervalMinutes !== undefined || body.preferredHour !== undefined
-  const nextRunAt = scheduleChanged ? computeNextRunAt(newInterval, newHour, null, now) : undefined
+  const nextRunAt = scheduleChanged ? computeNextRunAt(newInterval, newHour, null, now, true) : undefined
 
   await db.update(monitors).set({
     ...body,
@@ -159,7 +159,7 @@ monitorsRouter.post('/', zValidator('json', monitorBody), async (c) => {
   const id = randomUUID()
   const userRow = await db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get()
   const tz = (parseSettings(userRow?.settings ?? '{}').timezone as string | undefined) ?? null
-  const nextRunAt = computeNextRunAt(body.intervalMinutes, body.preferredHour, tz, now)
+  const nextRunAt = computeNextRunAt(body.intervalMinutes, body.preferredHour, tz, now, true)
 
   await db.insert(monitors).values({
     id,
@@ -200,7 +200,7 @@ monitorsRouter.patch('/:id', zValidator('json', monitorBody.partial()), async (c
   if (scheduleChanged) {
     const userRow = await db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get()
     const tz = (parseSettings(userRow?.settings ?? '{}').timezone as string | undefined) ?? null
-    nextRunAt = computeNextRunAt(newInterval, newHour, tz, now)
+    nextRunAt = computeNextRunAt(newInterval, newHour, tz, now, true)
   }
 
   await db.update(monitors).set({
