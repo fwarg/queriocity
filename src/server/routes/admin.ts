@@ -16,7 +16,7 @@ adminRouter.use('*', authMiddleware)
 adminRouter.use('*', adminMiddleware)
 
 adminRouter.get('/settings', async (c) => {
-  const [memoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, attachmentChars, spaceRagBudget, queryReformulation] = await Promise.all([
+  const [memoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget] = await Promise.all([
     getAppSetting('memory_token_budget', '1000').then(Number),
     getAppSetting('dream_hour', '-1').then(Number),
     getAppSetting('dream_threshold', '1500').then(Number),
@@ -27,8 +27,9 @@ adminRouter.get('/settings', async (c) => {
     getAppSetting('attachment_chars', '20000').then(Number),
     getAppSetting('space_rag_budget', '500').then(Number),
     getAppSetting('query_reformulation', 'true').then(v => v === 'true'),
+    getAppSetting('rss_feed_chars_budget', '50000').then(Number),
   ])
-  return c.json({ memoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, attachmentChars, spaceRagBudget, queryReformulation })
+  return c.json({ memoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget })
 })
 
 adminRouter.patch('/settings', zValidator('json', z.object({
@@ -42,6 +43,7 @@ adminRouter.patch('/settings', zValidator('json', z.object({
   attachmentChars: z.number().int().min(1000).max(500000).optional(),
   spaceRagBudget: z.number().int().min(0).max(10000).optional(),
   queryReformulation: z.boolean().optional(),
+  rssFeedCharsBudget: z.number().int().min(5000).max(500000).optional(),
 })), async (c) => {
   const body = c.req.valid('json')
   if (body.dreamTarget != null && body.dreamThreshold != null && body.dreamTarget > body.dreamThreshold)
@@ -59,6 +61,7 @@ adminRouter.patch('/settings', zValidator('json', z.object({
   if (body.attachmentChars != null) ops.push(setAppSetting('attachment_chars', String(body.attachmentChars)))
   if (body.spaceRagBudget != null) ops.push(setAppSetting('space_rag_budget', String(body.spaceRagBudget)))
   if (body.queryReformulation != null) ops.push(setAppSetting('query_reformulation', String(body.queryReformulation)))
+  if (body.rssFeedCharsBudget != null) ops.push(setAppSetting('rss_feed_chars_budget', String(body.rssFeedCharsBudget)))
   await Promise.all(ops)
   return c.json({ ok: true })
 })

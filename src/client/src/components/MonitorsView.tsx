@@ -204,10 +204,10 @@ export function MonitorsView({ spaces, isAdmin, timezone, onOpenSession, onCount
   useEffect(() => { onCountChange?.(monitors.length) }, [monitors.length, onCountChange])
 
   useEffect(() => {
-    if (globalExpanded && globalMonitors.length === 0) {
+    if ((globalExpanded || adminExpanded) && globalMonitors.length === 0) {
       fetchGlobalMonitors().then(setGlobalMonitors).catch(() => {})
     }
-  }, [globalExpanded])
+  }, [globalExpanded, adminExpanded])
 
   async function handleSave(data: Parameters<typeof createMonitor>[0]) {
     if (editor === 'new') {

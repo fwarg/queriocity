@@ -25,6 +25,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   const [attachmentCharsDraft, setAttachmentCharsDraft] = useState('20000')
   const [spaceRagBudgetDraft, setSpaceRagBudgetDraft] = useState('500')
   const [queryReformulationDraft, setQueryReformulationDraft] = useState(true)
+  const [rssFeedCharsBudgetDraft, setRssFeedCharsBudgetDraft] = useState('50000')
   const [savingBudget, setSavingBudget] = useState(false)
   const [budgetSaved, setBudgetSaved] = useState(false)
   const [dreamRunning, setDreamRunning] = useState(false)
@@ -51,6 +52,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
       setAttachmentCharsDraft(String(s.attachmentChars))
       setSpaceRagBudgetDraft(String(s.spaceRagBudget))
       setQueryReformulationDraft(s.queryReformulation)
+      setRssFeedCharsBudgetDraft(String(s.rssFeedCharsBudget))
     }).catch(() => setError('Failed to load settings.'))
   }, [])
 
@@ -69,6 +71,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     const rerankTopN = parseInt(rerankTopNDraft)
     const attachmentChars = parseInt(attachmentCharsDraft)
     const spaceRagBudget = parseInt(spaceRagBudgetDraft)
+    const rssFeedCharsBudget = parseInt(rssFeedCharsBudgetDraft)
     if (isNaN(budget) || budget < 100 || budget > 10000) return
     if (isNaN(dreamHour) || dreamHour < -1 || dreamHour > 23) return
     if (isNaN(dreamThreshold) || dreamThreshold < 100) return
@@ -77,12 +80,13 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     if (isNaN(rerankTopN) || rerankTopN < 1) return
     if (isNaN(attachmentChars) || attachmentChars < 1000) return
     if (isNaN(spaceRagBudget) || spaceRagBudget < 0) return
+    if (isNaN(rssFeedCharsBudget) || rssFeedCharsBudget < 5000) return
     if (dreamTarget > dreamThreshold) { setError('Dream target must be ≤ dream threshold.'); return }
     if (dreamThreshold > budget) { setError('Dream threshold must be ≤ memory token budget.'); return }
     setError('')
     setSavingBudget(true)
     try {
-      await updateAdminSettings({ memoryTokenBudget: budget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, attachmentChars, spaceRagBudget, queryReformulation: queryReformulationDraft })
+      await updateAdminSettings({ memoryTokenBudget: budget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, attachmentChars, spaceRagBudget, queryReformulation: queryReformulationDraft, rssFeedCharsBudget })
 
       onBudgetChange?.(budget)
       setBudgetSaved(true)
@@ -249,6 +253,13 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                     className="accent-blue-500 w-3.5 h-3.5" />
                   <span className="text-xs text-gray-400">Enabled</span>
                 </label>
+              </div>
+              <div className="flex flex-col gap-1.5 border-t border-gray-800/60 pt-3">
+                <p className="text-xs text-gray-400 font-medium">RSS feed character budget</p>
+                <p className="text-xs text-gray-500">Total characters of news content fetched for a monitor run. Items per feed and content length scale automatically to fit. Increase for large-context models; decrease for small ones (e.g. 8K context ≈ 20 000 chars).</p>
+                <input type="number" min={5000} max={500000} step={5000} value={rssFeedCharsBudgetDraft}
+                  onChange={e => setRssFeedCharsBudgetDraft(e.target.value)}
+                  className="w-32 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
               </div>
             </div>
 

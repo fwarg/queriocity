@@ -1,7 +1,9 @@
-import { db, monitors, monitorSubscriptions, monitorRuns, chatSessions, messages, users, parseSettings } from './db.ts'
+import { db, monitors, monitorSubscriptions, monitorRuns, chatSessions, messages, users, parseSettings, getAppSetting } from './db.ts'
 import { eq, and, lte, desc, count } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { executeChatAndSave } from './chat-executor.ts'
+import { fetchSelectedFeeds } from './rss.ts'
+import type { SearchResult } from './searxng.ts'
 
 /** Convert a preferred hour in a given IANA timezone on the same calendar day as `near` to UTC. */
 function localHourToUTC(hour: number, tz: string, near: Date): Date {
@@ -99,6 +101,17 @@ async function runMonitorForUser(
   const sessionId = randomUUID()
   const focusMode = monitor.focusMode as 'flash' | 'balanced' | 'thorough'
 
+  let feedItems: SearchResult[] | undefined
+  if (monitor.feedSources) {
+    const selectedNames = JSON.parse(monitor.feedSources) as string[]
+    if (selectedNames.length > 0) {
+      console.log(`  [monitor] fetching ${selectedNames.length} RSS feeds`)
+      const charsBudget = await getAppSetting('rss_feed_chars_budget', '50000').then(Number)
+      feedItems = await fetchSelectedFeeds(selectedNames, charsBudget)
+      console.log(`  [monitor] got ${feedItems.length} feed items total`)
+    }
+  }
+
   await executeChatAndSave({
     sessionId,
     userId,
@@ -106,6 +119,7 @@ async function runMonitorForUser(
     promptText: monitor.promptText,
     focusMode: ['flash', 'balanced', 'thorough'].includes(focusMode) ? focusMode : 'balanced',
     spaceId: monitor.spaceId ?? undefined,
+    feedItems,
   })
 
   const now = new Date()

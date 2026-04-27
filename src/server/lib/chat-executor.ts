@@ -25,6 +25,7 @@ export async function executeChatAndSave({
   promptText,
   focusMode,
   spaceId,
+  feedItems,
 }: {
   sessionId: string
   userId: string
@@ -32,6 +33,7 @@ export async function executeChatAndSave({
   promptText: string
   focusMode: 'flash' | 'balanced' | 'thorough'
   spaceId?: string
+  feedItems?: SearchResult[]
 }): Promise<void> {
   const msgs = [{ role: 'user' as const, content: promptText }]
   const now = new Date()
@@ -60,7 +62,10 @@ export async function executeChatAndSave({
       if (part.type === 'text-delta') fullContent += part.textDelta
     }
   } else {
-    const { initialQueries, initialResults } = await reformulateAndSearch(promptText, focusMode)
+    // When RSS feed items are pre-fetched, skip web search and inject them directly
+    const { initialQueries, initialResults } = feedItems?.length
+      ? { initialQueries: ['latest news from selected RSS feeds'], initialResults: feedItems }
+      : await reformulateAndSearch(promptText, focusMode)
     const [userRow, memoryBudget, ragBudget] = await Promise.all([
       db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get(),
       spaceId ? getAppSetting('memory_token_budget', '1000').then(Number) : Promise.resolve(0),
