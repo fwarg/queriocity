@@ -447,6 +447,7 @@ export interface Monitor {
   intervalMinutes: number
   keepCount: number
   preferredHour?: number | null
+  timezone?: string | null
   feedSources?: string[] | null
   isGlobal: boolean
   spaceId?: string | null

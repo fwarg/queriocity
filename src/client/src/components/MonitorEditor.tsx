@@ -7,7 +7,7 @@ interface Props {
   initial?: Monitor
   spaces: Space[]
   timezone?: string
-  onSave: (data: Omit<Monitor, 'id' | 'createdAt' | 'isGlobal' | 'subscribed'>) => Promise<void>
+  onSave: (data: Omit<Monitor, 'id' | 'createdAt' | 'isGlobal' | 'subscribed'> & { timezone?: string | null }) => Promise<void>
   onClose: () => void
   isGlobal?: boolean
 }
@@ -49,6 +49,7 @@ export function MonitorEditor({ initial, spaces, timezone, onSave, onClose, isGl
   const [keepCount, setKeepCount] = useState(String(initial?.keepCount ?? 3))
   const [spaceId, setSpaceId] = useState<string>(initial?.spaceId ?? '')
   const [preferredHour, setPreferredHour] = useState<number | null>(initial?.preferredHour ?? null)
+  const [monitorTimezone, setMonitorTimezone] = useState<string>(initial?.timezone ?? '')
   const [enabled, setEnabled] = useState(initial?.enabled ?? true)
   const [feedSources, setFeedSources] = useState<string[]>(initial?.feedSources ?? [])
   const [catalog, setCatalog] = useState<FeedRegion[] | null>(null)
@@ -110,6 +111,7 @@ export function MonitorEditor({ initial, spaces, timezone, onSave, onClose, isGl
         intervalMinutes,
         keepCount: Math.max(1, Math.min(20, parseInt(keepCount) || 3)),
         preferredHour: showHourPicker ? preferredHour : null,
+        timezone: isGlobal ? (monitorTimezone.trim() || null) : undefined,
         spaceId: spaceId || null,
         enabled,
         feedSources: feedSources.length > 0 ? feedSources : null,
@@ -274,7 +276,17 @@ export function MonitorEditor({ initial, spaces, timezone, onSave, onClose, isGl
                       <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>
                     ))}
                   </select>
-                  <span className="text-xs text-gray-500">{timezone || 'server time'}</span>
+                  {isGlobal ? (
+                    <input
+                      type="text"
+                      value={monitorTimezone}
+                      onChange={e => setMonitorTimezone(e.target.value)}
+                      placeholder="e.g. Europe/Stockholm"
+                      className="rounded bg-gray-800 border border-gray-700 px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500 w-44"
+                    />
+                  ) : (
+                    <span className="text-xs text-gray-500">{timezone || 'server time'}</span>
+                  )}
                 </div>
               </div>
             )}

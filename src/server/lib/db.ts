@@ -119,6 +119,7 @@ export const monitors = sqliteTable('monitors', {
   spaceId: text('space_id').references(() => spaces.id, { onDelete: 'set null' }),
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
   preferredHour: integer('preferred_hour'),
+  timezone: text('timezone'),
   feedSources: text('feed_sources'),
   nextRunAt: integer('next_run_at', { mode: 'timestamp' }),
   lastRunAt: integer('last_run_at', { mode: 'timestamp' }),
@@ -335,6 +336,7 @@ function initSchema() {
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_monitors_next_run ON monitors(next_run_at)`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_monitor_runs_monitor_user ON monitor_runs(monitor_id, user_id)`)
   try { sqlite.run('ALTER TABLE monitors ADD COLUMN preferred_hour INTEGER') } catch {}
+  try { sqlite.run('ALTER TABLE monitors ADD COLUMN timezone TEXT') } catch {}
   try { sqlite.run('ALTER TABLE monitors ADD COLUMN feed_sources TEXT') } catch {}
 }
 

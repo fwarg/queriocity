@@ -18,6 +18,7 @@ const monitorBody = z.object({
   intervalMinutes: z.number().int().min(60),
   keepCount: z.number().int().min(1).max(20).default(3),
   preferredHour: z.number().int().min(0).max(23).nullable().optional(),
+  timezone: z.string().nullable().optional(),
   spaceId: z.string().nullable().optional(),
   enabled: z.boolean().default(true),
   feedSources: z.array(z.string()).nullable().optional(),
@@ -37,6 +38,7 @@ function serializeMonitor(m: typeof monitors.$inferSelect, subscribed?: boolean)
     intervalMinutes: m.intervalMinutes,
     keepCount: m.keepCount,
     preferredHour: m.preferredHour ?? null,
+    timezone: m.timezone ?? null,
     feedSources: m.feedSources ? JSON.parse(m.feedSources) as string[] : null,
     isGlobal: m.isGlobal,
     spaceId: m.spaceId,
@@ -65,7 +67,7 @@ monitorsRouter.post('/global', zValidator('json', monitorBody), async (c) => {
   const body = c.req.valid('json')
   const now = new Date()
   const id = randomUUID()
-  const nextRunAt = computeNextRunAt(body.intervalMinutes, body.preferredHour, null, now, true)
+  const nextRunAt = computeNextRunAt(body.intervalMinutes, body.preferredHour, body.timezone ?? null, now, true)
 
   await db.insert(monitors).values({
     id,
@@ -76,6 +78,7 @@ monitorsRouter.post('/global', zValidator('json', monitorBody), async (c) => {
     intervalMinutes: body.intervalMinutes,
     keepCount: body.keepCount,
     preferredHour: body.preferredHour ?? null,
+    timezone: body.timezone ?? null,
     feedSources: body.feedSources?.length ? JSON.stringify(body.feedSources) : null,
     isGlobal: true,
     spaceId: null,
@@ -103,12 +106,14 @@ monitorsRouter.patch('/global/:id', zValidator('json', monitorBody.partial()), a
   const now = new Date()
   const newInterval = body.intervalMinutes ?? monitor.intervalMinutes
   const newHour = body.preferredHour !== undefined ? body.preferredHour : monitor.preferredHour
-  const scheduleChanged = body.intervalMinutes !== undefined || body.preferredHour !== undefined
-  const nextRunAt = scheduleChanged ? computeNextRunAt(newInterval, newHour, null, now, true) : undefined
+  const newTz = body.timezone !== undefined ? (body.timezone ?? null) : monitor.timezone
+  const scheduleChanged = body.intervalMinutes !== undefined || body.preferredHour !== undefined || body.timezone !== undefined
+  const nextRunAt = scheduleChanged ? computeNextRunAt(newInterval, newHour, newTz, now, true) : undefined
 
   const { feedSources: fsSrcG, ...restG } = body
   await db.update(monitors).set({
     ...restG,
+    timezone: newTz,
     feedSources: fsSrcG !== undefined ? (fsSrcG?.length ? JSON.stringify(fsSrcG) : null) : undefined,
     ...(nextRunAt ? { nextRunAt } : {}),
     updatedAt: now,
@@ -175,6 +180,7 @@ monitorsRouter.post('/', zValidator('json', monitorBody), async (c) => {
     intervalMinutes: body.intervalMinutes,
     keepCount: body.keepCount,
     preferredHour: body.preferredHour ?? null,
+    timezone: tz,
     feedSources: body.feedSources?.length ? JSON.stringify(body.feedSources) : null,
     isGlobal: false,
     spaceId: body.spaceId ?? null,
@@ -203,15 +209,16 @@ monitorsRouter.patch('/:id', zValidator('json', monitorBody.partial()), async (c
   const newHour = body.preferredHour !== undefined ? body.preferredHour : monitor.preferredHour
   const scheduleChanged = body.intervalMinutes !== undefined || body.preferredHour !== undefined
   let nextRunAt: Date | undefined
+  const userRow = await db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get()
+  const tz = (parseSettings(userRow?.settings ?? '{}').timezone as string | undefined) ?? null
   if (scheduleChanged) {
-    const userRow = await db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get()
-    const tz = (parseSettings(userRow?.settings ?? '{}').timezone as string | undefined) ?? null
     nextRunAt = computeNextRunAt(newInterval, newHour, tz, now, true)
   }
 
   const { feedSources: fsSrc, spaceId: spSrc, ...rest } = body
   await db.update(monitors).set({
     ...rest,
+    timezone: tz,
     spaceId: spSrc !== undefined ? (spSrc ?? null) : undefined,
     feedSources: fsSrc !== undefined ? (fsSrc?.length ? JSON.stringify(fsSrc) : null) : undefined,
     ...(nextRunAt ? { nextRunAt } : {}),
