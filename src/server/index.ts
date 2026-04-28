@@ -109,6 +109,8 @@ async function preflight() {
 preflight().catch(() => {})
 
 setInterval(async () => {
+  runDueMonitors().catch(e => console.error('[monitors] run failed:', e))
+
   const hour = parseInt(await getAppSetting('dream_hour', '-1'))
   if (hour < 0) return
   const now = new Date()
@@ -119,7 +121,6 @@ setInterval(async () => {
   await setAppSetting('dream_last_run', todayKey)
   console.log(`  [dream] starting nightly compaction`)
   runDream().catch(e => console.error('[dream] failed:', e))
-  runDueMonitors().catch(e => console.error('[monitors] run failed:', e))
 }, 5 * 60 * 1000)
 
 export default { port: PORT, fetch: app.fetch, idleTimeout: 255 }
