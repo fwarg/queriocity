@@ -72,6 +72,7 @@ export async function runDueMonitors(): Promise<void> {
         }
 
         const nextRunAt = computeNextRunAt(monitor.intervalMinutes, monitor.preferredHour, monitor.timezone, now)
+        console.log(`  [monitor] "${monitor.name}" next run scheduled for ${nextRunAt.toISOString()}`)
         await db.update(monitors).set({ nextRunAt, lastRunAt: now, updatedAt: now }).where(eq(monitors.id, monitor.id))
       } catch (e) {
         console.error(`[monitor] processing failed for monitor=${monitor.id}:`, e)

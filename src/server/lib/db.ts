@@ -88,6 +88,7 @@ export const uploadedFiles = sqliteTable('uploaded_files', {
   filename: text('filename').notNull(),
   mimeType: text('mime_type').notNull(),
   size: integer('size').notNull(),
+  contentHash: text('content_hash'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 
@@ -150,6 +151,11 @@ function initSchema() {
     "SELECT sql FROM sqlite_master WHERE type='table' AND name='file_chunks'"
   ).get() as { sql: string } | null
   if (existing && !existing.sql.includes(`FLOAT[${EMBED_DIMS}]`)) {
+    if (!process.env.ALLOW_EMBED_RESET) {
+      throw new Error(
+        `[db] EMBED_DIMENSIONS changed to ${EMBED_DIMS} — set ALLOW_EMBED_RESET=true to wipe and recreate embedding tables (all uploads will be deleted)`
+      )
+    }
     console.log(`[db] Embedding dimension changed → recreating file_chunks (${EMBED_DIMS} dims), clearing uploaded files`)
     sqlite.run('DROP TABLE IF EXISTS file_chunks')
     sqlite.run('DELETE FROM file_chunk_meta')
@@ -161,6 +167,11 @@ function initSchema() {
     "SELECT sql FROM sqlite_master WHERE type='table' AND name='chat_chunks'"
   ).get() as { sql: string } | null
   if (existingChat && !existingChat.sql.includes(`FLOAT[${EMBED_DIMS}]`)) {
+    if (!process.env.ALLOW_EMBED_RESET) {
+      throw new Error(
+        `[db] EMBED_DIMENSIONS changed to ${EMBED_DIMS} — set ALLOW_EMBED_RESET=true to wipe and recreate embedding tables`
+      )
+    }
     console.log(`[db] Embedding dimension changed → recreating chat_chunks (${EMBED_DIMS} dims)`)
     sqlite.run('DROP TABLE IF EXISTS chat_chunks')
     sqlite.run('DELETE FROM chat_chunk_meta')
@@ -338,6 +349,19 @@ function initSchema() {
   try { sqlite.run('ALTER TABLE monitors ADD COLUMN preferred_hour INTEGER') } catch {}
   try { sqlite.run('ALTER TABLE monitors ADD COLUMN timezone TEXT') } catch {}
   try { sqlite.run('ALTER TABLE monitors ADD COLUMN feed_sources TEXT') } catch {}
+  try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN content_hash TEXT') } catch {}
+  // Migrate: backfill timezone from owner's settings for personal monitors that have none
+  try {
+    sqlite.run(`
+      UPDATE monitors SET timezone = (
+        SELECT json_extract(u.settings, '$.timezone')
+        FROM users u WHERE u.id = monitors.user_id
+      )
+      WHERE timezone IS NULL AND user_id IS NOT NULL
+        AND EXISTS (SELECT 1 FROM users u WHERE u.id = monitors.user_id
+                    AND json_extract(u.settings, '$.timezone') IS NOT NULL)
+    `)
+  } catch {}
 }
 
 initSchema()

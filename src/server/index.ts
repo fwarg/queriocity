@@ -1,3 +1,14 @@
+// Prefix all console output with ISO timestamp
+;(function () {
+  const ts = () => new Date().toISOString().replace('T', ' ').slice(0, 19)
+  const _log = console.log.bind(console)
+  const _warn = console.warn.bind(console)
+  const _error = console.error.bind(console)
+  console.log = (...a) => _log(`[${ts()}]`, ...a)
+  console.warn = (...a) => _warn(`[${ts()}]`, ...a)
+  console.error = (...a) => _error(`[${ts()}]`, ...a)
+})()
+
 import { Hono } from 'hono'
 import { authMiddleware, type AppEnv } from './middleware/auth.ts'
 import { cors } from 'hono/cors'

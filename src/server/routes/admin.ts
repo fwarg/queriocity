@@ -2,8 +2,9 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { generateText, embed } from 'ai'
-import { db, users, invites, getAppSetting, setAppSetting } from '../lib/db.ts'
+import { db, users, invites, chatSessions, getAppSetting, setAppSetting } from '../lib/db.ts'
 import { eq } from 'drizzle-orm'
+import { indexSession } from '../lib/chat-indexer.ts'
 import { randomUUID } from 'crypto'
 import { authMiddleware, adminMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { getChatModel, getSmallModel, getThinkingModel, getEmbeddingModel } from '../lib/llm.ts'
@@ -158,7 +159,21 @@ adminRouter.get('/models-test', async (c) => {
   return c.json(results)
 })
 
-adminRouter.post('/invites', zValidator('json', z.object({ email: z.string().email().optional() })), async (c) => {
+adminRouter.post('/reindex-chats', async (c) => {
+  const sessions = await db.select({ id: chatSessions.id }).from(chatSessions)
+  console.log(`[admin] reindex-chats triggered: ${sessions.length} sessions`)
+  ;(async () => {
+    let done = 0, failed = 0
+    for (const { id } of sessions) {
+      try { await indexSession(id); done++ }
+      catch (e) { failed++; console.error(`[admin] reindex-chats failed for session ${id}:`, e) }
+    }
+    console.log(`[admin] reindex-chats complete: ${done} ok, ${failed} failed`)
+  })().catch(e => console.error('[admin] reindex-chats error:', e))
+  return c.json({ ok: true, sessions: sessions.length })
+})
+
+adminRouter.post('/invites',zValidator('json', z.object({ email: z.string().email().optional() })), async (c) => {
   const { email } = c.req.valid('json')
   const id = randomUUID()
   const now = new Date()

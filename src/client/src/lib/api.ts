@@ -279,6 +279,11 @@ export async function triggerDream(): Promise<void> {
   await fetch(`${BASE}/admin/dream/run`, { method: 'POST' })
 }
 
+export async function reindexChats(): Promise<{ sessions: number }> {
+  const res = await fetch(`${BASE}/admin/reindex-chats`, { method: 'POST' })
+  return res.json()
+}
+
 export async function clearSpaceMemories(spaceId: string): Promise<void> {
   await fetch(`${BASE}/spaces/${spaceId}/memories`, { method: 'DELETE' })
 }
