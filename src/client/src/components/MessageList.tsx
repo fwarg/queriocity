@@ -1,4 +1,5 @@
 import React, { useState, useCallback, memo } from 'react'
+import { ChevronDown, ChevronRight } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -12,6 +13,7 @@ interface Props {
   messages: Message[]
   streaming?: string
   streamingThinking?: string
+  collapseFirstQuestion?: boolean
 }
 
 /** Normalize SVG blocks: unwrap any existing ```svg fences, then rewrap consistently. */
@@ -218,10 +220,29 @@ function ThinkingBlock({ content, open }: { content: string; open?: boolean }) {
 
 const baseMdComponents = makeMdComponents(null, () => {})
 
-function MessageItem({ msg }: { msg: Message }) {
+function MessageItem({ msg, isFirst, defaultCollapsed }: { msg: Message; isFirst?: boolean; defaultCollapsed?: boolean }) {
   const [highlightedSource, setHighlightedSource] = useState<number | null>(null)
+  const [collapsed, setCollapsed] = useState(!!defaultCollapsed)
   const toggleSource = useCallback((n: number) => setHighlightedSource(v => v === n ? null : n), [])
   const mdComponents = makeMdComponents(highlightedSource, toggleSource)
+
+  const collapsible = isFirst && msg.role === 'user'
+
+  if (collapsible && collapsed) {
+    const preview = msg.content.replace(/\s+/g, ' ').trim().slice(0, 80)
+    const truncated = msg.content.replace(/\s+/g, ' ').trim().length > 80
+    return (
+      <div className="flex justify-end w-full">
+        <button
+          onClick={() => setCollapsed(false)}
+          className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-300 max-w-2xl text-right"
+        >
+          <ChevronRight size={13} className="shrink-0" />
+          <span className="truncate">{preview}{truncated ? '…' : ''}</span>
+        </button>
+      </div>
+    )
+  }
 
   return (
     <div className={`flex flex-col gap-1 w-full ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
@@ -232,6 +253,15 @@ function MessageItem({ msg }: { msg: Message }) {
             : 'bg-gray-800 text-gray-100'
         }`}
       >
+        {collapsible && (
+          <button
+            onClick={() => setCollapsed(true)}
+            className="float-right ml-2 -mr-1 -mt-0.5 text-blue-300 hover:text-white opacity-60 hover:opacity-100"
+            title="Collapse"
+          >
+            <ChevronDown size={14} />
+          </button>
+        )}
         {msg.role === 'assistant' ? (
           <>
             {msg.thinking && <ThinkingBlock content={msg.thinking} />}
@@ -251,11 +281,11 @@ function MessageItem({ msg }: { msg: Message }) {
   )
 }
 
-export const MessageList = memo(function MessageList({ messages, streaming, streamingThinking }: Props) {
+export const MessageList = memo(function MessageList({ messages, streaming, streamingThinking, collapseFirstQuestion }: Props) {
   return (
     <div className="flex flex-col gap-4 p-4 overflow-y-auto overflow-x-hidden flex-1">
       {messages.map((msg, i) => (
-        <MessageItem key={i} msg={msg} />
+        <MessageItem key={i} msg={msg} isFirst={i === 0} defaultCollapsed={i === 0 && !!collapseFirstQuestion} />
       ))}
       {(streaming || streamingThinking) && (
         <div className="flex items-start">

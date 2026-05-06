@@ -55,6 +55,7 @@ export default function App() {
   const [files, setFiles] = useState<UploadedFile[]>([])
   const [spaces, setSpaces] = useState<Space[]>([])
   const [monitorCount, setMonitorCount] = useState(0)
+  const [isMonitorSession, setIsMonitorSession] = useState(false)
   const [currentSpaceId, setCurrentSpaceId] = useState<string | null>(null)
   const [editingSpaceId, setEditingSpaceId] = useState<string | null>(null)
   const [spaceDraft, setSpaceDraft] = useState('')
@@ -231,9 +232,10 @@ export default function App() {
   }
 
 
-  function loadSession(id: string, title: string, addToHistory = true) {
+  function loadSession(id: string, title: string, addToHistory = true, fromMonitor = false) {
     setSessionId(id)
     setEditingTitle(false)
+    setIsMonitorSession(fromMonitor)
     reset()
     setView('chat')
     fetchSession(id).then(setMessages).catch(() => {})
@@ -248,6 +250,7 @@ export default function App() {
   function newChat(inSpaceId?: string) {
     setSessionId(undefined)
     setEditingTitle(false)
+    setIsMonitorSession(false)
     reset()
     setCurrentSpaceId(inSpaceId ?? null)
     setView('chat')
@@ -1079,7 +1082,7 @@ export default function App() {
             isAdmin={currentUser?.role === 'admin'}
             timezone={currentUser?.settings?.timezone ?? ''}
             onCountChange={setMonitorCount}
-            onOpenSession={(id, title) => { loadSession(id, title, false); setSidebarOpen(false) }}
+            onOpenSession={(id, title) => { loadSession(id, title, false, true); setSidebarOpen(false) }}
           />
         ) : (
           <>
@@ -1164,7 +1167,7 @@ export default function App() {
                 <span className="text-sm">LLM-driven web search</span>
               </div>
             ) : (
-              <MessageList messages={messages} streaming={streaming} streamingThinking={streamingThinking} />
+              <MessageList messages={messages} streaming={streaming} streamingThinking={streamingThinking} collapseFirstQuestion={isMonitorSession} />
             )}
             {status && (
               <div className="px-4 py-1 text-xs text-gray-500 italic animate-pulse">{status}</div>
