@@ -1,4 +1,4 @@
-import React, { useState, useCallback, memo } from 'react'
+import React, { useState, useCallback, useEffect, useRef, useMemo, memo } from 'react'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -14,6 +14,9 @@ interface Props {
   streaming?: string
   streamingThinking?: string
   collapseFirstQuestion?: boolean
+  searchQuery?: string
+  searchMatchIndices?: number[]
+  searchActiveIndex?: number
 }
 
 /** Normalize SVG blocks: unwrap any existing ```svg fences, then rewrap consistently. */
@@ -220,7 +223,19 @@ function ThinkingBlock({ content, open }: { content: string; open?: boolean }) {
 
 const baseMdComponents = makeMdComponents(null, () => {})
 
-function MessageItem({ msg, isFirst, defaultCollapsed }: { msg: Message; isFirst?: boolean; defaultCollapsed?: boolean }) {
+function escapeRegex(s: string) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') }
+
+function HighlightedText({ text, query }: { text: string; query: string }) {
+  if (!query.trim()) return <>{text}</>
+  const parts = text.split(new RegExp(`(${escapeRegex(query)})`, 'gi'))
+  return <>{parts.map((p, i) =>
+    i % 2 === 1
+      ? <mark key={i} className="bg-yellow-500/50 text-white rounded-sm">{p}</mark>
+      : p
+  )}</>
+}
+
+function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, searchQuery }: { msg: Message; isFirst?: boolean; defaultCollapsed?: boolean; isMatch?: boolean; isActive?: boolean; searchQuery?: string }) {
   const [highlightedSource, setHighlightedSource] = useState<number | null>(null)
   const [collapsed, setCollapsed] = useState(!!defaultCollapsed)
   const toggleSource = useCallback((n: number) => setHighlightedSource(v => v === n ? null : n), [])
@@ -244,6 +259,12 @@ function MessageItem({ msg, isFirst, defaultCollapsed }: { msg: Message; isFirst
     )
   }
 
+  const ringClass = isActive
+    ? 'ring-2 ring-yellow-400'
+    : isMatch
+      ? 'ring-2 ring-yellow-600/50'
+      : ''
+
   return (
     <div className={`flex flex-col gap-1 w-full ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
       <div
@@ -251,7 +272,7 @@ function MessageItem({ msg, isFirst, defaultCollapsed }: { msg: Message; isFirst
           msg.role === 'user'
             ? 'bg-blue-700 text-white whitespace-pre-wrap'
             : 'bg-gray-800 text-gray-100'
-        }`}
+        } ${ringClass}`}
       >
         {collapsible && (
           <button
@@ -272,7 +293,7 @@ function MessageItem({ msg, isFirst, defaultCollapsed }: { msg: Message; isFirst
             })()}
             {msg.images?.map((img, i) => <ImageBlock key={i} url={img.url} alt={img.alt} />)}
           </>
-        ) : msg.content}
+        ) : <HighlightedText text={msg.content} query={searchQuery ?? ''} />}
       </div>
       {(msg.sources && msg.sources.length > 0 || msg.fileSources && msg.fileSources.length > 0) && (
         <SourceList content={msg.content} sources={msg.sources ?? []} fileSources={msg.fileSources} highlightedSource={highlightedSource} onSourceClick={toggleSource} />
@@ -281,11 +302,28 @@ function MessageItem({ msg, isFirst, defaultCollapsed }: { msg: Message; isFirst
   )
 }
 
-export const MessageList = memo(function MessageList({ messages, streaming, streamingThinking, collapseFirstQuestion }: Props) {
+export const MessageList = memo(function MessageList({ messages, streaming, streamingThinking, collapseFirstQuestion, searchQuery, searchMatchIndices, searchActiveIndex }: Props) {
+  const msgRefs = useRef<Map<number, HTMLDivElement>>(new Map())
+  const matchSet = useMemo(() => new Set(searchMatchIndices ?? []), [searchMatchIndices])
+
+  useEffect(() => {
+    if (searchActiveIndex == null || searchActiveIndex < 0) return
+    msgRefs.current.get(searchActiveIndex)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [searchActiveIndex])
+
   return (
     <div className="flex flex-col gap-4 p-4 overflow-y-auto overflow-x-hidden flex-1">
       {messages.map((msg, i) => (
-        <MessageItem key={i} msg={msg} isFirst={i === 0} defaultCollapsed={i === 0 && !!collapseFirstQuestion} />
+        <div key={i} ref={el => { if (el) msgRefs.current.set(i, el); else msgRefs.current.delete(i) }}>
+          <MessageItem
+            msg={msg}
+            isFirst={i === 0}
+            defaultCollapsed={i === 0 && !!collapseFirstQuestion}
+            isMatch={matchSet.has(i)}
+            isActive={i === searchActiveIndex}
+            searchQuery={searchQuery}
+          />
+        </div>
       ))}
       {(streaming || streamingThinking) && (
         <div className="flex items-start">
