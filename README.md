@@ -60,6 +60,8 @@ Queriocity is a private research assistant you run on your own hardware. It is d
 
 Start a chat from the sidebar. Type a question and choose a [research mode](#research-modes) before sending. Follow-up questions resolve pronouns and references automatically ("When was it founded?" after asking about a company works as expected). Chats can be assigned to a [space](#spaces) at any time from the chat header.
 
+The first message in a chat can be collapsed to save space — useful when the prompt is long or contains an attachment. Click the **▾** icon in the top-right corner of the message to collapse it; click the truncated preview to expand it again. When opening a monitor run session the first message (the recurring query) is collapsed by default.
+
 The **Chats** view lists all your conversations with infinite scroll. Use the **Active / Created** toggle in the top-right to sort by most recently active or by creation date.
 
 ### Searching chats
@@ -430,6 +432,11 @@ DB_PATH=queriocity.db                       # path to SQLite database file (for 
 JWT_SECRET=change-me-in-production-32chars!!
 ALLOWED_ORIGIN=http://localhost:3000        # CORS allowed origin; defaults to * (lock this in production)
 
+# ── Embedding reset (optional) ───────────────────────────────────────────────
+# Set to true when changing EMBED_DIMENSIONS to allow the embedding tables to be
+# wiped and recreated. WARNING: all uploaded file embeddings will be deleted.
+# ALLOW_EMBED_RESET=true
+
 # ── Reformulate context limits ────────────────────────────────────────────────
 # The small model receives recent conversation history so it can resolve
 # pronouns and follow-up references ("it", "that company", etc.) when
@@ -760,6 +767,8 @@ The **Admin panel > System settings** tab exposes runtime-configurable parameter
 | Search | Query reformulation | On | Use a small LLM to rewrite queries before searching. Improves relevance at the cost of a small model call. Disable on slow hardware. |
 | Search | RSS feed character budget | 50000 | Total characters of news content fetched per monitor run when RSS sources are selected. Items per feed and content length per item scale automatically to fill this budget. Increase for large-context models; decrease for small ones (8K context ≈ 20 000 chars). |
 | Attachments | Max context chars | 20000 | Max characters extracted from an attached file and sent as context |
+
+The **RAG context budget** field also has a **Re-index chats** button that queues a background re-index of all chat sessions across all users — useful after changing embedding models or dimensions.
 
 The **Users** tab lets admins manage accounts, roles, and invite links.
 

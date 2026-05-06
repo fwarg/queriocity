@@ -228,10 +228,6 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                     className="w-fit px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-xs text-gray-200 transition-colors">
                     {dreamRunning ? 'Starting…' : dreamTriggered ? 'Started' : 'Run now'}
                   </button>
-                  <button onClick={handleReindexChats} disabled={reindexing}
-                    className="w-fit px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-xs text-gray-200 transition-colors">
-                    {reindexing ? 'Queued…' : reindexResult !== null ? `Queued ${reindexResult} sessions` : 'Re-index chats'}
-                  </button>
                 </div>
               </div>
               <div className="flex flex-col gap-1.5 border-t border-gray-800/60 pt-3">
@@ -247,6 +243,11 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                 <input type="number" min={0} max={10000} step={100} value={spaceRagBudgetDraft}
                   onChange={e => setSpaceRagBudgetDraft(e.target.value)}
                   className="w-32 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
+                <p className="text-xs text-gray-500 mt-1">Re-index all chat sessions across all users. Run this after changing embedding models or dimensions.</p>
+                <button onClick={handleReindexChats} disabled={reindexing}
+                  className="w-fit px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-xs text-gray-200 transition-colors">
+                  {reindexing ? 'Queued…' : reindexResult !== null ? `Queued ${reindexResult} sessions` : 'Re-index chats'}
+                </button>
               </div>
             </div>
 
