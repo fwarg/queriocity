@@ -68,6 +68,10 @@ The **Chats** view lists all your conversations with infinite scroll. Use the **
 
 The search box at the top of the Chats view searches both **chat titles and message content** across your full history. Results appear after a short debounce and are capped at 100 matches. The sidebar also has a quick title-only filter for the currently loaded chats.
 
+### Searching within a chat
+
+Press **Ctrl+F** (or click the 🔍 icon in the chat header) to open an in-chat search bar. Matching messages are highlighted with a yellow ring and the active match scrolls into view. Use **▲ ▼**, **Enter** / **Shift+Enter** to navigate between matches; **Escape** closes the bar. Text matches are also highlighted inline in user messages.
+
 ## Research modes
 
 Queriocity runs every chat request in one of four modes, selectable per message in the chat input bar. A fifth **Image** mode is available when `IMAGE_BASE_URL` is configured — see [Image generation](#image-generation).
