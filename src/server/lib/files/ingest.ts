@@ -1,10 +1,11 @@
+import { createHash } from 'crypto'
 import { randomUUID } from 'crypto'
+import { and, eq } from 'drizzle-orm'
 import { sqlite, db, uploadedFiles } from '../db.ts'
 import { embedTexts } from '../embeddings.ts'
+import { semanticChunk } from '../chunker.ts'
 import { extractPdfChunks } from './pdf.ts'
 import { extractImageText } from './image.ts'
-
-const CHUNK_SIZE = 1000 // chars
 
 export const ACCEPTED_MIME_TYPES = new Set([
   'application/pdf',
@@ -18,19 +19,19 @@ export const ACCEPTED_MIME_TYPES = new Set([
   'image/webp',
 ])
 
-function chunkText(text: string): string[] {
-  const chunks: string[] = []
-  for (let i = 0; i < text.length; i += CHUNK_SIZE) {
-    const chunk = text.slice(i, i + CHUNK_SIZE).trim()
-    if (chunk) chunks.push(chunk)
-  }
-  return chunks
+const CHUNK_CONFIG: Record<string, { size: number; overlap: number }> = {
+  image: { size: 1000, overlap: 150 },
+  doc:   { size: 2000, overlap: 300 },
+}
+
+function chunkConfig(mimeType: string) {
+  return mimeType.startsWith('image/') ? CHUNK_CONFIG.image : CHUNK_CONFIG.doc
 }
 
 /** Returns false if text is too short or contains too many non-printable characters. */
 export function isUsableText(text: string): boolean {
   if (text.trim().length < 50) return false
-  const nonPrintable = (text.match(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\ufffd]/g) ?? []).length
+  const nonPrintable = (text.match(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f�]/g) ?? []).length
   return nonPrintable / text.length < 0.15
 }
 
@@ -55,14 +56,23 @@ export async function ingestFile(
     throw new Error(`Unsupported file type: ${mimeType}. Accepted types: PDF, plain text, images.`)
   }
 
+  // Dedup: return existing fileId if this user already uploaded identical content
+  const contentHash = createHash('sha256').update(Buffer.from(buffer)).digest('hex')
+  const existing = await db.select({ id: uploadedFiles.id })
+    .from(uploadedFiles)
+    .where(and(eq(uploadedFiles.userId, userId), eq(uploadedFiles.contentHash, contentHash)))
+    .get()
+  if (existing) return existing.id
+
   const fileId = randomUUID()
 
-  // 1. Extract text chunks
+  // 1. Extract and chunk text
   const fullText = await extractFileText(buffer, mimeType)
   if (!isUsableText(fullText)) {
     throw new Error('Could not extract readable text from this file. It may be corrupted or in an unsupported encoding.')
   }
-  const rawChunks = chunkText(fullText)
+  const { size, overlap } = chunkConfig(mimeType)
+  const rawChunks = semanticChunk(fullText, size, overlap, 50)
 
   // 2. Embed all chunks
   const embeddings = await embedTexts(rawChunks)
@@ -74,6 +84,7 @@ export async function ingestFile(
     filename,
     mimeType,
     size: buffer.byteLength,
+    contentHash,
     createdAt: new Date(),
   })
 
@@ -85,14 +96,13 @@ export async function ingestFile(
     'INSERT INTO file_chunks (chunk_id, embedding) VALUES (?,?)',
   )
 
-  const insertAll = sqlite.transaction(() => {
+  sqlite.transaction(() => {
     for (let i = 0; i < rawChunks.length; i++) {
       const chunkId = `${fileId}:${i}`
       insertChunk.run(chunkId, fileId, rawChunks[i])
       insertVec.run(chunkId, JSON.stringify(embeddings[i]))
     }
-  })
-  insertAll()
+  })()
 
   return fileId
 }

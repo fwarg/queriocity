@@ -1,4 +1,4 @@
-import { db, monitors, monitorSubscriptions, monitorRuns, chatSessions, messages, users, parseSettings, getAppSetting } from './db.ts'
+import { db, monitors, monitorSubscriptions, monitorRuns, chatSessions, messages, getAppSetting } from './db.ts'
 import { eq, and, lte, desc, count } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { executeChatAndSave } from './chat-executor.ts'
@@ -71,11 +71,8 @@ export async function runDueMonitors(): Promise<void> {
           }
         }
 
-        const ownerRow = monitor.userId
-          ? await db.select({ settings: users.settings }).from(users).where(eq(users.id, monitor.userId)).get()
-          : null
-        const ownerTz = ownerRow ? (parseSettings(ownerRow.settings ?? '{}').timezone as string | undefined) : undefined
-        const nextRunAt = computeNextRunAt(monitor.intervalMinutes, monitor.preferredHour, ownerTz, now)
+        const nextRunAt = computeNextRunAt(monitor.intervalMinutes, monitor.preferredHour, monitor.timezone, now)
+        console.log(`  [monitor] "${monitor.name}" next run scheduled for ${nextRunAt.toISOString()}`)
         await db.update(monitors).set({ nextRunAt, lastRunAt: now, updatedAt: now }).where(eq(monitors.id, monitor.id))
       } catch (e) {
         console.error(`[monitor] processing failed for monitor=${monitor.id}:`, e)

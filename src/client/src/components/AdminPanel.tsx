@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { listUsers, setUserRole, deleteUser, createInvite, testModels, fetchAdminSettings, updateAdminSettings, triggerDream, type ModelTestResult } from '../lib/api.ts'
+import { listUsers, setUserRole, deleteUser, createInvite, testModels, fetchAdminSettings, updateAdminSettings, triggerDream, reindexChats, type ModelTestResult } from '../lib/api.ts'
 import { Modal } from './Modal.tsx'
 
 interface Props {
@@ -30,6 +30,8 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   const [budgetSaved, setBudgetSaved] = useState(false)
   const [dreamRunning, setDreamRunning] = useState(false)
   const [dreamTriggered, setDreamTriggered] = useState(false)
+  const [reindexing, setReindexing] = useState(false)
+  const [reindexResult, setReindexResult] = useState<number | null>(null)
   const [modelResults, setModelResults] = useState<ModelTestResult[] | null>(null)
   const [testingModels, setTestingModels] = useState(false)
 
@@ -95,6 +97,18 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
       setError('Failed to save settings.')
     } finally {
       setSavingBudget(false)
+    }
+  }
+
+  async function handleReindexChats() {
+    setReindexing(true)
+    setReindexResult(null)
+    try {
+      const { sessions } = await reindexChats()
+      setReindexResult(sessions)
+      setTimeout(() => setReindexResult(null), 5000)
+    } finally {
+      setReindexing(false)
     }
   }
 
@@ -209,10 +223,12 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                     className="accent-blue-500 w-3.5 h-3.5" />
                   <span className="text-xs text-gray-400">Deep dream — re-extract from source conversations using the thinking model</span>
                 </label>
-                <button onClick={handleRunDream} disabled={dreamRunning}
-                  className="mt-1 w-fit px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-xs text-gray-200 transition-colors">
-                  {dreamRunning ? 'Starting…' : dreamTriggered ? 'Started' : 'Run now'}
-                </button>
+                <div className="flex items-center gap-3 mt-1">
+                  <button onClick={handleRunDream} disabled={dreamRunning}
+                    className="w-fit px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-xs text-gray-200 transition-colors">
+                    {dreamRunning ? 'Starting…' : dreamTriggered ? 'Started' : 'Run now'}
+                  </button>
+                </div>
               </div>
               <div className="flex flex-col gap-1.5 border-t border-gray-800/60 pt-3">
                 <p className="text-xs text-gray-400 font-medium">Extraction context</p>
@@ -227,6 +243,11 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                 <input type="number" min={0} max={10000} step={100} value={spaceRagBudgetDraft}
                   onChange={e => setSpaceRagBudgetDraft(e.target.value)}
                   className="w-32 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
+                <p className="text-xs text-gray-500 mt-1">Re-index all chat sessions across all users. Run this after changing embedding models or dimensions.</p>
+                <button onClick={handleReindexChats} disabled={reindexing}
+                  className="w-fit px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-xs text-gray-200 transition-colors">
+                  {reindexing ? 'Queued…' : reindexResult !== null ? `Queued ${reindexResult} sessions` : 'Re-index chats'}
+                </button>
               </div>
             </div>
 

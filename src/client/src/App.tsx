@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { MessageList } from './components/MessageList.tsx'
 import { ChatInput } from './components/ChatInput.tsx'
 import { LoginPage } from './components/LoginPage.tsx'
@@ -55,6 +55,11 @@ export default function App() {
   const [files, setFiles] = useState<UploadedFile[]>([])
   const [spaces, setSpaces] = useState<Space[]>([])
   const [monitorCount, setMonitorCount] = useState(0)
+  const [isMonitorSession, setIsMonitorSession] = useState(false)
+  const [chatSearchOpen, setChatSearchOpen] = useState(false)
+  const [chatSearchQuery, setChatSearchQuery] = useState('')
+  const [chatSearchCursor, setChatSearchCursor] = useState(0)
+  const chatSearchInputRef = useRef<HTMLInputElement>(null)
   const [currentSpaceId, setCurrentSpaceId] = useState<string | null>(null)
   const [editingSpaceId, setEditingSpaceId] = useState<string | null>(null)
   const [spaceDraft, setSpaceDraft] = useState('')
@@ -210,6 +215,33 @@ export default function App() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, streaming])
 
+  const chatMatchIndices = useMemo(() => {
+    if (!chatSearchOpen || !chatSearchQuery.trim()) return []
+    const q = chatSearchQuery.toLowerCase()
+    return messages.reduce<number[]>((acc, msg, i) => {
+      if (msg.content.toLowerCase().includes(q)) acc.push(i)
+      return acc
+    }, [])
+  }, [messages, chatSearchQuery, chatSearchOpen])
+
+  // Reset cursor when query or session changes
+  useEffect(() => { setChatSearchCursor(0) }, [chatSearchQuery, sessionId])
+
+  // Close search when switching sessions
+  useEffect(() => { setChatSearchOpen(false); setChatSearchQuery('') }, [sessionId])
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'f' && view === 'chat' && messages.length > 0) {
+        e.preventDefault()
+        setChatSearchOpen(true)
+        setTimeout(() => chatSearchInputRef.current?.focus(), 0)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [view, messages.length])
+
   function handleAuthSuccess(user: AuthUser) {
     setCurrentUser(user)
     setAuthView('loading')
@@ -231,9 +263,10 @@ export default function App() {
   }
 
 
-  function loadSession(id: string, title: string, addToHistory = true) {
+  function loadSession(id: string, title: string, addToHistory = true, fromMonitor = false) {
     setSessionId(id)
     setEditingTitle(false)
+    setIsMonitorSession(fromMonitor)
     reset()
     setView('chat')
     fetchSession(id).then(setMessages).catch(() => {})
@@ -248,6 +281,7 @@ export default function App() {
   function newChat(inSpaceId?: string) {
     setSessionId(undefined)
     setEditingTitle(false)
+    setIsMonitorSession(false)
     reset()
     setCurrentSpaceId(inSpaceId ?? null)
     setView('chat')
@@ -1079,7 +1113,7 @@ export default function App() {
             isAdmin={currentUser?.role === 'admin'}
             timezone={currentUser?.settings?.timezone ?? ''}
             onCountChange={setMonitorCount}
-            onOpenSession={(id, title) => { loadSession(id, title, false); setSidebarOpen(false) }}
+            onOpenSession={(id, title) => { loadSession(id, title, false, true); setSidebarOpen(false) }}
           />
         ) : (
           <>
@@ -1152,11 +1186,59 @@ export default function App() {
                       >
                         ✎
                       </button>
+                      <button
+                        onClick={() => { setChatSearchOpen(o => !o); if (!chatSearchOpen) setTimeout(() => chatSearchInputRef.current?.focus(), 0) }}
+                        className={`text-xs shrink-0 ${chatSearchOpen ? 'text-blue-400' : 'text-gray-600 hover:text-gray-400'}`}
+                        aria-label="Search in chat"
+                        title="Search in chat (Ctrl+F)"
+                      >
+                        🔍
+                      </button>
                     </>
                   )}
                 </div>
               )
             })()}
+            {chatSearchOpen && messages.length > 0 && (
+              <div className="flex items-center gap-2 px-3 py-1.5 border-b border-gray-800 bg-gray-900">
+                <button
+                  onClick={() => { const prev = (chatSearchCursor - 1 + chatMatchIndices.length) % Math.max(chatMatchIndices.length, 1); setChatSearchCursor(prev) }}
+                  disabled={chatMatchIndices.length === 0}
+                  className="text-gray-500 hover:text-gray-300 disabled:opacity-30 text-xs px-1"
+                  title="Previous match"
+                >▲</button>
+                <button
+                  onClick={() => { setChatSearchCursor((chatSearchCursor + 1) % Math.max(chatMatchIndices.length, 1)) }}
+                  disabled={chatMatchIndices.length === 0}
+                  className="text-gray-500 hover:text-gray-300 disabled:opacity-30 text-xs px-1"
+                  title="Next match"
+                >▼</button>
+                <input
+                  ref={chatSearchInputRef}
+                  value={chatSearchQuery}
+                  onChange={e => setChatSearchQuery(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      if (e.shiftKey) setChatSearchCursor(c => (c - 1 + Math.max(chatMatchIndices.length, 1)) % Math.max(chatMatchIndices.length, 1))
+                      else setChatSearchCursor(c => (c + 1) % Math.max(chatMatchIndices.length, 1))
+                    } else if (e.key === 'Escape') { setChatSearchOpen(false); setChatSearchQuery('') }
+                  }}
+                  placeholder="Search in chat…"
+                  className="flex-1 bg-transparent text-sm text-gray-100 placeholder-gray-600 focus:outline-none min-w-0"
+                />
+                <span className="text-xs text-gray-600 shrink-0 tabular-nums">
+                  {chatMatchIndices.length === 0
+                    ? (chatSearchQuery.trim() ? 'no matches' : '')
+                    : `${chatSearchCursor + 1} of ${chatMatchIndices.length}`}
+                </span>
+                <button
+                  onClick={() => { setChatSearchOpen(false); setChatSearchQuery('') }}
+                  className="text-gray-600 hover:text-gray-400 text-xs px-1"
+                  title="Close search"
+                >×</button>
+              </div>
+            )}
             {messages.length === 0 && !streaming ? (
               <div className="flex flex-col items-center justify-center flex-1 gap-3 text-gray-500">
                 <img src="/logo.webp" alt="Queriocity" className="w-24 sm:w-32 md:w-40 h-auto" />
@@ -1164,7 +1246,15 @@ export default function App() {
                 <span className="text-sm">LLM-driven web search</span>
               </div>
             ) : (
-              <MessageList messages={messages} streaming={streaming} streamingThinking={streamingThinking} />
+              <MessageList
+                messages={messages}
+                streaming={streaming}
+                streamingThinking={streamingThinking}
+                collapseFirstQuestion={isMonitorSession}
+                searchQuery={chatSearchOpen ? chatSearchQuery : ''}
+                searchActiveIndex={chatSearchOpen && chatMatchIndices.length > 0 ? chatMatchIndices[chatSearchCursor] : -1}
+                searchMatchIndices={chatSearchOpen ? chatMatchIndices : []}
+              />
             )}
             {status && (
               <div className="px-4 py-1 text-xs text-gray-500 italic animate-pulse">{status}</div>

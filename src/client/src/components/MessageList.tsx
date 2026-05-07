@@ -1,4 +1,5 @@
-import React, { useState, useCallback, memo } from 'react'
+import React, { useState, useCallback, useEffect, useRef, useMemo, memo } from 'react'
+import { ChevronDown, ChevronRight } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -12,6 +13,10 @@ interface Props {
   messages: Message[]
   streaming?: string
   streamingThinking?: string
+  collapseFirstQuestion?: boolean
+  searchQuery?: string
+  searchMatchIndices?: number[]
+  searchActiveIndex?: number
 }
 
 /** Normalize SVG blocks: unwrap any existing ```svg fences, then rewrap consistently. */
@@ -218,10 +223,47 @@ function ThinkingBlock({ content, open }: { content: string; open?: boolean }) {
 
 const baseMdComponents = makeMdComponents(null, () => {})
 
-function MessageItem({ msg }: { msg: Message }) {
+function escapeRegex(s: string) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') }
+
+function HighlightedText({ text, query }: { text: string; query: string }) {
+  if (!query.trim()) return <>{text}</>
+  const parts = text.split(new RegExp(`(${escapeRegex(query)})`, 'gi'))
+  return <>{parts.map((p, i) =>
+    i % 2 === 1
+      ? <mark key={i} className="bg-yellow-500/50 text-white rounded-sm">{p}</mark>
+      : p
+  )}</>
+}
+
+function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, searchQuery }: { msg: Message; isFirst?: boolean; defaultCollapsed?: boolean; isMatch?: boolean; isActive?: boolean; searchQuery?: string }) {
   const [highlightedSource, setHighlightedSource] = useState<number | null>(null)
+  const [collapsed, setCollapsed] = useState(!!defaultCollapsed)
   const toggleSource = useCallback((n: number) => setHighlightedSource(v => v === n ? null : n), [])
   const mdComponents = makeMdComponents(highlightedSource, toggleSource)
+
+  const collapsible = isFirst && msg.role === 'user'
+
+  if (collapsible && collapsed) {
+    const preview = msg.content.replace(/\s+/g, ' ').trim().slice(0, 80)
+    const truncated = msg.content.replace(/\s+/g, ' ').trim().length > 80
+    return (
+      <div className="flex justify-end w-full">
+        <button
+          onClick={() => setCollapsed(false)}
+          className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-300 max-w-2xl text-right"
+        >
+          <ChevronRight size={13} className="shrink-0" />
+          <span className="truncate">{preview}{truncated ? '…' : ''}</span>
+        </button>
+      </div>
+    )
+  }
+
+  const ringClass = isActive
+    ? 'ring-2 ring-yellow-400'
+    : isMatch
+      ? 'ring-2 ring-yellow-600/50'
+      : ''
 
   return (
     <div className={`flex flex-col gap-1 w-full ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
@@ -230,8 +272,17 @@ function MessageItem({ msg }: { msg: Message }) {
           msg.role === 'user'
             ? 'bg-blue-700 text-white whitespace-pre-wrap'
             : 'bg-gray-800 text-gray-100'
-        }`}
+        } ${ringClass}`}
       >
+        {collapsible && (
+          <button
+            onClick={() => setCollapsed(true)}
+            className="float-right ml-2 -mr-1 -mt-0.5 text-blue-300 hover:text-white opacity-60 hover:opacity-100"
+            title="Collapse"
+          >
+            <ChevronDown size={14} />
+          </button>
+        )}
         {msg.role === 'assistant' ? (
           <>
             {msg.thinking && <ThinkingBlock content={msg.thinking} />}
@@ -242,7 +293,7 @@ function MessageItem({ msg }: { msg: Message }) {
             })()}
             {msg.images?.map((img, i) => <ImageBlock key={i} url={img.url} alt={img.alt} />)}
           </>
-        ) : msg.content}
+        ) : <HighlightedText text={msg.content} query={searchQuery ?? ''} />}
       </div>
       {(msg.sources && msg.sources.length > 0 || msg.fileSources && msg.fileSources.length > 0) && (
         <SourceList content={msg.content} sources={msg.sources ?? []} fileSources={msg.fileSources} highlightedSource={highlightedSource} onSourceClick={toggleSource} />
@@ -251,11 +302,28 @@ function MessageItem({ msg }: { msg: Message }) {
   )
 }
 
-export const MessageList = memo(function MessageList({ messages, streaming, streamingThinking }: Props) {
+export const MessageList = memo(function MessageList({ messages, streaming, streamingThinking, collapseFirstQuestion, searchQuery, searchMatchIndices, searchActiveIndex }: Props) {
+  const msgRefs = useRef<Map<number, HTMLDivElement>>(new Map())
+  const matchSet = useMemo(() => new Set(searchMatchIndices ?? []), [searchMatchIndices])
+
+  useEffect(() => {
+    if (searchActiveIndex == null || searchActiveIndex < 0) return
+    msgRefs.current.get(searchActiveIndex)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [searchActiveIndex])
+
   return (
     <div className="flex flex-col gap-4 p-4 overflow-y-auto overflow-x-hidden flex-1">
       {messages.map((msg, i) => (
-        <MessageItem key={i} msg={msg} />
+        <div key={i} ref={el => { if (el) msgRefs.current.set(i, el); else msgRefs.current.delete(i) }}>
+          <MessageItem
+            msg={msg}
+            isFirst={i === 0}
+            defaultCollapsed={i === 0 && !!collapseFirstQuestion}
+            isMatch={matchSet.has(i)}
+            isActive={i === searchActiveIndex}
+            searchQuery={searchQuery}
+          />
+        </div>
       ))}
       {(streaming || streamingThinking) && (
         <div className="flex items-start">

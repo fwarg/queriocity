@@ -2,18 +2,9 @@ import { randomUUID } from 'crypto'
 import { sqlite, db, messages } from './db.ts'
 import { eq } from 'drizzle-orm'
 import { embedTexts } from './embeddings.ts'
+import { semanticChunk } from './chunker.ts'
 
-const CHUNK_SIZE = 1000
 const MIN_CONTENT_LEN = 20
-
-function chunkContent(content: string): string[] {
-  const chunks: string[] = []
-  for (let i = 0; i < content.length; i += CHUNK_SIZE) {
-    const chunk = content.slice(i, i + CHUNK_SIZE).trim()
-    if (chunk.length >= MIN_CONTENT_LEN) chunks.push(chunk)
-  }
-  return chunks
-}
 
 /** Remove all indexed chunks for a session. */
 export function deindexSession(sessionId: string): void {
@@ -25,7 +16,7 @@ export function deindexSession(sessionId: string): void {
 export async function indexContents(sessionId: string, contents: string[]): Promise<number> {
   const chunks: Array<{ id: string; content: string }> = []
   for (const content of contents) {
-    for (const chunk of chunkContent(content)) {
+    for (const chunk of semanticChunk(content, 800, 120, MIN_CONTENT_LEN)) {
       chunks.push({ id: randomUUID(), content: chunk })
     }
   }
