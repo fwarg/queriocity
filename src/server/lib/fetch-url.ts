@@ -4,6 +4,8 @@ import { fetch as undiciFetch, ProxyAgent } from 'undici'
 const MAX_CHARS = parseInt(process.env.FETCH_MAX_CHARS ?? '12000')
 const PROXY_URL = process.env.FETCH_PROXY_URL
 const proxyAgent = PROXY_URL ? new ProxyAgent(PROXY_URL) : undefined
+const CACHE_TTL_MS = 5 * 60 * 1000
+const fetchCache = new Map<string, { result: string; ts: number }>()
 
 function stripHtml(html: string): string {
   return html
@@ -42,13 +44,20 @@ async function fetchStatic(url: string): Promise<string> {
 }
 
 async function fetchWithPlaywright(url: string): Promise<string> {
-  const browser = await chromium.launch({ headless: true })
+  const browser = await chromium.launch({
+    headless: true,
+    args: ['--disable-blink-features=AutomationControlled'],
+  })
   try {
-    const ctx = PROXY_URL
-      ? await browser.newContext({ proxy: { server: PROXY_URL } })
-      : await browser.newContext()
+    const ctxOptions = {
+      userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      viewport: { width: 1280, height: 800 },
+      ...(PROXY_URL ? { proxy: { server: PROXY_URL } } : {}),
+    }
+    const ctx = await browser.newContext(ctxOptions)
+    await ctx.addInitScript(() => { Object.defineProperty(navigator, 'webdriver', { get: () => undefined }) })
     const page = await ctx.newPage()
-    await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 })
+    await page.goto(url, { waitUntil: 'networkidle', timeout: 15000 })
     const text = await page.evaluate(() => document.body.innerText)
     await ctx.close()
     return text.replace(/\s+/g, ' ').trim()
@@ -58,27 +67,34 @@ async function fetchWithPlaywright(url: string): Promise<string> {
 }
 
 export async function fetchUrl(url: string): Promise<string> {
+  const cached = fetchCache.get(url)
+  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
+    console.log(`  [fetch-url] cache hit: ${url}`)
+    return cached.result
+  }
   const start = performance.now()
+  const cache = (result: string) => { fetchCache.set(url, { result, ts: Date.now() }); return result }
   try {
     const text = await fetchStatic(url)
     if (text.length >= 300) {
       console.log(`  [fetch-url] static ${url} — ${text.length} chars in ${(performance.now() - start).toFixed(0)}ms`)
-      return text.slice(0, MAX_CHARS)
+      return cache(text.slice(0, MAX_CHARS))
     }
     console.log(`  [fetch-url] static fetch short (${text.length} chars), trying Playwright`)
   } catch (err) {
-    if (err instanceof HttpError) {
-      console.log(`  [fetch-url] HTTP ${err.status} — skipping Playwright`)
-      return `Error fetching ${url}: HTTP ${err.status}`
+    if (err instanceof HttpError && proxyAgent) {
+      // With a proxy (Tor), HTTP errors mean the exit node is blocked — Playwright would also fail or timeout
+      console.log(`  [fetch-url] HTTP ${err.status} via proxy — skipping Playwright`)
+      return cache(`Error fetching ${url}: HTTP ${err.status}`)
     }
     console.log(`  [fetch-url] static fetch failed: ${err}, trying Playwright`)
   }
   try {
     const text = await fetchWithPlaywright(url)
     console.log(`  [fetch-url] playwright ${url} — ${text.length} chars in ${(performance.now() - start).toFixed(0)}ms`)
-    return text.slice(0, MAX_CHARS)
+    return cache(text.slice(0, MAX_CHARS))
   } catch (err) {
     console.log(`  [fetch-url] playwright failed: ${err}`)
-    return `Error fetching ${url}: ${err}`
+    return cache(`Error fetching ${url}: ${err}`)
   }
 }
