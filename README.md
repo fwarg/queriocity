@@ -430,6 +430,13 @@ RERANK_MODEL=qwen3-reranker
 SEARXNG_URL=http://localhost:4000  # url to your searxng instance
 # SEARXNG_ENGINES=                            # comma-separated engine list; blank = SearXNG defaults
 
+# ── URL fetching ──────────────────────────────────────────────────────────────
+# The fetch_url tool lets the LLM read full page content from a given URL.
+# By default requests come from the server's IP. Set FETCH_PROXY_URL to route
+# them through an HTTP or SOCKS5 proxy (e.g. Tor, Privoxy).
+# FETCH_PROXY_URL=socks5://127.0.0.1:9050    # optional proxy for URL fetches
+# FETCH_MAX_CHARS=12000                       # max chars returned per fetch (default: 12000)
+
 # ── Server ────────────────────────────────────────────────────────────────────
 PORT=3000                                   # not used in Docker (see docker/compose.yml)
 DB_PATH=queriocity.db                       # path to SQLite database file (for docker see docker/compose.yml))

@@ -6,9 +6,11 @@ COPY . .
 RUN bun run build:client
 
 FROM oven/bun:1
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 WORKDIR /app
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile --production
+RUN bunx playwright install --with-deps chromium
 COPY src ./src
 COPY docker/data/global_news_rss_feeds.json ./src/server/data/news_feeds.json
 COPY tsconfig.json drizzle.config.ts ./

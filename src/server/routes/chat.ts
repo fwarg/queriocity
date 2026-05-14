@@ -13,6 +13,7 @@ import { randomUUID } from 'crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { webSearch, webSearchMulti, type SearchResult } from '../lib/searxng.ts'
+import { fetchUrl } from '../lib/fetch-url.ts'
 import { getFlashModel, getChatModel, getThinkingModelOrFallback } from '../lib/llm.ts'
 import { ThinkExtractor } from '../lib/think-extractor.ts'
 import { rerank, rerankEnabled } from '../lib/reranker.ts'
@@ -306,13 +307,14 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
 
   const t0 = Date.now()
 
-  // Fetch user settings + file count + reformulate/pre-search + memory in parallel
-  const [userRow, fileCountRow, { initialQueries, initialResults }, memoryBudget, ragBudget] = await Promise.all([
+  // Fetch user settings + file count + reformulate/pre-search + memory + URL prefetch in parallel
+  const [userRow, fileCountRow, { initialQueries, initialResults }, memoryBudget, ragBudget, prefetchedUrls] = await Promise.all([
     db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get(),
     db.select({ count: sql<number>`count(*)` }).from(uploadedFiles).where(eq(uploadedFiles.userId, userId)).get(),
     runReformulateAndPreSearch(msgsForReformulate, focusMode as 'balanced' | 'thorough', hasAttachment),
     spaceId ? getAppSetting('memory_token_budget', '1000').then(Number) : Promise.resolve(1000),
     getAppSetting('space_rag_budget', '500').then(Number),
+    prefetchUrlsFromMessage(lastUser?.content ?? '', hasAttachment),
   ])
   const userQuery = lastUser?.content ?? ''
   const parsedSettings = parseSettings(userRow?.settings ?? '{}')
@@ -346,6 +348,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
 
     if (focusMode === 'thorough') {
       // Phase 1: Research (collect sources, no text to client)
+      if (prefetchedUrls.length) await emitStatus(`Reading: ${prefetchedUrls.map(f => new URL(f.url).hostname).join(', ')}`)
       if (initialQueries?.length) {
         await emitStatus(`Searching: ${initialQueries.map(q => `"${q}"`).join(', ')}`)
         if (showThinking) {
@@ -360,7 +363,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
         await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: snippets + '\n\n' }) })
       }
       const researchModel = useThinking ? getThinkingModelOrFallback() : getChatModel()
-      const researcherResult = runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock })
+      const researcherResult = runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock })
       const allSources: SearchResult[] = [...(initialResults ?? [])]
       let researcherNotes = ''
       const thoroughExtractor = useThinking ? new ThinkExtractor() : null
@@ -430,6 +433,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
       }
     } else {
       // Speed / balanced: stream researcher output directly
+      if (prefetchedUrls.length) await emitStatus(`Reading: ${prefetchedUrls.map(f => new URL(f.url).hostname).join(', ')}`)
       if (initialQueries?.length) {
         await emitStatus(`Searching: ${initialQueries.map(q => `"${q}"`).join(', ')}`)
         if (showThinking) {
@@ -448,7 +452,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
         await stream.writeSSE({ data: JSON.stringify({ type: 'sources', sources: initialResults }) })
       }
 
-      const result = runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock })
+      const result = runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock })
       const extractor = showThinking ? new ThinkExtractor() : null
 
       await drainResearcherStream(result, {
@@ -562,6 +566,21 @@ async function drainResearcherStream(
     }
   }
   console.log(`  [drain] textDelta=${textDeltaCount} reasoning=${reasoningCount} finishReason=${finishReason}`)
+}
+
+function extractUrls(text: string): string[] {
+  return [...text.matchAll(/https?:\/\/[^\s<>"')\]]+/g)]
+    .map(m => m[0].replace(/[.,;!?]+$/, ''))
+    .filter((u, i, a) => a.indexOf(u) === i)
+    .slice(0, 2)
+}
+
+async function prefetchUrlsFromMessage(text: string, hasAttachment: boolean): Promise<Array<{ url: string; content: string }>> {
+  if (hasAttachment) return []
+  const urls = extractUrls(text)
+  if (!urls.length) return []
+  console.log(`  [fetch-url] pre-fetching ${urls.length} URL(s): ${urls.join(', ')}`)
+  return Promise.all(urls.map(async url => ({ url, content: await fetchUrl(url) })))
 }
 
 async function runReformulateAndPreSearch(
