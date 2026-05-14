@@ -13,7 +13,7 @@ import { randomUUID } from 'crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { webSearch, webSearchMulti, type SearchResult } from '../lib/searxng.ts'
-import { fetchUrl } from '../lib/fetch-url.ts'
+import { fetchUrlAllPages } from '../lib/fetch-url.ts'
 import { getFlashModel, getChatModel, getThinkingModelOrFallback } from '../lib/llm.ts'
 import { ThinkExtractor } from '../lib/think-extractor.ts'
 import { rerank, rerankEnabled } from '../lib/reranker.ts'
@@ -580,7 +580,7 @@ async function prefetchUrlsFromMessage(text: string, hasAttachment: boolean): Pr
   const urls = extractUrls(text)
   if (!urls.length) return []
   console.log(`  [fetch-url] pre-fetching ${urls.length} URL(s): ${urls.join(', ')}`)
-  return Promise.all(urls.map(async url => ({ url, content: await fetchUrl(url) })))
+  return Promise.all(urls.map(async url => ({ url, content: await fetchUrlAllPages(url) })))
 }
 
 async function runReformulateAndPreSearch(

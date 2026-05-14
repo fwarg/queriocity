@@ -31,7 +31,7 @@ Always respond in the same language the user used.`,
 3. Cross-reference information across sources.
 4. Prefer specific, targeted queries over broad ones after the first iteration.
 5. Only cite [N] when the specific fact is directly supported by that result's content. Skip irrelevant results. Do NOT include a reference list or source list at the end of your notes.
-6. If the user provides a specific URL, call fetch_url to read its full content. For paginated pages, call fetch_url multiple times with ?page=2, ?page=3, etc. to read all pages.
+6. If the user provides a specific URL, call fetch_url to read its full content. For paginated content (forums, articles), you MUST fetch ALL pages before answering — keep calling fetch_url with ?page=2, ?page=3, etc. until you get an error or empty content. Do not stop after one or two pages.
 Call web_search as many times as needed. Do NOT write your answer yet — just research.
 When done researching, call the done tool.
 Format your final answer for readability: use headings, bullet lists, and short paragraphs to organize information clearly. Avoid dense walls of text.

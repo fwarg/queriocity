@@ -6,6 +6,7 @@ const PROXY_URL = process.env.FETCH_PROXY_URL
 const proxyAgent = PROXY_URL ? new ProxyAgent(PROXY_URL) : undefined
 const CACHE_TTL_MS = 5 * 60 * 1000
 const fetchCache = new Map<string, { result: string; ts: number }>()
+const MAX_PREFETCH_PAGES = parseInt(process.env.FETCH_MAX_PAGES ?? '8')
 
 function stripHtml(html: string): string {
   return html
@@ -97,4 +98,38 @@ export async function fetchUrl(url: string): Promise<string> {
     console.log(`  [fetch-url] playwright failed: ${err}`)
     return cache(`Error fetching ${url}: ${err}`)
   }
+}
+
+function buildPageUrl(url: string, page: number): string {
+  const u = new URL(url)
+  u.searchParams.set('page', String(page))
+  return u.toString()
+}
+
+export async function fetchUrlAllPages(url: string): Promise<string> {
+  console.log(`  [fetch-url] page 1: ${url}`)
+  const first = await fetchUrl(url)
+  if (first.startsWith('Error')) return first
+
+  const pages = [first]
+  const seen = new Set([first])
+  for (let p = 2; p <= MAX_PREFETCH_PAGES; p++) {
+    const pageUrl = buildPageUrl(url, p)
+    console.log(`  [fetch-url] page ${p}: ${pageUrl}`)
+    const content = await fetchUrl(pageUrl)
+    if (content.startsWith('Error') || content.length < 300) {
+      console.log(`  [fetch-url] page ${p} empty/error — stopping at ${p - 1} pages`)
+      break
+    }
+    if (seen.has(content)) {
+      console.log(`  [fetch-url] page ${p} duplicate — site ignores page param, stopping at ${p - 1} pages`)
+      break
+    }
+    seen.add(content)
+    pages.push(content)
+  }
+
+  console.log(`  [fetch-url] fetched ${pages.length} page(s) total for ${url}`)
+  if (pages.length === 1) return first
+  return pages.map((p, i) => `--- Page ${i + 1} ---\n${p}`).join('\n\n')
 }
