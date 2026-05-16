@@ -128,7 +128,7 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
             <p className="text-xs text-gray-400 mb-2 px-1">Choose a prompt template</p>
 
             {/* Built-in templates */}
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {TEMPLATES.map(t => (
                 <button
                   key={t.id}
@@ -151,7 +151,7 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
             {customTemplates.length > 0 && (
               <div className="mt-3">
                 <p className="text-xs text-gray-500 mb-2 px-1">Custom</p>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {customTemplates.map(ct => (
                     <div key={ct.id} className="relative group">
                       <button
