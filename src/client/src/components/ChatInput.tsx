@@ -33,7 +33,16 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
   const [extractStatus, setExtractStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [extractError, setExtractError] = useState('')
   const [showTemplates, setShowTemplates] = useState(false)
+  const [visibleDesc, setVisibleDesc] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const descTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  function handleModeChange(m: FocusMode) {
+    onFocusModeChange(m)
+    if (descTimerRef.current) clearTimeout(descTimerRef.current)
+    setVisibleDesc(MODE_DESCRIPTIONS[m])
+    descTimerRef.current = setTimeout(() => setVisibleDesc(null), 2500)
+  }
 
   const isFlash = focusMode === 'flash'
   const isOverLimit = isFlash && value.length > FLASH_MAX
@@ -90,12 +99,15 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
           onClose={() => setShowTemplates(false)}
         />
       )}
+      <div className={`overflow-hidden text-xs text-gray-500 flex items-center transition-all duration-500 ${visibleDesc ? 'max-h-7 opacity-100' : 'max-h-0 opacity-0'}`}>
+        {visibleDesc}
+      </div>
       <div className="flex items-center gap-2 text-xs">
         {(['flash', 'balanced', 'thorough', 'image'] as const).map(m => (
           <button
             key={m}
             type="button"
-            onClick={() => onFocusModeChange(m)}
+            onClick={() => handleModeChange(m)}
             className={`px-2 py-1 rounded capitalize ${focusMode === m ? 'bg-blue-600' : 'bg-gray-800 hover:bg-gray-700'}`}
           >
             {m}
@@ -106,9 +118,6 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
             {value.length}/{FLASH_MAX}
           </span>
         )}
-      </div>
-      <div className="h-7 flex items-center text-xs text-gray-500 overflow-hidden">
-        {MODE_DESCRIPTIONS[focusMode]}
       </div>
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
