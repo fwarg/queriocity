@@ -44,6 +44,7 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
   const [values, setValues] = useState<Record<string, string>>({})
   const [customTemplates, setCustomTemplates] = useState<CustomTemplate[]>([])
   const [studio, setStudio] = useState<'create' | CustomTemplate | null>(null)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const studioRef = useRef<'create' | CustomTemplate | null>(null)
 
@@ -82,6 +83,8 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
 
   async function handleDeleteCustom(e: React.MouseEvent, id: string) {
     e.stopPropagation()
+    if (confirmDeleteId !== id) { setConfirmDeleteId(id); return }
+    setConfirmDeleteId(null)
     await deleteCustomTemplate(id)
     setCustomTemplates(prev => prev.filter(t => t.id !== id))
   }
@@ -118,14 +121,14 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
 
       <div
         ref={panelRef}
-        className="absolute bottom-full left-0 right-0 mb-2 z-20 rounded-lg border border-gray-700 bg-gray-900 shadow-xl"
+        className="absolute bottom-full left-0 right-0 mb-2 z-20 rounded-lg border border-gray-700 bg-gray-900 shadow-xl max-h-[70vh] overflow-y-auto"
       >
         {!active ? (
           <div className="p-3">
             <p className="text-xs text-gray-400 mb-2 px-1">Choose a prompt template</p>
 
             {/* Built-in templates */}
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {TEMPLATES.map(t => (
                 <button
                   key={t.id}
@@ -148,7 +151,7 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
             {customTemplates.length > 0 && (
               <div className="mt-3">
                 <p className="text-xs text-gray-500 mb-2 px-1">Custom</p>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {customTemplates.map(ct => (
                     <div key={ct.id} className="relative group">
                       <button
@@ -166,23 +169,44 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
                           <p className="text-xs text-gray-400 leading-snug">{ct.description}</p>
                         )}
                       </button>
-                      <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="absolute top-2 right-2 flex gap-1">
                         <button
                           type="button"
-                          onClick={e => { e.stopPropagation(); setStudio(ct) }}
+                          onClick={e => { e.stopPropagation(); setConfirmDeleteId(null); setStudio(ct) }}
                           className="p-1 rounded text-gray-500 hover:text-gray-200 hover:bg-gray-600 transition-colors"
                           aria-label="Edit template"
                         >
                           <Pencil size={12} />
                         </button>
-                        <button
-                          type="button"
-                          onClick={e => handleDeleteCustom(e, ct.id)}
-                          className="p-1 rounded text-gray-500 hover:text-red-400 hover:bg-gray-600 transition-colors"
-                          aria-label="Delete template"
-                        >
-                          <Trash2 size={12} />
-                        </button>
+                        {confirmDeleteId === ct.id ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={e => handleDeleteCustom(e, ct.id)}
+                              className="p-1 rounded text-red-400 bg-gray-700 hover:bg-gray-600 transition-colors text-[10px] font-medium"
+                              aria-label="Confirm delete"
+                            >
+                              Del
+                            </button>
+                            <button
+                              type="button"
+                              onClick={e => { e.stopPropagation(); setConfirmDeleteId(null) }}
+                              className="p-1 rounded text-gray-400 bg-gray-700 hover:bg-gray-600 transition-colors text-[10px] font-medium"
+                              aria-label="Cancel delete"
+                            >
+                              ✕
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={e => handleDeleteCustom(e, ct.id)}
+                            className="p-1 rounded text-gray-500 hover:text-red-400 hover:bg-gray-600 transition-colors"
+                            aria-label="Delete template"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        )}
                       </div>
                     </div>
                   ))}

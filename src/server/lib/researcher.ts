@@ -4,19 +4,20 @@ import type { LanguageModel, CoreMessage } from 'ai'
 import { webSearch, webSearchMulti, type SearchResult } from './searxng.ts'
 import { searchUploads } from './files/uploads-search.ts'
 import { saveMemory } from './memory.ts'
+import { fetchUrl } from './fetch-url.ts'
 import { trimMessages } from './trim-messages.ts'
 
 
 export const SYSTEM_PROMPTS = {
   fast: `You are a fast research assistant. Answer directly. If a web search would help, \
 call web_search once with the most important query. Skip search for conversational \
-or factual questions you can answer from training.
+or factual questions you can answer from training. If the user provides a specific URL, call fetch_url to read its content.
 Format your answer for readability: use short paragraphs, bullet lists, or headings when the answer has multiple points or is more than two sentences. Avoid dense walls of text. Be concise.
 Always respond in the same language the user used.`,
 
   balanced: `You are a research assistant. For each query:
 1. Review the search results you already have.
-2. Before answering, ALWAYS call web_search at least once more with targeted follow-up queries to fill gaps or verify key claims. Do NOT skip this step.
+2. Before answering, ALWAYS call web_search at least once more with targeted follow-up queries to fill gaps or verify key claims. Do NOT skip this step. If the user provides a specific URL, call fetch_url to read its full content instead of or in addition to searching.
 3. After the follow-up search, write your answer with inline [N] citations where N is the exact \`index\` value of that result (e.g. [1][2]). Do NOT use markdown hyperlinks. NEVER invent your own numbering — only use index values that appear in the search results.
 4. Only cite [N] when the specific fact is directly supported by that result's content. Skip irrelevant results.
 5. NEVER use [N] citations for information from your training knowledge. If results are irrelevant, answer without any [N] citations.
@@ -30,6 +31,7 @@ Always respond in the same language the user used.`,
 3. Cross-reference information across sources.
 4. Prefer specific, targeted queries over broad ones after the first iteration.
 5. Only cite [N] when the specific fact is directly supported by that result's content. Skip irrelevant results. Do NOT include a reference list or source list at the end of your notes.
+6. If the user provides a specific URL, call fetch_url to read its full content. For paginated content (forums, articles), you MUST fetch ALL pages before answering — keep calling fetch_url with ?page=2, ?page=3, etc. until you get an error or empty content. Do not stop after one or two pages.
 Call web_search as many times as needed. Do NOT write your answer yet — just research.
 When done researching, call the done tool.
 Format your final answer for readability: use headings, bullet lists, and short paragraphs to organize information clearly. Avoid dense walls of text.
@@ -50,6 +52,7 @@ export interface ResearchOptions {
   abortSignal?: AbortSignal
   initialQueries?: string[]
   initialResults?: SearchResult[]
+  prefetchedUrls?: Array<{ url: string; content: string }>
   customPrompt?: string
   hasFiles?: boolean
   spaceId?: string
@@ -58,7 +61,7 @@ export interface ResearchOptions {
   maxStepsOverride?: number
 }
 
-export function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, maxStepsOverride }: ResearchOptions) {
+export function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, maxStepsOverride }: ResearchOptions) {
   const { maxSteps: defaultMaxSteps, count } = MODE_CONFIG[focusMode]
   const maxSteps = maxStepsOverride ?? defaultMaxSteps
   let nextIndex = 1
@@ -94,6 +97,19 @@ export function runResearcher({ messages, focusMode, userId, model, abortSignal,
     ]
   }
 
+  if (prefetchedUrls?.length) {
+    system += `\n\nNote: the following URL(s) have already been fetched and their content is in the conversation. Use this content to answer the user's question directly.`
+    for (let i = 0; i < prefetchedUrls.length; i++) {
+      const { url, content } = prefetchedUrls[i]
+      const callId = `pre-fetch-${i}`
+      augmentedMessages = [
+        ...augmentedMessages,
+        { role: 'assistant', content: [{ type: 'tool-call', toolCallId: callId, toolName: 'fetch_url', args: { url } }] },
+        { role: 'tool', content: [{ type: 'tool-result', toolCallId: callId, toolName: 'fetch_url', result: content }] },
+      ]
+    }
+  }
+
   const ctxLimit = parseInt(process.env.CONTEXT_TOKEN_LIMIT ?? '8192')
   augmentedMessages = trimMessages(augmentedMessages, ctxLimit - Math.floor(ctxLimit * 0.2), system)
 
@@ -120,7 +136,14 @@ export function runResearcher({ messages, focusMode, userId, model, abortSignal,
       })
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const tools: Record<string, any> = { web_search: webSearchTool }
+  const tools: Record<string, any> = {
+    web_search: webSearchTool,
+    fetch_url: tool({
+      description: 'Fetch and read the full text content of a specific URL. Use when the user provides a URL to analyze, or when a search result needs to be read in full. For paginated content, call multiple times with page parameters (e.g. ?page=2).',
+      parameters: z.object({ url: z.string().url() }),
+      execute: async ({ url }) => fetchUrl(url),
+    }),
+  }
 
   if (hasFiles) {
     tools.uploads_search = tool({

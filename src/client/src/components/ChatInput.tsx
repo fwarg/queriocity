@@ -1,5 +1,5 @@
 import { useState, useRef, type FormEvent, type KeyboardEvent } from 'react'
-import { Send, Paperclip, X, Square, LayoutGrid } from 'lucide-react'
+import { Send, Paperclip, X, Square, LayoutGrid, ChevronDown, ChevronUp } from 'lucide-react'
 import { extractFileForContext } from '../lib/api.ts'
 import { TemplateSelector } from './TemplateSelector.tsx'
 
@@ -33,7 +33,17 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
   const [extractStatus, setExtractStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [extractError, setExtractError] = useState('')
   const [showTemplates, setShowTemplates] = useState(false)
+  const [collapsed, setCollapsed] = useState(false)
+  const [visibleDesc, setVisibleDesc] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const descTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  function handleModeChange(m: FocusMode) {
+    onFocusModeChange(m)
+    if (descTimerRef.current) clearTimeout(descTimerRef.current)
+    setVisibleDesc(MODE_DESCRIPTIONS[m])
+    descTimerRef.current = setTimeout(() => setVisibleDesc(null), 2500)
+  }
 
   const isFlash = focusMode === 'flash'
   const isOverLimit = isFlash && value.length > FLASH_MAX
@@ -79,7 +89,16 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
   }
 
   return (
-    <form onSubmit={handleSubmit} className="relative flex flex-col gap-2 p-4 border-t border-gray-800">
+    <form onSubmit={handleSubmit} className="relative flex flex-col border-t border-gray-800">
+      <button
+        type="button"
+        onClick={() => setCollapsed(v => !v)}
+        className="flex justify-center py-1 text-gray-700 hover:text-gray-400 transition-colors"
+        aria-label={collapsed ? 'Expand input' : 'Collapse input'}
+      >
+        {collapsed ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+      </button>
+      <div className={`overflow-hidden transition-all duration-300 flex flex-col gap-2 px-4 ${collapsed ? 'max-h-0' : 'max-h-96 pb-4'}`}>
       {showTemplates && (
         <TemplateSelector
           onSelect={(text, mode) => {
@@ -90,12 +109,15 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
           onClose={() => setShowTemplates(false)}
         />
       )}
+      <div className={`overflow-hidden text-xs text-gray-500 flex items-center transition-all duration-500 ${visibleDesc ? 'max-h-7 opacity-100' : 'max-h-0 opacity-0'}`}>
+        {visibleDesc}
+      </div>
       <div className="flex items-center gap-2 text-xs">
         {(['flash', 'balanced', 'thorough', 'image'] as const).map(m => (
           <button
             key={m}
             type="button"
-            onClick={() => onFocusModeChange(m)}
+            onClick={() => handleModeChange(m)}
             className={`px-2 py-1 rounded capitalize ${focusMode === m ? 'bg-blue-600' : 'bg-gray-800 hover:bg-gray-700'}`}
           >
             {m}
@@ -106,9 +128,6 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
             {value.length}/{FLASH_MAX}
           </span>
         )}
-      </div>
-      <div className="h-7 flex items-center text-xs text-gray-500 overflow-hidden">
-        {MODE_DESCRIPTIONS[focusMode]}
       </div>
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
@@ -185,6 +204,7 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
           )}
         </div>
         <input ref={fileRef} type="file" className="hidden" onChange={handleFile} />
+      </div>
       </div>
     </form>
   )
