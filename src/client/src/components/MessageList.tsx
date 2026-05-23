@@ -25,6 +25,11 @@ function wrapSvgBlocks(content: string): string {
   return unwrapped.replace(/(<svg[\s\S]*?<\/svg>)/gi, (_m, svg) => `\`\`\`svg\n${svg}\n\`\`\``)
 }
 
+/** Escape $ signs immediately preceding a digit (currency amounts) so remark-math doesn't treat them as math delimiters. */
+function escapeCurrencyDollars(content: string): string {
+  return content.replace(/\$(?=\d)/g, '\\$')
+}
+
 /** Replace [N] with markdown links [[N]](url) so react-markdown renders them as links. */
 function insertCitationLinks(content: string, sources: Array<{ url: string }>) {
   return content.replace(/\[(\d+)\]/g, (match, num) => {
@@ -289,7 +294,7 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
             {msg.content && (() => {
               const cited = msg.sources?.length ? insertCitationLinks(msg.content, msg.sources) : msg.content
               const cleaned = msg.images?.length ? cited.replace(/!\[.*?\]\([^)]+\.png\)/g, '') : cited
-              return cleaned.trim() ? <ReactMarkdown components={mdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{wrapSvgBlocks(cleaned)}</ReactMarkdown> : null
+              return cleaned.trim() ? <ReactMarkdown components={mdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{wrapSvgBlocks(escapeCurrencyDollars(cleaned))}</ReactMarkdown> : null
             })()}
             {msg.images?.map((img, i) => <ImageBlock key={i} url={img.url} alt={img.alt} />)}
           </>
@@ -331,7 +336,7 @@ export const MessageList = memo(function MessageList({ messages, streaming, stre
             {streamingThinking && <ThinkingBlock content={streamingThinking} open />}
             {streaming && (
               <>
-                <ReactMarkdown components={baseMdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{wrapSvgBlocks(streaming.replace(/!\[.*?\]\([^)]+\.png\)/g, ''))}</ReactMarkdown>
+                <ReactMarkdown components={baseMdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{wrapSvgBlocks(escapeCurrencyDollars(streaming.replace(/!\[.*?\]\([^)]+\.png\)/g, '')))}</ReactMarkdown>
                 <span className="animate-pulse">▋</span>
               </>
             )}

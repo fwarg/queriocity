@@ -379,6 +379,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
           onText: (text) => { researcherNotes += text },
           onSources: (results) => { allSources.push(...results) },
         })
+        // Note: thorough mode runs a writer pass regardless of researcher output, so no extra fallback needed here.
       } finally {
         clearInterval(keepalive)
       }
@@ -455,7 +456,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
       const result = runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock })
       const extractor = showThinking ? new ThinkExtractor() : null
 
-      await drainResearcherStream(result, {
+      const drainFinishReason = await drainResearcherStream(result, {
         stream, showThinking, emitSearchStatus,
         extractor,
         onText: async (text) => {
@@ -467,6 +468,26 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
           await stream.writeSSE({ data: JSON.stringify({ type: 'sources', sources: results }) })
         },
       })
+
+      // Fallback: if the researcher exhausted its steps on tool calls without producing text,
+      // run one tool-free LLM call to synthesise an answer from the model's knowledge.
+      if (fullContent.length === 0 && drainFinishReason === 'tool-calls') {
+        console.warn('  [balanced] maxSteps exhausted without answer — running no-tool synthesis fallback')
+        await emitStatus('Synthesising answer…')
+        const fallback = streamText({
+          model: getChatModel(),
+          system: `Today's date is ${new Date().toISOString().split('T')[0]}. Answer the user's question as helpfully as possible based on your knowledge. Be concise and direct.`,
+          messages: msgs,
+          abortSignal,
+        })
+        for await (const part of fallback.fullStream) {
+          const p = part as { type: string; textDelta?: string }
+          if (p.type === 'text-delta' && p.textDelta) {
+            fullContent += p.textDelta
+            await stream.writeSSE({ data: JSON.stringify({ type: 'text', delta: p.textDelta }) })
+          }
+        }
+      }
     }
 
     if (fullContent.length < 50) console.log(`  [debug] short content: ${JSON.stringify(fullContent)}`)
@@ -506,7 +527,7 @@ async function drainResearcherStream(
     onSources: (results: SearchResult[]) => void | Promise<void>
     emitTextAsThinking?: boolean
   },
-) {
+): Promise<string> {
   const emitThinking = (delta: string) =>
     stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta }) })
 
@@ -566,6 +587,7 @@ async function drainResearcherStream(
     }
   }
   console.log(`  [drain] textDelta=${textDeltaCount} reasoning=${reasoningCount} finishReason=${finishReason}`)
+  return finishReason
 }
 
 function extractUrls(text: string): string[] {
