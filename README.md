@@ -21,6 +21,7 @@ through a single Bun process.
     - [Searching chats](#searching-chats)
   - [Research modes](#research-modes)
   - [Files](#files)
+  - [URL fetching](#url-fetching)
   - [Prompt templates](#prompt-templates)
     - [Prompt Studio](#prompt-studio)
   - [Settings](#settings)
@@ -62,6 +63,8 @@ Start a chat from the sidebar. Type a question and choose a [research mode](#res
 
 The first message in a chat can be collapsed to save space — useful when the prompt is long or contains an attachment. Click the **▾** icon in the top-right corner of the message to collapse it; click the truncated preview to expand it again. When opening a monitor run session the first message (the recurring query) is collapsed by default.
 
+The **chat input bar** at the bottom can also be collapsed to give the full viewport height to the conversation. Click the chevron (▾ / ▴) at the top of the input area to toggle between collapsed and expanded.
+
 The **Chats** view lists all your conversations with infinite scroll. Use the **Active / Created** toggle in the top-right to sort by most recently active or by creation date.
 
 ### Searching chats
@@ -74,7 +77,7 @@ Press **Ctrl+F** (or click the 🔍 icon in the chat header) to open an in-chat 
 
 ## Research modes
 
-Queriocity runs every chat request in one of four modes, selectable per message in the chat input bar. A fifth **Image** mode is available when `IMAGE_BASE_URL` is configured — see [Image generation](#image-generation).
+Queriocity runs every chat request in one of three research modes (Flash, Balanced, Thorough), selectable per message in the chat input bar. A fourth **Image** mode is available when `IMAGE_BASE_URL` is configured — see [Image generation](#image-generation).
 
 ### Flash
 
@@ -157,6 +160,20 @@ Max upload size: 50 MB.
 
 ---
 
+## URL fetching
+
+When a message contains a URL, Queriocity fetches the full page content server-side and injects it into the conversation before the model runs — no need to copy-paste text from web pages.
+
+- **Static fetch first** — a lightweight HTTP request strips scripts, styles, and navigation elements to extract readable text. Fast and proxy-friendly.
+- **Playwright fallback** — if the static fetch returns too little content (JS-rendered pages, login walls that redirect), a headless Chromium instance renders the page and extracts `innerText`.
+- **Pagination** — up to `FETCH_MAX_PAGES` pages are fetched automatically by appending `?page=2`, `?page=3`, etc. Stops on error, short content, or when two consecutive pages are identical (sites that ignore the page parameter).
+- **Cache** — fetched URLs are cached for 5 minutes so the model does not re-fetch during the same session.
+- **Privacy** — by default requests originate from the server's IP. Set `FETCH_PROXY_URL` to route all fetches through an HTTP or SOCKS5 proxy (e.g. [Privoxy](https://www.privoxy.org/) → Tor).
+
+The model also has an explicit `fetch_url` tool it can call autonomously — e.g. to read a search result in full, or to follow up on a URL mentioned in conversation.
+
+---
+
 ## Prompt templates
 
 Click the **template icon** (grid icon) in the chat input bar to open the template picker. Templates assemble a structured prompt from a short form — no need to craft the wording yourself. Each template also sets the suggested research mode automatically.
@@ -185,7 +202,7 @@ Prompt Studio is a built-in editor for creating and iterating on your own prompt
 4. Iterate: edit the prompt, adjust values, run again.
 5. When satisfied, give the template a name and click **Save template**.
 
-Saved templates appear in the template picker under **Custom**. Each card has **Edit** (pencil) and **Delete** (trash) buttons on hover. Editing re-opens Prompt Studio pre-filled with the existing template.
+Saved templates appear in the template picker under **Custom**. Each card has always-visible **Edit** (pencil) and **Delete** (trash) buttons. Tapping delete requires a confirmation step (a **Del** / **✕** pair appears inline) to prevent accidental deletion. Editing re-opens Prompt Studio pre-filled with the existing template.
 
 Templates are stored per user in the database and persist across sessions.
 
@@ -421,7 +438,7 @@ EMBED_DIMENSIONS=1536                       # must match the model's output size
 RERANK_MODEL=qwen3-reranker
 
 # ── Image generation (optional) ──────────────────────────────────────────────
-# When set, Flash mode gains generate_image and edit_image tools.
+# When set, enables the Image mode for generating and editing images.
 # Point to any OpenAI-compatible diffusion server (ComfyUI, A1111, etc.).
 # IMAGE_BASE_URL=http://localhost:8188   # base URL of diffusion server
 # IMAGE_MODEL=                           # optional model name/alias sent to the server
@@ -436,6 +453,7 @@ SEARXNG_URL=http://localhost:4000  # url to your searxng instance
 # them through an HTTP or SOCKS5 proxy (e.g. Tor, Privoxy).
 # FETCH_PROXY_URL=socks5://127.0.0.1:9050    # optional proxy for URL fetches
 # FETCH_MAX_CHARS=12000                       # max chars returned per fetch (default: 12000)
+# FETCH_MAX_PAGES=8                           # max pages fetched via ?page=N pagination (default: 8)
 
 # ── Server ────────────────────────────────────────────────────────────────────
 PORT=3000                                   # not used in Docker (see docker/compose.yml)
@@ -848,6 +866,7 @@ Hono server (Bun)
         │
         ├── SearXNG   (meta-search)
         ├── RSS feeds (fetched at monitor run time from news_feeds.json)
+        ├── URL fetcher  (static + Playwright; optional proxy via FETCH_PROXY_URL)
         ├── Ollama / OpenAI-compatible API
         ├── Diffusion server (optional, image generation/editing)
         ├── Reranker API (optional, cross-encoder)
@@ -879,6 +898,8 @@ All direct runtime dependencies use **MIT** or **Apache 2.0** licenses.
 | `bcryptjs`            | MIT        | Password hashing                      |
 | `drizzle-orm`         | Apache 2.0 | Type-safe SQLite ORM                  |
 | `sqlite-vec`          | MIT        | Vector similarity search in SQLite    |
+| `playwright`          | Apache 2.0 | Headless browser for JS-rendered pages |
+| `undici`              | MIT        | HTTP client with proxy agent support  |
 | `pdf-parse`           | MIT        | PDF text extraction                   |
 | `pdfjs-dist`          | Apache 2.0 | PDF rendering (canvas fallback)       |
 | `tesseract.js`        | Apache 2.0 | OCR for image attachments             |
