@@ -61,6 +61,7 @@ export const chatSessions = sqliteTable('chat_sessions', {
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   spaceId: text('space_id').references(() => spaces.id, { onDelete: 'set null' }),
+  graduated: integer('graduated').notNull().default(0),
 })
 
 export const spaceMemories = sqliteTable('space_memories', {
@@ -277,6 +278,11 @@ function initSchema() {
   // Migration: add space_id column if it doesn't exist yet
   try {
     sqlite.run(`ALTER TABLE chat_sessions ADD COLUMN space_id TEXT REFERENCES spaces(id) ON DELETE SET NULL`)
+  } catch {}
+
+  // Migration: add graduated column for monitor session graduation
+  try {
+    sqlite.run(`ALTER TABLE chat_sessions ADD COLUMN graduated INTEGER NOT NULL DEFAULT 0`)
   } catch {}
 
   // Migration: add 'compact' to space_memories source CHECK constraint
