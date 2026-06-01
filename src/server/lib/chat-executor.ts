@@ -113,7 +113,7 @@ export async function executeChatAndSave({
         console.warn('  [monitor-executor] maxSteps exhausted without answer — running no-tool synthesis fallback')
         const fallback = streamText({
           model: getChatModel(),
-          system: `Today's date is ${new Date().toISOString().split('T')[0]}. Answer the user's question as helpfully as possible based on your knowledge. Be concise and direct.`,
+          system: `Today's date is ${new Date().toISOString().split('T')[0]}. You have already searched the web — the results are in the conversation above. Synthesize those results into a direct answer with inline [N] citations (using the exact index values from the results). Do NOT call any more search tools.${memoryBlock ? '\n\n' + memoryBlock : ''}`,
           messages: msgs,
           abortSignal: AbortSignal.timeout(120_000),
         })
