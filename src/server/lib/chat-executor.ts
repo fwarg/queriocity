@@ -111,9 +111,15 @@ export async function executeChatAndSave({
       // Fallback: researcher exhausted all steps on tool calls without producing text
       if (!fullContent && finishReason === 'tool-calls') {
         console.warn('  [monitor-executor] maxSteps exhausted without answer — running no-tool synthesis fallback')
+        const resultsBlock = rs.length > 0
+          ? '\n\nSearch results:\n' + rs.map((r, i) => {
+              const idx = (r as SearchResult & { index?: number }).index ?? (i + 1)
+              return `[${idx}] ${r.title}\n${r.url}\n${r.content.slice(0, 500)}`
+            }).join('\n\n')
+          : ''
         const fallback = streamText({
           model: getChatModel(),
-          system: `Today's date is ${new Date().toISOString().split('T')[0]}. You have already searched the web — the results are in the conversation above. Synthesize those results into a direct answer with inline [N] citations (using the exact index values from the results). Do NOT call any more search tools.${memoryBlock ? '\n\n' + memoryBlock : ''}`,
+          system: `Today's date is ${new Date().toISOString().split('T')[0]}. Synthesize the search results below into a direct answer with inline [N] citations using the index values shown. Do NOT say you lack internet access.${resultsBlock}${memoryBlock ? '\n\n' + memoryBlock : ''}`,
           messages: msgs,
           abortSignal: AbortSignal.timeout(120_000),
         })

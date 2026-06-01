@@ -453,6 +453,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
         await stream.writeSSE({ data: JSON.stringify({ type: 'sources', sources: initialResults }) })
       }
 
+      const fullSources: SearchResult[] = []
       const result = runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock })
       const extractor = showThinking ? new ThinkExtractor() : null
 
@@ -464,19 +465,27 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
           await stream.writeSSE({ data: JSON.stringify({ type: 'text', delta: text }) })
         },
         onSources: async (results) => {
+          fullSources.push(...results)
           sources.push(...results.map(r => ({ title: r.title, url: r.url })))
           await stream.writeSSE({ data: JSON.stringify({ type: 'sources', sources: results }) })
         },
       })
 
       // Fallback: if the researcher exhausted its steps on tool calls without producing text,
-      // run one tool-free LLM call to synthesise an answer from the model's knowledge.
+      // run one tool-free LLM call to synthesise an answer from the collected results.
       if (fullContent.length === 0 && drainFinishReason === 'tool-calls') {
         console.warn('  [balanced] maxSteps exhausted without answer — running no-tool synthesis fallback')
         await emitStatus('Synthesising answer…')
+        const allResults = [...(initialResults ?? []), ...fullSources]
+        const resultsBlock = allResults.length > 0
+          ? '\n\nSearch results:\n' + allResults.map((r, i) => {
+              const idx = (r as SearchResult & { index?: number }).index ?? (i + 1)
+              return `[${idx}] ${r.title}\n${r.url}\n${r.content.slice(0, 500)}`
+            }).join('\n\n')
+          : ''
         const fallback = streamText({
           model: getChatModel(),
-          system: `Today's date is ${new Date().toISOString().split('T')[0]}. You have already searched the web — the results are in the conversation above. Synthesize those results into a direct answer with inline [N] citations (using the exact index values from the results). Do NOT call any more search tools.${memoryBlock ? '\n\n' + memoryBlock : ''}`,
+          system: `Today's date is ${new Date().toISOString().split('T')[0]}. Synthesize the search results below into a direct answer with inline [N] citations using the index values shown. Do NOT say you lack internet access.${resultsBlock}${memoryBlock ? '\n\n' + memoryBlock : ''}`,
           messages: msgs,
           abortSignal,
         })
