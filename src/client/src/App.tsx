@@ -1144,7 +1144,7 @@ export default function App() {
                   Resources are chunked, embedded, and searched automatically whenever your query
                   might be answered by their content — no need to reference them explicitly.
                   To ask about a specific file without storing it, use the paperclip in the chat input instead.
-                  Supported: PDF, plain text, images, and web pages (via URL).
+                  Supported: PDF, plain text, Markdown, CSV, HTML, images (PNG/JPEG/GIF/WebP), and web pages (via URL).
                 </p>
               </div>
               <div className="flex flex-col items-end gap-1 shrink-0">
