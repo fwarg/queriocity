@@ -265,8 +265,8 @@ export async function untagFileFromSpace(spaceId: string, fileId: string): Promi
   await fetch(`${BASE}/spaces/${spaceId}/files/${fileId}`, { method: 'DELETE' })
 }
 
-export async function ingestUrlToSpace(spaceId: string, url: string): Promise<{ fileId: string; filename: string }> {
-  const res = await fetch(`${BASE}/spaces/${spaceId}/ingest-url`, {
+export async function ingestUrl(url: string): Promise<{ fileId: string; filename: string }> {
+  const res = await fetch(`${BASE}/files/ingest-url`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ url }),

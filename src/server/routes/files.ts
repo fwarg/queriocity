@@ -3,6 +3,7 @@ import { db, uploadedFiles, getAppSetting } from '../lib/db.ts'
 import { eq } from 'drizzle-orm'
 import { ingestFile, extractFileText, isUsableText, ACCEPTED_MIME_TYPES } from '../lib/files/ingest.ts'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
+import { fetchUrl } from '../lib/fetch-url.ts'
 
 export const filesRouter = new Hono<AppEnv>()
 
@@ -30,6 +31,28 @@ filesRouter.post('/upload', async (c) => {
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Upload failed'
     console.error(`  [upload] failed: ${msg}`)
+    return c.json({ error: msg }, 400)
+  }
+})
+
+filesRouter.post('/ingest-url', async (c) => {
+  const userId = c.get('userId') as string
+  const body = await c.req.json() as { url?: string }
+  const url = body.url?.trim()
+  if (!url) return c.json({ error: 'No URL provided' }, 400)
+  let parsed: URL
+  try { parsed = new URL(url) } catch { return c.json({ error: 'Invalid URL' }, 400) }
+  console.log(`\n━━━ [ingest-url] ${url}`)
+  const text = await fetchUrl(url)
+  if (text.startsWith('Error fetching')) return c.json({ error: `Could not fetch URL: ${text}` }, 400)
+  const filename = parsed.hostname + (parsed.pathname !== '/' ? parsed.pathname.replace(/\/$/, '').split('/').pop() ?? '' : '') + '.txt'
+  const buffer = new TextEncoder().encode(text).buffer as ArrayBuffer
+  try {
+    const fileId = await ingestFile(buffer, filename, 'text/plain', userId)
+    console.log(`  [ingest-url] done → fileId=${fileId}`)
+    return c.json({ fileId, filename }, 201)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Ingest failed'
     return c.json({ error: msg }, 400)
   }
 })

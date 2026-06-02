@@ -12,7 +12,7 @@ import {
   fetchSpaces, createSpace, updateSpace, deleteSpace, assignChatToSpace, recreateChatMemories,
   fetchSpaceMemories, createSpaceMemory, updateSpaceMemory, deleteSpaceMemory, compactSpaceMemories, recreateAllSpaceMemories, clearSpaceMemories,
   fetchChatIndexStatus, rebuildChatIndex, searchHistory,
-  fetchSpaceFiles, tagFileToSpace, untagFileFromSpace, ingestUrlToSpace,
+  fetchSpaceFiles, tagFileToSpace, untagFileFromSpace, ingestUrl,
   fetchMonitors,
 } from './lib/api.ts'
 import type { AuthUser, Message, Space, SpaceMemory, SpaceFile } from './lib/api.ts'
@@ -426,12 +426,12 @@ export default function App() {
   const [kbUploadMsg, setKbUploadMsg] = useState('')
 
   async function handleUrlIngest() {
-    if (!currentSpaceId || !urlIngestValue.trim()) return
+    if (!urlIngestValue.trim()) return
     setUrlIngestStatus('loading')
     setUrlIngestError('')
     try {
-      await ingestUrlToSpace(currentSpaceId, urlIngestValue.trim())
-      fetchSpaceFiles(currentSpaceId).then(setTaggedFiles).catch(() => {})
+      await ingestUrl(urlIngestValue.trim())
+      fetchFiles().then(setFiles).catch(() => {})
       setUrlIngestOpen(false)
       setUrlIngestValue('')
       setUrlIngestStatus('idle')
@@ -541,7 +541,7 @@ export default function App() {
           onClick={() => { setView(v => v === 'files' ? 'chat' : 'files'); setSidebarOpen(false) }}
           className={`w-full text-left px-3 py-2 rounded text-sm font-medium ${view === 'files' ? 'bg-indigo-700 text-white' : 'text-indigo-400 hover:bg-gray-800'}`}
         >
-          Files ({files.length})
+          Resources ({files.length})
         </button>
         <button
           onClick={() => { setView(v => v === 'spaces' ? 'chat' : 'spaces'); setCurrentSpaceId(null); setSidebarOpen(false) }}
@@ -880,53 +880,21 @@ export default function App() {
                     className="flex items-center gap-1.5 text-sm font-medium text-gray-400 hover:text-gray-200"
                   >
                     <span>{filesSectionOpen ? '▾' : '▸'}</span>
-                    Tagged files ({taggedFiles.length})
+                    Tagged resources ({taggedFiles.length})
                   </button>
                   {filesSectionOpen && (
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={async () => {
-                          const all = await fetchFiles()
-                          setAllUserFiles(all.filter(f => !taggedFiles.some(t => t.id === f.id)))
-                          setFilePickerOpen(o => !o)
-                          setUrlIngestOpen(false)
-                        }}
-                        className="text-xs text-gray-500 hover:text-gray-300"
-                      >
-                        + Tag file
-                      </button>
-                      <button
-                        onClick={() => { setUrlIngestOpen(o => !o); setFilePickerOpen(false); setUrlIngestValue(''); setUrlIngestStatus('idle') }}
-                        className="text-xs text-gray-500 hover:text-gray-300"
-                      >
-                        + Add URL
-                      </button>
-                    </div>
+                    <button
+                      onClick={async () => {
+                        const all = await fetchFiles()
+                        setAllUserFiles(all.filter(f => !taggedFiles.some(t => t.id === f.id)))
+                        setFilePickerOpen(o => !o)
+                      }}
+                      className="text-xs text-gray-500 hover:text-gray-300"
+                    >
+                      + Tag resource
+                    </button>
                   )}
                 </div>
-                {filesSectionOpen && urlIngestOpen && (
-                  <div className="mt-2 flex flex-col gap-1.5">
-                    <div className="flex gap-1">
-                      <input
-                        type="url"
-                        value={urlIngestValue}
-                        onChange={e => setUrlIngestValue(e.target.value)}
-                        placeholder="https://…"
-                        className="flex-1 text-xs bg-gray-900 border border-gray-700 rounded px-2 py-1 focus:outline-none focus:border-blue-500"
-                        onKeyDown={async e => { if (e.key === 'Enter') { e.preventDefault(); await handleUrlIngest() } }}
-                        disabled={urlIngestStatus === 'loading'}
-                      />
-                      <button
-                        onClick={handleUrlIngest}
-                        disabled={!urlIngestValue.trim() || urlIngestStatus === 'loading'}
-                        className="text-xs px-2 py-1 rounded bg-blue-700 hover:bg-blue-600 disabled:opacity-50"
-                      >
-                        {urlIngestStatus === 'loading' ? '…' : 'Fetch'}
-                      </button>
-                    </div>
-                    {urlIngestStatus === 'error' && <p className="text-xs text-red-400">{urlIngestError}</p>}
-                  </div>
-                )}
                 {filesSectionOpen && filePickerOpen && allUserFiles.length > 0 && (
                   <div className="mt-2 flex flex-col gap-1 border border-gray-700 rounded p-2 bg-gray-900">
                     {allUserFiles.map(f => (
@@ -947,8 +915,8 @@ export default function App() {
                 {filesSectionOpen && filePickerOpen && allUserFiles.length === 0 && (
                   <p className="text-xs text-gray-600 mt-2">No untagged files available.</p>
                 )}
-                {filesSectionOpen && taggedFiles.length === 0 && !filePickerOpen && !urlIngestOpen && (
-                  <p className="text-xs text-gray-600 mt-2">No files tagged. Tag library files to inject relevant excerpts into the space context.</p>
+                {filesSectionOpen && taggedFiles.length === 0 && !filePickerOpen && (
+                  <p className="text-xs text-gray-600 mt-2">No resources tagged. Tag resources to inject relevant excerpts into the space context.</p>
                 )}
                 {filesSectionOpen && taggedFiles.map(f => (
                   <div key={f.id} className="flex items-center justify-between group py-1">
@@ -1116,22 +1084,30 @@ export default function App() {
           <div className="flex flex-col flex-1 overflow-y-auto p-6 gap-4">
             <div className="flex items-start justify-between gap-4">
               <div className="flex flex-col gap-1">
-                <h2 className="text-lg font-semibold text-gray-200">Knowledge base</h2>
+                <h2 className="text-lg font-semibold text-gray-200">Resources</h2>
                 <p className="text-xs text-gray-500 max-w-lg">
-                  Files here are chunked, embedded, and searched automatically whenever your query
+                  Resources are chunked, embedded, and searched automatically whenever your query
                   might be answered by their content — no need to reference them explicitly.
                   To ask about a specific file without storing it, use the paperclip in the chat input instead.
-                  Supported: PDF, plain text, images.
+                  Supported: PDF, plain text, images, and web pages (via URL).
                 </p>
               </div>
               <div className="flex flex-col items-end gap-1 shrink-0">
-                <button
-                  onClick={() => kbFileRef.current?.click()}
-                  disabled={kbUploadStatus === 'uploading'}
-                  className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-sm font-medium whitespace-nowrap"
-                >
-                  {kbUploadStatus === 'uploading' ? 'Uploading…' : '+ Upload file'}
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => { setUrlIngestOpen(o => !o); setUrlIngestValue(''); setUrlIngestStatus('idle') }}
+                    className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-sm font-medium whitespace-nowrap"
+                  >
+                    + Add URL
+                  </button>
+                  <button
+                    onClick={() => kbFileRef.current?.click()}
+                    disabled={kbUploadStatus === 'uploading'}
+                    className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-sm font-medium whitespace-nowrap"
+                  >
+                    {kbUploadStatus === 'uploading' ? 'Uploading…' : '+ Upload file'}
+                  </button>
+                </div>
                 {kbUploadStatus !== 'idle' && (
                   <span className={`text-xs ${kbUploadStatus === 'error' ? 'text-red-400' : 'text-green-400'}`}>
                     {kbUploadMsg}
@@ -1140,8 +1116,32 @@ export default function App() {
                 <input ref={kbFileRef} type="file" className="hidden" onChange={handleKbUpload} />
               </div>
             </div>
-            {files.length === 0 ? (
-              <p className="text-gray-500 text-sm">No files uploaded yet.</p>
+            {urlIngestOpen && (
+              <div className="flex flex-col gap-1.5 p-3 rounded-lg bg-gray-800 border border-gray-700">
+                <div className="flex gap-2">
+                  <input
+                    type="url"
+                    value={urlIngestValue}
+                    onChange={e => setUrlIngestValue(e.target.value)}
+                    placeholder="https://…"
+                    className="flex-1 text-sm bg-gray-900 border border-gray-700 rounded px-3 py-1.5 focus:outline-none focus:border-blue-500"
+                    onKeyDown={async e => { if (e.key === 'Enter') { e.preventDefault(); await handleUrlIngest() } }}
+                    disabled={urlIngestStatus === 'loading'}
+                    autoFocus
+                  />
+                  <button
+                    onClick={handleUrlIngest}
+                    disabled={!urlIngestValue.trim() || urlIngestStatus === 'loading'}
+                    className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-sm font-medium"
+                  >
+                    {urlIngestStatus === 'loading' ? 'Fetching…' : 'Fetch & add'}
+                  </button>
+                </div>
+                {urlIngestStatus === 'error' && <p className="text-xs text-red-400">{urlIngestError}</p>}
+              </div>
+            )}
+            {files.length === 0 && !urlIngestOpen ? (
+              <p className="text-gray-500 text-sm">No resources yet. Upload a file or add a URL.</p>
             ) : (
               <div className="flex flex-col gap-2">
                 {files.map(f => (
