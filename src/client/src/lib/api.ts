@@ -118,6 +118,7 @@ export async function* streamChat(
   signal?: AbortSignal,
   spaceId?: string,
   ephemeral?: boolean,
+  searchCategory?: 'web' | 'news' | 'science' | 'discussions',
 ): AsyncGenerator<{ type: string; [k: string]: unknown }> {
   const res = await fetch(`${BASE}/chat`, {
     method: 'POST',
@@ -133,6 +134,7 @@ export async function* streamChat(
       sessionId,
       spaceId,
       ...(ephemeral ? { ephemeral: true } : {}),
+      ...(searchCategory ? { searchCategory } : {}),
     }),
     signal,
   })
@@ -261,6 +263,19 @@ export async function tagFileToSpace(spaceId: string, fileId: string): Promise<v
 
 export async function untagFileFromSpace(spaceId: string, fileId: string): Promise<void> {
   await fetch(`${BASE}/spaces/${spaceId}/files/${fileId}`, { method: 'DELETE' })
+}
+
+export async function ingestUrlToSpace(spaceId: string, url: string): Promise<{ fileId: string; filename: string }> {
+  const res = await fetch(`${BASE}/spaces/${spaceId}/ingest-url`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+  })
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({})) as { error?: string }
+    throw new Error(e.error ?? 'Failed to ingest URL')
+  }
+  return res.json()
 }
 
 export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; attachmentChars: number; spaceRagBudget: number; queryReformulation: boolean; rssFeedCharsBudget: number }> {

@@ -5,11 +5,12 @@ import type { Message } from '../lib/api.ts'
 interface UseChatOptions {
   sessionId: string | undefined
   focusMode: 'flash' | 'balanced' | 'thorough' | 'image'
+  searchCategory?: 'web' | 'news' | 'science' | 'discussions'
   spaceId?: string
   onSessionCreated: (id: string, title: string) => void
 }
 
-export function useChat({ sessionId, focusMode, spaceId, onSessionCreated }: UseChatOptions) {
+export function useChat({ sessionId, focusMode, searchCategory, spaceId, onSessionCreated }: UseChatOptions) {
   const [messages, setMessages] = useState<Message[]>([])
   const [streaming, setStreaming] = useState('')
   const [streamingThinking, setStreamingThinking] = useState('')
@@ -44,7 +45,7 @@ export function useChat({ sessionId, focusMode, spaceId, onSessionCreated }: Use
     let wasAborted = false
 
     try {
-      for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId)) {
+      for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId, undefined, searchCategory)) {
         if (chunk.type === 'text') {
           accumulated += chunk.delta as string
           cancelAnimationFrame(rafRef.current)

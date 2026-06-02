@@ -12,7 +12,7 @@ import {
   fetchSpaces, createSpace, updateSpace, deleteSpace, assignChatToSpace, recreateChatMemories,
   fetchSpaceMemories, createSpaceMemory, updateSpaceMemory, deleteSpaceMemory, compactSpaceMemories, recreateAllSpaceMemories, clearSpaceMemories,
   fetchChatIndexStatus, rebuildChatIndex, searchHistory,
-  fetchSpaceFiles, tagFileToSpace, untagFileFromSpace,
+  fetchSpaceFiles, tagFileToSpace, untagFileFromSpace, ingestUrlToSpace,
   fetchMonitors,
 } from './lib/api.ts'
 import type { AuthUser, Message, Space, SpaceMemory, SpaceFile } from './lib/api.ts'
@@ -49,6 +49,7 @@ export default function App() {
   const [inviteToken, setInviteToken] = useState<string | undefined>()
 
   const [focusMode, setFocusMode] = useState<'flash' | 'balanced' | 'thorough' | 'image'>('balanced')
+  const [searchCategory, setSearchCategory] = useState<'web' | 'news' | 'science' | 'discussions' | undefined>(undefined)
   const [sessionId, setSessionId] = useState<string | undefined>()
   const [sessions, setSessions] = useState<Session[]>([])
   const [sessionSearch, setSessionSearch] = useState('')
@@ -79,6 +80,10 @@ export default function App() {
   const [filesSectionOpen, setFilesSectionOpen] = useState(false)
   const [allUserFiles, setAllUserFiles] = useState<Array<{ id: string; filename: string; size: number }>>([])
   const [filePickerOpen, setFilePickerOpen] = useState(false)
+  const [urlIngestOpen, setUrlIngestOpen] = useState(false)
+  const [urlIngestValue, setUrlIngestValue] = useState('')
+  const [urlIngestStatus, setUrlIngestStatus] = useState<'idle' | 'loading' | 'error'>('idle')
+  const [urlIngestError, setUrlIngestError] = useState('')
   const [compacting, setCompacting] = useState(false)
   const [compactResult, setCompactResult] = useState<string | null>(null)
   const [recreating, setRecreating] = useState(false)
@@ -107,6 +112,7 @@ export default function App() {
   const { messages, setMessages, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, cancel, reset } = useChat({
     sessionId,
     focusMode,
+    searchCategory,
     spaceId: activeSpaceId ?? undefined,
     onSessionCreated: (id, title) => {
       setSessionId(id)
@@ -418,6 +424,22 @@ export default function App() {
   const kbFileRef = useRef<HTMLInputElement>(null)
   const [kbUploadStatus, setKbUploadStatus] = useState<'idle' | 'uploading' | 'ok' | 'error'>('idle')
   const [kbUploadMsg, setKbUploadMsg] = useState('')
+
+  async function handleUrlIngest() {
+    if (!currentSpaceId || !urlIngestValue.trim()) return
+    setUrlIngestStatus('loading')
+    setUrlIngestError('')
+    try {
+      await ingestUrlToSpace(currentSpaceId, urlIngestValue.trim())
+      fetchSpaceFiles(currentSpaceId).then(setTaggedFiles).catch(() => {})
+      setUrlIngestOpen(false)
+      setUrlIngestValue('')
+      setUrlIngestStatus('idle')
+    } catch (err: unknown) {
+      setUrlIngestStatus('error')
+      setUrlIngestError(err instanceof Error ? err.message : 'Failed to ingest URL')
+    }
+  }
 
   async function handleKbUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -861,18 +883,50 @@ export default function App() {
                     Tagged files ({taggedFiles.length})
                   </button>
                   {filesSectionOpen && (
-                    <button
-                      onClick={async () => {
-                        const all = await fetchFiles()
-                        setAllUserFiles(all.filter(f => !taggedFiles.some(t => t.id === f.id)))
-                        setFilePickerOpen(o => !o)
-                      }}
-                      className="text-xs text-gray-500 hover:text-gray-300"
-                    >
-                      + Tag file
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={async () => {
+                          const all = await fetchFiles()
+                          setAllUserFiles(all.filter(f => !taggedFiles.some(t => t.id === f.id)))
+                          setFilePickerOpen(o => !o)
+                          setUrlIngestOpen(false)
+                        }}
+                        className="text-xs text-gray-500 hover:text-gray-300"
+                      >
+                        + Tag file
+                      </button>
+                      <button
+                        onClick={() => { setUrlIngestOpen(o => !o); setFilePickerOpen(false); setUrlIngestValue(''); setUrlIngestStatus('idle') }}
+                        className="text-xs text-gray-500 hover:text-gray-300"
+                      >
+                        + Add URL
+                      </button>
+                    </div>
                   )}
                 </div>
+                {filesSectionOpen && urlIngestOpen && (
+                  <div className="mt-2 flex flex-col gap-1.5">
+                    <div className="flex gap-1">
+                      <input
+                        type="url"
+                        value={urlIngestValue}
+                        onChange={e => setUrlIngestValue(e.target.value)}
+                        placeholder="https://…"
+                        className="flex-1 text-xs bg-gray-900 border border-gray-700 rounded px-2 py-1 focus:outline-none focus:border-blue-500"
+                        onKeyDown={async e => { if (e.key === 'Enter') { e.preventDefault(); await handleUrlIngest() } }}
+                        disabled={urlIngestStatus === 'loading'}
+                      />
+                      <button
+                        onClick={handleUrlIngest}
+                        disabled={!urlIngestValue.trim() || urlIngestStatus === 'loading'}
+                        className="text-xs px-2 py-1 rounded bg-blue-700 hover:bg-blue-600 disabled:opacity-50"
+                      >
+                        {urlIngestStatus === 'loading' ? '…' : 'Fetch'}
+                      </button>
+                    </div>
+                    {urlIngestStatus === 'error' && <p className="text-xs text-red-400">{urlIngestError}</p>}
+                  </div>
+                )}
                 {filesSectionOpen && filePickerOpen && allUserFiles.length > 0 && (
                   <div className="mt-2 flex flex-col gap-1 border border-gray-700 rounded p-2 bg-gray-900">
                     {allUserFiles.map(f => (
@@ -893,7 +947,7 @@ export default function App() {
                 {filesSectionOpen && filePickerOpen && allUserFiles.length === 0 && (
                   <p className="text-xs text-gray-600 mt-2">No untagged files available.</p>
                 )}
-                {filesSectionOpen && taggedFiles.length === 0 && !filePickerOpen && (
+                {filesSectionOpen && taggedFiles.length === 0 && !filePickerOpen && !urlIngestOpen && (
                   <p className="text-xs text-gray-600 mt-2">No files tagged. Tag library files to inject relevant excerpts into the space context.</p>
                 )}
                 {filesSectionOpen && taggedFiles.map(f => (
@@ -1295,6 +1349,8 @@ export default function App() {
               disabled={busy}
               focusMode={focusMode}
               onFocusModeChange={setFocusMode}
+              searchCategory={searchCategory}
+              onSearchCategoryChange={setSearchCategory}
             />
           </>
         )}

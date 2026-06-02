@@ -4,6 +4,7 @@ import { extractFileForContext } from '../lib/api.ts'
 import { TemplateSelector } from './TemplateSelector.tsx'
 
 type FocusMode = 'flash' | 'balanced' | 'thorough' | 'image'
+type SearchCategory = 'web' | 'news' | 'science' | 'discussions'
 
 interface Props {
   onSubmit: (text: string) => void
@@ -11,6 +12,8 @@ interface Props {
   disabled?: boolean
   focusMode: FocusMode
   onFocusModeChange: (m: FocusMode) => void
+  searchCategory?: SearchCategory
+  onSearchCategoryChange: (c: SearchCategory | undefined) => void
 }
 
 interface Attachment {
@@ -27,7 +30,7 @@ const MODE_DESCRIPTIONS: Record<FocusMode, string> = {
   image: 'Generate or edit images — researches unfamiliar topics automatically for better results.',
 }
 
-export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusModeChange }: Props) {
+export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategory, onSearchCategoryChange }: Props) {
   const [value, setValue] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [extractStatus, setExtractStatus] = useState<'idle' | 'loading' | 'error'>('idle')
@@ -129,6 +132,21 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
           </span>
         )}
       </div>
+      {(focusMode === 'balanced' || focusMode === 'thorough') && (
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-gray-600">Search:</span>
+          {(['web', 'news', 'science', 'discussions'] as const).map(cat => (
+            <button
+              key={cat}
+              type="button"
+              onClick={() => onSearchCategoryChange(searchCategory === cat ? undefined : cat)}
+              className={`px-2 py-0.5 rounded capitalize ${searchCategory === cat ? 'bg-indigo-700 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200'}`}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
+      )}
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {attachments.map((att, i) => (

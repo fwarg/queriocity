@@ -7,6 +7,8 @@ import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { getSpaceMemories, saveMemory, compactSpaceMemories, extractMemoriesPostHoc } from '../lib/memory.ts'
 import { getAppSetting } from '../lib/db.ts'
 import { indexSession } from '../lib/chat-indexer.ts'
+import { fetchUrl } from '../lib/fetch-url.ts'
+import { ingestFile } from '../lib/files/ingest.ts'
 
 export const memoriesRouter = new Hono<AppEnv>()
 
@@ -195,6 +197,23 @@ memoriesRouter.get('/:spaceId/files', async (c) => {
     .innerJoin(uploadedFiles, eq(spaceFiles.fileId, uploadedFiles.id))
     .where(eq(spaceFiles.spaceId, spaceId))
   return c.json(rows)
+})
+
+memoriesRouter.post('/:spaceId/ingest-url', zValidator('json', z.object({ url: z.string().url() })), async (c) => {
+  const userId = c.get('userId') as string
+  const spaceId = c.req.param('spaceId')
+  const { url } = c.req.valid('json')
+  if (!await verifySpaceOwner(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
+  console.log(`\n━━━ [ingest-url] ${url}`)
+  const text = await fetchUrl(url)
+  if (text.startsWith('Error fetching')) return c.json({ error: `Could not fetch URL: ${text}` }, 400)
+  const hostname = (() => { try { return new URL(url).hostname } catch { return url.slice(0, 40) } })()
+  const filename = `${hostname}.txt`
+  const buffer = new TextEncoder().encode(text).buffer as ArrayBuffer
+  const fileId = await ingestFile(buffer, filename, 'text/plain', userId)
+  await db.insert(spaceFiles).values({ spaceId, fileId }).onConflictDoNothing()
+  console.log(`  [ingest-url] done → fileId=${fileId}  filename=${filename}`)
+  return c.json({ fileId, filename }, 201)
 })
 
 memoriesRouter.post('/:spaceId/files', zValidator('json', z.object({ fileId: z.string() })), async (c) => {

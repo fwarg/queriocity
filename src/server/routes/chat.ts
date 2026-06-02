@@ -40,6 +40,7 @@ const chatSchema = z.object({
     content: z.string(),
   })),
   focusMode: z.enum(['flash', 'balanced', 'thorough', 'image']).default('balanced'),
+  searchCategory: z.enum(['web', 'news', 'science', 'discussions']).optional(),
   ephemeral: z.boolean().optional(),
 })
 
@@ -49,7 +50,7 @@ chatRouter.use('*', authMiddleware)
 
 chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
   const userId = c.get('userId') as string
-  const { sessionId, spaceId, messages: msgs, focusMode, ephemeral } = c.req.valid('json')
+  const { sessionId, spaceId, messages: msgs, focusMode, searchCategory, ephemeral } = c.req.valid('json')
   const sid = sessionId ?? randomUUID()
 
   const abortSignal = c.req.raw.signal
@@ -311,7 +312,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
   const [userRow, fileCountRow, { initialQueries, initialResults }, memoryBudget, ragBudget, prefetchedUrls] = await Promise.all([
     db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get(),
     db.select({ count: sql<number>`count(*)` }).from(uploadedFiles).where(eq(uploadedFiles.userId, userId)).get(),
-    runReformulateAndPreSearch(msgsForReformulate, focusMode as 'balanced' | 'thorough', hasAttachment),
+    runReformulateAndPreSearch(msgsForReformulate, focusMode as 'balanced' | 'thorough', hasAttachment, searchCategory),
     spaceId ? getAppSetting('memory_token_budget', '1000').then(Number) : Promise.resolve(1000),
     getAppSetting('space_rag_budget', '500').then(Number),
     prefetchUrlsFromMessage(lastUser?.content ?? '', hasAttachment),
@@ -618,6 +619,7 @@ async function runReformulateAndPreSearch(
   msgsForReformulate: Array<{ role: string; content: string }>,
   focusMode: 'balanced' | 'thorough',
   hasAttachment: boolean,
+  categories?: string,
 ): Promise<{ initialQueries?: string[]; initialResults?: SearchResult[] }> {
   try {
     if (hasAttachment) {
@@ -630,7 +632,7 @@ async function runReformulateAndPreSearch(
       const q = lastUser?.content ?? ''
       if (!q) return {}
       console.log(`  [reformulate] disabled — using raw query: ${JSON.stringify(q.slice(0, 80))}`)
-      const initialResults = await webSearch(q, 6)
+      const initialResults = await webSearch(q, 6, categories)
       return { initialQueries: [q], initialResults }
     }
 
@@ -639,7 +641,7 @@ async function runReformulateAndPreSearch(
     if (queries.length === 0) return {}
 
     const maxQueries = focusMode === 'thorough' ? 3 : 2
-    const initialResults = await webSearchMulti(queries.slice(0, maxQueries), countEach)
+    const initialResults = await webSearchMulti(queries.slice(0, maxQueries), countEach, categories)
     return { initialQueries: queries, initialResults }
   } catch (e) {
     console.error('[reformulate] error:', e)
