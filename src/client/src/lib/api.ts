@@ -118,7 +118,7 @@ export async function* streamChat(
   signal?: AbortSignal,
   spaceId?: string,
   ephemeral?: boolean,
-  searchCategory?: 'web' | 'news' | 'science' | 'discussions',
+  searchCategories?: Array<'news' | 'science' | 'discussions' | 'tech'>,
 ): AsyncGenerator<{ type: string; [k: string]: unknown }> {
   const res = await fetch(`${BASE}/chat`, {
     method: 'POST',
@@ -134,7 +134,7 @@ export async function* streamChat(
       sessionId,
       spaceId,
       ...(ephemeral ? { ephemeral: true } : {}),
-      ...(searchCategory ? { searchCategory } : {}),
+      ...(searchCategories?.length ? { searchCategories } : {}),
     }),
     signal,
   })

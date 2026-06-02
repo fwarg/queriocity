@@ -40,7 +40,7 @@ const chatSchema = z.object({
     content: z.string(),
   })),
   focusMode: z.enum(['flash', 'balanced', 'thorough', 'image']).default('balanced'),
-  searchCategory: z.enum(['web', 'news', 'science', 'discussions']).optional(),
+  searchCategories: z.array(z.enum(['news', 'science', 'discussions', 'tech'])).optional(),
   ephemeral: z.boolean().optional(),
 })
 
@@ -50,7 +50,8 @@ chatRouter.use('*', authMiddleware)
 
 chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
   const userId = c.get('userId') as string
-  const { sessionId, spaceId, messages: msgs, focusMode, searchCategory, ephemeral } = c.req.valid('json')
+  const { sessionId, spaceId, messages: msgs, focusMode, searchCategories, ephemeral } = c.req.valid('json')
+  const searchCategory = toSearxngCategories(searchCategories)
   const sid = sessionId ?? randomUUID()
 
   const abortSignal = c.req.raw.signal
@@ -613,6 +614,12 @@ async function prefetchUrlsFromMessage(text: string, hasAttachment: boolean): Pr
   if (!urls.length) return []
   console.log(`  [fetch-url] pre-fetching ${urls.length} URL(s): ${urls.join(', ')}`)
   return Promise.all(urls.map(async url => ({ url, content: await fetchUrlAllPages(url) })))
+}
+
+function toSearxngCategories(cats?: string[]): string | undefined {
+  if (!cats?.length) return undefined
+  const map: Record<string, string> = { discussions: 'social media', tech: 'it' }
+  return cats.map(c => map[c] ?? c).join(',')
 }
 
 async function runReformulateAndPreSearch(

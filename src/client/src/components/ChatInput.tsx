@@ -4,7 +4,9 @@ import { extractFileForContext } from '../lib/api.ts'
 import { TemplateSelector } from './TemplateSelector.tsx'
 
 type FocusMode = 'flash' | 'balanced' | 'thorough' | 'image'
-type SearchCategory = 'web' | 'news' | 'science' | 'discussions'
+type SearchCategory = 'news' | 'science' | 'discussions' | 'tech'
+
+const SEARCH_CATEGORIES: SearchCategory[] = ['news', 'science', 'discussions', 'tech']
 
 interface Props {
   onSubmit: (text: string) => void
@@ -12,8 +14,8 @@ interface Props {
   disabled?: boolean
   focusMode: FocusMode
   onFocusModeChange: (m: FocusMode) => void
-  searchCategory?: SearchCategory
-  onSearchCategoryChange: (c: SearchCategory | undefined) => void
+  searchCategories: SearchCategory[]
+  onSearchCategoriesChange: (cats: SearchCategory[]) => void
 }
 
 interface Attachment {
@@ -30,7 +32,7 @@ const MODE_DESCRIPTIONS: Record<FocusMode, string> = {
   image: 'Generate or edit images — researches unfamiliar topics automatically for better results.',
 }
 
-export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategory, onSearchCategoryChange }: Props) {
+export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange }: Props) {
   const [value, setValue] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [extractStatus, setExtractStatus] = useState<'idle' | 'loading' | 'error'>('idle')
@@ -38,6 +40,7 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
   const [showTemplates, setShowTemplates] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
   const [visibleDesc, setVisibleDesc] = useState<string | null>(null)
+  const [categoryOpen, setCategoryOpen] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const descTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -126,21 +129,36 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
             {m}
           </button>
         ))}
+        <span className="flex-1" />
         {isFlash && (
-          <span className={`ml-auto ${isOverLimit ? 'text-red-400' : 'text-gray-500'}`}>
+          <span className={isOverLimit ? 'text-red-400' : 'text-gray-500'}>
             {value.length}/{FLASH_MAX}
           </span>
         )}
+        {(focusMode === 'balanced' || focusMode === 'thorough') && (
+          <button
+            type="button"
+            onClick={() => setCategoryOpen(o => !o)}
+            className={`flex items-center gap-1 px-2 py-1 rounded text-xs ${searchCategories.length > 0 ? 'bg-indigo-700 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
+          >
+            {searchCategories.length === 0 ? 'All' : searchCategories.join('+')}
+            <span className="opacity-60">{categoryOpen ? '▴' : '▾'}</span>
+          </button>
+        )}
       </div>
-      {(focusMode === 'balanced' || focusMode === 'thorough') && (
-        <div className="flex items-center gap-2 text-xs">
-          <span className="text-gray-600">Search:</span>
-          {(['web', 'news', 'science', 'discussions'] as const).map(cat => (
+      {categoryOpen && (focusMode === 'balanced' || focusMode === 'thorough') && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {SEARCH_CATEGORIES.map(cat => (
             <button
               key={cat}
               type="button"
-              onClick={() => onSearchCategoryChange(searchCategory === cat ? undefined : cat)}
-              className={`px-2 py-0.5 rounded capitalize ${searchCategory === cat ? 'bg-indigo-700 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200'}`}
+              onClick={() => {
+                const next = searchCategories.includes(cat)
+                  ? searchCategories.filter(c => c !== cat)
+                  : [...searchCategories, cat]
+                onSearchCategoriesChange(next)
+              }}
+              className={`px-2 py-0.5 rounded capitalize text-xs ${searchCategories.includes(cat) ? 'bg-indigo-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'}`}
             >
               {cat}
             </button>

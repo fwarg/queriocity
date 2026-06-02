@@ -49,7 +49,8 @@ export default function App() {
   const [inviteToken, setInviteToken] = useState<string | undefined>()
 
   const [focusMode, setFocusMode] = useState<'flash' | 'balanced' | 'thorough' | 'image'>('balanced')
-  const [searchCategory, setSearchCategory] = useState<'web' | 'news' | 'science' | 'discussions' | undefined>(undefined)
+  const [searchCategories, setSearchCategories] = useState<Array<'news' | 'science' | 'discussions' | 'tech'>>([])
+
   const [sessionId, setSessionId] = useState<string | undefined>()
   const [sessions, setSessions] = useState<Session[]>([])
   const [sessionSearch, setSessionSearch] = useState('')
@@ -112,7 +113,7 @@ export default function App() {
   const { messages, setMessages, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, cancel, reset } = useChat({
     sessionId,
     focusMode,
-    searchCategory,
+    searchCategories,
     spaceId: activeSpaceId ?? undefined,
     onSessionCreated: (id, title) => {
       setSessionId(id)
@@ -1349,8 +1350,8 @@ export default function App() {
               disabled={busy}
               focusMode={focusMode}
               onFocusModeChange={setFocusMode}
-              searchCategory={searchCategory}
-              onSearchCategoryChange={setSearchCategory}
+              searchCategories={searchCategories}
+              onSearchCategoriesChange={setSearchCategories}
             />
           </>
         )}
