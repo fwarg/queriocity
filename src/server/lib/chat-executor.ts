@@ -104,9 +104,30 @@ export async function executeChatAndSave({
         initialQueries, initialResults, customPrompt, hasFiles: false, spaceId, sessionId, memoryBlock,
         maxStepsOverride: 6,
       })
-      const { text, sources: rs } = await collectStream(researcherResult, () => {})
+      const { text, sources: rs, finishReason } = await collectStream(researcherResult, () => {})
       fullContent = text
       sources.push(...rs)
+
+      // Fallback: researcher exhausted all steps on tool calls without producing text
+      if (!fullContent && finishReason === 'tool-calls') {
+        console.warn('  [monitor-executor] maxSteps exhausted without answer — running no-tool synthesis fallback')
+        const resultsBlock = rs.length > 0
+          ? '\n\nSearch results:\n' + rs.map((r, i) => {
+              const idx = (r as SearchResult & { index?: number }).index ?? (i + 1)
+              return `[${idx}] ${r.title}\n${r.url}\n${r.content.slice(0, 500)}`
+            }).join('\n\n')
+          : ''
+        const fallback = streamText({
+          model: getChatModel(),
+          system: `Today's date is ${new Date().toISOString().split('T')[0]}. Synthesize the search results below into a direct answer with inline [N] citations using the index values shown. Do NOT say you lack internet access.${resultsBlock}${memoryBlock ? '\n\n' + memoryBlock : ''}`,
+          messages: msgs,
+          abortSignal: AbortSignal.timeout(120_000),
+        })
+        for await (const part of fallback.fullStream) {
+          const p = part as { type: string; textDelta?: string }
+          if (p.type === 'text-delta' && p.textDelta) fullContent += p.textDelta
+        }
+      }
     }
   }
 
@@ -150,13 +171,16 @@ async function reformulateAndSearch(
 async function collectStream(
   researcherResult: { fullStream: AsyncIterable<unknown> },
   onText: (text: string) => void,
-): Promise<{ text: string; sources: SearchResult[] }> {
+): Promise<{ text: string; sources: SearchResult[]; finishReason: string }> {
   let text = ''
   let reasoning = ''
+  let finishReason = 'unknown'
   const sources: SearchResult[] = []
   for await (const _part of researcherResult.fullStream) {
-    const part = _part as { type: string; toolName?: string; result?: unknown; textDelta?: string }
-    if (part.type === 'tool-result' && part.toolName === 'web_search') {
+    const part = _part as { type: string; toolName?: string; result?: unknown; textDelta?: string; finishReason?: string }
+    if (part.type === 'finish' || part.type === 'step-finish') {
+      if (part.finishReason) finishReason = part.finishReason
+    } else if (part.type === 'tool-result' && part.toolName === 'web_search') {
       sources.push(...(part.result ?? []) as SearchResult[])
     } else if (part.type === 'text-delta') {
       text += part.textDelta ?? ''
@@ -170,5 +194,5 @@ async function collectStream(
     text = reasoning
     onText(reasoning)
   }
-  return { text, sources }
+  return { text, sources, finishReason }
 }
