@@ -12,7 +12,7 @@ import {
   fetchSpaces, createSpace, updateSpace, deleteSpace, assignChatToSpace, recreateChatMemories,
   fetchSpaceMemories, createSpaceMemory, updateSpaceMemory, deleteSpaceMemory, compactSpaceMemories, recreateAllSpaceMemories, clearSpaceMemories,
   fetchChatIndexStatus, rebuildChatIndex, searchHistory,
-  fetchSpaceFiles, tagFileToSpace, untagFileFromSpace, ingestUrl,
+  fetchSpaceFiles, tagFileToSpace, untagFileFromSpace, ingestUrl, transformSpace,
   fetchMonitors,
 } from './lib/api.ts'
 import type { AuthUser, Message, Space, SpaceMemory, SpaceFile } from './lib/api.ts'
@@ -85,6 +85,10 @@ export default function App() {
   const [urlIngestValue, setUrlIngestValue] = useState('')
   const [urlIngestStatus, setUrlIngestStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [urlIngestError, setUrlIngestError] = useState('')
+  const [pinnedFileIds, setPinnedFileIds] = useState<string[]>([])
+  const [pinnedMemoryIds, setPinnedMemoryIds] = useState<string[]>([])
+  const [transformStatus, setTransformStatus] = useState<'idle' | 'loading' | 'error'>('idle')
+  const [transformError, setTransformError] = useState('')
   const [compacting, setCompacting] = useState(false)
   const [compactResult, setCompactResult] = useState<string | null>(null)
   const [recreating, setRecreating] = useState(false)
@@ -114,6 +118,8 @@ export default function App() {
     sessionId,
     focusMode,
     searchCategories,
+    includeFileIds: pinnedFileIds.length ? pinnedFileIds : undefined,
+    includeMemoryIds: pinnedMemoryIds.length ? pinnedMemoryIds : undefined,
     spaceId: activeSpaceId ?? undefined,
     onSessionCreated: (id, title) => {
       setSessionId(id)
@@ -201,6 +207,8 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    setPinnedFileIds([])
+    setPinnedMemoryIds([])
     if (currentSpaceId) {
       fetchSpaceMemories(currentSpaceId).then(({ memories }) => { setSpaceMemories(memories) }).catch(() => {})
       fetchSpaceFiles(currentSpaceId).then(setTaggedFiles).catch(() => {})
@@ -209,6 +217,8 @@ export default function App() {
       setSpaceMemories([])
       setTaggedFiles([])
       setChatIndexStatus(null)
+      setPinnedFileIds([])
+      setPinnedMemoryIds([])
     }
     setMemorySectionOpen(false)
     setFilesSectionOpen(false)
@@ -425,6 +435,22 @@ export default function App() {
   const kbFileRef = useRef<HTMLInputElement>(null)
   const [kbUploadStatus, setKbUploadStatus] = useState<'idle' | 'uploading' | 'ok' | 'error'>('idle')
   const [kbUploadMsg, setKbUploadMsg] = useState('')
+
+  async function handleTransform() {
+    if (!currentSpaceId) return
+    setTransformStatus('loading')
+    setTransformError('')
+    try {
+      const fileIds = pinnedFileIds.length ? pinnedFileIds : undefined
+      await transformSpace(currentSpaceId, 'summarize', fileIds)
+      fetchSpaceMemories(currentSpaceId).then(({ memories }) => setSpaceMemories(memories)).catch(() => {})
+      setTransformStatus('idle')
+    } catch (err: unknown) {
+      setTransformStatus('error')
+      setTransformError(err instanceof Error ? err.message : 'Transform failed')
+      setTimeout(() => setTransformStatus('idle'), 5000)
+    }
+  }
 
   async function handleUrlIngest() {
     if (!urlIngestValue.trim()) return
@@ -835,6 +861,13 @@ export default function App() {
                   <p className="text-xs text-gray-600 mt-2">No memories yet. The assistant will save noteworthy facts from conversations in this space.</p>
                 ) : memorySectionOpen && spaceMemories.map(m => (
                   <div key={m.id} className="flex items-start gap-1.5 group py-1">
+                    <input
+                      type="checkbox"
+                      checked={pinnedMemoryIds.includes(m.id)}
+                      onChange={() => setPinnedMemoryIds(prev => prev.includes(m.id) ? prev.filter(id => id !== m.id) : [...prev, m.id])}
+                      className="mt-0.5 shrink-0 accent-indigo-500 cursor-pointer"
+                      title="Pin to next query"
+                    />
                     {editingMemoryId === m.id ? (
                       <input
                         autoFocus
@@ -920,19 +953,40 @@ export default function App() {
                   <p className="text-xs text-gray-600 mt-2">No resources tagged. Tag resources to inject relevant excerpts into the space context.</p>
                 )}
                 {filesSectionOpen && taggedFiles.map(f => (
-                  <div key={f.id} className="flex items-center justify-between group py-1">
-                    <span className="text-xs text-gray-300 truncate min-w-0">{f.filename}</span>
+                  <div key={f.id} className="flex items-center gap-1.5 justify-between group py-1">
+                    <input
+                      type="checkbox"
+                      checked={pinnedFileIds.includes(f.id)}
+                      onChange={() => setPinnedFileIds(prev => prev.includes(f.id) ? prev.filter(id => id !== f.id) : [...prev, f.id])}
+                      className="shrink-0 accent-indigo-500 cursor-pointer"
+                      title="Pin to next query"
+                    />
+                    <span className="text-xs text-gray-300 truncate flex-1 min-w-0">{f.filename}</span>
                     <button
                       onClick={async () => {
                         await untagFileFromSpace(currentSpaceId!, f.id)
+                        setPinnedFileIds(prev => prev.filter(id => id !== f.id))
                         setTaggedFiles(prev => prev.filter(t => t.id !== f.id))
                       }}
-                      className="text-gray-700 hover:text-red-400 text-xs shrink-0 opacity-0 group-hover:opacity-100 transition-opacity ml-2"
+                      className="text-gray-700 hover:text-red-400 text-xs shrink-0 opacity-0 group-hover:opacity-100 transition-opacity ml-1"
                     >
                       ×
                     </button>
                   </div>
                 ))}
+                {filesSectionOpen && taggedFiles.length > 0 && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <button
+                      onClick={handleTransform}
+                      disabled={transformStatus === 'loading'}
+                      className="text-xs px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-50"
+                      title={pinnedFileIds.length ? 'Summarize selected resources into a memory' : 'Summarize all tagged resources into a memory'}
+                    >
+                      {transformStatus === 'loading' ? 'Summarizing…' : '⟳ Summarize resources'}
+                    </button>
+                    {transformStatus === 'error' && <span className="text-xs text-red-400">{transformError}</span>}
+                  </div>
+                )}
               </div>
 
               {chatIndexStatus !== null && (

@@ -3,7 +3,7 @@ import { db, uploadedFiles, getAppSetting } from '../lib/db.ts'
 import { eq } from 'drizzle-orm'
 import { ingestFile, extractFileText, isUsableText, ACCEPTED_MIME_TYPES } from '../lib/files/ingest.ts'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
-import { fetchUrl } from '../lib/fetch-url.ts'
+import { fetchUrl, extractYoutubeVideoId } from '../lib/fetch-url.ts'
 
 export const filesRouter = new Hono<AppEnv>()
 
@@ -43,9 +43,14 @@ filesRouter.post('/ingest-url', async (c) => {
   let parsed: URL
   try { parsed = new URL(url) } catch { return c.json({ error: 'Invalid URL' }, 400) }
   console.log(`\n━━━ [ingest-url] ${url}`)
+
+  const videoId = extractYoutubeVideoId(url)
   const text = await fetchUrl(url)
   if (text.startsWith('Error fetching')) return c.json({ error: `Could not fetch URL: ${text}` }, 400)
-  const filename = parsed.hostname + (parsed.pathname !== '/' ? parsed.pathname.replace(/\/$/, '').split('/').pop() ?? '' : '') + '.txt'
+  const filename = videoId
+    ? `youtube-${videoId}.txt`
+    : parsed.hostname + (parsed.pathname !== '/' ? parsed.pathname.replace(/\/$/, '').split('/').pop() ?? '' : '') + '.txt'
+
   const buffer = new TextEncoder().encode(text).buffer as ArrayBuffer
   try {
     const fileId = await ingestFile(buffer, filename, 'text/plain', userId)
@@ -56,6 +61,7 @@ filesRouter.post('/ingest-url', async (c) => {
     return c.json({ error: msg }, 400)
   }
 })
+
 
 filesRouter.post('/extract', async (c) => {
   const body = await c.req.parseBody()

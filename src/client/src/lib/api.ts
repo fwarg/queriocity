@@ -119,6 +119,8 @@ export async function* streamChat(
   spaceId?: string,
   ephemeral?: boolean,
   searchCategories?: Array<'news' | 'science' | 'discussions' | 'tech'>,
+  includeFileIds?: string[],
+  includeMemoryIds?: string[],
 ): AsyncGenerator<{ type: string; [k: string]: unknown }> {
   const res = await fetch(`${BASE}/chat`, {
     method: 'POST',
@@ -135,6 +137,8 @@ export async function* streamChat(
       spaceId,
       ...(ephemeral ? { ephemeral: true } : {}),
       ...(searchCategories?.length ? { searchCategories } : {}),
+      ...(includeFileIds?.length ? { includeFileIds } : {}),
+      ...(includeMemoryIds?.length ? { includeMemoryIds } : {}),
     }),
     signal,
   })
@@ -263,6 +267,19 @@ export async function tagFileToSpace(spaceId: string, fileId: string): Promise<v
 
 export async function untagFileFromSpace(spaceId: string, fileId: string): Promise<void> {
   await fetch(`${BASE}/spaces/${spaceId}/files/${fileId}`, { method: 'DELETE' })
+}
+
+export async function transformSpace(spaceId: string, operation: 'summarize', fileIds?: string[]): Promise<{ memoryId: string; content: string }> {
+  const res = await fetch(`${BASE}/spaces/${spaceId}/transform`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ operation, ...(fileIds?.length ? { fileIds } : {}) }),
+  })
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({})) as { error?: string }
+    throw new Error(e.error ?? 'Transform failed')
+  }
+  return res.json()
 }
 
 export async function ingestUrl(url: string): Promise<{ fileId: string; filename: string }> {

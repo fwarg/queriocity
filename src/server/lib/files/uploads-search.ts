@@ -17,7 +17,12 @@ export function spaceHasTaggedFiles(spaceId: string): boolean {
 }
 
 /** Search file chunks for a space using a pre-computed embedding vector. */
-export async function searchSpaceFiles(spaceId: string, query: string, embedding: number[], limit = 5, skipRerank = false): Promise<ChunkResult[]> {
+export async function searchSpaceFiles(spaceId: string, query: string, embedding: number[], limit = 5, skipRerank = false, fileIds?: string[]): Promise<ChunkResult[]> {
+  const fileFilter = fileIds?.length
+    ? `AND m.file_id IN (${fileIds.map(() => '?').join(',')})`
+    : ''
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const params: any[] = [JSON.stringify(embedding), spaceId, limit, ...(fileIds ?? [])]
   const rows = sqlite.prepare(`
     SELECT m.chunk_id AS chunkId, m.file_id AS fileId, f.filename, m.content, v.distance
     FROM file_chunks v
@@ -27,8 +32,9 @@ export async function searchSpaceFiles(spaceId: string, query: string, embedding
     WHERE v.embedding MATCH ?
       AND sf.space_id = ?
       AND k = ?
+      ${fileFilter}
     ORDER BY v.distance
-  `).all(JSON.stringify(embedding), spaceId, limit) as ChunkResult[]
+  `).all(...params) as ChunkResult[]
 
   if (skipRerank || !rerankEnabled || rows.length === 0) return rows
   const indices = await rerank(query, rows.map(r => r.content), rows.length)

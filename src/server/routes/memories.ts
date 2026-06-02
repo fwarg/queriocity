@@ -7,6 +7,8 @@ import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { getSpaceMemories, saveMemory, compactSpaceMemories, extractMemoriesPostHoc } from '../lib/memory.ts'
 import { getAppSetting } from '../lib/db.ts'
 import { indexSession } from '../lib/chat-indexer.ts'
+import { generateText } from 'ai'
+import { getChatModel } from '../lib/llm.ts'
 
 export const memoriesRouter = new Hono<AppEnv>()
 
@@ -195,6 +197,64 @@ memoriesRouter.get('/:spaceId/files', async (c) => {
     .innerJoin(uploadedFiles, eq(spaceFiles.fileId, uploadedFiles.id))
     .where(eq(spaceFiles.spaceId, spaceId))
   return c.json(rows)
+})
+
+memoriesRouter.post('/:spaceId/transform', zValidator('json', z.object({
+  operation: z.enum(['summarize']),
+  fileIds: z.array(z.string()).optional(),
+})), async (c) => {
+  const userId = c.get('userId') as string
+  const spaceId = c.req.param('spaceId')
+  const { operation, fileIds } = c.req.valid('json')
+  if (!await verifySpaceOwner(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
+
+  const fileFilter = fileIds?.length
+    ? `AND sf.file_id IN (${fileIds.map(() => '?').join(',')})`
+    : ''
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const params: any[] = [spaceId, ...(fileIds ?? [])]
+  const chunks = sqlite.prepare(`
+    SELECT m.content, f.filename
+    FROM file_chunk_meta m
+    JOIN space_files sf ON sf.file_id = m.file_id
+    JOIN uploaded_files f ON f.id = m.file_id
+    WHERE sf.space_id = ? ${fileFilter}
+    ORDER BY m.file_id, m.chunk_id
+  `).all(...params) as Array<{ content: string; filename: string }>
+
+  if (!chunks.length) return c.json({ error: 'No resource content found in this space' }, 400)
+
+  const MAX_CHARS = 24000
+  let totalChars = 0
+  const sections: string[] = []
+  let lastFile = ''
+  for (const chunk of chunks) {
+    if (totalChars >= MAX_CHARS) break
+    if (chunk.filename !== lastFile) { sections.push(`\n[${chunk.filename}]`); lastFile = chunk.filename }
+    sections.push(chunk.content)
+    totalChars += chunk.content.length
+  }
+  const context = sections.join('\n').slice(0, MAX_CHARS)
+
+  console.log(`\n━━━ [transform:${operation}] space=${spaceId}  ${chunks.length} chunks  ${totalChars} chars`)
+
+  const prompts: Record<string, string> = {
+    summarize: `Summarize the key information from the following resource excerpts into a concise set of bullet points. Focus on the most important facts, findings, and conclusions. Be comprehensive but avoid redundancy.\n\n${context}`,
+  }
+
+  const { text } = await generateText({
+    model: getChatModel(),
+    prompt: prompts[operation],
+    abortSignal: AbortSignal.timeout(120_000),
+  })
+
+  if (!text.trim()) return c.json({ error: 'Model returned empty response' }, 500)
+
+  const label = operation === 'summarize' ? 'Resource summary' : operation
+  const content = `${label}: ${text.trim()}`
+  const memoryId = await saveMemory(spaceId, content, 'extraction')
+  console.log(`  [transform] saved memory ${memoryId}`)
+  return c.json({ memoryId, content: text.trim() })
 })
 
 memoriesRouter.post('/:spaceId/files', zValidator('json', z.object({ fileId: z.string() })), async (c) => {

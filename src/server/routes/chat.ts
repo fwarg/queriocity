@@ -41,6 +41,8 @@ const chatSchema = z.object({
   })),
   focusMode: z.enum(['flash', 'balanced', 'thorough', 'image']).default('balanced'),
   searchCategories: z.array(z.enum(['news', 'science', 'discussions', 'tech'])).optional(),
+  includeFileIds: z.array(z.string()).optional(),
+  includeMemoryIds: z.array(z.string()).optional(),
   ephemeral: z.boolean().optional(),
 })
 
@@ -50,7 +52,7 @@ chatRouter.use('*', authMiddleware)
 
 chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
   const userId = c.get('userId') as string
-  const { sessionId, spaceId, messages: msgs, focusMode, searchCategories, ephemeral } = c.req.valid('json')
+  const { sessionId, spaceId, messages: msgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, ephemeral } = c.req.valid('json')
   const searchCategory = toSearxngCategories(searchCategories)
   const sid = sessionId ?? randomUUID()
 
@@ -74,7 +76,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
     const userQuery = lastUser?.content ?? ''
     const parsedFlashSettings = parseSettings(userRow?.settings ?? '{}')
     const effectiveRag = (parsedFlashSettings.useSpaceRag !== false) ? ragBudget : 0
-    const { block: resolvedMemoryBlock, fileSources: flashFileSources } = spaceId ? await buildMemoryBlock(spaceId, memoryBudget, effectiveRag, userQuery) : { block: '', fileSources: [] }
+    const { block: resolvedMemoryBlock, fileSources: flashFileSources } = spaceId ? await buildMemoryBlock(spaceId, memoryBudget, effectiveRag, userQuery, includeFileIds, includeMemoryIds) : { block: '', fileSources: [] }
     const customPrompt: string | undefined = parsedFlashSettings.customPrompt as string | undefined
     const t0 = Date.now()
     let fullContent = ''
@@ -323,7 +325,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
   const hasFiles = (fileCountRow?.count ?? 0) > 0
   const effectiveRag = (parsedSettings.useSpaceRag !== false) ? ragBudget : 0
   const { block: memoryBlock, fileSources } = spaceId
-    ? await buildMemoryBlock(spaceId, memoryBudget, effectiveRag, userQuery)
+    ? await buildMemoryBlock(spaceId, memoryBudget, effectiveRag, userQuery, includeFileIds, includeMemoryIds)
     : (hasFiles && parsedSettings.useChatRag !== false)
       ? await buildChatFileBlock(userId, userQuery, ragBudget)
       : { block: '', fileSources: [] }
