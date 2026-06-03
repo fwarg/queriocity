@@ -6,8 +6,26 @@ import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
-import { ExternalLink, FileText, Download } from 'lucide-react'
+import { ExternalLink, FileText, Download, Volume2, VolumeX } from 'lucide-react'
 import type { Message } from '../lib/api.ts'
+
+function stripForSpeech(content: string): string {
+  return content
+    .replace(/```[\s\S]*?```/g, 'code block.')
+    .replace(/`[^`]+`/g, '')
+    .replace(/!\[.*?\]\([^)]+\)/g, '')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/[*_]{1,3}([^*_\n]+)[*_]{1,3}/g, '$1')
+    .replace(/\[(\d+)\]/g, '')
+    .replace(/^[-*]\s+/gm, '')
+    .replace(/^\d+\.\s+/gm, '')
+    .replace(/^>\s+/gm, '')
+    .replace(/\n{2,}/g, '. ')
+    .replace(/\n/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+}
 
 interface Props {
   messages: Message[]
@@ -243,8 +261,23 @@ function HighlightedText({ text, query }: { text: string; query: string }) {
 function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, searchQuery }: { msg: Message; isFirst?: boolean; defaultCollapsed?: boolean; isMatch?: boolean; isActive?: boolean; searchQuery?: string }) {
   const [highlightedSource, setHighlightedSource] = useState<number | null>(null)
   const [collapsed, setCollapsed] = useState(!!defaultCollapsed)
+  const [speaking, setSpeaking] = useState(false)
   const toggleSource = useCallback((n: number) => setHighlightedSource(v => v === n ? null : n), [])
   const mdComponents = makeMdComponents(highlightedSource, toggleSource)
+
+  function handleSpeak() {
+    if (speaking) {
+      window.speechSynthesis.cancel()
+      setSpeaking(false)
+      return
+    }
+    window.speechSynthesis.cancel()
+    const utt = new SpeechSynthesisUtterance(stripForSpeech(msg.content))
+    utt.onstart = () => setSpeaking(true)
+    utt.onend = () => setSpeaking(false)
+    utt.onerror = () => setSpeaking(false)
+    window.speechSynthesis.speak(utt)
+  }
 
   const collapsible = isFirst && msg.role === 'user'
 
@@ -297,6 +330,17 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
               return cleaned.trim() ? <ReactMarkdown components={mdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{wrapSvgBlocks(escapeCurrencyDollars(cleaned))}</ReactMarkdown> : null
             })()}
             {msg.images?.map((img, i) => <ImageBlock key={i} url={img.url} alt={img.alt} />)}
+            {'speechSynthesis' in window && msg.content && (
+              <div className="flex justify-end mt-1">
+                <button
+                  onClick={handleSpeak}
+                  className={`p-0.5 rounded transition-colors ${speaking ? 'text-blue-400 hover:text-blue-300' : 'text-gray-600 hover:text-gray-400'}`}
+                  title={speaking ? 'Stop reading' : 'Read aloud'}
+                >
+                  {speaking ? <VolumeX size={13} /> : <Volume2 size={13} />}
+                </button>
+              </div>
+            )}
           </>
         ) : <HighlightedText text={msg.content} query={searchQuery ?? ''} />}
       </div>

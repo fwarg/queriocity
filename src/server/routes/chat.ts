@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { streamSSE } from 'hono/streaming'
-import { streamText, tool } from 'ai'
+import { streamText, generateText, tool } from 'ai'
 import { runResearcher } from '../lib/researcher.ts'
 import { runWriter } from '../lib/writer.ts'
 import { reformulateLLM } from '../lib/reformulate.ts'
@@ -49,6 +49,29 @@ const chatSchema = z.object({
 export const chatRouter = new Hono<AppEnv>()
 
 chatRouter.use('*', authMiddleware)
+
+chatRouter.post('/suggest', zValidator('json', z.object({ text: z.string().min(5).max(500) })), async (c) => {
+  const { text } = c.req.valid('json')
+  try {
+    const { text: raw } = await generateText({
+      model: getFlashModel(),
+      system: 'Return a JSON array of exactly 3 short search query suggestions that complete or refine the user\'s partial input. Return ONLY the raw JSON array, no markdown, no explanation.',
+      messages: [{ role: 'user', content: text }],
+      maxTokens: 120,
+      abortSignal: AbortSignal.timeout(6000),
+    })
+    const match = raw.match(/\[[\s\S]*\]/)
+    if (match) {
+      const suggestions = JSON.parse(match[0])
+      if (Array.isArray(suggestions)) {
+        return c.json(suggestions.slice(0, 4).filter((s): s is string => typeof s === 'string'))
+      }
+    }
+  } catch (e) {
+    console.error('[suggest]', e)
+  }
+  return c.json([])
+})
 
 chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
   const userId = c.get('userId') as string

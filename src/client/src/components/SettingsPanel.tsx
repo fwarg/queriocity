@@ -26,18 +26,20 @@ interface Props {
   useThinking: boolean
   useSpaceRag: boolean
   useChatRag: boolean
+  querySuggestions: boolean
   fontSize: number
   timezone: string
   onClose: () => void
-  onSave: (customPrompt: string, showThinking: { balanced: boolean; thorough: boolean }, useThinking: boolean, useSpaceRag: boolean, useChatRag: boolean, fontSize: number, timezone: string) => void
+  onSave: (customPrompt: string, showThinking: { balanced: boolean; thorough: boolean }, useThinking: boolean, useSpaceRag: boolean, useChatRag: boolean, querySuggestions: boolean, fontSize: number, timezone: string) => void
 }
 
-export function SettingsPanel({ customPrompt: initial, showThinking: initialShowThinking, useThinking: initialUseThinking, useSpaceRag: initialUseSpaceRag, useChatRag: initialUseChatRag, fontSize: initialFontSize, timezone: initialTimezone, onClose, onSave }: Props) {
+export function SettingsPanel({ customPrompt: initial, showThinking: initialShowThinking, useThinking: initialUseThinking, useSpaceRag: initialUseSpaceRag, useChatRag: initialUseChatRag, querySuggestions: initialQuerySuggestions, fontSize: initialFontSize, timezone: initialTimezone, onClose, onSave }: Props) {
   const [customPrompt, setCustomPrompt] = useState(initial)
   const [showThinking, setShowThinking] = useState(initialShowThinking)
   const [useThinking, setUseThinking] = useState(initialUseThinking)
   const [useSpaceRag, setUseSpaceRag] = useState(initialUseSpaceRag)
   const [useChatRag, setUseChatRag] = useState(initialUseChatRag)
+  const [querySuggestions, setQuerySuggestions] = useState(initialQuerySuggestions)
   const [fontSize, setFontSize] = useState(initialFontSize)
   const [timezone, setTimezone] = useState(initialTimezone)
   const [busy, setBusy] = useState(false)
@@ -47,8 +49,8 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
     e.preventDefault()
     setBusy(true)
     try {
-      await updateSettings({ customPrompt, showThinking, useThinking, useSpaceRag, useChatRag, fontSize, timezone: timezone || undefined })
-      onSave(customPrompt, showThinking, useThinking, useSpaceRag, useChatRag, fontSize, timezone)
+      await updateSettings({ customPrompt, showThinking, useThinking, useSpaceRag, useChatRag, querySuggestions, fontSize, timezone: timezone || undefined })
+      onSave(customPrompt, showThinking, useThinking, useSpaceRag, useChatRag, querySuggestions, fontSize, timezone)
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } finally {
@@ -140,6 +142,22 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
                 className="accent-blue-500"
               />
               Enable chat RAG
+            </label>
+          </div>
+          <div className="border-t border-gray-800" />
+          <div className="flex flex-col gap-2">
+            <label className="text-xs text-gray-400 font-medium">Query suggestions</label>
+            <p className="text-xs text-gray-500">
+              Show AI-generated query completions as you type in the chat input. Adds a small flash-model call on each keystroke pause — disable on slow setups.
+            </p>
+            <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={querySuggestions}
+                onChange={e => setQuerySuggestions(e.target.checked)}
+                className="accent-blue-500"
+              />
+              Enable query suggestions
             </label>
           </div>
           <div className="border-t border-gray-800" />

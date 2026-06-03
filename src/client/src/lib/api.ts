@@ -5,7 +5,7 @@ export interface AuthUser {
   email: string
   name: string | null
   role: 'user' | 'admin'
-  settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; useSpaceRag?: boolean; useChatRag?: boolean; fontSize?: number; timezone?: string }
+  settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; useSpaceRag?: boolean; useChatRag?: boolean; querySuggestions?: boolean; fontSize?: number; timezone?: string }
   memoryTokenBudget: number
 }
 
@@ -68,7 +68,20 @@ export async function logout(): Promise<void> {
   await fetch(`${BASE}/auth/logout`, { method: 'POST' })
 }
 
-export async function updateSettings(settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; useSpaceRag?: boolean; useChatRag?: boolean; fontSize?: number; timezone?: string }): Promise<void> {
+export async function fetchSuggestions(text: string): Promise<string[]> {
+  try {
+    const res = await fetch(`${BASE}/chat/suggest`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+      signal: AbortSignal.timeout(7000),
+    })
+    if (!res.ok) return []
+    return res.json()
+  } catch { return [] }
+}
+
+export async function updateSettings(settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; useSpaceRag?: boolean; useChatRag?: boolean; fontSize?: number; timezone?: string; querySuggestions?: boolean }): Promise<void> {
   await fetch(`${BASE}/users/settings`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },

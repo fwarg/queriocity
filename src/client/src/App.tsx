@@ -521,10 +521,11 @@ export default function App() {
           useThinking={currentUser.settings?.useThinking ?? false}
           useSpaceRag={currentUser.settings?.useSpaceRag !== false}
           useChatRag={currentUser.settings?.useChatRag !== false}
+          querySuggestions={currentUser.settings?.querySuggestions !== false}
           fontSize={currentUser.settings?.fontSize ?? 17}
           timezone={currentUser.settings?.timezone ?? ''}
           onClose={() => setShowSettings(false)}
-          onSave={(cp, st, ut, sr, cr, fs, tz) => setCurrentUser(u => u ? { ...u, settings: { ...u.settings, customPrompt: cp, showThinking: st, useThinking: ut, useSpaceRag: sr, useChatRag: cr, fontSize: fs, timezone: tz } } : u)}
+          onSave={(cp, st, ut, sr, cr, qs, fs, tz) => setCurrentUser(u => u ? { ...u, settings: { ...u.settings, customPrompt: cp, showThinking: st, useThinking: ut, useSpaceRag: sr, useChatRag: cr, querySuggestions: qs, fontSize: fs, timezone: tz } } : u)}
         />
       )}
       {showAdmin && currentUser && (
@@ -1406,6 +1407,7 @@ export default function App() {
               onFocusModeChange={setFocusMode}
               searchCategories={searchCategories}
               onSearchCategoriesChange={setSearchCategories}
+              suggestionsEnabled={currentUser?.settings?.querySuggestions !== false}
             />
           </>
         )}
