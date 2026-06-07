@@ -1,9 +1,12 @@
 import { useState, useRef, type FormEvent, type KeyboardEvent } from 'react'
 import { Send, Paperclip, X, Square, LayoutGrid, ChevronDown, ChevronUp } from 'lucide-react'
-import { extractFileForContext } from '../lib/api.ts'
+import { extractFileForContext, fetchSuggestions } from '../lib/api.ts'
 import { TemplateSelector } from './TemplateSelector.tsx'
 
 type FocusMode = 'flash' | 'balanced' | 'thorough' | 'image'
+type SearchCategory = 'news' | 'science' | 'discussions' | 'tech'
+
+const SEARCH_CATEGORIES: SearchCategory[] = ['news', 'science', 'discussions', 'tech']
 
 interface Props {
   onSubmit: (text: string) => void
@@ -11,6 +14,9 @@ interface Props {
   disabled?: boolean
   focusMode: FocusMode
   onFocusModeChange: (m: FocusMode) => void
+  searchCategories: SearchCategory[]
+  onSearchCategoriesChange: (cats: SearchCategory[]) => void
+  suggestionsEnabled?: boolean
 }
 
 interface Attachment {
@@ -27,7 +33,7 @@ const MODE_DESCRIPTIONS: Record<FocusMode, string> = {
   image: 'Generate or edit images — researches unfamiliar topics automatically for better results.',
 }
 
-export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusModeChange }: Props) {
+export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, suggestionsEnabled }: Props) {
   const [value, setValue] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [extractStatus, setExtractStatus] = useState<'idle' | 'loading' | 'error'>('idle')
@@ -35,8 +41,11 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
   const [showTemplates, setShowTemplates] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
   const [visibleDesc, setVisibleDesc] = useState<string | null>(null)
+  const [categoryOpen, setCategoryOpen] = useState(false)
+  const [suggestions, setSuggestions] = useState<string[]>([])
   const fileRef = useRef<HTMLInputElement>(null)
   const descTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const suggestTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   function handleModeChange(m: FocusMode) {
     onFocusModeChange(m)
@@ -47,6 +56,20 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
 
   const isFlash = focusMode === 'flash'
   const isOverLimit = isFlash && value.length > FLASH_MAX
+
+  function handleSuggestionFetch(text: string) {
+    if (suggestTimerRef.current) clearTimeout(suggestTimerRef.current)
+    if (!suggestionsEnabled || focusMode === 'flash' || text.trim().length < 8) {
+      setSuggestions([])
+      return
+    }
+    suggestTimerRef.current = setTimeout(async () => {
+      try {
+        const results = await fetchSuggestions(text.trim())
+        setSuggestions(results)
+      } catch { setSuggestions([]) }
+    }, 500)
+  }
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -61,6 +84,7 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
     onSubmit(fullText)
     setValue('')
     setAttachments([])
+    setSuggestions([])
   }
 
   function handleKey(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -123,12 +147,56 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
             {m}
           </button>
         ))}
+        <span className="flex-1" />
         {isFlash && (
-          <span className={`ml-auto ${isOverLimit ? 'text-red-400' : 'text-gray-500'}`}>
+          <span className={isOverLimit ? 'text-red-400' : 'text-gray-500'}>
             {value.length}/{FLASH_MAX}
           </span>
         )}
+        {(focusMode === 'balanced' || focusMode === 'thorough') && (
+          <button
+            type="button"
+            onClick={() => setCategoryOpen(o => !o)}
+            className={`flex items-center gap-1 px-2 py-1 rounded text-xs ${searchCategories.length > 0 ? 'bg-indigo-700 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
+          >
+            {searchCategories.length === 0 ? 'All' : searchCategories.join('+')}
+            <span className="opacity-60">{categoryOpen ? '▴' : '▾'}</span>
+          </button>
+        )}
       </div>
+      {categoryOpen && (focusMode === 'balanced' || focusMode === 'thorough') && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {SEARCH_CATEGORIES.map(cat => (
+            <button
+              key={cat}
+              type="button"
+              onClick={() => {
+                const next = searchCategories.includes(cat)
+                  ? searchCategories.filter(c => c !== cat)
+                  : [...searchCategories, cat]
+                onSearchCategoriesChange(next)
+              }}
+              className={`px-2 py-0.5 rounded capitalize text-xs ${searchCategories.includes(cat) ? 'bg-indigo-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'}`}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
+      )}
+      {suggestions.length > 0 && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {suggestions.map((s, i) => (
+            <button
+              key={i}
+              type="button"
+              onClick={() => { setValue(s); setSuggestions([]) }}
+              className="px-2 py-0.5 rounded-full text-xs bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white border border-gray-600 truncate max-w-60"
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {attachments.map((att, i) => (
@@ -157,7 +225,7 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
           className="flex-1 resize-none rounded bg-gray-900 border border-gray-700 p-2 text-sm focus:outline-none focus:border-blue-500"
           rows={3}
           value={value}
-          onChange={e => setValue(e.target.value)}
+          onChange={e => { setValue(e.target.value); handleSuggestionFetch(e.target.value) }}
           onKeyDown={handleKey}
           placeholder="Ask anything… (Enter to send, Shift+Enter for newline)"
           disabled={disabled}

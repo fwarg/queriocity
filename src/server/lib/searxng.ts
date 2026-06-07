@@ -7,8 +7,8 @@ export interface SearchResult {
   content: string
 }
 
-export async function webSearchMulti(queries: string[], countEach: number): Promise<SearchResult[]> {
-  const batches = await Promise.all(queries.map(q => webSearch(q, countEach)))
+export async function webSearchMulti(queries: string[], countEach: number, categories?: string): Promise<SearchResult[]> {
+  const batches = await Promise.all(queries.map(q => webSearch(q, countEach, categories)))
   const seen = new Set<string>()
   const results: SearchResult[] = []
   for (const batch of batches) {
@@ -22,11 +22,12 @@ export async function webSearchMulti(queries: string[], countEach: number): Prom
   return results
 }
 
-export async function webSearch(query: string, count = 10): Promise<SearchResult[]> {
+export async function webSearch(query: string, count = 10, categories?: string): Promise<SearchResult[]> {
   const url = new URL('/search', SEARXNG_URL)
   url.searchParams.set('q', query)
   url.searchParams.set('format', 'json')
   if (process.env.SEARXNG_ENGINES) url.searchParams.set('engines', process.env.SEARXNG_ENGINES)
+  if (categories) url.searchParams.set('categories', categories)
   url.searchParams.set('language', 'all')
 
   const start = performance.now()

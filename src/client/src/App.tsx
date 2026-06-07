@@ -12,7 +12,7 @@ import {
   fetchSpaces, createSpace, updateSpace, deleteSpace, assignChatToSpace, recreateChatMemories,
   fetchSpaceMemories, createSpaceMemory, updateSpaceMemory, deleteSpaceMemory, compactSpaceMemories, recreateAllSpaceMemories, clearSpaceMemories,
   fetchChatIndexStatus, rebuildChatIndex, searchHistory,
-  fetchSpaceFiles, tagFileToSpace, untagFileFromSpace,
+  fetchSpaceFiles, tagFileToSpace, untagFileFromSpace, ingestUrl, transformSpace,
   fetchMonitors,
 } from './lib/api.ts'
 import type { AuthUser, Message, Space, SpaceMemory, SpaceFile } from './lib/api.ts'
@@ -49,6 +49,8 @@ export default function App() {
   const [inviteToken, setInviteToken] = useState<string | undefined>()
 
   const [focusMode, setFocusMode] = useState<'flash' | 'balanced' | 'thorough' | 'image'>('balanced')
+  const [searchCategories, setSearchCategories] = useState<Array<'news' | 'science' | 'discussions' | 'tech'>>([])
+
   const [sessionId, setSessionId] = useState<string | undefined>()
   const [sessions, setSessions] = useState<Session[]>([])
   const [sessionSearch, setSessionSearch] = useState('')
@@ -79,6 +81,15 @@ export default function App() {
   const [filesSectionOpen, setFilesSectionOpen] = useState(false)
   const [allUserFiles, setAllUserFiles] = useState<Array<{ id: string; filename: string; size: number }>>([])
   const [filePickerOpen, setFilePickerOpen] = useState(false)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [urlIngestOpen, setUrlIngestOpen] = useState(false)
+  const [urlIngestValue, setUrlIngestValue] = useState('')
+  const [urlIngestStatus, setUrlIngestStatus] = useState<'idle' | 'loading' | 'error'>('idle')
+  const [urlIngestError, setUrlIngestError] = useState('')
+  const [pinnedFileIds, setPinnedFileIds] = useState<string[]>([])
+  const [pinnedMemoryIds, setPinnedMemoryIds] = useState<string[]>([])
+  const [transformStatus, setTransformStatus] = useState<'idle' | 'loading' | 'error'>('idle')
+  const [transformError, setTransformError] = useState('')
   const [compacting, setCompacting] = useState(false)
   const [compactResult, setCompactResult] = useState<string | null>(null)
   const [recreating, setRecreating] = useState(false)
@@ -107,6 +118,9 @@ export default function App() {
   const { messages, setMessages, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, cancel, reset } = useChat({
     sessionId,
     focusMode,
+    searchCategories,
+    includeFileIds: pinnedFileIds.length ? pinnedFileIds : undefined,
+    includeMemoryIds: pinnedMemoryIds.length ? pinnedMemoryIds : undefined,
     spaceId: activeSpaceId ?? undefined,
     onSessionCreated: (id, title) => {
       setSessionId(id)
@@ -194,6 +208,8 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    setPinnedFileIds([])
+    setPinnedMemoryIds([])
     if (currentSpaceId) {
       fetchSpaceMemories(currentSpaceId).then(({ memories }) => { setSpaceMemories(memories) }).catch(() => {})
       fetchSpaceFiles(currentSpaceId).then(setTaggedFiles).catch(() => {})
@@ -202,6 +218,8 @@ export default function App() {
       setSpaceMemories([])
       setTaggedFiles([])
       setChatIndexStatus(null)
+      setPinnedFileIds([])
+      setPinnedMemoryIds([])
     }
     setMemorySectionOpen(false)
     setFilesSectionOpen(false)
@@ -331,6 +349,13 @@ export default function App() {
 
   function handleDeleteSession(id: string, e: React.MouseEvent) {
     e.stopPropagation()
+    setConfirmDeleteId(id)
+  }
+
+  function confirmDeleteSession() {
+    if (!confirmDeleteId) return
+    const id = confirmDeleteId
+    setConfirmDeleteId(null)
     deleteSession(id).then(() => {
       setSessions(prev => {
         const session = prev.find(s => s.id === id)
@@ -419,6 +444,38 @@ export default function App() {
   const [kbUploadStatus, setKbUploadStatus] = useState<'idle' | 'uploading' | 'ok' | 'error'>('idle')
   const [kbUploadMsg, setKbUploadMsg] = useState('')
 
+  async function handleTransform() {
+    if (!currentSpaceId) return
+    setTransformStatus('loading')
+    setTransformError('')
+    try {
+      const fileIds = pinnedFileIds.length ? pinnedFileIds : undefined
+      await transformSpace(currentSpaceId, 'summarize', fileIds)
+      fetchSpaceMemories(currentSpaceId).then(({ memories }) => setSpaceMemories(memories)).catch(() => {})
+      setTransformStatus('idle')
+    } catch (err: unknown) {
+      setTransformStatus('error')
+      setTransformError(err instanceof Error ? err.message : 'Transform failed')
+      setTimeout(() => setTransformStatus('idle'), 5000)
+    }
+  }
+
+  async function handleUrlIngest() {
+    if (!urlIngestValue.trim()) return
+    setUrlIngestStatus('loading')
+    setUrlIngestError('')
+    try {
+      await ingestUrl(urlIngestValue.trim())
+      fetchFiles().then(setFiles).catch(() => {})
+      setUrlIngestOpen(false)
+      setUrlIngestValue('')
+      setUrlIngestStatus('idle')
+    } catch (err: unknown) {
+      setUrlIngestStatus('error')
+      setUrlIngestError(err instanceof Error ? err.message : 'Failed to ingest URL')
+    }
+  }
+
   async function handleKbUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
@@ -464,6 +521,7 @@ export default function App() {
   }
 
   return (
+    <>
     <div className="flex h-screen">
       {showSettings && currentUser && (
         <SettingsPanel
@@ -472,10 +530,11 @@ export default function App() {
           useThinking={currentUser.settings?.useThinking ?? false}
           useSpaceRag={currentUser.settings?.useSpaceRag !== false}
           useChatRag={currentUser.settings?.useChatRag !== false}
+          querySuggestions={currentUser.settings?.querySuggestions !== false}
           fontSize={currentUser.settings?.fontSize ?? 17}
           timezone={currentUser.settings?.timezone ?? ''}
           onClose={() => setShowSettings(false)}
-          onSave={(cp, st, ut, sr, cr, fs, tz) => setCurrentUser(u => u ? { ...u, settings: { ...u.settings, customPrompt: cp, showThinking: st, useThinking: ut, useSpaceRag: sr, useChatRag: cr, fontSize: fs, timezone: tz } } : u)}
+          onSave={(cp, st, ut, sr, cr, qs, fs, tz) => setCurrentUser(u => u ? { ...u, settings: { ...u.settings, customPrompt: cp, showThinking: st, useThinking: ut, useSpaceRag: sr, useChatRag: cr, querySuggestions: qs, fontSize: fs, timezone: tz } } : u)}
         />
       )}
       {showAdmin && currentUser && (
@@ -519,7 +578,7 @@ export default function App() {
           onClick={() => { setView(v => v === 'files' ? 'chat' : 'files'); setSidebarOpen(false) }}
           className={`w-full text-left px-3 py-2 rounded text-sm font-medium ${view === 'files' ? 'bg-indigo-700 text-white' : 'text-indigo-400 hover:bg-gray-800'}`}
         >
-          Files ({files.length})
+          Resources ({files.length})
         </button>
         <button
           onClick={() => { setView(v => v === 'spaces' ? 'chat' : 'spaces'); setCurrentSpaceId(null); setSidebarOpen(false) }}
@@ -812,6 +871,13 @@ export default function App() {
                   <p className="text-xs text-gray-600 mt-2">No memories yet. The assistant will save noteworthy facts from conversations in this space.</p>
                 ) : memorySectionOpen && spaceMemories.map(m => (
                   <div key={m.id} className="flex items-start gap-1.5 group py-1">
+                    <input
+                      type="checkbox"
+                      checked={pinnedMemoryIds.includes(m.id)}
+                      onChange={() => setPinnedMemoryIds(prev => prev.includes(m.id) ? prev.filter(id => id !== m.id) : [...prev, m.id])}
+                      className="mt-0.5 shrink-0 accent-indigo-500 cursor-pointer"
+                      title="Pin to next query"
+                    />
                     {editingMemoryId === m.id ? (
                       <input
                         autoFocus
@@ -858,7 +924,7 @@ export default function App() {
                     className="flex items-center gap-1.5 text-sm font-medium text-gray-400 hover:text-gray-200"
                   >
                     <span>{filesSectionOpen ? '▾' : '▸'}</span>
-                    Tagged files ({taggedFiles.length})
+                    Tagged resources ({taggedFiles.length})
                   </button>
                   {filesSectionOpen && (
                     <button
@@ -869,7 +935,7 @@ export default function App() {
                       }}
                       className="text-xs text-gray-500 hover:text-gray-300"
                     >
-                      + Tag file
+                      + Tag resource
                     </button>
                   )}
                 </div>
@@ -894,22 +960,43 @@ export default function App() {
                   <p className="text-xs text-gray-600 mt-2">No untagged files available.</p>
                 )}
                 {filesSectionOpen && taggedFiles.length === 0 && !filePickerOpen && (
-                  <p className="text-xs text-gray-600 mt-2">No files tagged. Tag library files to inject relevant excerpts into the space context.</p>
+                  <p className="text-xs text-gray-600 mt-2">No resources tagged. Tag resources to inject relevant excerpts into the space context.</p>
                 )}
                 {filesSectionOpen && taggedFiles.map(f => (
-                  <div key={f.id} className="flex items-center justify-between group py-1">
-                    <span className="text-xs text-gray-300 truncate min-w-0">{f.filename}</span>
+                  <div key={f.id} className="flex items-center gap-1.5 justify-between group py-1">
+                    <input
+                      type="checkbox"
+                      checked={pinnedFileIds.includes(f.id)}
+                      onChange={() => setPinnedFileIds(prev => prev.includes(f.id) ? prev.filter(id => id !== f.id) : [...prev, f.id])}
+                      className="shrink-0 accent-indigo-500 cursor-pointer"
+                      title="Pin to next query"
+                    />
+                    <span className="text-xs text-gray-300 truncate flex-1 min-w-0">{f.filename}</span>
                     <button
                       onClick={async () => {
                         await untagFileFromSpace(currentSpaceId!, f.id)
+                        setPinnedFileIds(prev => prev.filter(id => id !== f.id))
                         setTaggedFiles(prev => prev.filter(t => t.id !== f.id))
                       }}
-                      className="text-gray-700 hover:text-red-400 text-xs shrink-0 opacity-0 group-hover:opacity-100 transition-opacity ml-2"
+                      className="text-gray-700 hover:text-red-400 text-xs shrink-0 opacity-0 group-hover:opacity-100 transition-opacity ml-1"
                     >
                       ×
                     </button>
                   </div>
                 ))}
+                {filesSectionOpen && taggedFiles.length > 0 && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <button
+                      onClick={handleTransform}
+                      disabled={transformStatus === 'loading'}
+                      className="text-xs px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-50"
+                      title={pinnedFileIds.length ? 'Summarize selected resources into a memory' : 'Summarize all tagged resources into a memory'}
+                    >
+                      {transformStatus === 'loading' ? 'Summarizing…' : '⟳ Summarize resources'}
+                    </button>
+                    {transformStatus === 'error' && <span className="text-xs text-red-400">{transformError}</span>}
+                  </div>
+                )}
               </div>
 
               {chatIndexStatus !== null && (
@@ -1062,22 +1149,30 @@ export default function App() {
           <div className="flex flex-col flex-1 overflow-y-auto p-6 gap-4">
             <div className="flex items-start justify-between gap-4">
               <div className="flex flex-col gap-1">
-                <h2 className="text-lg font-semibold text-gray-200">Knowledge base</h2>
+                <h2 className="text-lg font-semibold text-gray-200">Resources</h2>
                 <p className="text-xs text-gray-500 max-w-lg">
-                  Files here are chunked, embedded, and searched automatically whenever your query
+                  Resources are chunked, embedded, and searched automatically whenever your query
                   might be answered by their content — no need to reference them explicitly.
                   To ask about a specific file without storing it, use the paperclip in the chat input instead.
-                  Supported: PDF, plain text, images.
+                  Supported: PDF, plain text, Markdown, CSV, HTML, images (PNG/JPEG/GIF/WebP), and web pages (via URL).
                 </p>
               </div>
               <div className="flex flex-col items-end gap-1 shrink-0">
-                <button
-                  onClick={() => kbFileRef.current?.click()}
-                  disabled={kbUploadStatus === 'uploading'}
-                  className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-sm font-medium whitespace-nowrap"
-                >
-                  {kbUploadStatus === 'uploading' ? 'Uploading…' : '+ Upload file'}
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => { setUrlIngestOpen(o => !o); setUrlIngestValue(''); setUrlIngestStatus('idle') }}
+                    className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-sm font-medium whitespace-nowrap"
+                  >
+                    + Add URL
+                  </button>
+                  <button
+                    onClick={() => kbFileRef.current?.click()}
+                    disabled={kbUploadStatus === 'uploading'}
+                    className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-sm font-medium whitespace-nowrap"
+                  >
+                    {kbUploadStatus === 'uploading' ? 'Uploading…' : '+ Upload file'}
+                  </button>
+                </div>
                 {kbUploadStatus !== 'idle' && (
                   <span className={`text-xs ${kbUploadStatus === 'error' ? 'text-red-400' : 'text-green-400'}`}>
                     {kbUploadMsg}
@@ -1086,8 +1181,32 @@ export default function App() {
                 <input ref={kbFileRef} type="file" className="hidden" onChange={handleKbUpload} />
               </div>
             </div>
-            {files.length === 0 ? (
-              <p className="text-gray-500 text-sm">No files uploaded yet.</p>
+            {urlIngestOpen && (
+              <div className="flex flex-col gap-1.5 p-3 rounded-lg bg-gray-800 border border-gray-700">
+                <div className="flex gap-2">
+                  <input
+                    type="url"
+                    value={urlIngestValue}
+                    onChange={e => setUrlIngestValue(e.target.value)}
+                    placeholder="https://…"
+                    className="flex-1 text-sm bg-gray-900 border border-gray-700 rounded px-3 py-1.5 focus:outline-none focus:border-blue-500"
+                    onKeyDown={async e => { if (e.key === 'Enter') { e.preventDefault(); await handleUrlIngest() } }}
+                    disabled={urlIngestStatus === 'loading'}
+                    autoFocus
+                  />
+                  <button
+                    onClick={handleUrlIngest}
+                    disabled={!urlIngestValue.trim() || urlIngestStatus === 'loading'}
+                    className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-sm font-medium"
+                  >
+                    {urlIngestStatus === 'loading' ? 'Fetching…' : 'Fetch & add'}
+                  </button>
+                </div>
+                {urlIngestStatus === 'error' && <p className="text-xs text-red-400">{urlIngestError}</p>}
+              </div>
+            )}
+            {files.length === 0 && !urlIngestOpen ? (
+              <p className="text-gray-500 text-sm">No resources yet. Upload a file or add a URL.</p>
             ) : (
               <div className="flex flex-col gap-2">
                 {files.map(f => (
@@ -1290,15 +1409,31 @@ export default function App() {
               <div className="px-4 py-0.5 text-xs text-purple-400 opacity-70">⬡ Model thinking active</div>
             )}
             <ChatInput
+              key={sessionId ?? 'new'}
               onSubmit={submit}
               onCancel={cancel}
               disabled={busy}
               focusMode={focusMode}
               onFocusModeChange={setFocusMode}
+              searchCategories={searchCategories}
+              onSearchCategoriesChange={setSearchCategories}
+              suggestionsEnabled={currentUser?.settings?.querySuggestions !== false}
             />
           </>
         )}
       </div>
     </div>
+    {confirmDeleteId && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setConfirmDeleteId(null)}>
+        <div className="bg-gray-900 border border-gray-700 rounded-lg p-5 flex flex-col gap-4 w-72 shadow-xl" onClick={e => e.stopPropagation()}>
+          <p className="text-sm text-gray-200">Delete this chat? This cannot be undone.</p>
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setConfirmDeleteId(null)} className="px-3 py-1.5 rounded text-sm bg-gray-700 hover:bg-gray-600 text-gray-200">Cancel</button>
+            <button onClick={confirmDeleteSession} className="px-3 py-1.5 rounded text-sm bg-red-700 hover:bg-red-600 text-white">Delete</button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   )
 }

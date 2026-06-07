@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { streamSSE } from 'hono/streaming'
-import { streamText, tool } from 'ai'
+import { streamText, generateText, tool } from 'ai'
 import { runResearcher } from '../lib/researcher.ts'
 import { runWriter } from '../lib/writer.ts'
 import { reformulateLLM } from '../lib/reformulate.ts'
@@ -40,6 +40,9 @@ const chatSchema = z.object({
     content: z.string(),
   })),
   focusMode: z.enum(['flash', 'balanced', 'thorough', 'image']).default('balanced'),
+  searchCategories: z.array(z.enum(['news', 'science', 'discussions', 'tech'])).optional(),
+  includeFileIds: z.array(z.string()).optional(),
+  includeMemoryIds: z.array(z.string()).optional(),
   ephemeral: z.boolean().optional(),
 })
 
@@ -47,9 +50,33 @@ export const chatRouter = new Hono<AppEnv>()
 
 chatRouter.use('*', authMiddleware)
 
+chatRouter.post('/suggest', zValidator('json', z.object({ text: z.string().min(5).max(500) })), async (c) => {
+  const { text } = c.req.valid('json')
+  try {
+    const { text: raw } = await generateText({
+      model: getFlashModel(),
+      system: 'Return a JSON array of exactly 3 short search query suggestions that complete or refine the user\'s partial input. Return ONLY the raw JSON array, no markdown, no explanation.',
+      messages: [{ role: 'user', content: text }],
+      maxTokens: 120,
+      abortSignal: AbortSignal.timeout(6000),
+    })
+    const match = raw.match(/\[[\s\S]*\]/)
+    if (match) {
+      const suggestions = JSON.parse(match[0])
+      if (Array.isArray(suggestions)) {
+        return c.json(suggestions.slice(0, 4).filter((s): s is string => typeof s === 'string'))
+      }
+    }
+  } catch (e) {
+    console.error('[suggest]', e)
+  }
+  return c.json([])
+})
+
 chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
   const userId = c.get('userId') as string
-  const { sessionId, spaceId, messages: msgs, focusMode, ephemeral } = c.req.valid('json')
+  const { sessionId, spaceId, messages: msgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, ephemeral } = c.req.valid('json')
+  const searchCategory = toSearxngCategories(searchCategories)
   const sid = sessionId ?? randomUUID()
 
   const abortSignal = c.req.raw.signal
@@ -72,7 +99,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
     const userQuery = lastUser?.content ?? ''
     const parsedFlashSettings = parseSettings(userRow?.settings ?? '{}')
     const effectiveRag = (parsedFlashSettings.useSpaceRag !== false) ? ragBudget : 0
-    const { block: resolvedMemoryBlock, fileSources: flashFileSources } = spaceId ? await buildMemoryBlock(spaceId, memoryBudget, effectiveRag, userQuery) : { block: '', fileSources: [] }
+    const { block: resolvedMemoryBlock, fileSources: flashFileSources } = spaceId ? await buildMemoryBlock(spaceId, memoryBudget, effectiveRag, userQuery, includeFileIds, includeMemoryIds) : { block: '', fileSources: [] }
     const customPrompt: string | undefined = parsedFlashSettings.customPrompt as string | undefined
     const t0 = Date.now()
     let fullContent = ''
@@ -311,7 +338,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
   const [userRow, fileCountRow, { initialQueries, initialResults }, memoryBudget, ragBudget, prefetchedUrls] = await Promise.all([
     db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get(),
     db.select({ count: sql<number>`count(*)` }).from(uploadedFiles).where(eq(uploadedFiles.userId, userId)).get(),
-    runReformulateAndPreSearch(msgsForReformulate, focusMode as 'balanced' | 'thorough', hasAttachment),
+    runReformulateAndPreSearch(msgsForReformulate, focusMode as 'balanced' | 'thorough', hasAttachment, searchCategory),
     spaceId ? getAppSetting('memory_token_budget', '1000').then(Number) : Promise.resolve(1000),
     getAppSetting('space_rag_budget', '500').then(Number),
     prefetchUrlsFromMessage(lastUser?.content ?? '', hasAttachment),
@@ -321,7 +348,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
   const hasFiles = (fileCountRow?.count ?? 0) > 0
   const effectiveRag = (parsedSettings.useSpaceRag !== false) ? ragBudget : 0
   const { block: memoryBlock, fileSources } = spaceId
-    ? await buildMemoryBlock(spaceId, memoryBudget, effectiveRag, userQuery)
+    ? await buildMemoryBlock(spaceId, memoryBudget, effectiveRag, userQuery, includeFileIds, includeMemoryIds)
     : (hasFiles && parsedSettings.useChatRag !== false)
       ? await buildChatFileBlock(userId, userQuery, ragBudget)
       : { block: '', fileSources: [] }
@@ -614,10 +641,17 @@ async function prefetchUrlsFromMessage(text: string, hasAttachment: boolean): Pr
   return Promise.all(urls.map(async url => ({ url, content: await fetchUrlAllPages(url) })))
 }
 
+function toSearxngCategories(cats?: string[]): string | undefined {
+  if (!cats?.length) return undefined
+  const map: Record<string, string> = { discussions: 'social media', tech: 'it' }
+  return cats.map(c => map[c] ?? c).join(',')
+}
+
 async function runReformulateAndPreSearch(
   msgsForReformulate: Array<{ role: string; content: string }>,
   focusMode: 'balanced' | 'thorough',
   hasAttachment: boolean,
+  categories?: string,
 ): Promise<{ initialQueries?: string[]; initialResults?: SearchResult[] }> {
   try {
     if (hasAttachment) {
@@ -630,7 +664,7 @@ async function runReformulateAndPreSearch(
       const q = lastUser?.content ?? ''
       if (!q) return {}
       console.log(`  [reformulate] disabled — using raw query: ${JSON.stringify(q.slice(0, 80))}`)
-      const initialResults = await webSearch(q, 6)
+      const initialResults = await webSearch(q, 6, categories)
       return { initialQueries: [q], initialResults }
     }
 
@@ -639,7 +673,7 @@ async function runReformulateAndPreSearch(
     if (queries.length === 0) return {}
 
     const maxQueries = focusMode === 'thorough' ? 3 : 2
-    const initialResults = await webSearchMulti(queries.slice(0, maxQueries), countEach)
+    const initialResults = await webSearchMulti(queries.slice(0, maxQueries), countEach, categories)
     return { initialQueries: queries, initialResults }
   } catch (e) {
     console.error('[reformulate] error:', e)

@@ -19,6 +19,7 @@ const settingsSchema = z.object({
   useChatRag: z.boolean().optional(),
   fontSize: z.number().min(12).max(22).optional(),
   timezone: z.string().refine(v => !v || VALID_TIMEZONES.has(v), 'Invalid timezone').optional(),
+  querySuggestions: z.boolean().optional(),
 })
 
 usersRouter.get('/settings', async (c) => {

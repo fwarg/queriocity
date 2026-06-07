@@ -1,5 +1,6 @@
 import { chromium } from 'playwright'
 import { fetch as undiciFetch, ProxyAgent } from 'undici'
+import { YoutubeTranscript } from 'youtube-transcript'
 
 const MAX_CHARS = parseInt(process.env.FETCH_MAX_CHARS ?? '12000')
 const PROXY_URL = process.env.FETCH_PROXY_URL
@@ -67,6 +68,19 @@ async function fetchWithPlaywright(url: string): Promise<string> {
   }
 }
 
+export function extractYoutubeVideoId(url: string): string | null {
+  try {
+    const u = new URL(url)
+    if (u.hostname === 'youtu.be') return u.pathname.slice(1).split('?')[0] || null
+    if (u.hostname.endsWith('youtube.com')) {
+      if (u.pathname === '/watch') return u.searchParams.get('v')
+      const m = u.pathname.match(/\/(?:shorts|embed|v)\/([^/?]+)/)
+      if (m) return m[1]
+    }
+    return null
+  } catch { return null }
+}
+
 export async function fetchUrl(url: string): Promise<string> {
   const cached = fetchCache.get(url)
   if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
@@ -75,6 +89,19 @@ export async function fetchUrl(url: string): Promise<string> {
   }
   const start = performance.now()
   const cache = (result: string) => { fetchCache.set(url, { result, ts: Date.now() }); return result }
+
+  const videoId = extractYoutubeVideoId(url)
+  if (videoId) {
+    try {
+      const segments = await YoutubeTranscript.fetchTranscript(videoId)
+      const text = segments.map(s => s.text).join(' ').replace(/\s+/g, ' ').trim()
+      console.log(`  [fetch-url] youtube transcript ${videoId} — ${text.length} chars in ${(performance.now() - start).toFixed(0)}ms`)
+      return cache(text.slice(0, MAX_CHARS))
+    } catch (e) {
+      console.log(`  [fetch-url] youtube transcript failed (${e}), falling back to static fetch`)
+    }
+  }
+
   try {
     const text = await fetchStatic(url)
     if (text.length >= 300) {

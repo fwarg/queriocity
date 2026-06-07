@@ -148,11 +148,12 @@ export async function executeChatAndSave({
 async function reformulateAndSearch(
   query: string,
   focusMode: 'balanced' | 'thorough',
+  categories?: string,
 ): Promise<{ initialQueries?: string[]; initialResults?: SearchResult[] }> {
   try {
     const queryReformulation = await getAppSetting('query_reformulation', 'true').then(v => v === 'true')
     if (!queryReformulation) {
-      const results = await webSearch(query, 6)
+      const results = await webSearch(query, 6, categories)
       return { initialQueries: [query], initialResults: results }
     }
     const msgs = [{ role: 'user' as const, content: query }]
@@ -160,7 +161,7 @@ async function reformulateAndSearch(
     const queries = await reformulateLLM(msgs, focusMode)
     if (queries.length === 0) return {}
     const maxQueries = focusMode === 'thorough' ? 3 : 2
-    const results = await webSearchMulti(queries.slice(0, maxQueries), countEach)
+    const results = await webSearchMulti(queries.slice(0, maxQueries), countEach, categories)
     return { initialQueries: queries, initialResults: results }
   } catch (e) {
     console.error('[monitor-reformulate]', e)

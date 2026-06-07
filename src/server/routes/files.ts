@@ -3,6 +3,7 @@ import { db, uploadedFiles, getAppSetting } from '../lib/db.ts'
 import { eq } from 'drizzle-orm'
 import { ingestFile, extractFileText, isUsableText, ACCEPTED_MIME_TYPES } from '../lib/files/ingest.ts'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
+import { fetchUrl, extractYoutubeVideoId } from '../lib/fetch-url.ts'
 
 export const filesRouter = new Hono<AppEnv>()
 
@@ -18,7 +19,7 @@ filesRouter.post('/upload', async (c) => {
   if (!file) return c.json({ error: 'No file provided' }, 400)
   if (file.size > MAX_SIZE) return c.json({ error: 'File too large (max 50 MB)' }, 413)
   if (!ACCEPTED_MIME_TYPES.has(file.type.split(';')[0].trim())) {
-    return c.json({ error: `Unsupported file type: ${file.type}. Accepted types: PDF, plain text, images.` }, 400)
+    return c.json({ error: `Unsupported file type: ${file.type}. Accepted: PDF, plain text, Markdown, CSV, HTML, images.` }, 400)
   }
 
   const buffer = await file.arrayBuffer()
@@ -34,13 +35,41 @@ filesRouter.post('/upload', async (c) => {
   }
 })
 
+filesRouter.post('/ingest-url', async (c) => {
+  const userId = c.get('userId') as string
+  const body = await c.req.json() as { url?: string }
+  const url = body.url?.trim()
+  if (!url) return c.json({ error: 'No URL provided' }, 400)
+  let parsed: URL
+  try { parsed = new URL(url) } catch { return c.json({ error: 'Invalid URL' }, 400) }
+  console.log(`\n━━━ [ingest-url] ${url}`)
+
+  const videoId = extractYoutubeVideoId(url)
+  const text = await fetchUrl(url)
+  if (text.startsWith('Error fetching')) return c.json({ error: `Could not fetch URL: ${text}` }, 400)
+  const filename = videoId
+    ? `youtube-${videoId}.txt`
+    : parsed.hostname + (parsed.pathname !== '/' ? parsed.pathname.replace(/\/$/, '').split('/').pop() ?? '' : '') + '.txt'
+
+  const buffer = new TextEncoder().encode(text).buffer as ArrayBuffer
+  try {
+    const fileId = await ingestFile(buffer, filename, 'text/plain', userId)
+    console.log(`  [ingest-url] done → fileId=${fileId}`)
+    return c.json({ fileId, filename }, 201)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Ingest failed'
+    return c.json({ error: msg }, 400)
+  }
+})
+
+
 filesRouter.post('/extract', async (c) => {
   const body = await c.req.parseBody()
   const file = body['file'] as File | undefined
   if (!file) return c.json({ error: 'No file provided' }, 400)
   if (file.size > MAX_SIZE) return c.json({ error: 'File too large (max 50 MB)' }, 413)
   if (!ACCEPTED_MIME_TYPES.has(file.type.split(';')[0].trim())) {
-    return c.json({ error: `Unsupported file type: ${file.type}. Accepted types: PDF, plain text, images.` }, 400)
+    return c.json({ error: `Unsupported file type: ${file.type}. Accepted: PDF, plain text, Markdown, CSV, HTML, images.` }, 400)
   }
   const maxChars = parseInt(await getAppSetting('attachment_chars', '20000'))
   const buffer = await file.arrayBuffer()

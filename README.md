@@ -19,8 +19,13 @@ through a single Bun process.
   - [What is Queriocity](#what-is-queriocity)
   - [Chats](#chats)
     - [Searching chats](#searching-chats)
+    - [Text-to-speech](#text-to-speech)
   - [Research modes](#research-modes)
-  - [Files](#files)
+    - [Search category filtering](#search-category-filtering)
+  - [Resources](#resources)
+    - [Chat attachment (ephemeral)](#chat-attachment-ephemeral)
+    - [Library upload (persistent)](#library-upload-persistent-vector-searchable)
+    - [URL and YouTube ingestion](#url-and-youtube-ingestion)
   - [URL fetching](#url-fetching)
   - [Prompt templates](#prompt-templates)
     - [Prompt Studio](#prompt-studio)
@@ -64,6 +69,10 @@ Start a chat from the sidebar. Type a question and choose a [research mode](#res
 The first message in a chat can be collapsed to save space — useful when the prompt is long or contains an attachment. Click the **▾** icon in the top-right corner of the message to collapse it; click the truncated preview to expand it again. When opening a monitor run session the first message (the recurring query) is collapsed by default.
 
 The **chat input bar** at the bottom can also be collapsed to give the full viewport height to the conversation. Click the chevron (▾ / ▴) at the top of the input area to toggle between collapsed and expanded.
+
+### Text-to-speech
+
+Every assistant message has a small **speaker icon** (🔊) in its bottom-right corner. Click it to have the response read aloud using the browser's built-in Web Speech API. The icon turns blue and switches to a stop icon (🔇) while speaking; click again to stop. Starting a new message automatically cancels the previous one. Markdown syntax, code blocks, and citation markers are stripped before reading.
 
 The **Chats** view lists all your conversations with infinite scroll. Use the **Active / Created** toggle in the top-right to sort by most recently active or by creation date.
 
@@ -119,13 +128,24 @@ the user's question.
 - Separate writer model pass for the final answer
 - If `RERANK_MODEL` is configured, accumulated sources are reranked by relevance before the writer pass, improving synthesis quality
 
+### Search category filtering
 
+In **Balanced** and **Thorough** modes, an **All ▾** button appears at the right end of the mode row. Click it to restrict search to one or more topic categories:
+
+| Category | SearXNG equivalent |
+|---|---|
+| **news** | news engines |
+| **science** | science engines |
+| **discussions** | social media / forum engines |
+| **tech** | IT / technology engines |
+
+Categories are multi-select — e.g. "news+science" searches both simultaneously. When no category is selected (the default), all engines are used. The button label shows the active selection (e.g. `news+discussions ▾`).
 
 ---
 
-## Files
+## Resources
 
-There are two distinct ways to bring file content into a conversation.
+There are three ways to bring file content into a conversation.
 
 ### Chat attachment (ephemeral)
 
@@ -139,7 +159,7 @@ The character limit is configurable in **Admin > System settings > Attachments**
 Use this when you want to ask a one-off question about a document: *"Summarise this
 contract"*, *"What are the key findings in this paper?"*
 
-Supported: PDF, plain text, and images (via vision LLM with Tesseract OCR fallback)
+Supported: PDF, plain text, Markdown, CSV, HTML, and images (via vision LLM with Tesseract OCR fallback)
 
 > When a file is attached to the message, reformulation and pre-search are skipped entirely
 > in all research modes. The model reads the file content directly and decides autonomously whether
@@ -147,7 +167,7 @@ Supported: PDF, plain text, and images (via vision LLM with Tesseract OCR fallba
 
 ### Library upload (persistent, vector-searchable)
 
-Open the **Files** view in the sidebar. Upload a file there and it is ingested into the
+Open the **Resources** view in the sidebar. Upload a file there and it is ingested into the
 library: the text is chunked, each chunk is embedded with the configured embedding model,
 and the chunks + embeddings are stored in SQLite (via the `sqlite-vec` extension).
 
@@ -157,6 +177,15 @@ explicitly.
 The library is useful for building a personal knowledge base of PDFs, notes, or research papers that the assistant can draw on across many conversations.
 
 Max upload size: 50 MB.
+
+### URL and YouTube ingestion
+
+Click **+ Add URL** in the Resources view to permanently ingest a web page or YouTube video into your library. The content is fetched server-side, chunked, embedded, and stored exactly like an uploaded file.
+
+- **Web pages** — the page is fetched and its text extracted (same pipeline as the `fetch_url` tool).
+- **YouTube videos** — paste any YouTube URL (`youtube.com/watch?v=…`, `youtu.be/…`, shorts, embeds) and the video's transcript is fetched automatically via the YouTube transcript API. No local download or `yt-dlp` required. The transcript is stored as a searchable document.
+
+Ingested URLs work the same as uploaded files: they appear in the Resources list, can be tagged to spaces, and are available to the `uploads_search` tool.
 
 ---
 
@@ -219,6 +248,7 @@ Open **Settings** from the bottom of the sidebar. Settings are saved per user.
 | **Model thinking** | Use the `THINKING_MODEL` for the researcher phase in Thorough mode. Requires a reasoning-capable model (e.g. Qwen3). Falls back to the chat model if `THINKING_MODEL` is not configured. |
 | **Space RAG** | When chatting in a space, retrieve relevant past messages and document excerpts semantically on top of the fixed memory block. |
 | **Chat RAG** | When chatting outside a space, automatically retrieve relevant excerpts from your uploaded file library and inject them as context. |
+| **Query suggestions** | Show AI-generated query completions as you type in the chat input (debounced, min 8 characters). Powered by the flash model. Disable on slow setups or if the extra latency is distracting. |
 | **Font size** | UI font size: Small (15 px), Normal (17 px), Large (19 px), XL (21 px). Sizes scale up automatically on narrow viewports. |
 | **Timezone** | IANA timezone (e.g. `Europe/Stockholm`) used when scheduling monitors at a specific hour of the day. Defaults to server time (UTC in Docker) if not set. |
 
@@ -293,9 +323,17 @@ Space RAG can be toggled per user in **Settings** (see [Settings](#settings)).
 
 For RAG over chat history to work, messages must be indexed. New messages are indexed automatically after each response. When a chat is first assigned to a space its history is indexed retroactively. The space sidebar shows **Chat index: N/M sessions** — click **Rebuild index** to (re-)index all chats at any time.
 
-### Tagged files
+### Tagged resources
 
-Any file in your library can be tagged to a space from the space detail view. Tagged files are searched semantically on every request in that space (within the RAG budget), injecting relevant excerpts as additional context. This is useful for persistent reference material — specs, style guides, background documents — that should inform all conversations in the space.
+Any file in your library can be tagged to a space from the space detail view. Tagged resources are searched semantically on every request in that space (within the RAG budget), injecting relevant excerpts as additional context. This is useful for persistent reference material — specs, style guides, background documents — that should inform all conversations in the space.
+
+#### Fine-grained context control
+
+Each tagged resource and each space memory has a **checkbox** in the space detail panel. When one or more boxes are checked, only those items are included in the next query's context — all unchecked items are excluded. When nothing is checked, all memories and tagged resources are included as usual. This lets you focus a query on a specific document or set of notes without removing them from the space permanently.
+
+#### Summarize resources
+
+The tagged resources section has a **Summarize resources** button. Clicking it sends all tagged resource content through the chat model and saves the result as a new space memory (type: *extraction*). This is useful for distilling a set of documents into a standing summary that the model can draw on in every conversation.
 
 ### How memory works
 
@@ -900,6 +938,7 @@ All direct runtime dependencies use **MIT** or **Apache 2.0** licenses.
 | `sqlite-vec`          | MIT        | Vector similarity search in SQLite    |
 | `playwright`          | Apache 2.0 | Headless browser for JS-rendered pages |
 | `undici`              | MIT        | HTTP client with proxy agent support  |
+| `youtube-transcript`  | MIT        | YouTube video transcript fetching     |
 | `pdf-parse`           | MIT        | PDF text extraction                   |
 | `pdfjs-dist`          | Apache 2.0 | PDF rendering (canvas fallback)       |
 | `tesseract.js`        | Apache 2.0 | OCR for image attachments             |

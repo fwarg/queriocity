@@ -5,7 +5,7 @@ export interface AuthUser {
   email: string
   name: string | null
   role: 'user' | 'admin'
-  settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; useSpaceRag?: boolean; useChatRag?: boolean; fontSize?: number; timezone?: string }
+  settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; useSpaceRag?: boolean; useChatRag?: boolean; querySuggestions?: boolean; fontSize?: number; timezone?: string }
   memoryTokenBudget: number
 }
 
@@ -68,7 +68,20 @@ export async function logout(): Promise<void> {
   await fetch(`${BASE}/auth/logout`, { method: 'POST' })
 }
 
-export async function updateSettings(settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; useSpaceRag?: boolean; useChatRag?: boolean; fontSize?: number; timezone?: string }): Promise<void> {
+export async function fetchSuggestions(text: string): Promise<string[]> {
+  try {
+    const res = await fetch(`${BASE}/chat/suggest`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+      signal: AbortSignal.timeout(7000),
+    })
+    if (!res.ok) return []
+    return res.json()
+  } catch { return [] }
+}
+
+export async function updateSettings(settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; useSpaceRag?: boolean; useChatRag?: boolean; fontSize?: number; timezone?: string; querySuggestions?: boolean }): Promise<void> {
   await fetch(`${BASE}/users/settings`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -118,6 +131,9 @@ export async function* streamChat(
   signal?: AbortSignal,
   spaceId?: string,
   ephemeral?: boolean,
+  searchCategories?: Array<'news' | 'science' | 'discussions' | 'tech'>,
+  includeFileIds?: string[],
+  includeMemoryIds?: string[],
 ): AsyncGenerator<{ type: string; [k: string]: unknown }> {
   const res = await fetch(`${BASE}/chat`, {
     method: 'POST',
@@ -133,6 +149,9 @@ export async function* streamChat(
       sessionId,
       spaceId,
       ...(ephemeral ? { ephemeral: true } : {}),
+      ...(searchCategories?.length ? { searchCategories } : {}),
+      ...(includeFileIds?.length ? { includeFileIds } : {}),
+      ...(includeMemoryIds?.length ? { includeMemoryIds } : {}),
     }),
     signal,
   })
@@ -261,6 +280,32 @@ export async function tagFileToSpace(spaceId: string, fileId: string): Promise<v
 
 export async function untagFileFromSpace(spaceId: string, fileId: string): Promise<void> {
   await fetch(`${BASE}/spaces/${spaceId}/files/${fileId}`, { method: 'DELETE' })
+}
+
+export async function transformSpace(spaceId: string, operation: 'summarize', fileIds?: string[]): Promise<{ memoryId: string; content: string }> {
+  const res = await fetch(`${BASE}/spaces/${spaceId}/transform`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ operation, ...(fileIds?.length ? { fileIds } : {}) }),
+  })
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({})) as { error?: string }
+    throw new Error(e.error ?? 'Transform failed')
+  }
+  return res.json()
+}
+
+export async function ingestUrl(url: string): Promise<{ fileId: string; filename: string }> {
+  const res = await fetch(`${BASE}/files/ingest-url`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+  })
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({})) as { error?: string }
+    throw new Error(e.error ?? 'Failed to ingest URL')
+  }
+  return res.json()
 }
 
 export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; attachmentChars: number; spaceRagBudget: number; queryReformulation: boolean; rssFeedCharsBudget: number }> {

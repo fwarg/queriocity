@@ -83,8 +83,13 @@ export async function buildMemoryBlock(
   tokenBudget = 1000,
   ragBudget = 0,
   query?: string,
+  includeFileIds?: string[],
+  includeMemoryIds?: string[],
 ): Promise<MemoryBlock> {
-  const memories = await getSpaceMemories(spaceId)
+  const allMemories = await getSpaceMemories(spaceId)
+  const memories = includeMemoryIds?.length
+    ? allMemories.filter(m => includeMemoryIds.includes(m.id))
+    : allMemories
   if (!memories.length) return { block: '', fileSources: [] }
 
   const header = '## Space Memory\nThe following facts were accumulated from previous conversations in this space. Use them to inform your responses.'
@@ -139,7 +144,7 @@ export async function buildMemoryBlock(
       let fileRows: ChunkResult[] = []
       if (hasTaggedFiles) {
         try {
-          fileRows = await searchSpaceFiles(spaceId, query, embedding, 15, true)
+          fileRows = await searchSpaceFiles(spaceId, query, embedding, 15, true, includeFileIds)
         } catch (e) {
           console.error('  [memory] space file RAG failed:', e)
         }
