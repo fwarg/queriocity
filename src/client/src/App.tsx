@@ -81,6 +81,7 @@ export default function App() {
   const [filesSectionOpen, setFilesSectionOpen] = useState(false)
   const [allUserFiles, setAllUserFiles] = useState<Array<{ id: string; filename: string; size: number }>>([])
   const [filePickerOpen, setFilePickerOpen] = useState(false)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [urlIngestOpen, setUrlIngestOpen] = useState(false)
   const [urlIngestValue, setUrlIngestValue] = useState('')
   const [urlIngestStatus, setUrlIngestStatus] = useState<'idle' | 'loading' | 'error'>('idle')
@@ -348,6 +349,13 @@ export default function App() {
 
   function handleDeleteSession(id: string, e: React.MouseEvent) {
     e.stopPropagation()
+    setConfirmDeleteId(id)
+  }
+
+  function confirmDeleteSession() {
+    if (!confirmDeleteId) return
+    const id = confirmDeleteId
+    setConfirmDeleteId(null)
     deleteSession(id).then(() => {
       setSessions(prev => {
         const session = prev.find(s => s.id === id)
@@ -1414,5 +1422,16 @@ export default function App() {
         )}
       </div>
     </div>
+    {confirmDeleteId && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setConfirmDeleteId(null)}>
+        <div className="bg-gray-900 border border-gray-700 rounded-lg p-5 flex flex-col gap-4 w-72 shadow-xl" onClick={e => e.stopPropagation()}>
+          <p className="text-sm text-gray-200">Delete this chat? This cannot be undone.</p>
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setConfirmDeleteId(null)} className="px-3 py-1.5 rounded text-sm bg-gray-700 hover:bg-gray-600 text-gray-200">Cancel</button>
+            <button onClick={confirmDeleteSession} className="px-3 py-1.5 rounded text-sm bg-red-700 hover:bg-red-600 text-white">Delete</button>
+          </div>
+        </div>
+      </div>
+    )}
   )
 }
