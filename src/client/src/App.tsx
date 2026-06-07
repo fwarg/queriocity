@@ -521,6 +521,7 @@ export default function App() {
   }
 
   return (
+    <>
     <div className="flex h-screen">
       {showSettings && currentUser && (
         <SettingsPanel
@@ -1433,5 +1434,6 @@ export default function App() {
         </div>
       </div>
     )}
+    </>
   )
 }
