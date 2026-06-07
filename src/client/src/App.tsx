@@ -1400,6 +1400,7 @@ export default function App() {
               <div className="px-4 py-0.5 text-xs text-purple-400 opacity-70">⬡ Model thinking active</div>
             )}
             <ChatInput
+              key={sessionId ?? 'new'}
               onSubmit={submit}
               onCancel={cancel}
               disabled={busy}
