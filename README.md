@@ -195,7 +195,8 @@ When a message contains a URL, Queriocity fetches the full page content server-s
 
 - **Static fetch first** — a lightweight HTTP request strips scripts, styles, and navigation elements to extract readable text. Fast and proxy-friendly.
 - **Playwright fallback** — if the static fetch returns too little content (JS-rendered pages, login walls that redirect), a headless Chromium instance renders the page and extracts `innerText`.
-- **Pagination** — up to `FETCH_MAX_PAGES` pages are fetched automatically by appending `?page=2`, `?page=3`, etc. Stops on error, short content, or when two consecutive pages are identical (sites that ignore the page parameter).
+- **Pagination** — up to `FETCH_MAX_PAGES` pages are fetched automatically by appending `?page=2`, `?page=3`, etc. Stops on error, short content, duplicate content, or when two consecutive pages have the same length (e.g. file-listing pagination with identical structure). Overridable per-instance in Admin → Settings.
+- **Context budget** — fetched content is capped at `FETCH_MAX_URL_CONTEXT_CHARS` (default 40 000 chars) before injection to prevent a single large page from consuming the model's entire context window. If the *Summarize oversized URL content* admin setting is enabled, content that exceeds the cap is compressed by the small model in serial chunks (`FETCH_SUMMARIZE_MAX_CHUNKS`, default 6) rather than hard-truncated.
 - **Cache** — fetched URLs are cached for 5 minutes so the model does not re-fetch during the same session.
 - **Privacy** — by default requests originate from the server's IP. Set `FETCH_PROXY_URL` to route all fetches through an HTTP or SOCKS5 proxy (e.g. [Privoxy](https://www.privoxy.org/) → Tor).
 
@@ -492,6 +493,8 @@ SEARXNG_URL=http://localhost:4000  # url to your searxng instance
 # FETCH_PROXY_URL=socks5://127.0.0.1:9050    # optional proxy for URL fetches
 # FETCH_MAX_CHARS=12000                       # max chars returned per fetch (default: 12000)
 # FETCH_MAX_PAGES=8                           # max pages fetched via ?page=N pagination (default: 8)
+# FETCH_MAX_URL_CONTEXT_CHARS=40000           # hard cap on URL content injected into context (default: 40000)
+# FETCH_SUMMARIZE_MAX_CHUNKS=6               # max chunks when summarising oversized URL content (default: 6)
 
 # ── Server ────────────────────────────────────────────────────────────────────
 PORT=3000                                   # not used in Docker (see docker/compose.yml)
@@ -513,10 +516,19 @@ REFORMULATE_USER_CTX=400                  # max chars of prior user turns
 REFORMULATE_ASSISTANT_CTX=1000            # max chars of prior assistant turns
 
 # ── Chat context window ───────────────────────────────────────────────────────
-# Context window size of the chat/thinking model in tokens. When a conversation
-# grows beyond 80 % of this limit, the oldest messages are dropped so the
-# request always fits. Set to match your model. (~4 chars ≈ 1 token)
-# CONTEXT_TOKEN_LIMIT=32768               # default: 8192
+# Context window of the main chat/thinking model in tokens. When a conversation
+# grows beyond 80% of this limit, the oldest messages are dropped so the
+# request always fits. ⚠ Default is 8192 — set to your actual model context or
+# history will be over-trimmed. (~4 chars ≈ 1 token)
+# CONTEXT_TOKEN_LIMIT=32768               # ⚠ default: 8192 (too small for most modern models)
+
+# Context window of the small utility model in tokens (used for query
+# reformulation, URL summarisation, query suggestions). Used to derive safe
+# chunk sizes automatically. Default 4096.
+# SMALL_MODEL_CONTEXT_TOKENS=4096
+
+# Max output tokens for flash mode responses. Default 200 (intentionally terse).
+# FLASH_MAX_TOKENS=200
 ```
 
 ## Running

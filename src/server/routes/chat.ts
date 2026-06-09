@@ -13,7 +13,7 @@ import { randomUUID } from 'crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { webSearch, webSearchMulti, type SearchResult } from '../lib/searxng.ts'
-import { fetchUrlAllPages } from '../lib/fetch-url.ts'
+import { fetchUrlAllPages, processUrlsForContext } from '../lib/fetch-url.ts'
 import { getFlashModel, getChatModel, getThinkingModelOrFallback } from '../lib/llm.ts'
 import { ThinkExtractor } from '../lib/think-extractor.ts'
 import { rerank, rerankEnabled } from '../lib/reranker.ts'
@@ -27,9 +27,9 @@ const FLASH_SYSTEM = `Answer in at most 5 sentences using only your training kno
 Do not search the web. If you cannot answer confidently, say so briefly.
 Always respond in the same language the user used.`
 
-const FLASH_MAX_TOKENS = 200
+const FLASH_MAX_TOKENS = parseInt(process.env.FLASH_MAX_TOKENS ?? '200')
 const KEEPALIVE_INTERVAL_MS = 15000
-const RESEARCHER_NOTES_CAP = 2000
+const RESEARCHER_NOTES_CAP = 12000
 const SESSION_TITLE_MAX = 60
 
 const chatSchema = z.object({
@@ -334,6 +334,11 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
 
   const t0 = Date.now()
 
+  const [fetchMaxPages, fetchSummarize] = await Promise.all([
+    getAppSetting('fetch_max_pages', '8').then(Number),
+    getAppSetting('fetch_summarize_overflow', 'false').then(v => v === 'true'),
+  ])
+
   // Fetch user settings + file count + reformulate/pre-search + memory + URL prefetch in parallel
   const [userRow, fileCountRow, { initialQueries, initialResults }, memoryBudget, ragBudget, prefetchedUrls] = await Promise.all([
     db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get(),
@@ -341,7 +346,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
     runReformulateAndPreSearch(msgsForReformulate, focusMode as 'balanced' | 'thorough', hasAttachment, searchCategory),
     spaceId ? getAppSetting('memory_token_budget', '1000').then(Number) : Promise.resolve(1000),
     getAppSetting('space_rag_budget', '500').then(Number),
-    prefetchUrlsFromMessage(lastUser?.content ?? '', hasAttachment),
+    prefetchUrlsFromMessage(lastUser?.content ?? '', hasAttachment, fetchMaxPages),
   ])
   const userQuery = lastUser?.content ?? ''
   const parsedSettings = parseSettings(userRow?.settings ?? '{}')
@@ -359,6 +364,14 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
                      : false
   const useThinking: boolean = !!(parsedSettings.useThinking) && focusMode === 'thorough'
 
+  const ctxTokenLimit = parseInt(process.env.CONTEXT_TOKEN_LIMIT ?? '8192')
+  const estSystemChars = 500 + (memoryBlock?.length ?? 0) + (customPrompt?.length ?? 0)
+  const estMsgsChars = msgs.reduce((s, m) => s + (typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content).length), 0)
+  const urlBudgetChars = Math.max(0, ctxTokenLimit * 0.8 * 4 - estSystemChars - estMsgsChars)
+  const processedUrls = prefetchedUrls.length > 0
+    ? await processUrlsForContext(prefetchedUrls, urlBudgetChars, fetchSummarize)
+    : prefetchedUrls
+
   return streamSSE(c, async (stream) => {
     let fullContent = ''
     const sources: unknown[] = []
@@ -375,7 +388,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
 
     if (focusMode === 'thorough') {
       // Phase 1: Research (collect sources, no text to client)
-      if (prefetchedUrls.length) await emitStatus(`Reading: ${prefetchedUrls.map(f => new URL(f.url).hostname).join(', ')}`)
+      if (processedUrls.length) await emitStatus(`Reading: ${processedUrls.map(f => new URL(f.url).hostname).join(', ')}`)
       if (initialQueries?.length) {
         await emitStatus(`Searching: ${initialQueries.map(q => `"${q}"`).join(', ')}`)
         if (showThinking) {
@@ -390,7 +403,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
         await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: snippets + '\n\n' }) })
       }
       const researchModel = useThinking ? getThinkingModelOrFallback() : getChatModel()
-      const researcherResult = runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock })
+      const researcherResult = runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock })
       const allSources: SearchResult[] = [...(initialResults ?? [])]
       let researcherNotes = ''
       const thoroughExtractor = useThinking ? new ThinkExtractor() : null
@@ -461,7 +474,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
       }
     } else {
       // Speed / balanced: stream researcher output directly
-      if (prefetchedUrls.length) await emitStatus(`Reading: ${prefetchedUrls.map(f => new URL(f.url).hostname).join(', ')}`)
+      if (processedUrls.length) await emitStatus(`Reading: ${processedUrls.map(f => new URL(f.url).hostname).join(', ')}`)
       if (initialQueries?.length) {
         await emitStatus(`Searching: ${initialQueries.map(q => `"${q}"`).join(', ')}`)
         if (showThinking) {
@@ -481,7 +494,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
       }
 
       const fullSources: SearchResult[] = []
-      const result = runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock })
+      const result = runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock })
       const extractor = showThinking ? new ThinkExtractor() : null
 
       const drainFinishReason = await drainResearcherStream(result, {
@@ -498,9 +511,10 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
         },
       })
 
-      // Fallback: if the researcher exhausted its steps on tool calls without producing text,
-      // run one tool-free LLM call to synthesise an answer from the collected results.
-      if (fullContent.length === 0 && drainFinishReason === 'tool-calls') {
+      // Fallback: if the researcher exhausted its step budget on tool calls, synthesise an answer.
+      // finishReason=tool-calls means the model's last action was a tool call, not a final answer —
+      // so any accumulated content is just intermediate reasoning preamble, not a real response.
+      if (drainFinishReason === 'tool-calls') {
         console.warn('  [balanced] maxSteps exhausted without answer — running no-tool synthesis fallback')
         await emitStatus('Synthesising answer…')
         const allResults = [...(initialResults ?? []), ...fullSources]
@@ -633,12 +647,12 @@ function extractUrls(text: string): string[] {
     .slice(0, 2)
 }
 
-async function prefetchUrlsFromMessage(text: string, hasAttachment: boolean): Promise<Array<{ url: string; content: string }>> {
+async function prefetchUrlsFromMessage(text: string, hasAttachment: boolean, maxPages = 8): Promise<Array<{ url: string; content: string }>> {
   if (hasAttachment) return []
   const urls = extractUrls(text)
   if (!urls.length) return []
   console.log(`  [fetch-url] pre-fetching ${urls.length} URL(s): ${urls.join(', ')}`)
-  return Promise.all(urls.map(async url => ({ url, content: await fetchUrlAllPages(url) })))
+  return Promise.all(urls.map(async url => ({ url, content: await fetchUrlAllPages(url, maxPages) })))
 }
 
 function toSearxngCategories(cats?: string[]): string | undefined {

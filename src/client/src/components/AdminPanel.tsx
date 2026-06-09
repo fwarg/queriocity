@@ -26,6 +26,8 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   const [spaceRagBudgetDraft, setSpaceRagBudgetDraft] = useState('500')
   const [queryReformulationDraft, setQueryReformulationDraft] = useState(true)
   const [rssFeedCharsBudgetDraft, setRssFeedCharsBudgetDraft] = useState('50000')
+  const [fetchMaxPagesDraft, setFetchMaxPagesDraft] = useState('8')
+  const [fetchSummarizeOverflowDraft, setFetchSummarizeOverflowDraft] = useState(false)
   const [savingBudget, setSavingBudget] = useState(false)
   const [budgetSaved, setBudgetSaved] = useState(false)
   const [dreamRunning, setDreamRunning] = useState(false)
@@ -55,6 +57,8 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
       setSpaceRagBudgetDraft(String(s.spaceRagBudget))
       setQueryReformulationDraft(s.queryReformulation)
       setRssFeedCharsBudgetDraft(String(s.rssFeedCharsBudget))
+      setFetchMaxPagesDraft(String(s.fetchMaxPages))
+      setFetchSummarizeOverflowDraft(s.fetchSummarizeOverflow)
     }).catch(() => setError('Failed to load settings.'))
   }, [])
 
@@ -74,6 +78,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     const attachmentChars = parseInt(attachmentCharsDraft)
     const spaceRagBudget = parseInt(spaceRagBudgetDraft)
     const rssFeedCharsBudget = parseInt(rssFeedCharsBudgetDraft)
+    const fetchMaxPages = parseInt(fetchMaxPagesDraft)
     if (isNaN(budget) || budget < 100 || budget > 10000) return
     if (isNaN(dreamHour) || dreamHour < -1 || dreamHour > 23) return
     if (isNaN(dreamThreshold) || dreamThreshold < 100) return
@@ -83,12 +88,13 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     if (isNaN(attachmentChars) || attachmentChars < 1000) return
     if (isNaN(spaceRagBudget) || spaceRagBudget < 0) return
     if (isNaN(rssFeedCharsBudget) || rssFeedCharsBudget < 5000) return
+    if (isNaN(fetchMaxPages) || fetchMaxPages < 0) return
     if (dreamTarget > dreamThreshold) { setError('Dream target must be ≤ dream threshold.'); return }
     if (dreamThreshold > budget) { setError('Dream threshold must be ≤ memory token budget.'); return }
     setError('')
     setSavingBudget(true)
     try {
-      await updateAdminSettings({ memoryTokenBudget: budget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, attachmentChars, spaceRagBudget, queryReformulation: queryReformulationDraft, rssFeedCharsBudget })
+      await updateAdminSettings({ memoryTokenBudget: budget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, attachmentChars, spaceRagBudget, queryReformulation: queryReformulationDraft, rssFeedCharsBudget, fetchMaxPages, fetchSummarizeOverflow: fetchSummarizeOverflowDraft })
 
       onBudgetChange?.(budget)
       setBudgetSaved(true)
@@ -281,6 +287,22 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                 <input type="number" min={5000} max={500000} step={5000} value={rssFeedCharsBudgetDraft}
                   onChange={e => setRssFeedCharsBudgetDraft(e.target.value)}
                   className="w-32 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
+              </div>
+              <div className="flex flex-col gap-1.5 border-t border-gray-800/60 pt-3">
+                <p className="text-xs text-gray-400 font-medium">Max pages per URL</p>
+                <p className="text-xs text-gray-500">How many paginated pages to fetch when a user provides a URL (e.g. ?page=2, ?page=3…). Set to 0 for unlimited. Reduce to prevent large sites from flooding the context window.</p>
+                <input type="number" min={0} max={50} step={1} value={fetchMaxPagesDraft}
+                  onChange={e => setFetchMaxPagesDraft(e.target.value)}
+                  className="w-24 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
+              </div>
+              <div className="flex flex-col gap-1.5 border-t border-gray-800/60 pt-3">
+                <p className="text-xs text-gray-400 font-medium">Summarize oversized URL content</p>
+                <p className="text-xs text-gray-500">When fetched URL content exceeds the context budget, use the small model to summarize it instead of hard-truncating. Produces better results but adds latency. Requires a fast small model.</p>
+                <label className="flex items-center gap-2 cursor-pointer w-fit">
+                  <input type="checkbox" checked={fetchSummarizeOverflowDraft} onChange={e => setFetchSummarizeOverflowDraft(e.target.checked)}
+                    className="accent-blue-500 w-3.5 h-3.5" />
+                  <span className="text-xs text-gray-400">Enabled</span>
+                </label>
               </div>
             </div>
 

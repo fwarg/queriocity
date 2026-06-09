@@ -19,12 +19,15 @@ export function trimMessages(messages: CoreMessage[], maxTokens: number, systemP
   while (total > budget && start < messages.length - 1) {
     total -= estimate(JSON.stringify(messages[start]))
     start++
-    // Drop any orphaned tool results now at the front
-    while (start < messages.length && messages[start].role === 'tool') {
+    // Drop orphaned tool results at the front, but never the last message
+    while (start < messages.length - 1 && messages[start].role === 'tool') {
       total -= estimate(JSON.stringify(messages[start]))
       start++
     }
   }
   console.warn(`[chat] context trim: dropped first ${start} messages (system ~${systemCost} tok, budget ${budget} tok)`)
-  return messages.slice(start)
+  const trimmed = messages.slice(start)
+  // Strip any leading tool message left orphaned after its tool-call was dropped
+  const firstNonTool = trimmed.findIndex(m => m.role !== 'tool')
+  return firstNonTool > 0 ? trimmed.slice(firstNonTool) : trimmed
 }

@@ -96,7 +96,10 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
       setStreaming('')
       setStreamingThinking('')
       if (!accumulated && !wasAborted) setStatus('No response received — search may be temporarily unavailable. Try again.')
-      else if (!accumulated) setStatus('')
+      else if (wasAborted && !accumulated && images.length === 0) {
+        setMessages(prev => prev.slice(0, -1))
+        setStatus('')
+      }
       setBusy(false)
     }
   }
