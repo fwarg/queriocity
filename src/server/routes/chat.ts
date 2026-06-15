@@ -87,7 +87,10 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
   const ck = cacheKey(lastUser?.content ?? '', focusMode)
   const cached = getCached<string>(ck)
   if (cached) {
-    return c.json({ cached: true, content: cached })
+    return streamSSE(c, async (stream) => {
+      await stream.writeSSE({ data: JSON.stringify({ type: 'text', delta: cached }) })
+      await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, elapsedMs: 0 }) })
+    })
   }
 
   if (focusMode === 'flash') {
