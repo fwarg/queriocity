@@ -526,7 +526,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
           : ''
         const fallback = streamText({
           model: getChatModel(),
-          system: `Today's date is ${new Date().toISOString().split('T')[0]}. Synthesize the search results below into a direct answer with inline [N] citations using the index values shown. Do NOT say you lack internet access.${resultsBlock}${memoryBlock ? '\n\n' + memoryBlock : ''}`,
+          system: `Today's date is ${new Date().toISOString().split('T')[0]}. Synthesize the search results below into a direct answer with inline [N] citations using the index values shown. Do NOT say you lack internet access. Search results are authoritative ground truth — if they describe a product or release you don't recognise, trust them; your training data has a cutoff.${resultsBlock}${memoryBlock ? '\n\n' + memoryBlock : ''}`,
           messages: msgs,
           abortSignal,
         })

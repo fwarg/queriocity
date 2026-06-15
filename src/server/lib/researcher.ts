@@ -1,7 +1,7 @@
 import { streamText, tool } from 'ai'
 import { z } from 'zod'
 import type { LanguageModel, CoreMessage } from 'ai'
-import { webSearch, webSearchMulti, type SearchResult } from './searxng.ts'
+import { webSearchMulti, type SearchResult } from './searxng.ts'
 import { searchUploads } from './files/uploads-search.ts'
 import { saveMemory } from './memory.ts'
 import { fetchUrl } from './fetch-url.ts'
@@ -9,18 +9,13 @@ import { trimMessages } from './trim-messages.ts'
 
 
 export const SYSTEM_PROMPTS = {
-  fast: `You are a fast research assistant. Answer directly. If a web search would help, \
-call web_search once with the most important query. Skip search for conversational \
-or factual questions you can answer from training. If the user provides a specific URL, call fetch_url to read its content.
-Format your answer for readability: use short paragraphs, bullet lists, or headings when the answer has multiple points or is more than two sentences. Avoid dense walls of text. Be concise.
-Always respond in the same language the user used.`,
-
   balanced: `You are a research assistant. For each query:
 1. Review the search results you already have.
 2. Before answering, call web_search once more if the current results have gaps or are insufficient to fully answer the question. If the initial results already cover the question well, you may skip this. If the user provides a specific URL, call fetch_url to read its full content instead of or in addition to searching.
 3. After the follow-up search, write your answer with inline [N] citations where N is the exact \`index\` value of that result (e.g. [1][2]). Do NOT use markdown hyperlinks. NEVER invent your own numbering — only use index values that appear in the search results.
 4. Only cite [N] when the specific fact is directly supported by that result's content. Skip irrelevant results.
 5. NEVER use [N] citations for information from your training knowledge. If results are irrelevant, answer without any [N] citations.
+Search results are authoritative ground truth. If results describe a product, release, or name you don't recognise, trust the results — your training data has a cutoff and does not know about recent releases. Never deny that something exists based on your training knowledge alone.
 Use web_search with up to 2 queries at a time.
 Format your answer for readability: use short paragraphs, bullet lists, or headings when the answer has multiple points. Avoid dense walls of text.
 Always respond in the same language the user used.`,
@@ -32,6 +27,7 @@ Always respond in the same language the user used.`,
 4. Prefer specific, targeted queries over broad ones after the first iteration.
 5. Only cite [N] when the specific fact is directly supported by that result's content. Skip irrelevant results. Do NOT include a reference list or source list at the end of your notes.
 6. If the user provides a specific URL, call fetch_url to read its full content. For paginated content (forums, articles), you MUST fetch ALL pages before answering — keep calling fetch_url with ?page=2, ?page=3, etc. until you get an error or empty content. Do not stop after one or two pages.
+Search results are authoritative ground truth. If results describe a product, release, or name you don't recognise, trust the results — your training data has a cutoff and does not know about recent releases. Never deny that something exists based on your training knowledge alone.
 Call web_search as many times as needed. Do NOT write your answer yet — just research.
 When done researching, call the done tool.
 Format your final answer for readability: use headings, bullet lists, and short paragraphs to organize information clearly. Avoid dense walls of text.
@@ -39,14 +35,13 @@ Always respond in the same language the user used.`,
 }
 
 const MODE_CONFIG = {
-  fast:    { maxSteps: 2, count: 6 },
   balanced: { maxSteps: 4, count: 8 },
   thorough: { maxSteps: 5, count: 10 },
 }
 
 export interface ResearchOptions {
   messages: Array<{ role: 'user' | 'assistant'; content: string }>
-  focusMode: 'fast' | 'balanced' | 'thorough'
+  focusMode: 'balanced' | 'thorough'
   userId: string
   model: LanguageModel
   abortSignal?: AbortSignal
@@ -86,9 +81,7 @@ export function runResearcher({ messages, focusMode, userId, model, abortSignal,
   let augmentedMessages: CoreMessage[] = cleanMessages
   if (initialResults?.length && initialQueries?.length) {
     system += `\n\nNote: an initial search has already been performed and the results are in the conversation. Use different, more specific queries for your follow-up search.`
-    const args = focusMode === 'fast'
-      ? { query: initialQueries[0] }
-      : { queries: initialQueries }
+    const args = { queries: initialQueries }
     const indexedInitial = initialResults.map(r => ({ ...r, index: nextIndex++ }))
     augmentedMessages = [
       ...cleanMessages,
@@ -113,27 +106,16 @@ export function runResearcher({ messages, focusMode, userId, model, abortSignal,
   const ctxLimit = parseInt(process.env.CONTEXT_TOKEN_LIMIT ?? '8192')
   augmentedMessages = trimMessages(augmentedMessages, ctxLimit - Math.floor(ctxLimit * 0.2), system)
 
-  const webSearchTool = focusMode === 'fast'
-    ? tool({
-        description: 'Search the web for up-to-date information.',
-        parameters: z.object({
-          query: z.string().describe('Search query'),
-        }),
-        execute: async ({ query }) => {
-          const results = await webSearch(query, count)
-          return results.map(r => ({ ...r, index: nextIndex++ }))
-        },
-      })
-    : tool({
-        description: `Search the web. Provide up to ${focusMode === 'thorough' ? 3 : 2} queries covering different angles.`,
-        parameters: z.object({
-          queries: z.array(z.string()).describe('Search queries'),
-        }),
-        execute: async ({ queries }) => {
-          const results = await webSearchMulti(queries.slice(0, focusMode === 'thorough' ? 3 : 2), count)
-          return results.map(r => ({ ...r, index: nextIndex++ }))
-        },
-      })
+  const webSearchTool = tool({
+    description: `Search the web. Provide up to ${focusMode === 'thorough' ? 3 : 2} queries covering different angles.`,
+    parameters: z.object({
+      queries: z.array(z.string()).describe('Search queries'),
+    }),
+    execute: async ({ queries }) => {
+      const results = await webSearchMulti(queries.slice(0, focusMode === 'thorough' ? 3 : 2), count)
+      return results.map(r => ({ ...r, index: nextIndex++ }))
+    },
+  })
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const tools: Record<string, any> = {
