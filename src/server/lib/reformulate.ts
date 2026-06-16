@@ -33,14 +33,14 @@ export function reformulateSpeed(messages: Array<{ role: string; content: string
 const REFORMULATE_SYSTEM = `You are a search query optimizer. Rewrite the user question as an optimized search query. Today's date is ${new Date().toISOString().split('T')[0]}.
 
 Rules:
-1. Strip conversational filler. Use keywords a search engine favors.
-2. For questions about current/recent/latest topics, append the current month and year (e.g. "March 2026") to the query.
-3. Output ONLY the search string. No explanations, no quotes, no preamble.`
+1. Strip conversational filler. Output short keywords, not sentences — a search engine, not a human, reads this.
+2. For products, technologies, companies, software, or other topics primarily covered in English sources, write the query in English regardless of the user's language.
+3. For questions about current/recent/latest topics, append the current year (e.g. "2026") to the query.
+4. Output ONLY the search string. No explanations, no quotes, no preamble.`
 
 /** Returns true if the string looks like a natural language sentence rather than a search query. */
 function looksLikeSentence(s: string): boolean {
   return /\b(stands? for|is an? |refers to|means |is the abbreviation|is short for|is used to|was (founded|created|established))\b/i.test(s)
-    || s.split(/\s+/).length > 9
     || s.endsWith('.')
 }
 
@@ -52,7 +52,7 @@ export async function reformulateLLM(
   const lastUser = [...messages].reverse().find(m => m.role === 'user')
   if (!lastUser) return []
 
-  const count = mode === 'thorough' ? 3 : 1
+  const count = mode === 'thorough' ? 3 : 2
 
   // Only pass the immediately preceding turn — enough to resolve pronouns and
   // judge what's already in context, without overflowing the small model's window.
@@ -70,9 +70,7 @@ export async function reformulateLLM(
     ? `Previous turn:\n${historyParts.join('\n')}\n\nLatest question: ${lastUser.content}`
     : lastUser.content
 
-  const userPrompt = count === 1
-    ? `Rewrite into 1 optimized search query: "${contextPart}"`
-    : `Rewrite into ${count} complementary search queries covering different angles, one per line: "${contextPart}"`
+  const userPrompt = `Rewrite into ${count} complementary search queries covering different angles, one per line: "${contextPart}"`
 
   const SMALL_TARGET = `${process.env.SMALL_BASE_URL ?? process.env.CHAT_BASE_URL ?? process.env.BASE_URL ?? 'openai'} model=${process.env.SMALL_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2'}`
   console.log(`  [reformulate] ${SMALL_TARGET} mode=${mode} count=${count}`)
@@ -82,7 +80,7 @@ export async function reformulateLLM(
     model: getSmallModel(),
     system: REFORMULATE_SYSTEM,
     prompt: userPrompt,
-    maxTokens: 80,
+    maxTokens: 120,
   })
 
   console.log(`  [reformulate] done — ${(performance.now() - start).toFixed(0)}ms → ${JSON.stringify(text.trim())}`)

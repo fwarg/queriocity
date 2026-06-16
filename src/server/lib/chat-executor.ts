@@ -108,8 +108,8 @@ export async function executeChatAndSave({
       fullContent = text
       sources.push(...rs)
 
-      // Fallback: researcher exhausted all steps on tool calls without producing text
-      if (!fullContent && finishReason === 'tool-calls') {
+      // Fallback: researcher exhausted all steps on tool calls (any accumulated text is preamble, not an answer)
+      if (finishReason === 'tool-calls') {
         console.warn('  [monitor-executor] maxSteps exhausted without answer — running no-tool synthesis fallback')
         const resultsBlock = rs.length > 0
           ? '\n\nSearch results:\n' + rs.map((r, i) => {

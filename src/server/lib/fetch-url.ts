@@ -1,13 +1,15 @@
 import { chromium } from 'playwright'
 import { fetch as undiciFetch, ProxyAgent } from 'undici'
 import { YoutubeTranscript } from 'youtube-transcript'
+import { generateText } from 'ai'
+import { getSmallModel } from './llm.ts'
 
 const MAX_CHARS = parseInt(process.env.FETCH_MAX_CHARS ?? '12000')
 const PROXY_URL = process.env.FETCH_PROXY_URL
 const proxyAgent = PROXY_URL ? new ProxyAgent(PROXY_URL) : undefined
 const CACHE_TTL_MS = 5 * 60 * 1000
 const fetchCache = new Map<string, { result: string; ts: number }>()
-const MAX_PREFETCH_PAGES = parseInt(process.env.FETCH_MAX_PAGES ?? '8')
+const DEFAULT_MAX_PAGES = parseInt(process.env.FETCH_MAX_PAGES ?? '8')
 
 function stripHtml(html: string): string {
   return html
@@ -133,14 +135,15 @@ function buildPageUrl(url: string, page: number): string {
   return u.toString()
 }
 
-export async function fetchUrlAllPages(url: string): Promise<string> {
+export async function fetchUrlAllPages(url: string, maxPages = DEFAULT_MAX_PAGES): Promise<string> {
   console.log(`  [fetch-url] page 1: ${url}`)
   const first = await fetchUrl(url)
   if (first.startsWith('Error')) return first
 
+  const limit = maxPages === 0 ? Infinity : maxPages
   const pages = [first]
   const seen = new Set([first])
-  for (let p = 2; p <= MAX_PREFETCH_PAGES; p++) {
+  for (let p = 2; p <= limit; p++) {
     const pageUrl = buildPageUrl(url, p)
     console.log(`  [fetch-url] page ${p}: ${pageUrl}`)
     const content = await fetchUrl(pageUrl)
@@ -152,6 +155,11 @@ export async function fetchUrlAllPages(url: string): Promise<string> {
       console.log(`  [fetch-url] page ${p} duplicate — site ignores page param, stopping at ${p - 1} pages`)
       break
     }
+    // Same length as previous page = near-duplicate (e.g. file-listing pagination with same structure)
+    if (content.length === pages[pages.length - 1].length) {
+      console.log(`  [fetch-url] page ${p} same length as previous — non-content pagination, stopping at ${p - 1} pages`)
+      break
+    }
     seen.add(content)
     pages.push(content)
   }
@@ -159,4 +167,57 @@ export async function fetchUrlAllPages(url: string): Promise<string> {
   console.log(`  [fetch-url] fetched ${pages.length} page(s) total for ${url}`)
   if (pages.length === 1) return first
   return pages.map((p, i) => `--- Page ${i + 1} ---\n${p}`).join('\n\n')
+}
+
+// Derive chunk size from the small model's context window.
+// Reserve 30% for system prompt + output; use 2.5 chars/tok for dense technical content.
+const SMALL_CTX = parseInt(process.env.SMALL_MODEL_CONTEXT_TOKENS ?? '4096')
+const SUMMARIZE_INPUT_CHARS = Math.floor(SMALL_CTX * 0.7 * 2.5)
+// Max chunks to process serially (covers up to MAX_SUMMARIZE_CHUNKS × SUMMARIZE_INPUT_CHARS chars)
+const MAX_SUMMARIZE_CHUNKS = parseInt(process.env.FETCH_SUMMARIZE_MAX_CHUNKS ?? '6')
+// Hard cap per URL regardless of budget — prevents one URL from consuming the whole context
+const MAX_URL_CONTEXT_CHARS = parseInt(process.env.FETCH_MAX_URL_CONTEXT_CHARS ?? '40000')
+
+export async function summarizeContent(url: string, content: string, targetChars: number): Promise<string> {
+  const hostname = new URL(url).hostname
+  const start = performance.now()
+  const numChunks = Math.min(MAX_SUMMARIZE_CHUNKS, Math.ceil(content.length / SUMMARIZE_INPUT_CHARS))
+  const perChunkWords = Math.floor(targetChars / numChunks / 5)
+  const summaries: string[] = []
+  try {
+    for (let i = 0; i < numChunks; i++) {
+      const chunk = content.slice(i * SUMMARIZE_INPUT_CHARS, (i + 1) * SUMMARIZE_INPUT_CHARS)
+      const { text } = await generateText({
+        model: getSmallModel(),
+        system: `Summarize this section of a web page concisely, preserving all technically important facts. Reply in under ${perChunkWords} words. Output only the summary, no preamble.`,
+        prompt: chunk,
+      })
+      summaries.push(text)
+    }
+    const combined = summaries.join('\n\n')
+    console.log(`  [fetch-url] summarised ${hostname}: ${content.length} → ${combined.length} chars (${numChunks} chunks) in ${(performance.now() - start).toFixed(0)}ms`)
+    return combined
+  } catch (err) {
+    console.warn(`  [fetch-url] summarise failed for ${hostname}: ${err}`)
+    return content.slice(0, targetChars) + '\n[content truncated to fit context]'
+  }
+}
+
+export async function processUrlsForContext(
+  urls: Array<{ url: string; content: string }>,
+  budgetChars: number,
+  summarize: boolean,
+): Promise<Array<{ url: string; content: string }>> {
+  if (!urls.length) return urls
+  const perUrlChars = Math.min(MAX_URL_CONTEXT_CHARS, Math.max(8000, Math.floor(budgetChars / urls.length)))
+  return Promise.all(urls.map(async ({ url, content }) => {
+    if (content.length <= perUrlChars) return { url, content }
+    const hostname = new URL(url).hostname
+    if (summarize) {
+      return { url, content: await summarizeContent(url, content, perUrlChars) }
+    }
+    const truncated = content.slice(0, perUrlChars) + '\n[content truncated to fit context]'
+    console.log(`  [fetch-url] content for ${hostname}: ${content.length} → ${truncated.length} chars (truncated)`)
+    return { url, content: truncated }
+  }))
 }

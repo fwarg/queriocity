@@ -69,7 +69,9 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
         } else if (chunk.type === 'done') {
           if (chunk.elapsedMs) {
             const label = images.length > 0 ? 'Generated in' : 'Answered in'
-            setAnswerTime(`${label} ${(chunk.elapsedMs as number / 1000).toFixed(1)} seconds.`)
+            const srcCount = sources.length
+            const srcLabel = srcCount > 0 ? ` · ${srcCount} search result${srcCount === 1 ? '' : 's'}` : ' · no search results'
+            setAnswerTime(`${label} ${(chunk.elapsedMs as number / 1000).toFixed(1)} seconds${srcLabel}.`)
           }
           onSessionCreated(chunk.sessionId as string, (chunk.title as string | undefined) ?? text.slice(0, 60))
         }
@@ -96,7 +98,10 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
       setStreaming('')
       setStreamingThinking('')
       if (!accumulated && !wasAborted) setStatus('No response received — search may be temporarily unavailable. Try again.')
-      else if (!accumulated) setStatus('')
+      else if (wasAborted && !accumulated && images.length === 0) {
+        setMessages(prev => prev.slice(0, -1))
+        setStatus('')
+      }
       setBusy(false)
     }
   }
