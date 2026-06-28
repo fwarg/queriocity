@@ -14,7 +14,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { webSearch, webSearchMulti, type SearchResult } from '../lib/searxng.ts'
 import { fetchUrlAllPages, processUrlsForContext } from '../lib/fetch-url.ts'
-import { getFlashModel, getChatModel, getThinkingModelOrFallback } from '../lib/llm.ts'
+import { getFlashModel, getChatModel, getThinkingModelOrFallback, RESEARCH_MAX_TOKENS } from '../lib/llm.ts'
 import { ThinkExtractor } from '../lib/think-extractor.ts'
 import { rerank, rerankEnabled } from '../lib/reranker.ts'
 import { buildMemoryBlock, buildChatFileBlock, extractMemoriesPostHoc } from '../lib/memory.ts'
@@ -288,6 +288,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
         messages: trimMessages(msgs, ctxLimit - Math.floor(ctxLimit * 0.2), imageSystem),
         tools: imageTools,
         maxSteps: 4,
+        maxTokens: RESEARCH_MAX_TOKENS,
       })
       for await (const part of result.fullStream) {
         if (part.type === 'text-delta') {
@@ -532,6 +533,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
           system: `Today's date is ${new Date().toISOString().split('T')[0]}. Synthesize the search results below into a direct answer with inline [N] citations using the index values shown. Do NOT say you lack internet access. Search results are authoritative ground truth — if they describe a product or release you don't recognise, trust them; your training data has a cutoff.${resultsBlock}${memoryBlock ? '\n\n' + memoryBlock : ''}`,
           messages: msgs,
           abortSignal,
+          maxTokens: RESEARCH_MAX_TOKENS,
         })
         for await (const part of fallback.fullStream) {
           const p = part as { type: string; textDelta?: string }

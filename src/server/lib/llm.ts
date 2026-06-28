@@ -15,6 +15,10 @@ function makeProvider({ provider, baseURL, apiKey }: ProviderConfig) {
   return createOpenAI({ baseURL, apiKey: apiKey ?? 'sk-placeholder' })
 }
 
+// Output cap for the research/writer generations. Backstop against runaway
+// (esp. thinking-model) loops; covers reasoning + answer tokens together.
+export const RESEARCH_MAX_TOKENS = parseInt(process.env.RESEARCH_MAX_TOKENS ?? '6000')
+
 const BASE_URL = process.env.BASE_URL
 const BASE_PROVIDER = process.env.BASE_PROVIDER ?? 'openai'
 

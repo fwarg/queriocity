@@ -6,6 +6,7 @@ import { searchUploads } from './files/uploads-search.ts'
 import { saveMemory } from './memory.ts'
 import { fetchUrl } from './fetch-url.ts'
 import { trimMessages } from './trim-messages.ts'
+import { RESEARCH_MAX_TOKENS } from './llm.ts'
 
 
 export const SYSTEM_PROMPTS = {
@@ -171,6 +172,7 @@ export function runResearcher({ messages, focusMode, userId, model, abortSignal,
     system,
     messages: augmentedMessages,
     maxSteps,
+    maxTokens: RESEARCH_MAX_TOKENS,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     tools: tools as any,
   })
