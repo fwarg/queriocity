@@ -529,6 +529,13 @@ REFORMULATE_ASSISTANT_CTX=1000            # max chars of prior assistant turns
 
 # Max output tokens for flash mode responses. Default 200 (intentionally terse).
 # FLASH_MAX_TOKENS=200
+
+# Max output tokens for balanced/thorough research, the writer, and synthesis
+# fallbacks. Backstop against runaway generation (especially thinking-model
+# reasoning loops); covers reasoning + answer tokens together. For a clean stop
+# on a thinking model, also bound reasoning server-side (e.g. llama.cpp
+# --reasoning-budget) so the cap isn't spent entirely on <think> tokens. Default 6000.
+# RESEARCH_MAX_TOKENS=6000
 ```
 
 ## Running

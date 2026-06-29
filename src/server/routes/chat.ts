@@ -12,9 +12,9 @@ import { eq, sql } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
-import { webSearch, webSearchMulti, type SearchResult } from '../lib/searxng.ts'
+import { webSearch, webSearchMulti, type SearchResult, type EngineError } from '../lib/searxng.ts'
 import { fetchUrlAllPages, processUrlsForContext } from '../lib/fetch-url.ts'
-import { getFlashModel, getChatModel, getThinkingModelOrFallback } from '../lib/llm.ts'
+import { getFlashModel, getChatModel, getThinkingModelOrFallback, RESEARCH_MAX_TOKENS } from '../lib/llm.ts'
 import { ThinkExtractor } from '../lib/think-extractor.ts'
 import { rerank, rerankEnabled } from '../lib/reranker.ts'
 import { buildMemoryBlock, buildChatFileBlock, extractMemoriesPostHoc } from '../lib/memory.ts'
@@ -288,6 +288,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
         messages: trimMessages(msgs, ctxLimit - Math.floor(ctxLimit * 0.2), imageSystem),
         tools: imageTools,
         maxSteps: 4,
+        maxTokens: RESEARCH_MAX_TOKENS,
       })
       for await (const part of result.fullStream) {
         if (part.type === 'text-delta') {
@@ -343,7 +344,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
   ])
 
   // Fetch user settings + file count + reformulate/pre-search + memory + URL prefetch in parallel
-  const [userRow, fileCountRow, { initialQueries, initialResults }, memoryBudget, ragBudget, prefetchedUrls] = await Promise.all([
+  const [userRow, fileCountRow, { initialQueries, initialResults, engineErrors }, memoryBudget, ragBudget, prefetchedUrls] = await Promise.all([
     db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get(),
     db.select({ count: sql<number>`count(*)` }).from(uploadedFiles).where(eq(uploadedFiles.userId, userId)).get(),
     runReformulateAndPreSearch(msgsForReformulate, focusMode as 'balanced' | 'thorough', hasAttachment, searchCategory),
@@ -384,6 +385,19 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
     const emitStatus = (text: string) =>
       stream.writeSSE({ data: JSON.stringify({ type: 'status', text }) })
 
+    // Warn when a search came back empty *because* engines were blocked/suspended
+    // (rate-limit, CAPTCHA, access denied) — distinct from a query that simply matched
+    // nothing. Dedup by engine so the researcher's repeated searches don't spam the UI.
+    const warnedEngines = new Set<string>()
+    const warnEngineErrors = async (errors: EngineError[]) => {
+      const fresh = errors.filter(e => !warnedEngines.has(e.engine))
+      if (!fresh.length) return
+      fresh.forEach(e => warnedEngines.add(e.engine))
+      const detail = fresh.map(e => `${e.engine} (${e.reason})`).join(', ')
+      await emitStatus(`Search engines unavailable: ${detail}. Web results may be missing — the answer may be limited or rely on prior knowledge.`)
+    }
+    if (!initialResults?.length && engineErrors?.length) await warnEngineErrors(engineErrors)
+
     const emitSearchStatus = (args: { queries?: string[]; query?: string }) => {
       const queries: string[] = args.queries ?? (args.query ? [args.query] : [])
       if (queries.length) emitStatus(`Searching: ${queries.map(q => `"${q}"`).join(', ')}`)
@@ -406,7 +420,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
         await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: snippets + '\n\n' }) })
       }
       const researchModel = useThinking ? getThinkingModelOrFallback() : getChatModel()
-      const researcherResult = runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock })
+      const researcherResult = runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, onEngineErrors: warnEngineErrors })
       const allSources: SearchResult[] = [...(initialResults ?? [])]
       let researcherNotes = ''
       const thoroughExtractor = useThinking ? new ThinkExtractor() : null
@@ -497,7 +511,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
       }
 
       const fullSources: SearchResult[] = []
-      const result = runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock })
+      const result = runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, onEngineErrors: warnEngineErrors })
       const extractor = showThinking ? new ThinkExtractor() : null
 
       const drainFinishReason = await drainResearcherStream(result, {
@@ -532,6 +546,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
           system: `Today's date is ${new Date().toISOString().split('T')[0]}. Synthesize the search results below into a direct answer with inline [N] citations using the index values shown. Do NOT say you lack internet access. Search results are authoritative ground truth — if they describe a product or release you don't recognise, trust them; your training data has a cutoff.${resultsBlock}${memoryBlock ? '\n\n' + memoryBlock : ''}`,
           messages: msgs,
           abortSignal,
+          maxTokens: RESEARCH_MAX_TOKENS,
         })
         for await (const part of fallback.fullStream) {
           const p = part as { type: string; textDelta?: string }
@@ -669,7 +684,11 @@ async function runReformulateAndPreSearch(
   focusMode: 'balanced' | 'thorough',
   hasAttachment: boolean,
   categories?: string,
-): Promise<{ initialQueries?: string[]; initialResults?: SearchResult[] }> {
+): Promise<{ initialQueries?: string[]; initialResults?: SearchResult[]; engineErrors?: EngineError[] }> {
+  // Dedup engine errors by name across the (possibly multiple) pre-search queries.
+  const errByEngine = new Map<string, EngineError>()
+  const collect = (errors: EngineError[]) => errors.forEach(e => errByEngine.set(e.engine, e))
+  const engineErrors = () => [...errByEngine.values()]
   try {
     if (hasAttachment) {
       console.log(`  [chat] attachment detected — skipping reformulation/pre-search`)
@@ -681,8 +700,8 @@ async function runReformulateAndPreSearch(
       const q = lastUser?.content ?? ''
       if (!q) return {}
       console.log(`  [reformulate] disabled — using raw query: ${JSON.stringify(q.slice(0, 80))}`)
-      const initialResults = await webSearch(q, 6, categories)
-      return { initialQueries: [q], initialResults }
+      const initialResults = await webSearch(q, 6, categories, collect)
+      return { initialQueries: [q], initialResults, engineErrors: engineErrors() }
     }
 
     const countEach = focusMode === 'thorough' ? 10 : 6
@@ -690,8 +709,8 @@ async function runReformulateAndPreSearch(
     if (queries.length === 0) return {}
 
     const maxQueries = focusMode === 'thorough' ? 3 : 2
-    const initialResults = await webSearchMulti(queries.slice(0, maxQueries), countEach, categories)
-    return { initialQueries: queries, initialResults }
+    const initialResults = await webSearchMulti(queries.slice(0, maxQueries), countEach, categories, collect)
+    return { initialQueries: queries, initialResults, engineErrors: engineErrors() }
   } catch (e) {
     console.error('[reformulate] error:', e)
     return {}

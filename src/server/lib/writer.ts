@@ -1,5 +1,5 @@
 import { streamText } from 'ai'
-import { getChatModel } from './llm.ts'
+import { getChatModel, RESEARCH_MAX_TOKENS } from './llm.ts'
 import type { SearchResult } from './searxng.ts'
 
 const WRITER_SYSTEM = `You are a research writer. Given the research results, write a well-structured report.
@@ -39,5 +39,6 @@ export function runWriter(
     abortSignal,
     system: WRITER_SYSTEM,
     messages: [{ role: 'user', content: userContent }],
+    maxTokens: RESEARCH_MAX_TOKENS,
   })
 }
