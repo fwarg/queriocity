@@ -1,7 +1,7 @@
 import { streamText, tool } from 'ai'
 import { z } from 'zod'
 import type { LanguageModel, CoreMessage } from 'ai'
-import { webSearchMulti, type SearchResult } from './searxng.ts'
+import { webSearchMulti, type SearchResult, type EngineError } from './searxng.ts'
 import { searchUploads } from './files/uploads-search.ts'
 import { saveMemory } from './memory.ts'
 import { fetchUrl } from './fetch-url.ts'
@@ -55,9 +55,11 @@ export interface ResearchOptions {
   sessionId?: string
   memoryBlock?: string
   maxStepsOverride?: number
+  /** Called when a web_search returns no results because engines were suspended/blocked. */
+  onEngineErrors?: (errors: EngineError[]) => void | Promise<void>
 }
 
-export function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, maxStepsOverride }: ResearchOptions) {
+export function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, maxStepsOverride, onEngineErrors }: ResearchOptions) {
   const { maxSteps: defaultMaxSteps, count } = MODE_CONFIG[focusMode]
   const maxSteps = maxStepsOverride ?? defaultMaxSteps
   let nextIndex = 1
@@ -113,7 +115,10 @@ export function runResearcher({ messages, focusMode, userId, model, abortSignal,
       queries: z.array(z.string()).describe('Search queries'),
     }),
     execute: async ({ queries }) => {
-      const results = await webSearchMulti(queries.slice(0, focusMode === 'thorough' ? 3 : 2), count)
+      const errs: EngineError[] = []
+      const results = await webSearchMulti(queries.slice(0, focusMode === 'thorough' ? 3 : 2), count, undefined, e => errs.push(...e))
+      // Surface only when blocked engines left this search empty (matches pre-search semantics).
+      if (results.length === 0 && errs.length) await onEngineErrors?.(errs)
       return results.map(r => ({ ...r, index: nextIndex++ }))
     },
   })
