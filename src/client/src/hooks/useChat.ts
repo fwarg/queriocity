@@ -44,6 +44,7 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
     const sources: Array<{ title: string; url: string }> = []
     const fileSources: Array<{ title: string; url: string }> = []
     const images: Array<{ url: string; alt: string }> = []
+    const blockedEngines: Array<{ engine: string; reason: string }> = []
     let wasAborted = false
 
     try {
@@ -66,11 +67,16 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
           sources.push(...(chunk.sources as Array<{ title: string; url: string }>))
         } else if (chunk.type === 'file_sources') {
           fileSources.push(...(chunk.sources as Array<{ title: string; url: string }>))
+        } else if (chunk.type === 'search_warning') {
+          blockedEngines.push(...(chunk.engines as Array<{ engine: string; reason: string }>))
         } else if (chunk.type === 'done') {
           if (chunk.elapsedMs) {
             const label = images.length > 0 ? 'Generated in' : 'Answered in'
             const srcCount = sources.length
-            const srcLabel = srcCount > 0 ? ` · ${srcCount} search result${srcCount === 1 ? '' : 's'}` : ' · no search results'
+            let srcLabel: string
+            if (srcCount > 0) srcLabel = ` · ${srcCount} search result${srcCount === 1 ? '' : 's'}`
+            else if (blockedEngines.length) srcLabel = ` · search engines unavailable (${blockedEngines.map(e => e.engine).join(', ')}) — answered without web results`
+            else srcLabel = ' · no search results'
             setAnswerTime(`${label} ${(chunk.elapsedMs as number / 1000).toFixed(1)} seconds${srcLabel}.`)
           }
           onSessionCreated(chunk.sessionId as string, (chunk.title as string | undefined) ?? text.slice(0, 60))

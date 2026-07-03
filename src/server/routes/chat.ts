@@ -388,13 +388,15 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
     // Warn when a search came back empty *because* engines were blocked/suspended
     // (rate-limit, CAPTCHA, access denied) — distinct from a query that simply matched
     // nothing. Dedup by engine so the researcher's repeated searches don't spam the UI.
+    // Emitted as a persistent 'search_warning' (NOT the ephemeral status line, which is
+    // overwritten by later "Searching:" updates and cleared once answer text streams);
+    // the client folds it into the final footer so the user sees *why* results are missing.
     const warnedEngines = new Set<string>()
     const warnEngineErrors = async (errors: EngineError[]) => {
       const fresh = errors.filter(e => !warnedEngines.has(e.engine))
       if (!fresh.length) return
       fresh.forEach(e => warnedEngines.add(e.engine))
-      const detail = fresh.map(e => `${e.engine} (${e.reason})`).join(', ')
-      await emitStatus(`Search engines unavailable: ${detail}. Web results may be missing — the answer may be limited or rely on prior knowledge.`)
+      await stream.writeSSE({ data: JSON.stringify({ type: 'search_warning', engines: fresh.map(e => ({ engine: e.engine, reason: e.reason })) }) })
     }
     if (!initialResults?.length && engineErrors?.length) await warnEngineErrors(engineErrors)
 
