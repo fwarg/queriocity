@@ -1,3 +1,5 @@
+import { searchApi, isSearchApiEnabled } from './search-api.ts'
+
 const SEARXNG_URL = process.env.SEARXNG_URL ?? 'http://localhost:4000'
 
 
@@ -13,13 +15,19 @@ export interface EngineError {
   reason: string
 }
 
+/** Mutable per-request/run allowance for paid keyed-API fallback calls. */
+export interface SearchApiBudget {
+  remaining: number
+}
+
 export async function webSearchMulti(
   queries: string[],
   countEach: number,
   categories?: string,
   onEngineErrors?: (errors: EngineError[]) => void,
+  apiBudget?: SearchApiBudget,
 ): Promise<SearchResult[]> {
-  const batches = await Promise.all(queries.map(q => webSearch(q, countEach, categories, onEngineErrors)))
+  const batches = await Promise.all(queries.map(q => webSearch(q, countEach, categories, onEngineErrors, apiBudget)))
   const seen = new Set<string>()
   const results: SearchResult[] = []
   for (const batch of batches) {
@@ -38,6 +46,7 @@ export async function webSearch(
   count = 10,
   categories?: string,
   onEngineErrors?: (errors: EngineError[]) => void,
+  apiBudget?: SearchApiBudget,
 ): Promise<SearchResult[]> {
   const url = new URL('/search', SEARXNG_URL)
   url.searchParams.set('q', query)
@@ -81,5 +90,20 @@ export async function webSearch(
   const results = deduped.slice(0, count)
   const ms = (performance.now() - start).toFixed(0)
   console.log(`  [searxng] ${SEARXNG_URL} q="${query}" — ${ms}ms → ${results.length} results`)
+
+  // Keyed-API fallback: only when SearXNG found nothing, and only while the per-request
+  // budget allows. The check + decrement are synchronous (no await between) so parallel
+  // queries in webSearchMulti cannot collectively exceed the cap.
+  if (results.length === 0 && isSearchApiEnabled()) {
+    if (!apiBudget || apiBudget.remaining <= 0) {
+      console.log(`  [search-api] budget exhausted — skipping fallback for "${query}"`)
+    } else {
+      apiBudget.remaining--
+      const left = apiBudget.remaining   // capture before await; parallel calls decrement concurrently
+      const api = await searchApi(query, count)
+      console.log(`  [search-api] fallback ${api.length ? 'used' : 'empty'}, ${left} left for this request`)
+      if (api.length) return api
+    }
+  }
   return results
 }

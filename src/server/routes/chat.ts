@@ -12,7 +12,7 @@ import { eq, sql } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
-import { webSearch, webSearchMulti, type SearchResult, type EngineError } from '../lib/searxng.ts'
+import { webSearch, webSearchMulti, type SearchResult, type EngineError, type SearchApiBudget } from '../lib/searxng.ts'
 import { fetchUrlAllPages, processUrlsForContext } from '../lib/fetch-url.ts'
 import { getFlashModel, getChatModel, getThinkingModelOrFallback, RESEARCH_MAX_TOKENS } from '../lib/llm.ts'
 import { ThinkExtractor } from '../lib/think-extractor.ts'
@@ -343,11 +343,14 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
     getAppSetting('fetch_summarize_overflow', 'false').then(v => v === 'true'),
   ])
 
+  // Shared per-request allowance for paid keyed-API fallback searches (pre-search + researcher).
+  const apiBudget: SearchApiBudget = { remaining: parseInt(process.env.SEARCH_API_MAX_PER_REQUEST ?? '3', 10) }
+
   // Fetch user settings + file count + reformulate/pre-search + memory + URL prefetch in parallel
   const [userRow, fileCountRow, { initialQueries, initialResults, engineErrors }, memoryBudget, ragBudget, prefetchedUrls] = await Promise.all([
     db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get(),
     db.select({ count: sql<number>`count(*)` }).from(uploadedFiles).where(eq(uploadedFiles.userId, userId)).get(),
-    runReformulateAndPreSearch(msgsForReformulate, focusMode as 'balanced' | 'thorough', hasAttachment, searchCategory),
+    runReformulateAndPreSearch(msgsForReformulate, focusMode as 'balanced' | 'thorough', hasAttachment, searchCategory, apiBudget),
     spaceId ? getAppSetting('memory_token_budget', '1000').then(Number) : Promise.resolve(1000),
     getAppSetting('space_rag_budget', '500').then(Number),
     prefetchUrlsFromMessage(lastUser?.content ?? '', hasAttachment, fetchMaxPages),
@@ -422,7 +425,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
         await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: snippets + '\n\n' }) })
       }
       const researchModel = useThinking ? getThinkingModelOrFallback() : getChatModel()
-      const researcherResult = runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, onEngineErrors: warnEngineErrors })
+      const researcherResult = runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, onEngineErrors: warnEngineErrors, apiBudget })
       const allSources: SearchResult[] = [...(initialResults ?? [])]
       let researcherNotes = ''
       const thoroughExtractor = useThinking ? new ThinkExtractor() : null
@@ -513,7 +516,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
       }
 
       const fullSources: SearchResult[] = []
-      const result = runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, onEngineErrors: warnEngineErrors })
+      const result = runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, onEngineErrors: warnEngineErrors, apiBudget })
       const extractor = showThinking ? new ThinkExtractor() : null
 
       const drainFinishReason = await drainResearcherStream(result, {
@@ -686,6 +689,7 @@ async function runReformulateAndPreSearch(
   focusMode: 'balanced' | 'thorough',
   hasAttachment: boolean,
   categories?: string,
+  apiBudget?: SearchApiBudget,
 ): Promise<{ initialQueries?: string[]; initialResults?: SearchResult[]; engineErrors?: EngineError[] }> {
   // Dedup engine errors by name across the (possibly multiple) pre-search queries.
   const errByEngine = new Map<string, EngineError>()
@@ -702,7 +706,7 @@ async function runReformulateAndPreSearch(
       const q = lastUser?.content ?? ''
       if (!q) return {}
       console.log(`  [reformulate] disabled — using raw query: ${JSON.stringify(q.slice(0, 80))}`)
-      const initialResults = await webSearch(q, 6, categories, collect)
+      const initialResults = await webSearch(q, 6, categories, collect, apiBudget)
       return { initialQueries: [q], initialResults, engineErrors: engineErrors() }
     }
 
@@ -711,7 +715,7 @@ async function runReformulateAndPreSearch(
     if (queries.length === 0) return {}
 
     const maxQueries = focusMode === 'thorough' ? 3 : 2
-    const initialResults = await webSearchMulti(queries.slice(0, maxQueries), countEach, categories, collect)
+    const initialResults = await webSearchMulti(queries.slice(0, maxQueries), countEach, categories, collect, apiBudget)
     return { initialQueries: queries, initialResults, engineErrors: engineErrors() }
   } catch (e) {
     console.error('[reformulate] error:', e)

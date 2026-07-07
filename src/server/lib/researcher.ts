@@ -1,7 +1,7 @@
 import { streamText, tool } from 'ai'
 import { z } from 'zod'
 import type { LanguageModel, CoreMessage } from 'ai'
-import { webSearchMulti, type SearchResult, type EngineError } from './searxng.ts'
+import { webSearchMulti, type SearchResult, type EngineError, type SearchApiBudget } from './searxng.ts'
 import { searchUploads } from './files/uploads-search.ts'
 import { saveMemory } from './memory.ts'
 import { fetchUrl } from './fetch-url.ts'
@@ -57,9 +57,11 @@ export interface ResearchOptions {
   maxStepsOverride?: number
   /** Called when a web_search returns no results because engines were suspended/blocked. */
   onEngineErrors?: (errors: EngineError[]) => void | Promise<void>
+  /** Shared per-request allowance for paid keyed-API fallback searches. */
+  apiBudget?: SearchApiBudget
 }
 
-export function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, maxStepsOverride, onEngineErrors }: ResearchOptions) {
+export function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, maxStepsOverride, onEngineErrors, apiBudget }: ResearchOptions) {
   const { maxSteps: defaultMaxSteps, count } = MODE_CONFIG[focusMode]
   const maxSteps = maxStepsOverride ?? defaultMaxSteps
   let nextIndex = 1
@@ -116,7 +118,7 @@ export function runResearcher({ messages, focusMode, userId, model, abortSignal,
     }),
     execute: async ({ queries }) => {
       const errs: EngineError[] = []
-      const results = await webSearchMulti(queries.slice(0, focusMode === 'thorough' ? 3 : 2), count, undefined, e => errs.push(...e))
+      const results = await webSearchMulti(queries.slice(0, focusMode === 'thorough' ? 3 : 2), count, undefined, e => errs.push(...e), apiBudget)
       // Surface only when blocked engines left this search empty (matches pre-search semantics).
       if (results.length === 0 && errs.length) await onEngineErrors?.(errs)
       return results.map(r => ({ ...r, index: nextIndex++ }))

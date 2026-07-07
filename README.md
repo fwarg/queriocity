@@ -485,6 +485,12 @@ RERANK_MODEL=qwen3-reranker
 # ── SearXNG ───────────────────────────────────────────────────────────────────
 SEARXNG_URL=http://localhost:4000  # url to your searxng instance
 # SEARXNG_ENGINES=                            # comma-separated engine list; blank = SearXNG defaults
+# Keyed search-API fallback (optional). Called ONLY when a SearXNG query returns 0 results
+# (e.g. engines suspended on a blocked exit IP) and capped per request/monitor-run, so the
+# free SearXNG path stays primary and cost stays bounded. Unset = disabled (default).
+# SEARCH_API_PROVIDER=mojeek                  # currently only: mojeek (get a key at mojeek.com)
+# SEARCH_API_KEY=                             # provider API key
+# SEARCH_API_MAX_PER_REQUEST=3                # max paid fallback calls per request/run (0 disables)
 
 # ── URL fetching ──────────────────────────────────────────────────────────────
 # The fetch_url tool lets the LLM read full page content from a given URL.
