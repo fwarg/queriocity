@@ -623,7 +623,8 @@ async function drainResearcherStream(
     } else if (part.type === 'tool-call' && part.toolName === 'save_to_memory') {
       await stream.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Saving to memory…' }) })
     } else if (part.type === 'tool-result' && part.toolName === 'web_search') {
-      const results = (part.result ?? []) as SearchResult[]
+      // result may be a non-array "search unavailable" message when search is exhausted.
+      const results = (Array.isArray(part.result) ? part.result : []) as SearchResult[]
       await onSources(results)
       if (showThinking) {
         const snippets = results.slice(0, 3)

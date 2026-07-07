@@ -186,7 +186,8 @@ async function collectStream(
     if (part.type === 'finish' || part.type === 'step-finish') {
       if (part.finishReason) finishReason = part.finishReason
     } else if (part.type === 'tool-result' && part.toolName === 'web_search') {
-      sources.push(...(part.result ?? []) as SearchResult[])
+      // result may be a non-array "search unavailable" message when search is exhausted.
+      if (Array.isArray(part.result)) sources.push(...(part.result as SearchResult[]))
     } else if (part.type === 'text-delta') {
       text += part.textDelta ?? ''
       onText(part.textDelta ?? '')

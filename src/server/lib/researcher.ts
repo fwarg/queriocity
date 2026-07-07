@@ -2,6 +2,7 @@ import { streamText, tool } from 'ai'
 import { z } from 'zod'
 import type { LanguageModel, CoreMessage } from 'ai'
 import { webSearchMulti, type SearchResult, type EngineError, type SearchApiBudget } from './searxng.ts'
+import { isSearchApiEnabled } from './search-api.ts'
 import { searchUploads } from './files/uploads-search.ts'
 import { saveMemory } from './memory.ts'
 import { fetchUrl } from './fetch-url.ts'
@@ -40,6 +41,12 @@ const MODE_CONFIG = {
   thorough: { maxSteps: 5, count: 10 },
 }
 
+// Returned from web_search once search is confirmed unavailable, so the model stops
+// burning its remaining steps on futile searches and answers with what it already has.
+const SEARCH_DEAD_MSG = {
+  error: 'Web search is unavailable right now (search engines are blocked and the fallback search quota for this request is used up). Do NOT call web_search again — write your answer using the results already gathered.',
+}
+
 export interface ResearchOptions {
   messages: Array<{ role: 'user' | 'assistant'; content: string }>
   focusMode: 'balanced' | 'thorough'
@@ -65,6 +72,7 @@ export function runResearcher({ messages, focusMode, userId, model, abortSignal,
   const { maxSteps: defaultMaxSteps, count } = MODE_CONFIG[focusMode]
   const maxSteps = maxStepsOverride ?? defaultMaxSteps
   let nextIndex = 1
+  let searchDead = false   // set once web search is confirmed unavailable for this request
   const start = performance.now()
   console.log(`  [chat] model=${(model as LanguageModel & { modelId?: string }).modelId ?? String(model)} focusMode=${focusMode} maxSteps=${maxSteps}`)
 
@@ -117,10 +125,20 @@ export function runResearcher({ messages, focusMode, userId, model, abortSignal,
       queries: z.array(z.string()).describe('Search queries'),
     }),
     execute: async ({ queries }) => {
+      if (searchDead) return SEARCH_DEAD_MSG
       const errs: EngineError[] = []
       const results = await webSearchMulti(queries.slice(0, focusMode === 'thorough' ? 3 : 2), count, undefined, e => errs.push(...e), apiBudget)
       // Surface only when blocked engines left this search empty (matches pre-search semantics).
-      if (results.length === 0 && errs.length) await onEngineErrors?.(errs)
+      if (results.length === 0 && errs.length) {
+        await onEngineErrors?.(errs)
+        // Engines are blocked and the paid fallback can't help (disabled or budget spent) →
+        // every further search will also be empty. Stop the model from spinning on them.
+        if (!isSearchApiEnabled() || (apiBudget?.remaining ?? 0) <= 0) {
+          searchDead = true
+          console.log('  [researcher] search exhausted — instructing model to stop searching')
+          return SEARCH_DEAD_MSG
+        }
+      }
       return results.map(r => ({ ...r, index: nextIndex++ }))
     },
   })
