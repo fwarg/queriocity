@@ -519,19 +519,27 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
       const result = runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, onEngineErrors: warnEngineErrors, apiBudget })
       const extractor = showThinking ? new ThinkExtractor() : null
 
-      const drainFinishReason = await drainResearcherStream(result, {
-        stream, showThinking, emitSearchStatus,
-        extractor,
-        onText: async (text) => {
-          fullContent += text
-          await stream.writeSSE({ data: JSON.stringify({ type: 'text', delta: text }) })
-        },
-        onSources: async (results) => {
-          fullSources.push(...results)
-          sources.push(...results.map(r => ({ title: r.title, url: r.url })))
-          await stream.writeSSE({ data: JSON.stringify({ type: 'sources', sources: results }) })
-        },
-      })
+      const keepalive = setInterval(() => {
+        stream.writeSSE({ data: JSON.stringify({ type: 'ping' }) }).catch(() => {})
+      }, KEEPALIVE_INTERVAL_MS)
+      let drainFinishReason: string | undefined
+      try {
+        drainFinishReason = await drainResearcherStream(result, {
+          stream, showThinking, emitSearchStatus,
+          extractor,
+          onText: async (text) => {
+            fullContent += text
+            await stream.writeSSE({ data: JSON.stringify({ type: 'text', delta: text }) })
+          },
+          onSources: async (results) => {
+            fullSources.push(...results)
+            sources.push(...results.map(r => ({ title: r.title, url: r.url })))
+            await stream.writeSSE({ data: JSON.stringify({ type: 'sources', sources: results }) })
+          },
+        })
+      } finally {
+        clearInterval(keepalive)
+      }
 
       // Fallback: if the researcher exhausted its step budget on tool calls, synthesise an answer.
       // finishReason=tool-calls means the model's last action was a tool call, not a final answer —

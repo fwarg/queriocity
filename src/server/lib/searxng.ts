@@ -2,6 +2,10 @@ import { searchApi, isSearchApiEnabled } from './search-api.ts'
 
 const SEARXNG_URL = process.env.SEARXNG_URL ?? 'http://localhost:4000'
 
+// Top up via the keyed API when SearXNG returns fewer than this many results (not only when
+// empty) — e.g. when the only surviving engine returns a thin trickle. Set to 1 for empty-only.
+const API_MIN_RESULTS = parseInt(process.env.SEARCH_API_MIN_RESULTS ?? '3', 10)
+
 
 export interface SearchResult {
   title: string
@@ -18,6 +22,21 @@ export interface EngineError {
 /** Mutable per-request/run allowance for paid keyed-API fallback calls. */
 export interface SearchApiBudget {
   remaining: number
+}
+
+/** Drop results sharing a hostname (ignoring leading www.), keeping the first occurrence. */
+function dedupeByDomain(list: SearchResult[]): SearchResult[] {
+  const seen = new Set<string>()
+  return list.filter(r => {
+    try {
+      const domain = new URL(r.url).hostname.replace(/^www\./, '')
+      if (seen.has(domain)) return false
+      seen.add(domain)
+      return true
+    } catch {
+      return true
+    }
+  })
 }
 
 export async function webSearchMulti(
@@ -62,7 +81,7 @@ export async function webSearch(
     return []
   }
   const data = await res.json() as {
-    results?: Array<{ title: string; url: string; content?: string }>
+    results?: Array<{ title: string; url: string; content?: string; engine?: string; engines?: string[] }>
     unresponsive_engines?: Array<[string, string]>
   }
   // unresponsive_engines is [engine, reason] tuples, e.g. ["brave", "Suspended: too many requests"]
@@ -76,33 +95,31 @@ export async function webSearch(
     url: r.url,
     content: r.content ?? '',
   }))
-  const seen = new Set<string>()
-  const deduped = mapped.filter(r => {
-    try {
-      const domain = new URL(r.url).hostname.replace(/^www\./, '')
-      if (seen.has(domain)) return false
-      seen.add(domain)
-      return true
-    } catch {
-      return true
-    }
-  })
-  const results = deduped.slice(0, count)
+  const results = dedupeByDomain(mapped).slice(0, count)
   const ms = (performance.now() - start).toFixed(0)
-  console.log(`  [searxng] ${SEARXNG_URL} q="${query}" — ${ms}ms → ${results.length} results`)
+  // Which engines actually contributed (SearXNG tags each result with its source engines).
+  const engines = new Set<string>()
+  for (const r of data.results ?? []) for (const e of r.engines ?? (r.engine ? [r.engine] : [])) engines.add(e)
+  const from = engines.size ? ` from ${[...engines].sort().join(', ')}` : ''
+  console.log(`  [searxng] ${SEARXNG_URL} q="${query}" — ${ms}ms → ${results.length} results${from}`)
 
-  // Keyed-API fallback: only when SearXNG found nothing, and only while the per-request
-  // budget allows. The check + decrement are synchronous (no await between) so parallel
-  // queries in webSearchMulti cannot collectively exceed the cap.
-  if (results.length === 0 && isSearchApiEnabled()) {
+  // Keyed-API top-up: when SearXNG returns too few results (blocked engines, or only a thin
+  // trickle from a survivor like Marginalia), and while the per-request budget allows. The
+  // check + decrement are synchronous (no await between) so parallel queries in webSearchMulti
+  // cannot collectively exceed the cap.
+  if (results.length < API_MIN_RESULTS && isSearchApiEnabled()) {
     if (!apiBudget || apiBudget.remaining <= 0) {
       console.log(`  [search-api] budget exhausted — skipping fallback for "${query}"`)
     } else {
       apiBudget.remaining--
       const left = apiBudget.remaining   // capture before await; parallel calls decrement concurrently
       const api = await searchApi(query, count)
-      console.log(`  [search-api] fallback ${api.length ? 'used' : 'empty'}, ${left} left for this request`)
-      if (api.length) return api
+      if (api.length) {
+        const merged = dedupeByDomain([...results, ...api]).slice(0, count)
+        console.log(`  [search-api] fallback used — searxng ${results.length} + mojeek ${api.length} → ${merged.length}, ${left} left`)
+        return merged
+      }
+      console.log(`  [search-api] fallback empty, ${left} left for this request`)
     }
   }
   return results

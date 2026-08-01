@@ -491,6 +491,7 @@ SEARXNG_URL=http://localhost:4000  # url to your searxng instance
 # SEARCH_API_PROVIDER=mojeek                  # currently only: mojeek (get a key at mojeek.com)
 # SEARCH_API_KEY=                             # provider API key
 # SEARCH_API_MAX_PER_REQUEST=3                # max paid fallback calls per request/run (0 disables)
+# SEARCH_API_MIN_RESULTS=3                    # top up via the API when SearXNG returns fewer than N results (1 = empty-only)
 
 # ── URL fetching ──────────────────────────────────────────────────────────────
 # The fetch_url tool lets the LLM read full page content from a given URL.

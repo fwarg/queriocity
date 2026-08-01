@@ -183,13 +183,23 @@ export function runResearcher({ messages, focusMode, userId, model, abortSignal,
     })
   }
 
+  const fmt = (n: number | undefined) => (n != null && !isNaN(n)) ? String(n) : '?'
+  let stepIndex = 0
   return streamText({
     onError: ({ error }) => {
       console.error('  [chat] streamText error:', error)
     },
+    onStepFinish: (step) => {
+      stepIndex++
+      const toolSummary = step.toolCalls.map(c => {
+        const result = step.toolResults.find(tr => tr.toolCallId === c.toolCallId)?.result
+        const size = typeof result === 'string' ? result.length : JSON.stringify(result ?? '').length
+        return `${c.toolName}(${size}c)`
+      }).join(', ')
+      console.log(`  [chat] step ${stepIndex}: ${fmt(step.usage.promptTokens)}p + ${fmt(step.usage.completionTokens)}c tok, finish=${step.finishReason}${toolSummary ? ` tools=[${toolSummary}]` : ''}`)
+    },
     onFinish: ({ usage }) => {
       const ms = (performance.now() - start).toFixed(0)
-      const fmt = (n: number | undefined) => (n != null && !isNaN(n)) ? String(n) : '?'
       console.log(`  [chat] done — ${ms}ms  tokens: ${fmt(usage.promptTokens)}p + ${fmt(usage.completionTokens)}c`)
     },
     model,

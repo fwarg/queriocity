@@ -97,8 +97,9 @@ export async function fetchUrl(url: string): Promise<string> {
     try {
       const segments = await YoutubeTranscript.fetchTranscript(videoId)
       const text = segments.map(s => s.text).join(' ').replace(/\s+/g, ' ').trim()
-      console.log(`  [fetch-url] youtube transcript ${videoId} — ${text.length} chars in ${(performance.now() - start).toFixed(0)}ms`)
-      return cache(text.slice(0, MAX_CHARS))
+      const result = text.slice(0, MAX_CHARS)
+      console.log(`  [fetch-url] youtube transcript ${videoId} — ${result.length}${text.length > MAX_CHARS ? ` chars (truncated from ${text.length})` : ' chars'} in ${(performance.now() - start).toFixed(0)}ms`)
+      return cache(result)
     } catch (e) {
       console.log(`  [fetch-url] youtube transcript failed (${e}), falling back to static fetch`)
     }
@@ -107,8 +108,9 @@ export async function fetchUrl(url: string): Promise<string> {
   try {
     const text = await fetchStatic(url)
     if (text.length >= 300) {
-      console.log(`  [fetch-url] static ${url} — ${text.length} chars in ${(performance.now() - start).toFixed(0)}ms`)
-      return cache(text.slice(0, MAX_CHARS))
+      const result = text.slice(0, MAX_CHARS)
+      console.log(`  [fetch-url] static ${url} — ${result.length}${text.length > MAX_CHARS ? ` chars (truncated from ${text.length})` : ' chars'} in ${(performance.now() - start).toFixed(0)}ms`)
+      return cache(result)
     }
     console.log(`  [fetch-url] static fetch short (${text.length} chars), trying Playwright`)
   } catch (err) {
@@ -121,8 +123,9 @@ export async function fetchUrl(url: string): Promise<string> {
   }
   try {
     const text = await fetchWithPlaywright(url)
-    console.log(`  [fetch-url] playwright ${url} — ${text.length} chars in ${(performance.now() - start).toFixed(0)}ms`)
-    return cache(text.slice(0, MAX_CHARS))
+    const result = text.slice(0, MAX_CHARS)
+    console.log(`  [fetch-url] playwright ${url} — ${result.length}${text.length > MAX_CHARS ? ` chars (truncated from ${text.length})` : ' chars'} in ${(performance.now() - start).toFixed(0)}ms`)
+    return cache(result)
   } catch (err) {
     console.log(`  [fetch-url] playwright failed: ${err}`)
     return cache(`Error fetching ${url}: ${err}`)
