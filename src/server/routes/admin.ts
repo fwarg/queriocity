@@ -2,14 +2,25 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { generateText, embed } from 'ai'
-import { db, users, invites, chatSessions, getAppSetting, setAppSetting } from '../lib/db.ts'
-import { eq } from 'drizzle-orm'
+import { db, users, invites, chatSessions, authCredentials, getAppSetting, setAppSetting, bumpTokenVersion } from '../lib/db.ts'
+import { eq, desc } from 'drizzle-orm'
 import { indexSession } from '../lib/chat-indexer.ts'
-import { randomUUID } from 'crypto'
+import { randomUUID, randomInt } from 'crypto'
+import { hashPassword } from '../lib/auth.ts'
 import { authMiddleware, adminMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { getChatModel, getSmallModel, getThinkingModel, getEmbeddingModel } from '../lib/llm.ts'
 import { rerank, rerankEnabled } from '../lib/reranker.ts'
 import { runDream } from '../lib/memory.ts'
+
+/** Random temporary password that satisfies validatePassword's complexity rules. */
+function generateTempPassword(): string {
+  const pick = (set: string, n: number) =>
+    Array.from({ length: n }, () => set[randomInt(set.length)]).join('')
+  const chars = pick('ABCDEFGHJKLMNPQRSTUVWXYZ', 3) + pick('abcdefghijkmnpqrstuvwxyz', 5)
+    + pick('23456789', 3) + pick('!@#$%&*?', 2)
+  // Shuffle so the character classes aren't in a predictable order.
+  return chars.split('').sort(() => randomInt(2) - 0.5).join('')
+}
 
 export const adminRouter = new Hono<AppEnv>()
 
@@ -17,7 +28,7 @@ adminRouter.use('*', authMiddleware)
 adminRouter.use('*', adminMiddleware)
 
 adminRouter.get('/settings', async (c) => {
-  const [memoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchSummarizeOverflow] = await Promise.all([
+  const [memoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchSummarizeOverflow, compressHistoryOverflow] = await Promise.all([
     getAppSetting('memory_token_budget', '1000').then(Number),
     getAppSetting('dream_hour', '-1').then(Number),
     getAppSetting('dream_threshold', '1500').then(Number),
@@ -31,8 +42,9 @@ adminRouter.get('/settings', async (c) => {
     getAppSetting('rss_feed_chars_budget', '50000').then(Number),
     getAppSetting('fetch_max_pages', '8').then(Number),
     getAppSetting('fetch_summarize_overflow', 'false').then(v => v === 'true'),
+    getAppSetting('compress_history_overflow', 'false').then(v => v === 'true'),
   ])
-  return c.json({ memoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchSummarizeOverflow })
+  return c.json({ memoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchSummarizeOverflow, compressHistoryOverflow })
 })
 
 adminRouter.patch('/settings', zValidator('json', z.object({
@@ -49,6 +61,7 @@ adminRouter.patch('/settings', zValidator('json', z.object({
   rssFeedCharsBudget: z.number().int().min(5000).max(500000).optional(),
   fetchMaxPages: z.number().int().min(0).max(50).optional(),
   fetchSummarizeOverflow: z.boolean().optional(),
+  compressHistoryOverflow: z.boolean().optional(),
 })), async (c) => {
   const body = c.req.valid('json')
   if (body.dreamTarget != null && body.dreamThreshold != null && body.dreamTarget > body.dreamThreshold)
@@ -69,6 +82,7 @@ adminRouter.patch('/settings', zValidator('json', z.object({
   if (body.rssFeedCharsBudget != null) ops.push(setAppSetting('rss_feed_chars_budget', String(body.rssFeedCharsBudget)))
   if (body.fetchMaxPages != null) ops.push(setAppSetting('fetch_max_pages', String(body.fetchMaxPages)))
   if (body.fetchSummarizeOverflow != null) ops.push(setAppSetting('fetch_summarize_overflow', String(body.fetchSummarizeOverflow)))
+  if (body.compressHistoryOverflow != null) ops.push(setAppSetting('compress_history_overflow', String(body.compressHistoryOverflow)))
   await Promise.all(ops)
   return c.json({ ok: true })
 })
@@ -89,7 +103,27 @@ adminRouter.patch('/users/:id', zValidator('json', z.object({ role: z.enum(['use
   const { role } = c.req.valid('json')
   if (id === c.get('userId')) return c.json({ error: 'Cannot change your own role' }, 400)
   await db.update(users).set({ role, updatedAt: new Date() }).where(eq(users.id, id))
+  // Their existing cookie carries the old role — invalidate it so the change takes effect now.
+  await bumpTokenVersion(id)
   return c.json({ ok: true })
+})
+
+/** Issues a temporary password for a locked-out user. Returned once, in the response body —
+ *  the admin passes it on out-of-band, and the user is forced to replace it at next login. */
+adminRouter.post('/users/:id/reset-password', async (c) => {
+  const { id } = c.req.param()
+  const cred = await db.select().from(authCredentials).where(eq(authCredentials.userId, id)).get()
+  if (!cred) return c.json({ error: 'Not found' }, 404)
+
+  const tempPassword = generateTempPassword()
+  await db.update(authCredentials)
+    .set({ passwordHash: await hashPassword(tempPassword), mustChangePassword: true })
+    .where(eq(authCredentials.userId, id))
+  // Any session they still have open must not survive an admin-forced reset.
+  await bumpTokenVersion(id)
+
+  console.log(`  [admin] password reset for user ${id} by ${c.get('userId')}`)
+  return c.json({ tempPassword })
 })
 
 adminRouter.delete('/users/:id', async (c) => {
@@ -186,4 +220,23 @@ adminRouter.post('/invites',zValidator('json', z.object({ email: z.string().emai
   const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
   await db.insert(invites).values({ id, createdBy: c.get('userId'), email: email ?? null, createdAt: now, expiresAt })
   return c.json({ token: id, expiresAt })
+})
+
+adminRouter.get('/invites', async (c) => {
+  const rows = await db.select().from(invites).orderBy(desc(invites.createdAt))
+  return c.json(rows.map(i => ({
+    token: i.id,
+    email: i.email,
+    createdAt: i.createdAt,
+    expiresAt: i.expiresAt,
+    usedAt: i.usedAt,
+  })))
+})
+
+adminRouter.delete('/invites/:token', async (c) => {
+  const { token } = c.req.param()
+  const invite = await db.select().from(invites).where(eq(invites.id, token)).get()
+  if (!invite) return c.json({ error: 'Not found' }, 404)
+  await db.delete(invites).where(eq(invites.id, token))
+  return c.json({ ok: true })
 })

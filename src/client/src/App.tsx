@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
+import { RotateCcw } from 'lucide-react'
 import { MessageList } from './components/MessageList.tsx'
 import { ChatInput } from './components/ChatInput.tsx'
 import { LoginPage } from './components/LoginPage.tsx'
@@ -115,13 +116,14 @@ export default function App() {
     ? sessions.find(s => s.id === sessionId)?.spaceId ?? null
     : currentSpaceId
 
-  const { messages, setMessages, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, cancel, reset } = useChat({
+  const { messages, setMessages, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, regenerate, cancel, reset, related, setRelated } = useChat({
     sessionId,
     focusMode,
     searchCategories,
     includeFileIds: pinnedFileIds.length ? pinnedFileIds : undefined,
     includeMemoryIds: pinnedMemoryIds.length ? pinnedMemoryIds : undefined,
     spaceId: activeSpaceId ?? undefined,
+    followUpSuggestions: currentUser?.settings?.followUpSuggestions !== false,
     onSessionCreated: (id, title) => {
       setSessionId(id)
       setSessions(prev => prev.some(s => s.id === id) ? prev : [{ id, title, spaceId: activeSpaceId }, ...prev])
@@ -347,6 +349,34 @@ export default function App() {
     setExportOpen(false)
   }
 
+  /** Print the chat by cloning the message list into a detached container — see index.css.
+   *  Printing in place would capture only what the scroll container currently shows. */
+  function handlePrint() {
+    setExportOpen(false)
+    const region = document.querySelector('[data-print-region]')
+    if (!region) return
+    document.getElementById('print-root')?.remove()
+
+    const holder = document.createElement('div')
+    holder.id = 'print-root'
+    const heading = document.createElement('h1')
+    heading.textContent = sessions.find(s => s.id === sessionId)?.title ?? 'Chat'
+    const date = document.createElement('div')
+    date.className = 'print-date'
+    date.textContent = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+    holder.append(heading, date, region.cloneNode(true))
+    document.body.append(holder)
+    document.body.classList.add('printing')
+
+    const cleanup = () => {
+      holder.remove()
+      document.body.classList.remove('printing')
+      window.removeEventListener('afterprint', cleanup)
+    }
+    window.addEventListener('afterprint', cleanup)
+    window.print()
+  }
+
   function handleDeleteSession(id: string, e: React.MouseEvent) {
     e.stopPropagation()
     setConfirmDeleteId(id)
@@ -523,6 +553,17 @@ export default function App() {
   return (
     <>
     <div className="flex h-screen">
+      {currentUser?.mustChangePassword && !showSettings && (
+        <div className="fixed top-0 inset-x-0 z-50 bg-amber-900/90 text-amber-100 text-sm px-4 py-2 flex items-center justify-center gap-3">
+          <span>You are signed in with a temporary password. Please set your own.</span>
+          <button
+            onClick={() => setShowSettings(true)}
+            className="px-2 py-0.5 rounded bg-amber-700 hover:bg-amber-600 text-xs font-medium"
+          >
+            Change password
+          </button>
+        </div>
+      )}
       {showSettings && currentUser && (
         <SettingsPanel
           customPrompt={currentUser.settings?.customPrompt ?? ''}
@@ -531,10 +572,16 @@ export default function App() {
           useSpaceRag={currentUser.settings?.useSpaceRag !== false}
           useChatRag={currentUser.settings?.useChatRag !== false}
           querySuggestions={currentUser.settings?.querySuggestions !== false}
+          followUpSuggestions={currentUser.settings?.followUpSuggestions !== false}
           fontSize={currentUser.settings?.fontSize ?? 17}
           timezone={currentUser.settings?.timezone ?? ''}
           onClose={() => setShowSettings(false)}
-          onSave={(cp, st, ut, sr, cr, qs, fs, tz) => setCurrentUser(u => u ? { ...u, settings: { ...u.settings, customPrompt: cp, showThinking: st, useThinking: ut, useSpaceRag: sr, useChatRag: cr, querySuggestions: qs, fontSize: fs, timezone: tz } } : u)}
+          onPasswordChanged={() => setCurrentUser(u => u ? { ...u, mustChangePassword: false } : u)}
+          onSave={s => {
+            setCurrentUser(u => u ? { ...u, settings: { ...u.settings, ...s } } : u)
+            // Chips already on screen would otherwise linger until the next answer.
+            if (!s.followUpSuggestions) setRelated([])
+          }}
         />
       )}
       {showAdmin && currentUser && (
@@ -1379,7 +1426,31 @@ export default function App() {
               <div className="px-4 py-1 text-xs text-gray-500 italic animate-pulse">{status}</div>
             )}
             {answerTime && !busy && (
-              <div className="px-4 py-1 text-xs text-gray-500">{answerTime}</div>
+              <div className="px-4 py-1 text-xs text-gray-500 flex items-center gap-3">
+                <span>{answerTime}</span>
+                {messages.some(m => m.role === 'assistant') && (
+                  <button
+                    onClick={regenerate}
+                    title="Answer again — switch the mode first to retry differently"
+                    className="flex items-center gap-1 text-gray-500 hover:text-gray-300"
+                  >
+                    <RotateCcw size={11} /> Retry
+                  </button>
+                )}
+              </div>
+            )}
+            {related.length > 0 && !busy && (
+              <div className="px-4 pb-1 flex flex-wrap gap-1.5">
+                {related.map((q, i) => (
+                  <button
+                    key={i}
+                    onClick={() => { setRelated([]); submit(q) }}
+                    className="rounded-full border border-gray-700 bg-gray-800/60 px-2.5 py-1 text-xs text-gray-300 hover:border-gray-600 hover:text-gray-100"
+                  >
+                    {q}
+                  </button>
+                ))}
+              </div>
             )}
             {sessionId && messages.length > 0 && !busy && (
               <div className="px-4 py-1 relative flex items-center">
@@ -1398,6 +1469,9 @@ export default function App() {
                       </button>
                       <button onMouseDown={() => handleExport('last')} className="block w-full text-left px-4 py-2 text-xs text-gray-300 hover:bg-gray-700">
                         Download last answer (.md)
+                      </button>
+                      <button onMouseDown={handlePrint} className="block w-full text-left px-4 py-2 text-xs text-gray-300 hover:bg-gray-700 border-t border-gray-700">
+                        Print / Save as PDF…
                       </button>
                     </div>
                   )}

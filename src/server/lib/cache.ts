@@ -8,9 +8,12 @@ interface Entry<T> {
 }
 
 const store = new Map<string, Entry<unknown>>()
+const MAX_ENTRIES = 500
 
-export function cacheKey(query: string, focusMode: string): string {
-  return createHash('sha256').update(`${focusMode}:${query}`).digest('hex')
+/** `scope` must capture everything that personalises an answer (user, space, custom prompt,
+ *  pinned resources) — without it a cached reply can be served to a different user. */
+export function cacheKey(query: string, focusMode: string, scope: string): string {
+  return createHash('sha256').update(`${focusMode}:${scope}:${query}`).digest('hex')
 }
 
 export function getCached<T>(key: string): T | null {
@@ -23,5 +26,10 @@ export function getCached<T>(key: string): T | null {
 }
 
 export function setCached<T>(key: string, result: T): void {
-  store.set(key, { result, expires: Date.now() + TTL })
+  const now = Date.now()
+  if (store.size >= MAX_ENTRIES) {
+    for (const [k, e] of store) if (now > e.expires) store.delete(k)
+    if (store.size >= MAX_ENTRIES) store.clear()
+  }
+  store.set(key, { result, expires: now + TTL })
 }

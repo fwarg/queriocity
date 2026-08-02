@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { listUsers, setUserRole, deleteUser, createInvite, testModels, fetchAdminSettings, updateAdminSettings, triggerDream, reindexChats, type ModelTestResult } from '../lib/api.ts'
+import { listUsers, setUserRole, deleteUser, createInvite, listInvites, revokeInvite, resetUserPassword, testModels, fetchAdminSettings, updateAdminSettings, triggerDream, reindexChats, type ModelTestResult, type Invite } from '../lib/api.ts'
 import { Modal } from './Modal.tsx'
 
 interface Props {
@@ -28,6 +28,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   const [rssFeedCharsBudgetDraft, setRssFeedCharsBudgetDraft] = useState('50000')
   const [fetchMaxPagesDraft, setFetchMaxPagesDraft] = useState('8')
   const [fetchSummarizeOverflowDraft, setFetchSummarizeOverflowDraft] = useState(false)
+  const [compressHistoryOverflowDraft, setCompressHistoryOverflowDraft] = useState(false)
   const [savingBudget, setSavingBudget] = useState(false)
   const [budgetSaved, setBudgetSaved] = useState(false)
   const [dreamRunning, setDreamRunning] = useState(false)
@@ -41,6 +42,9 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   const [userList, setUserList] = useState<UserRow[]>([])
   const [inviteUrl, setInviteUrl] = useState('')
   const [inviteEmail, setInviteEmail] = useState('')
+  const [invites, setInvites] = useState<Invite[]>([])
+  // Shown once after a reset — the password is not recoverable afterwards.
+  const [tempPassword, setTempPassword] = useState<{ id: string; password: string } | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
@@ -59,12 +63,14 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
       setRssFeedCharsBudgetDraft(String(s.rssFeedCharsBudget))
       setFetchMaxPagesDraft(String(s.fetchMaxPages))
       setFetchSummarizeOverflowDraft(s.fetchSummarizeOverflow)
+      setCompressHistoryOverflowDraft(s.compressHistoryOverflow)
     }).catch(() => setError('Failed to load settings.'))
   }, [])
 
   useEffect(() => {
     if (tab === 'users' && userList.length === 0) {
       listUsers().then(setUserList).catch(() => setError('Failed to load users.'))
+      listInvites().then(setInvites).catch(() => setError('Failed to load invites.'))
     }
   }, [tab])
 
@@ -94,7 +100,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     setError('')
     setSavingBudget(true)
     try {
-      await updateAdminSettings({ memoryTokenBudget: budget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, attachmentChars, spaceRagBudget, queryReformulation: queryReformulationDraft, rssFeedCharsBudget, fetchMaxPages, fetchSummarizeOverflow: fetchSummarizeOverflowDraft })
+      await updateAdminSettings({ memoryTokenBudget: budget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, attachmentChars, spaceRagBudget, queryReformulation: queryReformulationDraft, rssFeedCharsBudget, fetchMaxPages, fetchSummarizeOverflow: fetchSummarizeOverflowDraft, compressHistoryOverflow: compressHistoryOverflowDraft })
 
       onBudgetChange?.(budget)
       setBudgetSaved(true)
@@ -165,9 +171,45 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
       const { token } = await createInvite(inviteEmail || undefined)
       const url = `${window.location.origin}/register?token=${token}`
       setInviteUrl(url)
+      setInvites(await listInvites())
     } finally {
       setBusy(false)
     }
+  }
+
+  async function handleResetPassword(id: string) {
+    if (!confirm('Replace this user\'s password with a temporary one? Their current password stops working and any open session is signed out.')) return
+    setBusy(true)
+    setError('')
+    try {
+      const { tempPassword } = await resetUserPassword(id)
+      setTempPassword({ id, password: tempPassword })
+    } catch {
+      setError('Failed to reset password.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleRevokeInvite(token: string) {
+    setBusy(true)
+    try {
+      await revokeInvite(token)
+      setInvites(await listInvites())
+    } catch {
+      setError('Failed to revoke invite.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /** 'used', 'expired', or the remaining lifetime — an invite is only usable while pending. */
+  function inviteStatus(i: Invite): string {
+    if (i.usedAt) return 'used'
+    const msLeft = new Date(i.expiresAt).getTime() - Date.now()
+    if (msLeft <= 0) return 'expired'
+    const days = Math.ceil(msLeft / 86400_000)
+    return days > 1 ? `${days} days left` : 'expires today'
   }
 
   const tabBtn = (t: Tab, _label: string) =>
@@ -306,6 +348,20 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
               </div>
             </div>
 
+            {/* Context */}
+            <div className="flex flex-col gap-3 border-t border-gray-800 pt-5">
+              <p className="text-xs font-semibold text-gray-300 uppercase tracking-wider">Context</p>
+              <div className="flex flex-col gap-1.5">
+                <p className="text-xs text-gray-400 font-medium">Compress dropped history</p>
+                <p className="text-xs text-gray-500">When a research turn's conversation history must be trimmed to fit the context budget, summarize the dropped messages with the small model and fold the summary into the system prompt instead of discarding them outright. Adds latency; only applies to balanced/thorough research turns.</p>
+                <label className="flex items-center gap-2 cursor-pointer w-fit">
+                  <input type="checkbox" checked={compressHistoryOverflowDraft} onChange={e => setCompressHistoryOverflowDraft(e.target.checked)}
+                    className="accent-blue-500 w-3.5 h-3.5" />
+                  <span className="text-xs text-gray-400">Enabled</span>
+                </label>
+              </div>
+            </div>
+
             {/* Attachments */}
             <div className="flex flex-col gap-3 border-t border-gray-800 pt-5">
               <p className="text-xs font-semibold text-gray-300 uppercase tracking-wider">Attachments</p>
@@ -389,7 +445,14 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                         </button>
                       )}
                     </td>
-                    <td className="py-2 text-right">
+                    <td className="py-2 text-right whitespace-nowrap">
+                      <button
+                        onClick={() => handleResetPassword(u.id)}
+                        disabled={busy}
+                        className="text-xs text-gray-600 hover:text-amber-400 disabled:opacity-50 mr-3"
+                      >
+                        Reset password
+                      </button>
                       {u.id !== currentUserId && (
                         <button
                           onClick={() => handleDelete(u.id)}
@@ -403,6 +466,34 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                 ))}
               </tbody>
             </table>
+
+            {tempPassword && (
+              <div className="flex flex-col gap-1 border border-amber-700/50 bg-amber-950/30 rounded p-3">
+                <p className="text-xs text-amber-300 font-medium">
+                  Temporary password for {userList.find(u => u.id === tempPassword.id)?.email ?? 'user'}
+                </p>
+                <p className="text-xs text-gray-400">
+                  Shown once — pass it on securely. They will be asked to set their own password after signing in.
+                </p>
+                <div className="flex items-center gap-2">
+                  <input
+                    readOnly
+                    value={tempPassword.password}
+                    onFocus={e => e.target.select()}
+                    className="flex-1 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-xs font-mono text-gray-100 focus:outline-none"
+                  />
+                  <button
+                    onClick={() => navigator.clipboard.writeText(tempPassword.password)}
+                    className="text-xs text-blue-400 hover:underline"
+                  >
+                    Copy
+                  </button>
+                  <button onClick={() => setTempPassword(null)} className="text-xs text-gray-500 hover:text-gray-300">
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Invite */}
             <div className="flex flex-col gap-2 border-t border-gray-800 pt-4">
@@ -437,6 +528,27 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                   >
                     Copy
                   </button>
+                </div>
+              )}
+
+              {invites.length > 0 && (
+                <div className="flex flex-col gap-1 pt-2">
+                  <p className="text-xs text-gray-400 font-medium">Outstanding invites</p>
+                  {invites.map(i => (
+                    <div key={i.token} className="flex items-center gap-2 text-xs text-gray-400">
+                      <span className="flex-1 truncate">
+                        {i.email ?? 'any email'}
+                        <span className="text-gray-600"> · {i.token.slice(0, 8)}… · {inviteStatus(i)}</span>
+                      </span>
+                      <button
+                        onClick={() => handleRevokeInvite(i.token)}
+                        disabled={busy}
+                        className="text-red-400 hover:underline disabled:opacity-50 whitespace-nowrap"
+                      >
+                        Revoke
+                      </button>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

@@ -65,6 +65,55 @@ export async function buildChatFileBlock(
   return { block, fileSources }
 }
 
+export interface HistoryHit {
+  session: string
+  date: string
+  content: string
+}
+
+/** Semantic search over past conversations in a space, for the search_space_history tool.
+ *  Same KNN as the passive RAG block in buildMemoryBlock, but with a model-chosen query and k,
+ *  and carrying session title + date so the model can tell when something was said. */
+export async function searchSpaceHistory(
+  spaceId: string,
+  query: string,
+  k = 8,
+  excludeSessionId?: string,
+): Promise<HistoryHit[]> {
+  if (!query.trim()) return []
+  let embedding: number[]
+  try {
+    embedding = await embedText(query)
+  } catch (e) {
+    console.error('  [memory] history search embed failed:', e)
+    return []
+  }
+  try {
+    const rows = sqlite.prepare(`
+      SELECT ccm.content, cs.title, cs.updated_at
+      FROM chat_chunks cc
+      JOIN chat_chunk_meta ccm ON ccm.chunk_id = cc.chunk_id
+      JOIN chat_sessions cs ON cs.id = ccm.session_id
+      WHERE cc.embedding MATCH ?
+        AND cs.space_id = ?
+        AND cs.id IS NOT ?
+        AND k = ?
+      ORDER BY cc.distance
+    `).all(JSON.stringify(embedding), spaceId, excludeSessionId ?? null, k) as
+      Array<{ content: string; title: string; updated_at: number }>
+    console.log(`  [memory] search_space_history "${query.slice(0, 60)}" → ${rows.length} hits`)
+    return rows.map(r => ({
+      session: r.title,
+      // Drizzle's `mode: 'timestamp'` stores seconds, and this is raw SQL, so scale to ms.
+      date: new Date(r.updated_at * 1000).toISOString().slice(0, 10),
+      content: r.content,
+    }))
+  } catch (e) {
+    console.error('  [memory] history search failed:', e)
+    return []
+  }
+}
+
 /** Load all memories for a space, newest first. */
 export async function getSpaceMemories(spaceId: string) {
   return db.select().from(spaceMemories)

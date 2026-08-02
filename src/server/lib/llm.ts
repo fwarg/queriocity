@@ -19,6 +19,11 @@ function makeProvider({ provider, baseURL, apiKey }: ProviderConfig) {
 // (esp. thinking-model) loops; covers reasoning + answer tokens together.
 export const RESEARCH_MAX_TOKENS = parseInt(process.env.RESEARCH_MAX_TOKENS ?? '6000')
 
+const SMALL_MODEL_CONTEXT_TOKENS = parseInt(process.env.SMALL_MODEL_CONTEXT_TOKENS ?? '4096')
+// Usable input budget for one small-model call, in chars: reserves 30% of its context for the
+// system prompt + output, 2.5 chars/token for dense/technical text.
+export const SMALL_MODEL_INPUT_CHARS = Math.floor(SMALL_MODEL_CONTEXT_TOKENS * 0.7 * 2.5)
+
 const BASE_URL = process.env.BASE_URL
 const BASE_PROVIDER = process.env.BASE_PROVIDER ?? 'openai'
 

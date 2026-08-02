@@ -12,6 +12,7 @@
 import { Hono } from 'hono'
 import { authMiddleware, type AppEnv } from './middleware/auth.ts'
 import { cors } from 'hono/cors'
+import { secureHeaders } from 'hono/secure-headers'
 import { logger } from 'hono/logger'
 import { serveStatic } from 'hono/bun'
 import { chatRouter } from './routes/chat.ts'
@@ -29,14 +30,25 @@ import { feedsRouter } from './routes/feeds.ts'
 import { sqlite, getAppSetting, setAppSetting } from './lib/db.ts'
 import { runDream } from './lib/memory.ts'
 import { runDueMonitors } from './lib/monitor-runner.ts'
+import { validateConfig, checkEmbeddingDimensions } from './lib/config-check.ts'
 
 import { IMAGE_STORAGE_DIR } from './lib/image-store.ts'
 
 const app = new Hono<AppEnv>()
 
 app.use('*', logger())
-const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN ?? '*'
-app.use('/api/*', cors({ origin: ALLOWED_ORIGIN, credentials: true }))
+// No CSP here: the client renders KaTeX, syntax highlighting and a service worker, and an
+// untested policy breaks the page silently. A ready-to-enable policy is in the README's
+// nginx section instead. HSTS is left to the proxy that terminates TLS.
+app.use('*', secureHeaders({ xFrameOptions: 'DENY', referrerPolicy: 'strict-origin-when-cross-origin', strictTransportSecurity: false }))
+
+// The client is always same-origin (Hono serves it in production, Vite proxies /api in dev),
+// so CORS is off unless a cross-origin caller is explicitly configured.
+const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN
+if (ALLOWED_ORIGIN === '*') {
+  console.warn('[cors] ALLOWED_ORIGIN=* allows any site to call this API. Set it to your own origin, or leave it unset for same-origin only.')
+}
+if (ALLOWED_ORIGIN) app.use('/api/*', cors({ origin: ALLOWED_ORIGIN, credentials: true }))
 
 app.route('/api/auth', authRouter)
 app.route('/api/chat', chatRouter)
@@ -115,7 +127,11 @@ async function preflight() {
   } catch {
     console.warn(`  [preflight] chat LLM unreachable at ${chatBase} — chat will fail`)
   }
+
+  await checkEmbeddingDimensions()
 }
+
+validateConfig()
 
 preflight().catch(() => {})
 

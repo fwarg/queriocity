@@ -5,8 +5,10 @@ export interface AuthUser {
   email: string
   name: string | null
   role: 'user' | 'admin'
-  settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; useSpaceRag?: boolean; useChatRag?: boolean; querySuggestions?: boolean; fontSize?: number; timezone?: string }
+  settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; useSpaceRag?: boolean; useChatRag?: boolean; querySuggestions?: boolean; followUpSuggestions?: boolean; fontSize?: number; timezone?: string }
   memoryTokenBudget: number
+  /** True after an admin issued a temporary password — the user must set their own. */
+  mustChangePassword?: boolean
 }
 
 export interface Space { id: string; name: string; chatCount: number; memoryCount: number; createdAt: number }
@@ -16,10 +18,13 @@ export interface SpaceMemory {
   sessionId: string | null; createdAt: number
 }
 
+/** `content` is a short snippet, shown as a preview when hovering the [N] citation. */
+export interface Source { title: string; url: string; content?: string }
+
 export interface Message {
   role: 'user' | 'assistant'
   content: string
-  sources?: Array<{ title: string; url: string }>
+  sources?: Source[]
   fileSources?: Array<{ title: string; url: string }>
   thinking?: string
   images?: Array<{ url: string; alt: string }>
@@ -81,7 +86,7 @@ export async function fetchSuggestions(text: string): Promise<string[]> {
   } catch { return [] }
 }
 
-export async function updateSettings(settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; useSpaceRag?: boolean; useChatRag?: boolean; fontSize?: number; timezone?: string; querySuggestions?: boolean }): Promise<void> {
+export async function updateSettings(settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; useSpaceRag?: boolean; useChatRag?: boolean; fontSize?: number; timezone?: string; querySuggestions?: boolean; followUpSuggestions?: boolean }): Promise<void> {
   await fetch(`${BASE}/users/settings`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -116,6 +121,41 @@ export async function createInvite(email?: string): Promise<{ token: string; exp
   return res.json()
 }
 
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  const res = await fetch(`${BASE}/users/password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ currentPassword, newPassword }),
+  })
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}))
+    throw new Error(e.error ?? 'Could not change password')
+  }
+}
+
+export async function resetUserPassword(id: string): Promise<{ tempPassword: string }> {
+  const res = await fetch(`${BASE}/admin/users/${id}/reset-password`, { method: 'POST' })
+  if (!res.ok) throw new Error('Could not reset password')
+  return res.json()
+}
+
+export interface Invite {
+  token: string
+  email: string | null
+  createdAt: string
+  expiresAt: string
+  usedAt: string | null
+}
+
+export async function listInvites(): Promise<Invite[]> {
+  const res = await fetch(`${BASE}/admin/invites`)
+  return res.json()
+}
+
+export async function revokeInvite(token: string): Promise<void> {
+  await fetch(`${BASE}/admin/invites/${token}`, { method: 'DELETE' })
+}
+
 export type ModelTestResult = { role: string; model: string; ok: boolean; ms: number; info: string }
 
 export async function testModels(): Promise<ModelTestResult[]> {
@@ -134,6 +174,7 @@ export async function* streamChat(
   searchCategories?: Array<'news' | 'science' | 'discussions' | 'tech'>,
   includeFileIds?: string[],
   includeMemoryIds?: string[],
+  regenerate?: boolean,
 ): AsyncGenerator<{ type: string; [k: string]: unknown }> {
   const res = await fetch(`${BASE}/chat`, {
     method: 'POST',
@@ -152,6 +193,7 @@ export async function* streamChat(
       ...(searchCategories?.length ? { searchCategories } : {}),
       ...(includeFileIds?.length ? { includeFileIds } : {}),
       ...(includeMemoryIds?.length ? { includeMemoryIds } : {}),
+      ...(regenerate ? { regenerate: true } : {}),
     }),
     signal,
   })
@@ -162,25 +204,81 @@ export async function* streamChat(
     throw new Error(detail || `Chat error: ${res.status}`)
   }
 
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
+  // The server keeps generating for a grace period after a dropped connection and buffers
+  // every event, so a network blip mid-answer is recovered by asking for what we missed
+  // rather than losing minutes of work. `seen` is the resume cursor.
+  let seen = 0
+  let sid = sessionId
+  let finished = false
 
-  try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() ?? ''
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          try { yield JSON.parse(line.slice(6)) } catch {}
+  async function* readEvents(body: ReadableStream<Uint8Array>) {
+    const reader = body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          let payload: { type: string; [k: string]: unknown }
+          try { payload = JSON.parse(line.slice(6)) } catch { continue }
+          seen++
+          if (payload.type === 'session') { sid = payload.sessionId as string; continue }
+          if (payload.type === 'done') finished = true
+          if (payload.type === 'ping') continue
+          yield payload
         }
       }
+    } finally {
+      reader.releaseLock()
     }
-  } finally {
-    reader.releaseLock()
+  }
+
+  yield* readEvents(res.body)
+
+  for (let attempt = 1; !finished && sid && !signal?.aborted && attempt <= RESUME_ATTEMPTS; attempt++) {
+    await new Promise(r => setTimeout(r, RESUME_BACKOFF_MS * attempt))
+    if (signal?.aborted) break
+    let resumed: Response
+    try {
+      resumed = await fetch(`${BASE}/chat/resume/${sid}?from=${seen}`, { signal })
+    } catch {
+      continue                      // still offline — try again until attempts run out
+    }
+    // 404 means the run is gone (finished long ago, or abandoned); nothing left to wait for.
+    if (resumed.status === 404) break
+    if (!resumed.ok || !resumed.body) continue
+    yield* readEvents(resumed.body)
+  }
+}
+
+const RESUME_ATTEMPTS = 4
+const RESUME_BACKOFF_MS = 800
+
+/** Asks the server to abandon a run. Best-effort — the run also self-abandons after its
+ *  grace period, so a failure here only means the model keeps working a little longer. */
+export async function stopChat(sessionId: string): Promise<void> {
+  try {
+    await fetch(`${BASE}/chat/${sessionId}/stop`, { method: 'POST' })
+  } catch { /* nothing useful to do */ }
+}
+
+export async function fetchRelatedQuestions(question: string, answer: string): Promise<string[]> {
+  try {
+    const res = await fetch(`${BASE}/chat/related`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question, answer }),
+    })
+    if (!res.ok) return []
+    const data = await res.json()
+    return Array.isArray(data) ? data : []
+  } catch {
+    return []
   }
 }
 
@@ -308,11 +406,11 @@ export async function ingestUrl(url: string): Promise<{ fileId: string; filename
   return res.json()
 }
 
-export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; attachmentChars: number; spaceRagBudget: number; queryReformulation: boolean; rssFeedCharsBudget: number; fetchMaxPages: number; fetchSummarizeOverflow: boolean }> {
+export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; attachmentChars: number; spaceRagBudget: number; queryReformulation: boolean; rssFeedCharsBudget: number; fetchMaxPages: number; fetchSummarizeOverflow: boolean; compressHistoryOverflow: boolean }> {
   return fetch(`${BASE}/admin/settings`).then(r => r.json())
 }
 
-export async function updateAdminSettings(s: { memoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; dreamDeep?: boolean; memoryExtractChars?: number; rerankTopN?: number; attachmentChars?: number; spaceRagBudget?: number; queryReformulation?: boolean; rssFeedCharsBudget?: number; fetchMaxPages?: number; fetchSummarizeOverflow?: boolean }): Promise<void> {
+export async function updateAdminSettings(s: { memoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; dreamDeep?: boolean; memoryExtractChars?: number; rerankTopN?: number; attachmentChars?: number; spaceRagBudget?: number; queryReformulation?: boolean; rssFeedCharsBudget?: number; fetchMaxPages?: number; fetchSummarizeOverflow?: boolean; compressHistoryOverflow?: boolean }): Promise<void> {
   await fetch(`${BASE}/admin/settings`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },

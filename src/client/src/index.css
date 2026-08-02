@@ -5,3 +5,113 @@
 body {
   @apply bg-gray-950 text-gray-100 min-h-screen overflow-x-hidden;
 }
+
+/* Print / Save as PDF. handlePrint() in App.tsx clones the message list into #print-root
+   rather than printing the live tree: the chat lives inside scroll containers, so printing
+   in place yields only the visible viewport. The clone sits in normal flow and prints whole.
+   Colours are flattened to black-on-white — the app's dark theme is unreadable on paper and
+   burns ink. */
+#print-root {
+  display: none;
+}
+
+@media print {
+  @page {
+    margin: 18mm 15mm;
+  }
+
+  /* The dark body background is normally dropped by the browser (backgrounds are off by
+     default when printing), but not if the user ticks "Background graphics" — without this
+     that gives black text on a black page. */
+  html, body.printing {
+    background: #fff !important;
+    color: #000 !important;
+  }
+
+  body.printing > #root {
+    display: none !important;
+  }
+
+  body.printing #print-root {
+    display: block !important;
+    font-family: Georgia, 'Times New Roman', serif;
+    color: #000;
+  }
+
+  /* Beats the dark-theme utility classes and react-syntax-highlighter's inline styles
+     (an !important declaration outranks a non-important inline style). */
+  #print-root, #print-root * {
+    background: transparent !important;
+    color: #000 !important;
+    border-color: #bbb !important;
+    box-shadow: none !important;
+    max-width: none !important;
+    overflow: visible !important;
+    text-shadow: none !important;
+  }
+
+  #print-root h1 {
+    font-size: 18pt;
+    font-weight: 700;
+    margin-bottom: 2pt;
+  }
+
+  #print-root .print-date {
+    font-size: 9pt;
+    color: #555 !important;
+    margin-bottom: 14pt;
+    border-bottom: 1px solid #bbb;
+    padding-bottom: 6pt;
+  }
+
+  /* Each turn labelled, since the on-screen cue is colour + alignment and both are gone. */
+  #print-root [data-role] {
+    display: block !important;
+    margin-bottom: 12pt;
+    page-break-inside: avoid;
+  }
+
+  #print-root [data-role]::before {
+    content: attr(data-role);
+    display: block;
+    font-family: system-ui, sans-serif;
+    font-size: 8pt;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #777 !important;
+  }
+
+  #print-root [data-role='user'] {
+    border-left: 2px solid #bbb;
+    padding-left: 8pt;
+  }
+
+  #print-root pre, #print-root code {
+    background: #f4f4f4 !important;
+    border: 1px solid #ddd !important;
+    font-family: 'DejaVu Sans Mono', Consolas, monospace;
+    font-size: 9pt;
+    white-space: pre-wrap !important;
+    word-break: break-word;
+  }
+
+  #print-root a {
+    color: #24427a !important;
+    text-decoration: underline;
+  }
+
+  /* Icon-only controls (speak, collapse, download) carry no meaning on paper. */
+  #print-root button > svg {
+    display: none !important;
+  }
+
+  #print-root button:has(> svg:only-child) {
+    display: none !important;
+  }
+
+  #print-root img {
+    max-width: 100% !important;
+    page-break-inside: avoid;
+  }
+}

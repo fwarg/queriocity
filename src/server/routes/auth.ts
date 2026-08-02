@@ -5,29 +5,21 @@ import { getCookie, setCookie, deleteCookie } from 'hono/cookie'
 import { db, users, authCredentials, invites, parseSettings, getAppSetting } from '../lib/db.ts'
 import { eq, count } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
+import bcrypt from 'bcryptjs'
 import {
   hashPassword, verifyPassword, signToken, verifyToken,
   validatePassword, AUTH_COOKIE, COOKIE_OPTIONS,
 } from '../lib/auth.ts'
+import { RateLimiter, clientIp, warnIfProxyUntrusted } from '../lib/rate-limit.ts'
 
 export const authRouter = new Hono()
 
-// Simple in-memory rate limiter for login: max 10 attempts per 15 minutes per IP
-const loginAttempts = new Map<string, { count: number; resetAt: number }>()
-const LOGIN_LIMIT = 10
-const LOGIN_WINDOW_MS = 15 * 60 * 1000
+// Max 10 attempts per 15 minutes per client address, for both login and registration.
+const authAttempts = new RateLimiter(10, 15 * 60 * 1000)
 
-function checkLoginRateLimit(ip: string): boolean {
-  const now = Date.now()
-  const entry = loginAttempts.get(ip)
-  if (!entry || entry.resetAt < now) {
-    loginAttempts.set(ip, { count: 1, resetAt: now + LOGIN_WINDOW_MS })
-    return true
-  }
-  if (entry.count >= LOGIN_LIMIT) return false
-  entry.count++
-  return true
-}
+// Compared against when the email is unknown, so a miss costs the same time as a wrong
+// password and the response can't be used to enumerate registered addresses.
+const DUMMY_HASH = bcrypt.hashSync('unused-placeholder-for-constant-time-compare', 12)
 
 authRouter.get('/has-users', async (c) => {
   const [{ value }] = await db.select({ value: count() }).from(users)
@@ -42,6 +34,9 @@ const registerSchema = z.object({
 })
 
 authRouter.post('/register', zValidator('json', registerSchema), async (c) => {
+  warnIfProxyUntrusted(c)
+  if (!authAttempts.check(clientIp(c))) return c.json({ error: 'Too many attempts. Try again later.' }, 429)
+
   const { email, password, name, inviteToken } = c.req.valid('json')
 
   const pwError = validatePassword(password)
@@ -77,7 +72,7 @@ authRouter.post('/register', zValidator('json', registerSchema), async (c) => {
     userId, email: email.toLowerCase(), passwordHash, active: true,
   })
 
-  const token = await signToken({ userId, email: email.toLowerCase(), role })
+  const token = await signToken({ userId, email: email.toLowerCase(), role, tokenVersion: 0 })
   setCookie(c, AUTH_COOKIE, token, COOKIE_OPTIONS)
   return c.json({ id: userId, email: email.toLowerCase(), name: name ?? null, role }, 201)
 })
@@ -88,20 +83,19 @@ const loginSchema = z.object({
 })
 
 authRouter.post('/login', zValidator('json', loginSchema), async (c) => {
-  const ip = c.req.header('x-forwarded-for') ?? c.req.header('x-real-ip') ?? 'unknown'
-  if (!checkLoginRateLimit(ip)) return c.json({ error: 'Too many login attempts. Try again later.' }, 429)
+  warnIfProxyUntrusted(c)
+  if (!authAttempts.check(clientIp(c))) return c.json({ error: 'Too many login attempts. Try again later.' }, 429)
 
   const { email, password } = c.req.valid('json')
   const cred = await db.select().from(authCredentials)
     .where(eq(authCredentials.email, email.toLowerCase())).get()
-  if (!cred || !cred.active) return c.json({ error: 'Invalid credentials' }, 401)
-  const ok = await verifyPassword(password, cred.passwordHash)
-  if (!ok) return c.json({ error: 'Invalid credentials' }, 401)
+  const ok = await verifyPassword(password, cred?.passwordHash ?? DUMMY_HASH)
+  if (!cred || !cred.active || !ok) return c.json({ error: 'Invalid credentials' }, 401)
   const user = await db.select().from(users).where(eq(users.id, cred.userId)).get()
   if (!user) return c.json({ error: 'User not found' }, 500)
-  const token = await signToken({ userId: user.id, email: user.email, role: user.role as 'user' | 'admin' })
+  const token = await signToken({ userId: user.id, email: user.email, role: user.role as 'user' | 'admin', tokenVersion: user.tokenVersion })
   setCookie(c, AUTH_COOKIE, token, COOKIE_OPTIONS)
-  return c.json({ id: user.id, email: user.email, name: user.name, role: user.role })
+  return c.json({ id: user.id, email: user.email, name: user.name, role: user.role, mustChangePassword: cred.mustChangePassword })
 })
 
 authRouter.post('/logout', (c) => {
@@ -113,16 +107,20 @@ authRouter.get('/me', async (c) => {
   const token = getCookie(c, AUTH_COOKIE)
   if (!token) return c.json({ error: 'Unauthorized' }, 401)
   try {
-    const { userId } = await verifyToken(token)
-    const [user, memoryTokenBudget] = await Promise.all([
+    const { userId, tokenVersion } = await verifyToken(token)
+    const [user, memoryTokenBudget, cred] = await Promise.all([
       db.select().from(users).where(eq(users.id, userId)).get(),
       getAppSetting('memory_token_budget', '1000').then(v => parseInt(v)),
+      db.select({ mustChangePassword: authCredentials.mustChangePassword })
+        .from(authCredentials).where(eq(authCredentials.userId, userId)).get(),
     ])
     if (!user) return c.json({ error: 'User not found' }, 404)
+    if (user.tokenVersion !== tokenVersion) return c.json({ error: 'Invalid token' }, 401)
     return c.json({
       id: user.id, email: user.email, name: user.name,
       role: user.role, settings: parseSettings(user.settings),
       memoryTokenBudget,
+      mustChangePassword: cred?.mustChangePassword ?? false,
     })
   } catch {
     return c.json({ error: 'Invalid token' }, 401)

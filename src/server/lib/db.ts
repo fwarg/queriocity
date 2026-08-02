@@ -1,7 +1,7 @@
 import { Database } from 'bun:sqlite'
 import * as sqliteVec from 'sqlite-vec'
 import { drizzle } from 'drizzle-orm/bun-sqlite'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { sqliteTable, text, integer, primaryKey } from 'drizzle-orm/sqlite-core'
 
 const DB_PATH = process.env.DB_PATH ?? 'queriocity.db'
@@ -9,6 +9,12 @@ const DB_PATH = process.env.DB_PATH ?? 'queriocity.db'
 const sqlite = new Database(DB_PATH)
 sqlite.loadExtension(sqliteVec.getLoadablePath())
 sqlite.run('PRAGMA foreign_keys = ON')
+// WAL lets background work (monitor runs, nightly dream compaction) write while requests
+// read, instead of blocking them; busy_timeout absorbs the brief contention that remains.
+// `sqlite3 .backup` — the method in the README — stays correct under WAL.
+sqlite.run('PRAGMA journal_mode = WAL')
+sqlite.run('PRAGMA synchronous = NORMAL')
+sqlite.run('PRAGMA busy_timeout = 5000')
 
 export const db = drizzle(sqlite)
 
@@ -20,6 +26,7 @@ export const users = sqliteTable('users', {
   name: text('name'),
   role: text('role', { enum: ['user', 'admin'] }).notNull().default('user'),
   settings: text('settings').notNull().default('{}'),
+  tokenVersion: integer('token_version').notNull().default(0),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 })
@@ -30,6 +37,8 @@ export const authCredentials = sqliteTable('auth_credentials', {
   email: text('email').notNull().unique(),
   passwordHash: text('password_hash').notNull(),
   active: integer('active', { mode: 'boolean' }).notNull().default(true),
+  /** Set when an admin issues a temporary password; the user is prompted to replace it. */
+  mustChangePassword: integer('must_change_password', { mode: 'boolean' }).notNull().default(false),
 })
 
 export const invites = sqliteTable('invites', {
@@ -352,6 +361,8 @@ function initSchema() {
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_monitors_user_id ON monitors(user_id)`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_monitors_next_run ON monitors(next_run_at)`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_monitor_runs_monitor_user ON monitor_runs(monitor_id, user_id)`)
+  try { sqlite.run('ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0') } catch {}
+  try { sqlite.run('ALTER TABLE auth_credentials ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0') } catch {}
   try { sqlite.run('ALTER TABLE monitors ADD COLUMN preferred_hour INTEGER') } catch {}
   try { sqlite.run('ALTER TABLE monitors ADD COLUMN timezone TEXT') } catch {}
   try { sqlite.run('ALTER TABLE monitors ADD COLUMN feed_sources TEXT') } catch {}
@@ -382,6 +393,14 @@ export function parseSettings(s: string): Record<string, unknown> {
 export async function getAppSetting(key: string, fallback: string): Promise<string> {
   const row = await db.select().from(appSettings).where(eq(appSettings.key, key)).get()
   return row?.value ?? fallback
+}
+
+/** Invalidates every JWT already issued to a user. Call on role change, password change,
+ *  and anywhere else an existing session must stop being trusted. */
+export async function bumpTokenVersion(userId: string): Promise<void> {
+  await db.update(users)
+    .set({ tokenVersion: sql`${users.tokenVersion} + 1`, updatedAt: new Date() })
+    .where(eq(users.id, userId))
 }
 
 export async function setAppSetting(key: string, value: string): Promise<void> {

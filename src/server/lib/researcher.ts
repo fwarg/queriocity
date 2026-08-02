@@ -1,11 +1,12 @@
 import { streamText, tool } from 'ai'
 import { z } from 'zod'
 import type { LanguageModel, CoreMessage } from 'ai'
-import { webSearchMulti, type SearchResult, type EngineError } from './searxng.ts'
+import { webSearchMulti, type SearchResult, type EngineError, type SearchApiBudget } from './searxng.ts'
+import { isSearchApiEnabled } from './search-api.ts'
 import { searchUploads } from './files/uploads-search.ts'
-import { saveMemory } from './memory.ts'
-import { fetchUrl } from './fetch-url.ts'
-import { trimMessages } from './trim-messages.ts'
+import { saveMemory, searchSpaceHistory } from './memory.ts'
+import { fetchUrl, processUrlsForContext, MIN_URL_CONTEXT_CHARS } from './fetch-url.ts'
+import { trimMessages, compressMessages, contextCharBudget, CONTEXT_RESERVE_FRACTION } from './trim-messages.ts'
 import { RESEARCH_MAX_TOKENS } from './llm.ts'
 
 
@@ -40,6 +41,33 @@ const MODE_CONFIG = {
   thorough: { maxSteps: 5, count: 10 },
 }
 
+// Fraction of the total input budget reserved for agentic tool (web_search/fetch_url) results,
+// held back from history trimming so a long conversation can't leave the tools starved of room,
+// however much history exists.
+const TOOL_BUDGET_RESERVE_FRACTION = parseFloat(process.env.TOOL_BUDGET_RESERVE_FRACTION ?? '0.3')
+// Fraction of the history sub-budget the small-model summary of dropped messages may itself
+// consume when history compression is enabled (comes out of that sub-budget, not additive).
+const COMPRESS_SUMMARY_FRACTION = 0.12
+
+// Returned from web_search once search is confirmed unavailable, so the model stops
+// burning its remaining steps on futile searches and answers with what it already has.
+const SEARCH_DEAD_MSG = {
+  error: 'Web search is unavailable right now (search engines are blocked and the fallback search quota for this request is used up). Do NOT call web_search again — write your answer using the results already gathered.',
+}
+
+// Returned from fetch_url/web_search once the shared per-turn context budget is used up,
+// so the model stops requesting more content and answers with what it already has.
+const CONTEXT_BUDGET_DEAD_MSG = {
+  error: 'The available context budget for this research turn has been used up by search/fetch results already gathered. Do NOT call web_search or fetch_url again — write your answer using the results already gathered.',
+}
+
+// Returned once too few steps remain to act on another tool result. Tools cannot be removed
+// mid-run (streamText's experimental_activeTools is fixed at call time and ai@4 has no
+// prepareStep for streaming), so the last rounds are closed off at the tool level instead.
+const FINAL_STEP_MSG = {
+  error: 'No research steps remain. Do NOT call any tool again — write your final answer NOW from the results already gathered. If they only partially cover the question, answer with what they do support and say briefly what was missing; do not reply with a refusal.',
+}
+
 export interface ResearchOptions {
   messages: Array<{ role: 'user' | 'assistant'; content: string }>
   focusMode: 'balanced' | 'thorough'
@@ -54,15 +82,34 @@ export interface ResearchOptions {
   spaceId?: string
   sessionId?: string
   memoryBlock?: string
+  /** Summarize (vs. truncate) URL content that overflows the context budget. Default false. */
+  fetchSummarize?: boolean
+  /** Summarize (vs. hard-drop) conversation history that overflows the context budget. Default false. */
+  compressHistory?: boolean
+  /** SearXNG category filter selected by the user; applies to the researcher's own searches
+   *  too, not just the pre-search, or the model's follow-ups silently query a different
+   *  engine set than the one the user asked for. */
+  searchCategory?: string
   maxStepsOverride?: number
   /** Called when a web_search returns no results because engines were suspended/blocked. */
   onEngineErrors?: (errors: EngineError[]) => void | Promise<void>
+  /** Shared per-request allowance for paid keyed-API fallback searches. */
+  apiBudget?: SearchApiBudget
 }
 
-export function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, maxStepsOverride, onEngineErrors }: ResearchOptions) {
+export async function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, fetchSummarize = false, compressHistory = false, searchCategory, maxStepsOverride, onEngineErrors, apiBudget }: ResearchOptions) {
   const { maxSteps: defaultMaxSteps, count } = MODE_CONFIG[focusMode]
   const maxSteps = maxStepsOverride ?? defaultMaxSteps
   let nextIndex = 1
+  let searchDead = false   // set once web search is confirmed unavailable for this request
+  let completedSteps = 0
+
+  // A tool result arriving on the final generation can never be used — the model has no step
+  // left to write prose, so the turn ends on finishReason=tool-calls with an empty answer.
+  // Refusing one round early leaves a generation free for the answer itself. Thorough mode is
+  // exempt: its researcher is *meant* to end without prose, and the writer pass follows.
+  const outOfResearchSteps = () =>
+    focusMode === 'balanced' && completedSteps >= Math.max(1, maxSteps - 2)
   const start = performance.now()
   console.log(`  [chat] model=${(model as LanguageModel & { modelId?: string }).modelId ?? String(model)} focusMode=${focusMode} maxSteps=${maxSteps}`)
 
@@ -72,6 +119,7 @@ export function runResearcher({ messages, focusMode, userId, model, abortSignal,
   if (customPrompt?.trim()) system += `\n\nAdditional instructions from the user:\n${customPrompt.trim()}`
   if (hasFiles) system += `\n\nYou have an uploads_search tool to search the user's uploaded documents. When the query might be answered by personal, domain-specific, or proprietary documents, call uploads_search before or alongside web_search.`
   if (spaceId) system += `\n\nYou have a save_to_memory tool. Use it when the user expresses a preference, makes a decision, or shares context that would be useful in future conversations. Do not save trivial or ephemeral details.`
+  if (spaceId) system += `\n\nYou also have a search_space_history tool for looking up earlier conversations in this space. Relevant excerpts are already provided above when they exist, so call it only when the user refers to something earlier that is not covered there.`
 
   // Inject pre-executed search results as a fake tool exchange so the model
   // sees them as already done and continues from there. Also note in the system
@@ -107,7 +155,28 @@ export function runResearcher({ messages, focusMode, userId, model, abortSignal,
   }
 
   const ctxLimit = parseInt(process.env.CONTEXT_TOKEN_LIMIT ?? '8192')
-  augmentedMessages = trimMessages(augmentedMessages, ctxLimit - Math.floor(ctxLimit * 0.2), system)
+  // Reserve TOOL_BUDGET_RESERVE_FRACTION of the total input budget for tools up front, so history
+  // trimming can never eat into the room tools need, however long the conversation is.
+  const totalInputTokens = ctxLimit * CONTEXT_RESERVE_FRACTION
+  const historyBudgetTokens = Math.floor(totalInputTokens * (1 - TOOL_BUDGET_RESERVE_FRACTION))
+
+  if (compressHistory) {
+    const summaryBudgetChars = Math.floor(historyBudgetTokens * 4 * COMPRESS_SUMMARY_FRACTION)
+    // Reserve the summary's own cost out of the history sub-budget up front, so kept-messages +
+    // summary together still respect historyBudgetTokens.
+    const dropBudgetTokens = historyBudgetTokens - Math.ceil(summaryBudgetChars / 4)
+    const { messages: compressedMessages, summary } = await compressMessages(augmentedMessages, dropBudgetTokens, system, summaryBudgetChars)
+    augmentedMessages = compressedMessages
+    if (summary) system += `\n\nSummary of earlier parts of this conversation (older messages were compacted to fit context):\n${summary}`
+  } else {
+    augmentedMessages = trimMessages(augmentedMessages, historyBudgetTokens, system)
+  }
+
+  // Cumulative budget for search/fetch content the agentic loop is about to add, derived from what's
+  // left of the context window after the (already trimmed/compressed) system prompt + conversation history.
+  const usedChars = system.length + augmentedMessages.reduce((s, m) => s + JSON.stringify(m).length, 0)
+  let toolBudgetRemaining = Math.max(0, contextCharBudget(ctxLimit) - usedChars)
+  console.log(`  [researcher] tool budget: ${toolBudgetRemaining}c remaining (ctxLimit=${ctxLimit}tok, historyBudget=${historyBudgetTokens}tok, system+history=${usedChars}c)`)
 
   const webSearchTool = tool({
     description: `Search the web. Provide up to ${focusMode === 'thorough' ? 3 : 2} queries covering different angles.`,
@@ -115,11 +184,25 @@ export function runResearcher({ messages, focusMode, userId, model, abortSignal,
       queries: z.array(z.string()).describe('Search queries'),
     }),
     execute: async ({ queries }) => {
+      if (outOfResearchSteps()) return FINAL_STEP_MSG
+      if (searchDead) return SEARCH_DEAD_MSG
+      if (toolBudgetRemaining <= MIN_URL_CONTEXT_CHARS) return CONTEXT_BUDGET_DEAD_MSG
       const errs: EngineError[] = []
-      const results = await webSearchMulti(queries.slice(0, focusMode === 'thorough' ? 3 : 2), count, undefined, e => errs.push(...e))
+      const results = await webSearchMulti(queries.slice(0, focusMode === 'thorough' ? 3 : 2), count, searchCategory, e => errs.push(...e), apiBudget)
       // Surface only when blocked engines left this search empty (matches pre-search semantics).
-      if (results.length === 0 && errs.length) await onEngineErrors?.(errs)
-      return results.map(r => ({ ...r, index: nextIndex++ }))
+      if (results.length === 0 && errs.length) {
+        await onEngineErrors?.(errs)
+        // Engines are blocked and the paid fallback can't help (disabled or budget spent) →
+        // every further search will also be empty. Stop the model from spinning on them.
+        if (!isSearchApiEnabled() || (apiBudget?.remaining ?? 0) <= 0) {
+          searchDead = true
+          console.log('  [researcher] search exhausted — instructing model to stop searching')
+          return SEARCH_DEAD_MSG
+        }
+      }
+      const indexed = results.map(r => ({ ...r, index: nextIndex++ }))
+      toolBudgetRemaining -= JSON.stringify(indexed).length
+      return indexed
     },
   })
 
@@ -129,7 +212,15 @@ export function runResearcher({ messages, focusMode, userId, model, abortSignal,
     fetch_url: tool({
       description: 'Fetch and read the full text content of a specific URL. Use when the user provides a URL to analyze, or when a search result needs to be read in full. For paginated content, call multiple times with page parameters (e.g. ?page=2).',
       parameters: z.object({ url: z.string().url() }),
-      execute: async ({ url }) => fetchUrl(url),
+      execute: async ({ url }) => {
+        if (outOfResearchSteps()) return FINAL_STEP_MSG
+        if (toolBudgetRemaining <= MIN_URL_CONTEXT_CHARS) return CONTEXT_BUDGET_DEAD_MSG
+        const raw = await fetchUrl(url)
+        if (raw.startsWith('Error fetching')) return raw
+        const [{ content }] = await processUrlsForContext([{ url, content: raw }], toolBudgetRemaining, fetchSummarize)
+        toolBudgetRemaining -= content.length
+        return content
+      },
     }),
   }
 
@@ -139,7 +230,7 @@ export function runResearcher({ messages, focusMode, userId, model, abortSignal,
       parameters: z.object({
         query: z.string().describe('Semantic search query'),
       }),
-      execute: async ({ query }) => searchUploads(query, userId),
+      execute: async ({ query }) => outOfResearchSteps() ? FINAL_STEP_MSG : searchUploads(query, userId),
     })
   }
 
@@ -161,15 +252,33 @@ export function runResearcher({ messages, focusMode, userId, model, abortSignal,
         return 'Saved.'
       },
     })
+
+    tools.search_space_history = tool({
+      description: 'Search past conversations in this space for relevant context (e.g. what was decided or discussed earlier). Relevant excerpts are already injected automatically — only call this when you need something they do not cover.',
+      parameters: z.object({
+        query: z.string().describe('Semantic search query'),
+      }),
+      execute: async ({ query }) =>
+        outOfResearchSteps() ? FINAL_STEP_MSG : searchSpaceHistory(spaceId, query, 8, sessionId),
+    })
   }
 
+  const fmt = (n: number | undefined) => (n != null && !isNaN(n)) ? String(n) : '?'
   return streamText({
     onError: ({ error }) => {
       console.error('  [chat] streamText error:', error)
     },
+    onStepFinish: (step) => {
+      completedSteps++
+      const toolSummary = step.toolCalls.map(c => {
+        const result = step.toolResults.find(tr => tr.toolCallId === c.toolCallId)?.result
+        const size = typeof result === 'string' ? result.length : JSON.stringify(result ?? '').length
+        return `${c.toolName}(${size}c)`
+      }).join(', ')
+      console.log(`  [chat] step ${completedSteps}: ${fmt(step.usage.promptTokens)}p + ${fmt(step.usage.completionTokens)}c tok, finish=${step.finishReason}${toolSummary ? ` tools=[${toolSummary}]` : ''} budget=${toolBudgetRemaining}c`)
+    },
     onFinish: ({ usage }) => {
       const ms = (performance.now() - start).toFixed(0)
-      const fmt = (n: number | undefined) => (n != null && !isNaN(n)) ? String(n) : '?'
       console.log(`  [chat] done — ${ms}ms  tokens: ${fmt(usage.promptTokens)}p + ${fmt(usage.completionTokens)}c`)
     },
     model,

@@ -6,6 +6,7 @@ import { eq, and, or, desc } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { runMonitorNow, computeNextRunAt } from '../lib/monitor-runner.ts'
+import { ownsSpace } from '../lib/ownership.ts'
 
 export const monitorsRouter = new Hono<AppEnv>()
 
@@ -165,6 +166,7 @@ monitorsRouter.get('/', async (c) => {
 monitorsRouter.post('/', zValidator('json', monitorBody), async (c) => {
   const userId = c.get('userId') as string
   const body = c.req.valid('json')
+  if (body.spaceId && !await ownsSpace(body.spaceId, userId)) return c.json({ error: 'Space not found' }, 404)
   const now = new Date()
   const id = randomUUID()
   const userRow = await db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get()
@@ -203,6 +205,7 @@ monitorsRouter.patch('/:id', zValidator('json', monitorBody.partial()), async (c
   const monitor = await db.select().from(monitors)
     .where(and(eq(monitors.id, id), eq(monitors.userId, userId))).get()
   if (!monitor) return c.json({ error: 'Not found' }, 404)
+  if (body.spaceId && !await ownsSpace(body.spaceId, userId)) return c.json({ error: 'Space not found' }, 404)
 
   const now = new Date()
   const newInterval = body.intervalMinutes ?? monitor.intervalMinutes
