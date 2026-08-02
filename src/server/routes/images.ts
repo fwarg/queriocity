@@ -3,6 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { rateLimitByUser, imageLimiter } from '../lib/rate-limit.ts'
+import { IMAGE_TIMEOUT_MS } from '../lib/image-store.ts'
 
 const generateSchema = z.object({
   prompt: z.string().min(1),
@@ -24,11 +25,20 @@ imagesRouter.post('/generate', rateLimitByUser(imageLimiter, 'image'), zValidato
   if (steps) body.steps = steps
   if (process.env.IMAGE_MODEL) body.model = process.env.IMAGE_MODEL
 
-  const res = await fetch(`${imageBaseUrl}/v1/images/generations`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
+  let res: Response
+  try {
+    res = await fetch(`${imageBaseUrl}/v1/images/generations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(IMAGE_TIMEOUT_MS),
+    })
+  } catch (e) {
+    const msg = e instanceof Error && e.name === 'TimeoutError'
+      ? `Image server did not respond within ${Math.round(IMAGE_TIMEOUT_MS / 1000)}s`
+      : `Image server unreachable: ${e instanceof Error ? e.message : e}`
+    return c.json({ error: msg }, 502)
+  }
 
   if (!res.ok) {
     const text = await res.text().catch(() => '')

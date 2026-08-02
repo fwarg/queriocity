@@ -255,6 +255,7 @@ Open **Settings** from the bottom of the sidebar. Settings are saved per user.
 | **Query suggestions** | Show AI-generated query completions as you type in the chat input (debounced, min 8 characters). Powered by the flash model. Disable on slow setups or if the extra latency is distracting. |
 | **Font size** | UI font size: Small (15 px), Normal (17 px), Large (19 px), XL (21 px). Sizes scale up automatically on narrow viewports. |
 | **Timezone** | IANA timezone (e.g. `Europe/Stockholm`) used when scheduling monitors at a specific hour of the day. Defaults to server time (UTC in Docker) if not set. |
+| **Password** | Change your password. Requires the current one; the new one needs 8+ characters with upper and lower case, a digit and a symbol. Changing it signs out your other devices but keeps the current session. |
 
 ---
 
@@ -427,10 +428,9 @@ bun install
 
 ### Database
 
-```bash
-bun run db:generate   # generate migrations from schema
-bun run db:migrate    # apply migrations (creates queriocity.db)
-```
+No migration step is needed. The schema is created and upgraded automatically at startup by
+idempotent DDL in `src/server/lib/db.ts`, so the database file appears on first run and
+existing installs pick up new columns when you restart.
 
 ## Environment variables
 
@@ -478,12 +478,16 @@ EMBED_DIMENSIONS=1536                       # must match the model's output size
 # results. RERANK_BASE_URL defaults to BASE_URL if unset.
 # RERANK_BASE_URL=http://localhost:8097
 RERANK_MODEL=qwen3-reranker
+# RERANK_TIMEOUT_MS=30000                     # reranking is an optimisation and falls back to the
+#                                              # original order, so it gives up quickly
 
 # ── Image generation (optional) ──────────────────────────────────────────────
 # When set, enables the Image mode for generating and editing images.
 # Point to any OpenAI-compatible diffusion server (ComfyUI, A1111, etc.).
 # IMAGE_BASE_URL=http://localhost:8188   # base URL of diffusion server
 # IMAGE_MODEL=                           # optional model name/alias sent to the server
+# IMAGE_TIMEOUT_MS=300000                # generation/edit timeout (default 5 min); catches a stuck
+#                                        # diffusion server without cutting off slow renders
 
 # ── SearXNG ───────────────────────────────────────────────────────────────────
 SEARXNG_URL=http://localhost:4000  # url to your searxng instance
@@ -495,6 +499,8 @@ SEARXNG_URL=http://localhost:4000  # url to your searxng instance
 # SEARCH_API_KEY=                             # provider API key
 # SEARCH_API_MAX_PER_REQUEST=3                # max paid fallback calls per request/run (0 disables)
 # SEARCH_API_MIN_RESULTS=3                    # top up via the API when SearXNG returns fewer than N results (1 = empty-only)
+# SEARCH_TIMEOUT_MS=20000                     # per-query timeout; on timeout the search yields no results
+#                                              # instead of hanging the whole chat request
 
 # ── URL fetching ──────────────────────────────────────────────────────────────
 # Pasted URLs are prefetched before the model runs; the model can also fetch URLs
@@ -994,6 +1000,12 @@ RERANK_MODEL=my-reranker-model
 - Admins can view all users and manage roles.
 - Deleting a user or changing their role **takes effect on their next request** — any session
   they already have open is invalidated rather than staying valid until the cookie expires.
+- **Reset password** replaces a locked-out user's password with a generated temporary one,
+  shown once in the panel. Pass it on securely: it is not stored in recoverable form and
+  cannot be displayed again. The user's existing sessions are signed out immediately, and
+  after logging in they see a banner prompting them to set their own password.
+- Users change their own password under **Settings > Password**. Doing so signs out their
+  other devices while keeping the current one active.
 
 ---
 
@@ -1129,7 +1141,7 @@ All direct runtime dependencies use **MIT** or **Apache 2.0** licenses.
 | `react-markdown`      | MIT        | Markdown rendering                    |
 | `lucide-react`        | ISC        | Icon library                          |
 
-Dev dependencies (`vite`, `tailwindcss`, `drizzle-kit`, `@vitejs/plugin-react`, Babel
+Dev dependencies (`vite`, `tailwindcss`, `@vitejs/plugin-react`, Babel
 plugins, type stubs) are likewise MIT or Apache 2.0.
 
 This project is licensed under **MIT**. It is compatible with all dependencies listed

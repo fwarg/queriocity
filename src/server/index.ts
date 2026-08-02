@@ -30,6 +30,7 @@ import { feedsRouter } from './routes/feeds.ts'
 import { sqlite, getAppSetting, setAppSetting } from './lib/db.ts'
 import { runDream } from './lib/memory.ts'
 import { runDueMonitors } from './lib/monitor-runner.ts'
+import { validateConfig, checkEmbeddingDimensions } from './lib/config-check.ts'
 
 import { IMAGE_STORAGE_DIR } from './lib/image-store.ts'
 
@@ -126,7 +127,11 @@ async function preflight() {
   } catch {
     console.warn(`  [preflight] chat LLM unreachable at ${chatBase} — chat will fail`)
   }
+
+  await checkEmbeddingDimensions()
 }
+
+validateConfig()
 
 preflight().catch(() => {})
 

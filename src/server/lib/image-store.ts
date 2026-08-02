@@ -1,5 +1,9 @@
 import { unlink } from 'node:fs/promises'
 
+// Diffusion runs are slow by nature (high step counts, large sizes, a shared GPU), so this
+// only catches a genuinely stuck server rather than bounding normal work.
+export const IMAGE_TIMEOUT_MS = parseInt(process.env.IMAGE_TIMEOUT_MS ?? '300000', 10)
+
 export const IMAGE_STORAGE_DIR = process.env.IMAGE_STORAGE_DIR ?? '/tmp/queriocity/images'
 
 const IMAGE_URL_RE = /!\[.*?\]\((\/images\/[\w-]+\/[\w-]+\.png)\)/g

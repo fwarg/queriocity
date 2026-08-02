@@ -95,7 +95,7 @@ authRouter.post('/login', zValidator('json', loginSchema), async (c) => {
   if (!user) return c.json({ error: 'User not found' }, 500)
   const token = await signToken({ userId: user.id, email: user.email, role: user.role as 'user' | 'admin', tokenVersion: user.tokenVersion })
   setCookie(c, AUTH_COOKIE, token, COOKIE_OPTIONS)
-  return c.json({ id: user.id, email: user.email, name: user.name, role: user.role })
+  return c.json({ id: user.id, email: user.email, name: user.name, role: user.role, mustChangePassword: cred.mustChangePassword })
 })
 
 authRouter.post('/logout', (c) => {
@@ -108,9 +108,11 @@ authRouter.get('/me', async (c) => {
   if (!token) return c.json({ error: 'Unauthorized' }, 401)
   try {
     const { userId, tokenVersion } = await verifyToken(token)
-    const [user, memoryTokenBudget] = await Promise.all([
+    const [user, memoryTokenBudget, cred] = await Promise.all([
       db.select().from(users).where(eq(users.id, userId)).get(),
       getAppSetting('memory_token_budget', '1000').then(v => parseInt(v)),
+      db.select({ mustChangePassword: authCredentials.mustChangePassword })
+        .from(authCredentials).where(eq(authCredentials.userId, userId)).get(),
     ])
     if (!user) return c.json({ error: 'User not found' }, 404)
     if (user.tokenVersion !== tokenVersion) return c.json({ error: 'Invalid token' }, 401)
@@ -118,6 +120,7 @@ authRouter.get('/me', async (c) => {
       id: user.id, email: user.email, name: user.name,
       role: user.role, settings: parseSettings(user.settings),
       memoryTokenBudget,
+      mustChangePassword: cred?.mustChangePassword ?? false,
     })
   } catch {
     return c.json({ error: 'Invalid token' }, 401)

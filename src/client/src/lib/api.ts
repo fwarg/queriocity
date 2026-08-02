@@ -7,6 +7,8 @@ export interface AuthUser {
   role: 'user' | 'admin'
   settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; useSpaceRag?: boolean; useChatRag?: boolean; querySuggestions?: boolean; fontSize?: number; timezone?: string }
   memoryTokenBudget: number
+  /** True after an admin issued a temporary password — the user must set their own. */
+  mustChangePassword?: boolean
 }
 
 export interface Space { id: string; name: string; chatCount: number; memoryCount: number; createdAt: number }
@@ -113,6 +115,24 @@ export async function createInvite(email?: string): Promise<{ token: string; exp
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email }),
   })
+  return res.json()
+}
+
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  const res = await fetch(`${BASE}/users/password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ currentPassword, newPassword }),
+  })
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}))
+    throw new Error(e.error ?? 'Could not change password')
+  }
+}
+
+export async function resetUserPassword(id: string): Promise<{ tempPassword: string }> {
+  const res = await fetch(`${BASE}/admin/users/${id}/reset-password`, { method: 'POST' })
+  if (!res.ok) throw new Error('Could not reset password')
   return res.json()
 }
 

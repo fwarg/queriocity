@@ -2,6 +2,9 @@ import type { SearchResult } from './searxng.ts'
 
 const PROVIDER = process.env.SEARCH_API_PROVIDER
 const API_KEY = process.env.SEARCH_API_KEY
+// Shares SEARCH_TIMEOUT_MS with the SearXNG path (declared separately to avoid an import
+// cycle: searxng.ts already imports from this module).
+const SEARCH_TIMEOUT_MS = parseInt(process.env.SEARCH_TIMEOUT_MS ?? '20000', 10)
 
 /** True only when a keyed search-API fallback is fully configured. */
 export function isSearchApiEnabled(): boolean {
@@ -35,7 +38,7 @@ async function mojeekSearch(query: string, count: number): Promise<SearchResult[
   url.searchParams.set('t', String(count))
 
   const start = performance.now()
-  const res = await fetch(url.toString())
+  const res = await fetch(url.toString(), { signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS) })
   if (!res.ok) {
     console.error(`  [search-api] mojeek HTTP ${res.status} for "${query}"`)
     return []

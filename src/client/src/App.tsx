@@ -523,6 +523,17 @@ export default function App() {
   return (
     <>
     <div className="flex h-screen">
+      {currentUser?.mustChangePassword && !showSettings && (
+        <div className="fixed top-0 inset-x-0 z-50 bg-amber-900/90 text-amber-100 text-sm px-4 py-2 flex items-center justify-center gap-3">
+          <span>You are signed in with a temporary password. Please set your own.</span>
+          <button
+            onClick={() => setShowSettings(true)}
+            className="px-2 py-0.5 rounded bg-amber-700 hover:bg-amber-600 text-xs font-medium"
+          >
+            Change password
+          </button>
+        </div>
+      )}
       {showSettings && currentUser && (
         <SettingsPanel
           customPrompt={currentUser.settings?.customPrompt ?? ''}
@@ -534,6 +545,7 @@ export default function App() {
           fontSize={currentUser.settings?.fontSize ?? 17}
           timezone={currentUser.settings?.timezone ?? ''}
           onClose={() => setShowSettings(false)}
+          onPasswordChanged={() => setCurrentUser(u => u ? { ...u, mustChangePassword: false } : u)}
           onSave={(cp, st, ut, sr, cr, qs, fs, tz) => setCurrentUser(u => u ? { ...u, settings: { ...u.settings, customPrompt: cp, showThinking: st, useThinking: ut, useSpaceRag: sr, useChatRag: cr, querySuggestions: qs, fontSize: fs, timezone: tz } } : u)}
         />
       )}

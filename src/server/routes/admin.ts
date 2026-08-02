@@ -2,14 +2,25 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { generateText, embed } from 'ai'
-import { db, users, invites, chatSessions, getAppSetting, setAppSetting, bumpTokenVersion } from '../lib/db.ts'
+import { db, users, invites, chatSessions, authCredentials, getAppSetting, setAppSetting, bumpTokenVersion } from '../lib/db.ts'
 import { eq, desc } from 'drizzle-orm'
 import { indexSession } from '../lib/chat-indexer.ts'
-import { randomUUID } from 'crypto'
+import { randomUUID, randomInt } from 'crypto'
+import { hashPassword } from '../lib/auth.ts'
 import { authMiddleware, adminMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { getChatModel, getSmallModel, getThinkingModel, getEmbeddingModel } from '../lib/llm.ts'
 import { rerank, rerankEnabled } from '../lib/reranker.ts'
 import { runDream } from '../lib/memory.ts'
+
+/** Random temporary password that satisfies validatePassword's complexity rules. */
+function generateTempPassword(): string {
+  const pick = (set: string, n: number) =>
+    Array.from({ length: n }, () => set[randomInt(set.length)]).join('')
+  const chars = pick('ABCDEFGHJKLMNPQRSTUVWXYZ', 3) + pick('abcdefghijkmnpqrstuvwxyz', 5)
+    + pick('23456789', 3) + pick('!@#$%&*?', 2)
+  // Shuffle so the character classes aren't in a predictable order.
+  return chars.split('').sort(() => randomInt(2) - 0.5).join('')
+}
 
 export const adminRouter = new Hono<AppEnv>()
 
@@ -95,6 +106,24 @@ adminRouter.patch('/users/:id', zValidator('json', z.object({ role: z.enum(['use
   // Their existing cookie carries the old role — invalidate it so the change takes effect now.
   await bumpTokenVersion(id)
   return c.json({ ok: true })
+})
+
+/** Issues a temporary password for a locked-out user. Returned once, in the response body —
+ *  the admin passes it on out-of-band, and the user is forced to replace it at next login. */
+adminRouter.post('/users/:id/reset-password', async (c) => {
+  const { id } = c.req.param()
+  const cred = await db.select().from(authCredentials).where(eq(authCredentials.userId, id)).get()
+  if (!cred) return c.json({ error: 'Not found' }, 404)
+
+  const tempPassword = generateTempPassword()
+  await db.update(authCredentials)
+    .set({ passwordHash: await hashPassword(tempPassword), mustChangePassword: true })
+    .where(eq(authCredentials.userId, id))
+  // Any session they still have open must not survive an admin-forced reset.
+  await bumpTokenVersion(id)
+
+  console.log(`  [admin] password reset for user ${id} by ${c.get('userId')}`)
+  return c.json({ tempPassword })
 })
 
 adminRouter.delete('/users/:id', async (c) => {

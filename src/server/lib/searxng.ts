@@ -6,6 +6,10 @@ const SEARXNG_URL = process.env.SEARXNG_URL ?? 'http://localhost:4000'
 // empty) — e.g. when the only surviving engine returns a thin trickle. Set to 1 for empty-only.
 const API_MIN_RESULTS = parseInt(process.env.SEARCH_API_MIN_RESULTS ?? '3', 10)
 
+// SearXNG aggregates many engines, so allow well over a single engine's latency — but never
+// wait indefinitely: without this a wedged instance hangs the whole chat request.
+const SEARCH_TIMEOUT_MS = parseInt(process.env.SEARCH_TIMEOUT_MS ?? '20000', 10)
+
 
 export interface SearchResult {
   title: string
@@ -75,7 +79,13 @@ export async function webSearch(
   url.searchParams.set('language', 'all')
 
   const start = performance.now()
-  const res = await fetch(url.toString())
+  let res: Response
+  try {
+    res = await fetch(url.toString(), { signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS) })
+  } catch (e) {
+    console.error(`  [searxng] request failed for "${query}": ${e instanceof Error ? e.message : e}`)
+    return []
+  }
   if (!res.ok) {
     console.error(`  [searxng] error: ${res.status} for query "${query}"`)
     return []

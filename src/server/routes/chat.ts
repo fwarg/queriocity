@@ -22,8 +22,15 @@ import { trimMessages, contextCharBudget, CONTEXT_RESERVE_FRACTION } from '../li
 import { indexContents } from '../lib/chat-indexer.ts'
 import { ownsSpace, sessionOwnership } from '../lib/ownership.ts'
 import { rateLimitByUser, chatLimiter, suggestLimiter } from '../lib/rate-limit.ts'
-import { IMAGE_STORAGE_DIR } from '../lib/image-store.ts'
+import { IMAGE_STORAGE_DIR, IMAGE_TIMEOUT_MS } from '../lib/image-store.ts'
+// Memo of image directories already mkdir'd, to skip the syscall. One entry per user, so it
+// only needs a sanity bound rather than real eviction.
 const _createdImageDirs = new Set<string>()
+const MAX_MEMOIZED_IMAGE_DIRS = 1000
+function rememberImageDir(dir: string) {
+  if (_createdImageDirs.size >= MAX_MEMOIZED_IMAGE_DIRS) _createdImageDirs.clear()
+  _createdImageDirs.add(dir)
+}
 
 const FLASH_SYSTEM = `Answer in at most 5 sentences using only your training knowledge. Be direct and factual.
 Do not search the web. If you cannot answer confidently, say so briefly.
@@ -204,6 +211,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(body),
+              signal: AbortSignal.timeout(IMAGE_TIMEOUT_MS),
             })
             if (!res.ok) {
               console.error(`  [image] diffusion server error ${res.status}`)
@@ -218,7 +226,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
             const imagesDir = `${IMAGE_STORAGE_DIR}/${userId}`
             if (!_createdImageDirs.has(imagesDir)) {
               await mkdir(imagesDir, { recursive: true })
-              _createdImageDirs.add(imagesDir)
+              rememberImageDir(imagesDir)
             }
             const filename = `${randomUUID()}.png`
             await writeFile(`${imagesDir}/${filename}`, Buffer.from(b64, 'base64'))
@@ -259,7 +267,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
             if (steps) form.append('steps', String(steps))
             if (process.env.IMAGE_MODEL) form.append('model', process.env.IMAGE_MODEL)
             console.log(`  [image] edit → ${imageBaseUrl}  prompt="${prompt}"  strength=${strength ?? 0.75}`)
-            const res = await fetch(`${imageBaseUrl}/v1/images/edits`, { method: 'POST', body: form })
+            const res = await fetch(`${imageBaseUrl}/v1/images/edits`, { method: 'POST', body: form, signal: AbortSignal.timeout(IMAGE_TIMEOUT_MS) })
             if (!res.ok) {
               console.error(`  [image] edit server error ${res.status}`)
               return { success: false, error: `Image server returned ${res.status}`, prompt }
@@ -273,7 +281,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
             const imagesDir = `${IMAGE_STORAGE_DIR}/${userId}`
             if (!_createdImageDirs.has(imagesDir)) {
               await mkdir(imagesDir, { recursive: true })
-              _createdImageDirs.add(imagesDir)
+              rememberImageDir(imagesDir)
             }
             const filename = `${randomUUID()}.png`
             await writeFile(`${imagesDir}/${filename}`, Buffer.from(b64, 'base64'))

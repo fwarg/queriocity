@@ -1,4 +1,4 @@
-import { chromium } from 'playwright'
+import { chromium, type Browser, type BrowserContext } from 'playwright'
 import { fetch as undiciFetch, ProxyAgent } from 'undici'
 import { YoutubeTranscript } from 'youtube-transcript'
 import { generateText } from 'ai'
@@ -14,6 +14,8 @@ const PROXY_URL = process.env.FETCH_PROXY_URL
 const proxyAgent = PROXY_URL ? new ProxyAgent(PROXY_URL) : undefined
 const CACHE_TTL_MS = 5 * 60 * 1000
 const fetchCache = new Map<string, { result: string; ts: number }>()
+// Entries hold whole page bodies, so this is a memory bound, not just hygiene.
+const FETCH_CACHE_MAX_ENTRIES = 200
 const DEFAULT_MAX_PAGES = parseInt(process.env.FETCH_MAX_PAGES ?? '8')
 
 function stripHtml(html: string): string {
@@ -81,18 +83,48 @@ async function fetchStatic(url: string): Promise<string> {
   throw new Error(`too many redirects (>${MAX_REDIRECTS})`)
 }
 
-async function fetchWithPlaywright(url: string): Promise<string> {
-  const browser = await chromium.launch({
+// Chromium takes ~1s to start, so it is launched once and shared; each fetch still gets its
+// own context, keeping cookies and storage isolated between pages. Closed again after an idle
+// period so a mostly-static path doesn't hold a browser resident forever.
+const BROWSER_IDLE_MS = 5 * 60 * 1000
+let sharedBrowser: Browser | null = null
+let browserIdleTimer: ReturnType<typeof setTimeout> | null = null
+let activeContexts = 0
+
+async function getBrowser(): Promise<Browser> {
+  if (sharedBrowser?.isConnected()) return sharedBrowser
+  sharedBrowser = await chromium.launch({
     headless: true,
     args: ['--disable-blink-features=AutomationControlled'],
   })
+  console.log('  [fetch-url] launched shared chromium')
+  return sharedBrowser
+}
+
+function scheduleBrowserClose(): void {
+  if (browserIdleTimer) clearTimeout(browserIdleTimer)
+  browserIdleTimer = setTimeout(() => {
+    if (activeContexts > 0 || !sharedBrowser) return
+    const browser = sharedBrowser
+    sharedBrowser = null
+    browser.close()
+      .then(() => console.log('  [fetch-url] closed idle chromium'))
+      .catch(() => {})
+  }, BROWSER_IDLE_MS)
+  browserIdleTimer.unref?.()
+}
+
+async function fetchWithPlaywright(url: string): Promise<string> {
+  const browser = await getBrowser()
+  activeContexts++
+  let ctx: BrowserContext | null = null
   try {
     const ctxOptions = {
       userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
       viewport: { width: 1280, height: 800 },
       ...(PROXY_URL ? { proxy: { server: PROXY_URL } } : {}),
     }
-    const ctx = await browser.newContext(ctxOptions)
+    ctx = await browser.newContext(ctxOptions)
     await ctx.addInitScript(() => { Object.defineProperty(navigator, 'webdriver', { get: () => undefined }) })
     // Playwright follows redirects internally, so guard each navigation rather than only the
     // entry URL. Subresources are left alone — their bodies never reach the caller.
@@ -109,10 +141,13 @@ async function fetchWithPlaywright(url: string): Promise<string> {
     const page = await ctx.newPage()
     await page.goto(url, { waitUntil: 'networkidle', timeout: 15000 })
     const text = await page.evaluate(() => document.body.innerText)
-    await ctx.close()
     return text.replace(/\s+/g, ' ').trim()
   } finally {
-    await browser.close()
+    // The browser outlives this call now, so the context must always be released — a failed
+    // goto would otherwise leak a live context for the process lifetime.
+    await ctx?.close().catch(() => {})
+    activeContexts--
+    scheduleBrowserClose()
   }
 }
 
@@ -144,7 +179,15 @@ export async function fetchUrl(url: string): Promise<string> {
     return cached.result
   }
   const start = performance.now()
-  const cache = (result: string) => { fetchCache.set(url, { result, ts: Date.now() }); return result }
+  const cache = (result: string) => {
+    const now = Date.now()
+    if (fetchCache.size >= FETCH_CACHE_MAX_ENTRIES) {
+      for (const [k, v] of fetchCache) if (now - v.ts >= CACHE_TTL_MS) fetchCache.delete(k)
+      if (fetchCache.size >= FETCH_CACHE_MAX_ENTRIES) fetchCache.clear()
+    }
+    fetchCache.set(url, { result, ts: now })
+    return result
+  }
 
   const videoId = extractYoutubeVideoId(url)
   if (videoId) {

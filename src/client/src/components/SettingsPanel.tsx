@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { updateSettings } from '../lib/api.ts'
+import { updateSettings, changePassword } from '../lib/api.ts'
 import { Modal } from './Modal.tsx'
 
 const FONT_SIZES = [
@@ -30,10 +30,12 @@ interface Props {
   fontSize: number
   timezone: string
   onClose: () => void
+  /** Clears the temporary-password banner once the user has set their own. */
+  onPasswordChanged?: () => void
   onSave: (customPrompt: string, showThinking: { balanced: boolean; thorough: boolean }, useThinking: boolean, useSpaceRag: boolean, useChatRag: boolean, querySuggestions: boolean, fontSize: number, timezone: string) => void
 }
 
-export function SettingsPanel({ customPrompt: initial, showThinking: initialShowThinking, useThinking: initialUseThinking, useSpaceRag: initialUseSpaceRag, useChatRag: initialUseChatRag, querySuggestions: initialQuerySuggestions, fontSize: initialFontSize, timezone: initialTimezone, onClose, onSave }: Props) {
+export function SettingsPanel({ customPrompt: initial, showThinking: initialShowThinking, useThinking: initialUseThinking, useSpaceRag: initialUseSpaceRag, useChatRag: initialUseChatRag, querySuggestions: initialQuerySuggestions, fontSize: initialFontSize, timezone: initialTimezone, onClose, onPasswordChanged, onSave }: Props) {
   const [customPrompt, setCustomPrompt] = useState(initial)
   const [showThinking, setShowThinking] = useState(initialShowThinking)
   const [useThinking, setUseThinking] = useState(initialUseThinking)
@@ -44,6 +46,29 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
   const [timezone, setTimezone] = useState(initialTimezone)
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [pwBusy, setPwBusy] = useState(false)
+  const [passwordMsg, setPasswordMsg] = useState('')
+  const [passwordOk, setPasswordOk] = useState(false)
+
+  async function handleChangePassword() {
+    setPwBusy(true)
+    setPasswordMsg('')
+    try {
+      await changePassword(currentPassword, newPassword)
+      setPasswordOk(true)
+      setPasswordMsg('Password changed.')
+      onPasswordChanged?.()
+      setCurrentPassword('')
+      setNewPassword('')
+    } catch (e) {
+      setPasswordOk(false)
+      setPasswordMsg(e instanceof Error ? e.message : 'Could not change password')
+    } finally {
+      setPwBusy(false)
+    }
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -188,6 +213,41 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
               <option value="">Not set (server default)</option>
               {TIMEZONE_OPTIONS.map(tz => <option key={tz} value={tz}>{tz}</option>)}
             </select>
+          </div>
+          <div className="border-t border-gray-800" />
+          <div className="flex flex-col gap-2">
+            <label className="text-xs text-gray-400 font-medium">Password</label>
+            <p className="text-xs text-gray-500">
+              At least 8 characters with upper and lower case, a digit and a symbol. Changing it
+              signs out your other devices.
+            </p>
+            <input
+              type="password"
+              autoComplete="current-password"
+              placeholder="Current password"
+              value={currentPassword}
+              onChange={e => setCurrentPassword(e.target.value)}
+              className="rounded bg-gray-800 border border-gray-700 px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500"
+            />
+            <input
+              type="password"
+              autoComplete="new-password"
+              placeholder="New password"
+              value={newPassword}
+              onChange={e => setNewPassword(e.target.value)}
+              className="rounded bg-gray-800 border border-gray-700 px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500"
+            />
+            {passwordMsg && (
+              <p className={`text-xs ${passwordOk ? 'text-green-400' : 'text-red-400'}`}>{passwordMsg}</p>
+            )}
+            <button
+              type="button"
+              onClick={handleChangePassword}
+              disabled={pwBusy || !currentPassword || !newPassword}
+              className="self-start px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 disabled:opacity-50 text-sm"
+            >
+              {pwBusy ? 'Changing…' : 'Change password'}
+            </button>
           </div>
           <div className="flex gap-2 justify-end">
             <button type="button" onClick={onClose} className="px-4 py-1.5 rounded text-sm text-gray-400 hover:text-gray-200">

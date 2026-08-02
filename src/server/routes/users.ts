@@ -1,9 +1,13 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
-import { db, users, parseSettings } from '../lib/db.ts'
+import { setCookie } from 'hono/cookie'
+import { db, users, authCredentials, parseSettings, bumpTokenVersion } from '../lib/db.ts'
 import { eq } from 'drizzle-orm'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
+import {
+  hashPassword, verifyPassword, validatePassword, signToken, AUTH_COOKIE, COOKIE_OPTIONS,
+} from '../lib/auth.ts'
 
 export const usersRouter = new Hono<AppEnv>()
 
@@ -20,6 +24,40 @@ const settingsSchema = z.object({
   fontSize: z.number().min(12).max(22).optional(),
   timezone: z.string().refine(v => !v || VALID_TIMEZONES.has(v), 'Invalid timezone').optional(),
   querySuggestions: z.boolean().optional(),
+})
+
+usersRouter.post('/password', zValidator('json', z.object({
+  currentPassword: z.string(),
+  newPassword: z.string(),
+})), async (c) => {
+  const userId = c.get('userId')
+  const { currentPassword, newPassword } = c.req.valid('json')
+
+  const pwError = validatePassword(newPassword)
+  if (pwError) return c.json({ error: pwError }, 400)
+
+  const cred = await db.select().from(authCredentials).where(eq(authCredentials.userId, userId)).get()
+  if (!cred) return c.json({ error: 'No credentials for this account' }, 400)
+  if (!await verifyPassword(currentPassword, cred.passwordHash)) {
+    return c.json({ error: 'Current password is incorrect' }, 401)
+  }
+
+  await db.update(authCredentials)
+    .set({ passwordHash: await hashPassword(newPassword), mustChangePassword: false })
+    .where(eq(authCredentials.userId, userId))
+
+  // Invalidate every session, then re-issue a cookie for this one — so a stolen token dies
+  // with the old password while the user changing it stays logged in.
+  await bumpTokenVersion(userId)
+  const user = await db.select().from(users).where(eq(users.id, userId)).get()
+  if (user) {
+    const token = await signToken({
+      userId, email: user.email, role: user.role as 'user' | 'admin', tokenVersion: user.tokenVersion,
+    })
+    setCookie(c, AUTH_COOKIE, token, COOKIE_OPTIONS)
+  }
+  console.log(`  [auth] password changed for user ${userId}`)
+  return c.json({ ok: true })
 })
 
 usersRouter.get('/settings', async (c) => {

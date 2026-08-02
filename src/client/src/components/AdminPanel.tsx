@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { listUsers, setUserRole, deleteUser, createInvite, listInvites, revokeInvite, testModels, fetchAdminSettings, updateAdminSettings, triggerDream, reindexChats, type ModelTestResult, type Invite } from '../lib/api.ts'
+import { listUsers, setUserRole, deleteUser, createInvite, listInvites, revokeInvite, resetUserPassword, testModels, fetchAdminSettings, updateAdminSettings, triggerDream, reindexChats, type ModelTestResult, type Invite } from '../lib/api.ts'
 import { Modal } from './Modal.tsx'
 
 interface Props {
@@ -43,6 +43,8 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   const [inviteUrl, setInviteUrl] = useState('')
   const [inviteEmail, setInviteEmail] = useState('')
   const [invites, setInvites] = useState<Invite[]>([])
+  // Shown once after a reset — the password is not recoverable afterwards.
+  const [tempPassword, setTempPassword] = useState<{ id: string; password: string } | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
@@ -170,6 +172,20 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
       const url = `${window.location.origin}/register?token=${token}`
       setInviteUrl(url)
       setInvites(await listInvites())
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleResetPassword(id: string) {
+    if (!confirm('Replace this user\'s password with a temporary one? Their current password stops working and any open session is signed out.')) return
+    setBusy(true)
+    setError('')
+    try {
+      const { tempPassword } = await resetUserPassword(id)
+      setTempPassword({ id, password: tempPassword })
+    } catch {
+      setError('Failed to reset password.')
     } finally {
       setBusy(false)
     }
@@ -429,7 +445,14 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                         </button>
                       )}
                     </td>
-                    <td className="py-2 text-right">
+                    <td className="py-2 text-right whitespace-nowrap">
+                      <button
+                        onClick={() => handleResetPassword(u.id)}
+                        disabled={busy}
+                        className="text-xs text-gray-600 hover:text-amber-400 disabled:opacity-50 mr-3"
+                      >
+                        Reset password
+                      </button>
                       {u.id !== currentUserId && (
                         <button
                           onClick={() => handleDelete(u.id)}
@@ -443,6 +466,34 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                 ))}
               </tbody>
             </table>
+
+            {tempPassword && (
+              <div className="flex flex-col gap-1 border border-amber-700/50 bg-amber-950/30 rounded p-3">
+                <p className="text-xs text-amber-300 font-medium">
+                  Temporary password for {userList.find(u => u.id === tempPassword.id)?.email ?? 'user'}
+                </p>
+                <p className="text-xs text-gray-400">
+                  Shown once — pass it on securely. They will be asked to set their own password after signing in.
+                </p>
+                <div className="flex items-center gap-2">
+                  <input
+                    readOnly
+                    value={tempPassword.password}
+                    onFocus={e => e.target.select()}
+                    className="flex-1 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-xs font-mono text-gray-100 focus:outline-none"
+                  />
+                  <button
+                    onClick={() => navigator.clipboard.writeText(tempPassword.password)}
+                    className="text-xs text-blue-400 hover:underline"
+                  >
+                    Copy
+                  </button>
+                  <button onClick={() => setTempPassword(null)} className="text-xs text-gray-500 hover:text-gray-300">
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Invite */}
             <div className="flex flex-col gap-2 border-t border-gray-800 pt-4">
