@@ -116,6 +116,23 @@ export async function createInvite(email?: string): Promise<{ token: string; exp
   return res.json()
 }
 
+export interface Invite {
+  token: string
+  email: string | null
+  createdAt: string
+  expiresAt: string
+  usedAt: string | null
+}
+
+export async function listInvites(): Promise<Invite[]> {
+  const res = await fetch(`${BASE}/admin/invites`)
+  return res.json()
+}
+
+export async function revokeInvite(token: string): Promise<void> {
+  await fetch(`${BASE}/admin/invites/${token}`, { method: 'DELETE' })
+}
+
 export type ModelTestResult = { role: string; model: string; ok: boolean; ms: number; info: string }
 
 export async function testModels(): Promise<ModelTestResult[]> {

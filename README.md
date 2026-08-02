@@ -511,12 +511,32 @@ SEARXNG_URL=http://localhost:4000  # url to your searxng instance
 # FETCH_MAX_URL_CONTEXT_CHARS=40000           # hard per-URL cap on content injected into the model's context — applies to
 #                                              # both pasted URLs and the fetch_url tool (default: 40000)
 # FETCH_SUMMARIZE_MAX_CHUNKS=6               # max chunks when summarising oversized URL content (default: 6)
+# URL fetching refuses loopback, private (RFC1918/CGNAT), link-local (incl. the
+# 169.254.169.254 cloud-metadata address) and non-http(s) targets — on the original URL and
+# on every redirect hop. The model can be talked into fetching a URL by a page it reads, so
+# without this a planted link would reach your Ollama/SearXNG/LiteLLM instances.
+# FETCH_ALLOW_PRIVATE_HOSTS=true              # only if you deliberately fetch internal pages (e.g. an intranet wiki)
 
 # ── Server ────────────────────────────────────────────────────────────────────
 PORT=3000                                   # not used in Docker (see docker/compose.yml)
 DB_PATH=queriocity.db                       # path to SQLite database file (for docker see docker/compose.yml))
 JWT_SECRET=change-me-in-production-32chars!!
-ALLOWED_ORIGIN=http://localhost:3000        # CORS allowed origin; defaults to * (lock this in production)
+# ALLOWED_ORIGIN=https://queriocity.example # CORS. Unset = same-origin only (correct for normal
+#                                            # deployments — the client is served from this same
+#                                            # origin). Set only for a separate front end elsewhere.
+# COOKIE_SECURE=false                        # set false ONLY for local http dev; otherwise the
+#                                            # session cookie is marked Secure and a browser will
+#                                            # refuse to store it over plain http
+# TRUST_PROXY=true                           # set when behind nginx/Caddy so login rate limits key
+#                                            # on the real client address instead of the proxy's.
+#                                            # Do NOT set when exposed directly — the header is
+#                                            # then client-forgeable.
+
+# ── Rate limits (per user, per minute; 0 disables one) ───────────────────────
+# RATE_LIMIT_CHAT_PER_MIN=30
+# RATE_LIMIT_SUGGEST_PER_MIN=60
+# RATE_LIMIT_IMAGE_PER_MIN=10
+# RATE_LIMIT_INGEST_PER_MIN=10
 
 # ── Embedding reset (optional) ───────────────────────────────────────────────
 # Set to true when changing EMBED_DIMENSIONS to allow the embedding tables to be
@@ -673,6 +693,61 @@ adds this automatically.
 your user rather than root, so you can read, copy, and back up the database without `sudo`.
 
 The schema is created automatically on first start — no separate migration step needed.
+
+### Reverse proxy (nginx)
+
+`compose.yml` publishes the app on `127.0.0.1:8012` — loopback only, so it is not reachable
+from the network until a proxy is put in front of it. (Change the mapping to `8012:3000` if
+you deliberately want it exposed directly.) Queriocity does not terminate TLS itself.
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name queriocity.example;
+
+    ssl_certificate     /etc/letsencrypt/live/queriocity.example/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/queriocity.example/privkey.pem;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    # Matches the 50 MB upload limit; without it nginx rejects large files with 413.
+    client_max_body_size 50m;
+
+    location / {
+        proxy_pass http://127.0.0.1:8012;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Required for streamed answers: with buffering on, nginx holds the SSE stream and
+        # the answer appears all at once (or the connection times out mid-generation).
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 600s;
+    }
+}
+
+server {
+    listen 80;
+    server_name queriocity.example;
+    return 301 https://$host$request_uri;
+}
+```
+
+Set `TRUST_PROXY=true` in `env.local` to go with `X-Forwarded-For` above — otherwise every
+user shares one login rate-limit bucket keyed on nginx's own address. Leave `COOKIE_SECURE`
+unset (it defaults to on) and `ALLOWED_ORIGIN` unset (same-origin only).
+
+A Content-Security-Policy is not set by the app, because an untested policy silently breaks
+KaTeX, syntax highlighting, or the service worker. To enable one, add it here and verify the
+browser console is clean before trusting it:
+
+```nginx
+    # add_header Content-Security-Policy "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'" always;
+```
 
 ---
 
@@ -870,8 +945,13 @@ RERANK_MODEL=my-reranker-model
 ## User management
 
 - Registration requires an **invite link** generated by an admin in the Admin panel > Users tab.
-- Invites can optionally be scoped to a specific email address and expire after a set time.
+- Invites can optionally be scoped to a specific email address and expire after 7 days.
+- Outstanding invites are listed under the generator with their status (pending / used /
+  expired) and can be **revoked** — revoking deletes the token, so the link stops working
+  immediately.
 - Admins can view all users and manage roles.
+- Deleting a user or changing their role **takes effect on their next request** — any session
+  they already have open is invalidated rather than staying valid until the cookie expires.
 
 ---
 

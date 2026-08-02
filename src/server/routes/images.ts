@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
+import { rateLimitByUser, imageLimiter } from '../lib/rate-limit.ts'
 
 const generateSchema = z.object({
   prompt: z.string().min(1),
@@ -13,7 +14,7 @@ export const imagesRouter = new Hono<AppEnv>()
 
 imagesRouter.use('*', authMiddleware)
 
-imagesRouter.post('/generate', zValidator('json', generateSchema), async (c) => {
+imagesRouter.post('/generate', rateLimitByUser(imageLimiter, 'image'), zValidator('json', generateSchema), async (c) => {
   const imageBaseUrl = process.env.IMAGE_BASE_URL?.trim()
   if (!imageBaseUrl) return c.json({ error: 'Image generation not configured' }, 503)
 

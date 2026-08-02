@@ -3,8 +3,13 @@ import { fetch as undiciFetch, ProxyAgent } from 'undici'
 import { YoutubeTranscript } from 'youtube-transcript'
 import { generateText } from 'ai'
 import { getSmallModel, SMALL_MODEL_INPUT_CHARS } from './llm.ts'
+import { assertFetchableUrl, BlockedUrlError } from './url-guard.ts'
 
 const MAX_CHARS = parseInt(process.env.FETCH_MAX_CHARS ?? '100000')
+// Hard ceiling on bytes read off the wire, well above MAX_CHARS to leave room for markup:
+// the char cap is applied after stripping, so without this a huge page is fully buffered first.
+const MAX_BODY_BYTES = MAX_CHARS * 5
+const MAX_REDIRECTS = 5
 const PROXY_URL = process.env.FETCH_PROXY_URL
 const proxyAgent = PROXY_URL ? new ProxyAgent(PROXY_URL) : undefined
 const CACHE_TTL_MS = 5 * 60 * 1000
@@ -32,19 +37,48 @@ class HttpError extends Error {
   constructor(public status: number) { super(`HTTP ${status}`) }
 }
 
+/** Reads a body up to MAX_BODY_BYTES, then abandons the rest of the stream. */
+async function readCapped(res: { body: ReadableStream<Uint8Array> | null; text: () => Promise<string> }): Promise<string> {
+  const reader = res.body?.getReader()
+  if (!reader) return res.text()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  while (total < MAX_BODY_BYTES) {
+    const { done, value } = await reader.read()
+    if (done) break
+    chunks.push(value)
+    total += value.length
+  }
+  await reader.cancel().catch(() => {})
+  return new TextDecoder().decode(Buffer.concat(chunks))
+}
+
+/** Redirects are followed manually so every hop can be re-checked: a single guard on the
+ *  original URL is trivially bypassed by a public page that 302s to an internal address. */
 async function fetchStatic(url: string): Promise<string> {
-  const res = await undiciFetch(url, {
-    dispatcher: proxyAgent,
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'Accept-Language': 'sv-SE,sv;q=0.9,en-US;q=0.8,en;q=0.7',
-    },
-    signal: AbortSignal.timeout(15000),
-  })
-  if (!res.ok) throw new HttpError(res.status)
-  const html = await res.text()
-  return stripHtml(html)
+  let current = url
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    const res = await undiciFetch(current, {
+      dispatcher: proxyAgent,
+      redirect: 'manual',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'sv-SE,sv;q=0.9,en-US;q=0.8,en;q=0.7',
+      },
+      signal: AbortSignal.timeout(15000),
+    })
+    if (res.status >= 300 && res.status < 400) {
+      const location = res.headers.get('location')
+      if (!location) throw new HttpError(res.status)
+      current = new URL(location, current).toString()
+      await assertFetchableUrl(current)
+      continue
+    }
+    if (!res.ok) throw new HttpError(res.status)
+    return stripHtml(await readCapped(res as unknown as { body: ReadableStream<Uint8Array> | null; text: () => Promise<string> }))
+  }
+  throw new Error(`too many redirects (>${MAX_REDIRECTS})`)
 }
 
 async function fetchWithPlaywright(url: string): Promise<string> {
@@ -60,6 +94,18 @@ async function fetchWithPlaywright(url: string): Promise<string> {
     }
     const ctx = await browser.newContext(ctxOptions)
     await ctx.addInitScript(() => { Object.defineProperty(navigator, 'webdriver', { get: () => undefined }) })
+    // Playwright follows redirects internally, so guard each navigation rather than only the
+    // entry URL. Subresources are left alone — their bodies never reach the caller.
+    await ctx.route('**/*', async (route) => {
+      if (!route.request().isNavigationRequest()) return route.continue()
+      try {
+        await assertFetchableUrl(route.request().url())
+        await route.continue()
+      } catch {
+        console.warn(`  [fetch-url] blocked playwright navigation to ${route.request().url()}`)
+        await route.abort('blockedbyclient')
+      }
+    })
     const page = await ctx.newPage()
     await page.goto(url, { waitUntil: 'networkidle', timeout: 15000 })
     const text = await page.evaluate(() => document.body.innerText)
@@ -84,6 +130,14 @@ export function extractYoutubeVideoId(url: string): string | null {
 }
 
 export async function fetchUrl(url: string): Promise<string> {
+  try {
+    await assertFetchableUrl(url)
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err)
+    console.warn(`  [fetch-url] blocked ${url} — ${reason}`)
+    return `Error fetching ${url}: ${reason}`
+  }
+
   const cached = fetchCache.get(url)
   if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
     console.log(`  [fetch-url] cache hit: ${url}`)
@@ -114,6 +168,11 @@ export async function fetchUrl(url: string): Promise<string> {
     }
     console.log(`  [fetch-url] static fetch short (${text.length} chars), trying Playwright`)
   } catch (err) {
+    // A blocked redirect target must not fall through to Playwright, which would follow it.
+    if (err instanceof BlockedUrlError) {
+      console.warn(`  [fetch-url] blocked redirect from ${url} — ${err.message}`)
+      return `Error fetching ${url}: ${err.message}`
+    }
     if (err instanceof HttpError && proxyAgent) {
       // With a proxy (Tor), HTTP errors mean the exit node is blocked — Playwright would also fail or timeout
       console.log(`  [fetch-url] HTTP ${err.status} via proxy — skipping Playwright`)

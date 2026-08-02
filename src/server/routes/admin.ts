@@ -2,8 +2,8 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { generateText, embed } from 'ai'
-import { db, users, invites, chatSessions, getAppSetting, setAppSetting } from '../lib/db.ts'
-import { eq } from 'drizzle-orm'
+import { db, users, invites, chatSessions, getAppSetting, setAppSetting, bumpTokenVersion } from '../lib/db.ts'
+import { eq, desc } from 'drizzle-orm'
 import { indexSession } from '../lib/chat-indexer.ts'
 import { randomUUID } from 'crypto'
 import { authMiddleware, adminMiddleware, type AppEnv } from '../middleware/auth.ts'
@@ -92,6 +92,8 @@ adminRouter.patch('/users/:id', zValidator('json', z.object({ role: z.enum(['use
   const { role } = c.req.valid('json')
   if (id === c.get('userId')) return c.json({ error: 'Cannot change your own role' }, 400)
   await db.update(users).set({ role, updatedAt: new Date() }).where(eq(users.id, id))
+  // Their existing cookie carries the old role — invalidate it so the change takes effect now.
+  await bumpTokenVersion(id)
   return c.json({ ok: true })
 })
 
@@ -189,4 +191,23 @@ adminRouter.post('/invites',zValidator('json', z.object({ email: z.string().emai
   const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
   await db.insert(invites).values({ id, createdBy: c.get('userId'), email: email ?? null, createdAt: now, expiresAt })
   return c.json({ token: id, expiresAt })
+})
+
+adminRouter.get('/invites', async (c) => {
+  const rows = await db.select().from(invites).orderBy(desc(invites.createdAt))
+  return c.json(rows.map(i => ({
+    token: i.id,
+    email: i.email,
+    createdAt: i.createdAt,
+    expiresAt: i.expiresAt,
+    usedAt: i.usedAt,
+  })))
+})
+
+adminRouter.delete('/invites/:token', async (c) => {
+  const { token } = c.req.param()
+  const invite = await db.select().from(invites).where(eq(invites.id, token)).get()
+  if (!invite) return c.json({ error: 'Not found' }, 404)
+  await db.delete(invites).where(eq(invites.id, token))
+  return c.json({ ok: true })
 })

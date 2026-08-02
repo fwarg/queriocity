@@ -11,6 +11,9 @@ export interface AuthUser {
   userId: string
   email: string
   role: 'user' | 'admin'
+  /** Invalidation counter — bumped on delete, role change and password change so an existing
+   *  cookie stops working immediately instead of at its 7-day expiry. */
+  tokenVersion: number
 }
 
 export async function hashPassword(password: string): Promise<string> {
@@ -22,7 +25,7 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
 }
 
 export async function signToken(user: AuthUser): Promise<string> {
-  return new SignJWT({ email: user.email, role: user.role })
+  return new SignJWT({ email: user.email, role: user.role, tv: user.tokenVersion })
     .setProtectedHeader({ alg: ALG })
     .setSubject(user.userId)
     .setIssuedAt()
@@ -37,6 +40,9 @@ export async function verifyToken(token: string): Promise<AuthUser> {
     userId: payload.sub,
     email: payload['email'] as string,
     role: payload['role'] as 'user' | 'admin',
+    // Tokens issued before token versioning existed carry no `tv` claim; treating them as
+    // version 0 (the column default) keeps everyone logged in across the upgrade.
+    tokenVersion: typeof payload['tv'] === 'number' ? payload['tv'] : 0,
   }
 }
 
@@ -49,8 +55,11 @@ export function validatePassword(password: string): string | null {
   return null
 }
 
+// `secure` is on unless explicitly disabled: set COOKIE_SECURE=false for local http
+// development, where the browser would otherwise discard the cookie entirely.
 export const COOKIE_OPTIONS = {
   httpOnly: true,
+  secure: process.env.COOKIE_SECURE !== 'false',
   sameSite: 'Lax' as const,
   path: '/',
   maxAge: 7 * 24 * 60 * 60,

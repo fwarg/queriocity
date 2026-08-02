@@ -20,6 +20,8 @@ import { rerank, rerankEnabled } from '../lib/reranker.ts'
 import { buildMemoryBlock, buildChatFileBlock, extractMemoriesPostHoc } from '../lib/memory.ts'
 import { trimMessages, contextCharBudget, CONTEXT_RESERVE_FRACTION } from '../lib/trim-messages.ts'
 import { indexContents } from '../lib/chat-indexer.ts'
+import { ownsSpace, sessionOwnership } from '../lib/ownership.ts'
+import { rateLimitByUser, chatLimiter, suggestLimiter } from '../lib/rate-limit.ts'
 import { IMAGE_STORAGE_DIR } from '../lib/image-store.ts'
 const _createdImageDirs = new Set<string>()
 
@@ -32,13 +34,15 @@ const KEEPALIVE_INTERVAL_MS = 15000
 const RESEARCHER_NOTES_CAP = 12000
 const SESSION_TITLE_MAX = 60
 
+// Content is generously bounded rather than tightly: a user message can carry an inlined
+// attachment, capped separately by the attachment_chars setting (admin max 500000).
 const chatSchema = z.object({
   sessionId: z.string().optional(),
   spaceId: z.string().optional(),
   messages: z.array(z.object({
     role: z.enum(['user', 'assistant']),
-    content: z.string(),
-  })),
+    content: z.string().max(600_000),
+  })).max(200),
   focusMode: z.enum(['flash', 'balanced', 'thorough', 'image']).default('balanced'),
   searchCategories: z.array(z.enum(['news', 'science', 'discussions', 'tech'])).optional(),
   includeFileIds: z.array(z.string()).optional(),
@@ -50,7 +54,7 @@ export const chatRouter = new Hono<AppEnv>()
 
 chatRouter.use('*', authMiddleware)
 
-chatRouter.post('/suggest', zValidator('json', z.object({ text: z.string().min(5).max(500) })), async (c) => {
+chatRouter.post('/suggest', rateLimitByUser(suggestLimiter, 'suggest'), zValidator('json', z.object({ text: z.string().min(5).max(500) })), async (c) => {
   const { text } = c.req.valid('json')
   try {
     const { text: raw } = await generateText({
@@ -73,18 +77,35 @@ chatRouter.post('/suggest', zValidator('json', z.object({ text: z.string().min(5
   return c.json([])
 })
 
-chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
+chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', chatSchema), async (c) => {
   const userId = c.get('userId') as string
   const { sessionId, spaceId, messages: msgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, ephemeral } = c.req.valid('json')
   const searchCategory = toSearxngCategories(searchCategories)
   const sid = sessionId ?? randomUUID()
+
+  // Both ids come straight from the client: without these checks a known space id leaks
+  // another user's memories into this answer, and a known session id appends to their chat.
+  if (spaceId && !await ownsSpace(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
+  if (sessionId && await sessionOwnership(sessionId, userId) === 'other') return c.json({ error: 'Not found' }, 404)
 
   const abortSignal = c.req.raw.signal
   const lastUser = [...msgs].reverse().find(m => m.role === 'user')
   const preview = (lastUser?.content ?? '').slice(0, 100).replace(/\n/g, ' ')
   console.log(`\n━━━ [${focusMode}] ${preview}`)
 
-  const ck = cacheKey(lastUser?.content ?? '', focusMode)
+  // Settings are read once here rather than per branch: the cache key depends on the custom
+  // prompt, so a personalised answer can never be served to a different user or context.
+  const userRow = await db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get()
+  const parsedSettings = parseSettings(userRow?.settings ?? '{}')
+  const customPrompt = parsedSettings.customPrompt as string | undefined
+  const cacheScope = [
+    userId, spaceId ?? '',
+    [...(includeFileIds ?? [])].sort().join(','),
+    [...(includeMemoryIds ?? [])].sort().join(','),
+    customPrompt ?? '',
+  ].join('|')
+
+  const ck = cacheKey(lastUser?.content ?? '', focusMode, cacheScope)
   const cached = getCached<string>(ck)
   if (cached) {
     return streamSSE(c, async (stream) => {
@@ -94,16 +115,13 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
   }
 
   if (focusMode === 'flash') {
-    const [userRow, memoryBudget, ragBudget] = await Promise.all([
-      db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get(),
+    const [memoryBudget, ragBudget] = await Promise.all([
       spaceId ? getAppSetting('memory_token_budget', '1000').then(Number) : Promise.resolve(1000),
       spaceId ? getAppSetting('space_rag_budget', '500').then(Number) : Promise.resolve(0),
     ])
     const userQuery = lastUser?.content ?? ''
-    const parsedFlashSettings = parseSettings(userRow?.settings ?? '{}')
-    const effectiveRag = (parsedFlashSettings.useSpaceRag !== false) ? ragBudget : 0
+    const effectiveRag = (parsedSettings.useSpaceRag !== false) ? ragBudget : 0
     const { block: resolvedMemoryBlock, fileSources: flashFileSources } = spaceId ? await buildMemoryBlock(spaceId, memoryBudget, effectiveRag, userQuery, includeFileIds, includeMemoryIds) : { block: '', fileSources: [] }
-    const customPrompt: string | undefined = parsedFlashSettings.customPrompt as string | undefined
     const t0 = Date.now()
     let fullContent = ''
     return streamSSE(c, async (stream) => {
@@ -348,8 +366,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
   const apiBudget: SearchApiBudget = { remaining: parseInt(process.env.SEARCH_API_MAX_PER_REQUEST ?? '3', 10) }
 
   // Fetch user settings + file count + reformulate/pre-search + memory + URL prefetch in parallel
-  const [userRow, fileCountRow, { initialQueries, initialResults, engineErrors }, memoryBudget, ragBudget, prefetchedUrls] = await Promise.all([
-    db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get(),
+  const [fileCountRow, { initialQueries, initialResults, engineErrors }, memoryBudget, ragBudget, prefetchedUrls] = await Promise.all([
     db.select({ count: sql<number>`count(*)` }).from(uploadedFiles).where(eq(uploadedFiles.userId, userId)).get(),
     runReformulateAndPreSearch(msgsForReformulate, focusMode as 'balanced' | 'thorough', hasAttachment, searchCategory, apiBudget),
     spaceId ? getAppSetting('memory_token_budget', '1000').then(Number) : Promise.resolve(1000),
@@ -357,7 +374,6 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
     prefetchUrlsFromMessage(lastUser?.content ?? '', hasAttachment, fetchMaxPages),
   ])
   const userQuery = lastUser?.content ?? ''
-  const parsedSettings = parseSettings(userRow?.settings ?? '{}')
   const hasFiles = (fileCountRow?.count ?? 0) > 0
   const effectiveRag = (parsedSettings.useSpaceRag !== false) ? ragBudget : 0
   const { block: memoryBlock, fileSources } = spaceId
@@ -365,7 +381,6 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
     : (hasFiles && parsedSettings.useChatRag !== false)
       ? await buildChatFileBlock(userId, userQuery, ragBudget)
       : { block: '', fileSources: [] }
-  const customPrompt = parsedSettings.customPrompt as string | undefined
   const showThinkingSettings = (parsedSettings.showThinking ?? { balanced: false, thorough: false }) as { balanced: boolean; thorough: boolean }
   const showThinking = focusMode === 'balanced' ? showThinkingSettings.balanced
                      : focusMode === 'thorough'  ? showThinkingSettings.thorough

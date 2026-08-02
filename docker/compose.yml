@@ -6,7 +6,9 @@ services:
     env_file: env.local
     user: "${UID:-1000}:${GID:-1000}"
     ports:
-      - "8012:3000"
+      # Loopback-only: a reverse proxy (nginx) is expected to terminate TLS in front.
+      # Change to "8012:3000" to expose the app directly on the network.
+      - "127.0.0.1:8012:3000"
     environment:
         IMAGE_STORAGE_DIR: /images
     volumes:

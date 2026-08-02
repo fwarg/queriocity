@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { listUsers, setUserRole, deleteUser, createInvite, testModels, fetchAdminSettings, updateAdminSettings, triggerDream, reindexChats, type ModelTestResult } from '../lib/api.ts'
+import { listUsers, setUserRole, deleteUser, createInvite, listInvites, revokeInvite, testModels, fetchAdminSettings, updateAdminSettings, triggerDream, reindexChats, type ModelTestResult, type Invite } from '../lib/api.ts'
 import { Modal } from './Modal.tsx'
 
 interface Props {
@@ -42,6 +42,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   const [userList, setUserList] = useState<UserRow[]>([])
   const [inviteUrl, setInviteUrl] = useState('')
   const [inviteEmail, setInviteEmail] = useState('')
+  const [invites, setInvites] = useState<Invite[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
@@ -67,6 +68,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   useEffect(() => {
     if (tab === 'users' && userList.length === 0) {
       listUsers().then(setUserList).catch(() => setError('Failed to load users.'))
+      listInvites().then(setInvites).catch(() => setError('Failed to load invites.'))
     }
   }, [tab])
 
@@ -167,9 +169,31 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
       const { token } = await createInvite(inviteEmail || undefined)
       const url = `${window.location.origin}/register?token=${token}`
       setInviteUrl(url)
+      setInvites(await listInvites())
     } finally {
       setBusy(false)
     }
+  }
+
+  async function handleRevokeInvite(token: string) {
+    setBusy(true)
+    try {
+      await revokeInvite(token)
+      setInvites(await listInvites())
+    } catch {
+      setError('Failed to revoke invite.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /** 'used', 'expired', or the remaining lifetime — an invite is only usable while pending. */
+  function inviteStatus(i: Invite): string {
+    if (i.usedAt) return 'used'
+    const msLeft = new Date(i.expiresAt).getTime() - Date.now()
+    if (msLeft <= 0) return 'expired'
+    const days = Math.ceil(msLeft / 86400_000)
+    return days > 1 ? `${days} days left` : 'expires today'
   }
 
   const tabBtn = (t: Tab, _label: string) =>
@@ -453,6 +477,27 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                   >
                     Copy
                   </button>
+                </div>
+              )}
+
+              {invites.length > 0 && (
+                <div className="flex flex-col gap-1 pt-2">
+                  <p className="text-xs text-gray-400 font-medium">Outstanding invites</p>
+                  {invites.map(i => (
+                    <div key={i.token} className="flex items-center gap-2 text-xs text-gray-400">
+                      <span className="flex-1 truncate">
+                        {i.email ?? 'any email'}
+                        <span className="text-gray-600"> · {i.token.slice(0, 8)}… · {inviteStatus(i)}</span>
+                      </span>
+                      <button
+                        onClick={() => handleRevokeInvite(i.token)}
+                        disabled={busy}
+                        className="text-red-400 hover:underline disabled:opacity-50 whitespace-nowrap"
+                      >
+                        Revoke
+                      </button>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

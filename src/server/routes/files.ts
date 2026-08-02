@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm'
 import { ingestFile, extractFileText, isUsableText, ACCEPTED_MIME_TYPES } from '../lib/files/ingest.ts'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { fetchUrl, extractYoutubeVideoId } from '../lib/fetch-url.ts'
+import { rateLimitByUser, ingestLimiter } from '../lib/rate-limit.ts'
 
 export const filesRouter = new Hono<AppEnv>()
 
@@ -35,7 +36,7 @@ filesRouter.post('/upload', async (c) => {
   }
 })
 
-filesRouter.post('/ingest-url', async (c) => {
+filesRouter.post('/ingest-url', rateLimitByUser(ingestLimiter, 'ingest-url'), async (c) => {
   const userId = c.get('userId') as string
   const body = await c.req.json() as { url?: string }
   const url = body.url?.trim()
