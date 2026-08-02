@@ -694,11 +694,50 @@ your user rather than root, so you can read, copy, and back up the database with
 
 The schema is created automatically on first start — no separate migration step needed.
 
-### Reverse proxy (nginx)
+### Reverse proxy
 
-`compose.yml` publishes the app on `127.0.0.1:8012` — loopback only, so it is not reachable
-from the network until a proxy is put in front of it. (Change the mapping to `8012:3000` if
-you deliberately want it exposed directly.) Queriocity does not terminate TLS itself.
+Queriocity does not terminate TLS itself — put a reverse proxy in front of it. Where the
+proxy runs decides how the app should be published, and getting this wrong produces a
+**502 Bad Gateway** even though the app is running perfectly.
+
+`compose.yml` publishes `8012:3000` (all interfaces) by default, which works in every case.
+
+**If the proxy runs on the host** (nginx or Caddy installed on the machine itself), tighten
+the mapping so port 8012 is not reachable from the LAN:
+
+```yaml
+    ports:
+      - "127.0.0.1:8012:3000"
+```
+
+**If the proxy runs in a container** (Nginx Proxy Manager, Traefik, a dockerised nginx),
+do *not* use the loopback mapping: inside that container `127.0.0.1` is the container
+itself, not your host, so it cannot reach a loopback-published port — that is the 502.
+Either keep the default `8012:3000` and point the proxy at the host's LAN address, or
+better, drop the published port entirely and let the two containers talk directly:
+
+```yaml
+services:
+  queriocity:
+    # ports:                       ← remove; nothing needs to be published
+    networks: [default, npm_default]
+
+networks:
+  npm_default:
+    external: true                 # the network your proxy already runs on
+```
+
+Then set the proxy's forward target to the container name and its internal port —
+`docker-queriocity-1` / `3000` — instead of a host address. Nothing is exposed on the LAN
+at all, and traffic no longer round-trips through the host.
+
+Check the network name with `docker inspect <proxy-container> --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}'`.
+
+#### nginx configuration
+
+The settings below matter regardless of where nginx runs; set `proxy_pass` to whichever
+target applies from the section above. In Nginx Proxy Manager, the streaming and timeout
+directives go in the proxy host's **Advanced** tab, and "Websockets Support" should be on.
 
 ```nginx
 server {
@@ -714,6 +753,8 @@ server {
     client_max_body_size 50m;
 
     location / {
+        # Host-installed nginx. From a containerised proxy use the host's LAN address, or
+        # http://docker-queriocity-1:3000 on a shared Docker network — never 127.0.0.1.
         proxy_pass http://127.0.0.1:8012;
         proxy_http_version 1.1;
 
@@ -738,8 +779,9 @@ server {
 ```
 
 Set `TRUST_PROXY=true` in `env.local` to go with `X-Forwarded-For` above — otherwise every
-user shares one login rate-limit bucket keyed on nginx's own address. Leave `COOKIE_SECURE`
-unset (it defaults to on) and `ALLOWED_ORIGIN` unset (same-origin only).
+user shares one login rate-limit bucket keyed on the proxy's own address. Nginx Proxy Manager
+sets that header itself, so the same applies there. Leave `COOKIE_SECURE` unset (it defaults
+to on) and `ALLOWED_ORIGIN` unset (same-origin only).
 
 A Content-Security-Policy is not set by the app, because an untested policy silently breaks
 KaTeX, syntax highlighting, or the service worker. To enable one, add it here and verify the
