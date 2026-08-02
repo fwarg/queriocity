@@ -338,9 +338,10 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
 
   const t0 = Date.now()
 
-  const [fetchMaxPages, fetchSummarize] = await Promise.all([
+  const [fetchMaxPages, fetchSummarize, compressHistory] = await Promise.all([
     getAppSetting('fetch_max_pages', '8').then(Number),
     getAppSetting('fetch_summarize_overflow', 'false').then(v => v === 'true'),
+    getAppSetting('compress_history_overflow', 'false').then(v => v === 'true'),
   ])
 
   // Shared per-request allowance for paid keyed-API fallback searches (pre-search + researcher).
@@ -425,7 +426,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
         await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: snippets + '\n\n' }) })
       }
       const researchModel = useThinking ? getThinkingModelOrFallback() : getChatModel()
-      const researcherResult = runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, fetchSummarize, onEngineErrors: warnEngineErrors, apiBudget })
+      const researcherResult = await runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, fetchSummarize, compressHistory, onEngineErrors: warnEngineErrors, apiBudget })
       const allSources: SearchResult[] = [...(initialResults ?? [])]
       let researcherNotes = ''
       const thoroughExtractor = useThinking ? new ThinkExtractor() : null
@@ -516,7 +517,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
       }
 
       const fullSources: SearchResult[] = []
-      const result = runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, fetchSummarize, onEngineErrors: warnEngineErrors, apiBudget })
+      const result = await runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, fetchSummarize, compressHistory, onEngineErrors: warnEngineErrors, apiBudget })
       const extractor = showThinking ? new ThinkExtractor() : null
 
       const keepalive = setInterval(() => {

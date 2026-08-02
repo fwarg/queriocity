@@ -28,6 +28,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   const [rssFeedCharsBudgetDraft, setRssFeedCharsBudgetDraft] = useState('50000')
   const [fetchMaxPagesDraft, setFetchMaxPagesDraft] = useState('8')
   const [fetchSummarizeOverflowDraft, setFetchSummarizeOverflowDraft] = useState(false)
+  const [compressHistoryOverflowDraft, setCompressHistoryOverflowDraft] = useState(false)
   const [savingBudget, setSavingBudget] = useState(false)
   const [budgetSaved, setBudgetSaved] = useState(false)
   const [dreamRunning, setDreamRunning] = useState(false)
@@ -59,6 +60,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
       setRssFeedCharsBudgetDraft(String(s.rssFeedCharsBudget))
       setFetchMaxPagesDraft(String(s.fetchMaxPages))
       setFetchSummarizeOverflowDraft(s.fetchSummarizeOverflow)
+      setCompressHistoryOverflowDraft(s.compressHistoryOverflow)
     }).catch(() => setError('Failed to load settings.'))
   }, [])
 
@@ -94,7 +96,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     setError('')
     setSavingBudget(true)
     try {
-      await updateAdminSettings({ memoryTokenBudget: budget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, attachmentChars, spaceRagBudget, queryReformulation: queryReformulationDraft, rssFeedCharsBudget, fetchMaxPages, fetchSummarizeOverflow: fetchSummarizeOverflowDraft })
+      await updateAdminSettings({ memoryTokenBudget: budget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, attachmentChars, spaceRagBudget, queryReformulation: queryReformulationDraft, rssFeedCharsBudget, fetchMaxPages, fetchSummarizeOverflow: fetchSummarizeOverflowDraft, compressHistoryOverflow: compressHistoryOverflowDraft })
 
       onBudgetChange?.(budget)
       setBudgetSaved(true)
@@ -300,6 +302,20 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                 <p className="text-xs text-gray-500">When fetched URL content exceeds the context budget, use the small model to summarize it instead of hard-truncating. Produces better results but adds latency. Requires a fast small model.</p>
                 <label className="flex items-center gap-2 cursor-pointer w-fit">
                   <input type="checkbox" checked={fetchSummarizeOverflowDraft} onChange={e => setFetchSummarizeOverflowDraft(e.target.checked)}
+                    className="accent-blue-500 w-3.5 h-3.5" />
+                  <span className="text-xs text-gray-400">Enabled</span>
+                </label>
+              </div>
+            </div>
+
+            {/* Context */}
+            <div className="flex flex-col gap-3 border-t border-gray-800 pt-5">
+              <p className="text-xs font-semibold text-gray-300 uppercase tracking-wider">Context</p>
+              <div className="flex flex-col gap-1.5">
+                <p className="text-xs text-gray-400 font-medium">Compress dropped history</p>
+                <p className="text-xs text-gray-500">When a research turn's conversation history must be trimmed to fit the context budget, summarize the dropped messages with the small model and fold the summary into the system prompt instead of discarding them outright. Adds latency; only applies to balanced/thorough research turns.</p>
+                <label className="flex items-center gap-2 cursor-pointer w-fit">
+                  <input type="checkbox" checked={compressHistoryOverflowDraft} onChange={e => setCompressHistoryOverflowDraft(e.target.checked)}
                     className="accent-blue-500 w-3.5 h-3.5" />
                   <span className="text-xs text-gray-400">Enabled</span>
                 </label>

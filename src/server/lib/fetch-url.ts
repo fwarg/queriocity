@@ -2,9 +2,9 @@ import { chromium } from 'playwright'
 import { fetch as undiciFetch, ProxyAgent } from 'undici'
 import { YoutubeTranscript } from 'youtube-transcript'
 import { generateText } from 'ai'
-import { getSmallModel } from './llm.ts'
+import { getSmallModel, SMALL_MODEL_INPUT_CHARS } from './llm.ts'
 
-const MAX_CHARS = parseInt(process.env.FETCH_MAX_CHARS ?? '12000')
+const MAX_CHARS = parseInt(process.env.FETCH_MAX_CHARS ?? '100000')
 const PROXY_URL = process.env.FETCH_PROXY_URL
 const proxyAgent = PROXY_URL ? new ProxyAgent(PROXY_URL) : undefined
 const CACHE_TTL_MS = 5 * 60 * 1000
@@ -172,26 +172,26 @@ export async function fetchUrlAllPages(url: string, maxPages = DEFAULT_MAX_PAGES
   return pages.map((p, i) => `--- Page ${i + 1} ---\n${p}`).join('\n\n')
 }
 
-// Derive chunk size from the small model's context window.
-// Reserve 30% for system prompt + output; use 2.5 chars/tok for dense technical content.
-const SMALL_CTX = parseInt(process.env.SMALL_MODEL_CONTEXT_TOKENS ?? '4096')
-const SUMMARIZE_INPUT_CHARS = Math.floor(SMALL_CTX * 0.7 * 2.5)
-// Max chunks to process serially (covers up to MAX_SUMMARIZE_CHUNKS × SUMMARIZE_INPUT_CHARS chars)
+// Max chunks to process serially (covers up to MAX_SUMMARIZE_CHUNKS × SMALL_MODEL_INPUT_CHARS chars)
 const MAX_SUMMARIZE_CHUNKS = parseInt(process.env.FETCH_SUMMARIZE_MAX_CHUNKS ?? '6')
 // Hard cap per URL regardless of budget — prevents one URL from consuming the whole context
 const MAX_URL_CONTEXT_CHARS = parseInt(process.env.FETCH_MAX_URL_CONTEXT_CHARS ?? '40000')
 // Floor per URL when a budget is split across many URLs — below this, summarizing/truncating isn't worth it
 export const MIN_URL_CONTEXT_CHARS = 8000
 
+if (MAX_CHARS < MAX_URL_CONTEXT_CHARS) {
+  console.warn(`[fetch-url] misconfiguration: FETCH_MAX_CHARS (${MAX_CHARS}) is less than FETCH_MAX_URL_CONTEXT_CHARS (${MAX_URL_CONTEXT_CHARS}). The raw scrape ceiling will clip content before the context cap or summarizer ever run, effectively disabling both for single-page fetches. Set FETCH_MAX_CHARS >= FETCH_MAX_URL_CONTEXT_CHARS.`)
+}
+
 export async function summarizeContent(url: string, content: string, targetChars: number): Promise<string> {
   const hostname = new URL(url).hostname
   const start = performance.now()
-  const numChunks = Math.min(MAX_SUMMARIZE_CHUNKS, Math.ceil(content.length / SUMMARIZE_INPUT_CHARS))
+  const numChunks = Math.min(MAX_SUMMARIZE_CHUNKS, Math.ceil(content.length / SMALL_MODEL_INPUT_CHARS))
   const perChunkWords = Math.floor(targetChars / numChunks / 5)
   const summaries: string[] = []
   try {
     for (let i = 0; i < numChunks; i++) {
-      const chunk = content.slice(i * SUMMARIZE_INPUT_CHARS, (i + 1) * SUMMARIZE_INPUT_CHARS)
+      const chunk = content.slice(i * SMALL_MODEL_INPUT_CHARS, (i + 1) * SMALL_MODEL_INPUT_CHARS)
       const { text } = await generateText({
         model: getSmallModel(),
         system: `Summarize this section of a web page concisely, preserving all technically important facts. Reply in under ${perChunkWords} words. Output only the summary, no preamble.`,

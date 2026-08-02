@@ -198,9 +198,10 @@ There are two ways page content reaches the model, and they share the same fetch
 - **Static fetch first** — a lightweight HTTP request strips scripts, styles, and navigation elements to extract readable text. Fast and proxy-friendly.
 - **Playwright fallback** — if the static fetch returns too little content (JS-rendered pages, login walls that redirect), a headless Chromium instance renders the page and extracts `innerText`.
 - **Pagination** — for pasted URLs, up to `FETCH_MAX_PAGES` pages are fetched automatically by appending `?page=2`, `?page=3`, etc. Stops on error, short content, duplicate content, or when two consecutive pages have the same length (e.g. file-listing pagination with identical structure). Overridable per-instance in Admin → Settings. The `fetch_url` tool fetches one page per call; the model can call it again with its own `?page=2` if it needs more, subject to the per-turn budget below.
-- **Raw scrape ceiling** — each single fetch (one page) is capped at `FETCH_MAX_CHARS` chars (default 12 000) of extracted text before it's cached. This only bounds how much is scraped and kept in memory — it does *not* by itself limit what reaches the model; see the next two limits for that.
+- **Raw scrape ceiling** — each single fetch (one page) is capped at `FETCH_MAX_CHARS` chars (default 100 000) of extracted text before it's cached. This only bounds how much is scraped and kept in memory — it does *not* by itself limit what reaches the model; see the next two limits for that. It must stay ≥ `FETCH_MAX_URL_CONTEXT_CHARS` (below) or it silently clips content before the context cap or summarizer ever run; a startup warning is logged if misconfigured.
 - **Per-URL context cap** — before a page's content is injected into the model's context, it's capped at `FETCH_MAX_URL_CONTEXT_CHARS` (default 40 000 chars), applied identically whether the URL was pasted by the user or fetched by the model's own `fetch_url` tool. If the *Summarize oversized URL content* admin setting is enabled, content over the cap is compressed by the small model in serial chunks (`FETCH_SUMMARIZE_MAX_CHUNKS`, default 6) instead of being hard-truncated.
-- **Per-turn cumulative budget** — `fetch_url` and `web_search` calls made by the model during one research turn draw from a single shared budget, derived from `CONTEXT_TOKEN_LIMIT` (roughly 80% of the model's real context window, minus what the system prompt and conversation history already use). Every call consumes from this pool as it goes; once it's nearly exhausted, further `fetch_url`/`web_search` calls are refused and the model is told to answer with what it already has instead of erroring. This is what actually protects against context overflow once an agentic research turn is underway — a `thorough`-mode run can call these tools many times across several steps, and this cap holds regardless of how high `FETCH_MAX_CHARS` is set for scraping purposes.
+- **Per-turn cumulative budget** — `fetch_url` and `web_search` calls made by the model during one research turn draw from a single shared budget, derived from `CONTEXT_TOKEN_LIMIT` (roughly 80% of the model's real context window, minus what the system prompt and conversation history already use). A fixed fraction of that budget (`TOOL_BUDGET_RESERVE_FRACTION`, default 30%) is reserved for this pool *before* conversation history is trimmed, so a long conversation can never leave the tools with no room to work. Every call consumes from the pool as it goes; once it's nearly exhausted, further `fetch_url`/`web_search` calls are refused and the model is told to answer with what it already has instead of erroring. This is what actually protects against context overflow once an agentic research turn is underway — a `thorough`-mode run can call these tools many times across several steps, and this cap holds regardless of how high `FETCH_MAX_CHARS` is set for scraping purposes.
+- **History compaction** — when conversation history must be trimmed to make room (for the tool budget above), the oldest messages are dropped by default. If the *Compress dropped history* admin setting is enabled, they're summarized by the small model and folded into the system prompt instead, preserving continuity at the cost of an extra LLM call. Only applies to balanced/thorough research turns.
 - **Cache** — fetched URLs are cached for 5 minutes so the model does not re-fetch during the same session.
 - **Privacy** — by default requests originate from the server's IP. Set `FETCH_PROXY_URL` to route all fetches through an HTTP or SOCKS5 proxy (e.g. [Privoxy](https://www.privoxy.org/) → Tor).
 
@@ -502,9 +503,10 @@ SEARXNG_URL=http://localhost:4000  # url to your searxng instance
 # By default requests come from the server's IP. Set FETCH_PROXY_URL to route
 # them through an HTTP or SOCKS5 proxy (e.g. Tor, Privoxy).
 # FETCH_PROXY_URL=socks5://127.0.0.1:9050    # optional proxy for URL fetches
-# FETCH_MAX_CHARS=12000                       # raw per-fetch scrape/cache ceiling (one page's extracted text, default: 12000).
+# FETCH_MAX_CHARS=100000                      # raw per-fetch scrape/cache ceiling (one page's extracted text, default: 100000).
 #                                              # Does NOT bound what reaches the model — see FETCH_MAX_URL_CONTEXT_CHARS and
 #                                              # CONTEXT_TOKEN_LIMIT below. Safe to raise independently for scraping/caching.
+#                                              # Must stay >= FETCH_MAX_URL_CONTEXT_CHARS or a startup warning is logged.
 # FETCH_MAX_PAGES=8                           # max pages fetched via ?page=N pagination (prefetch path only; default: 8)
 # FETCH_MAX_URL_CONTEXT_CHARS=40000           # hard per-URL cap on content injected into the model's context — applies to
 #                                              # both pasted URLs and the fetch_url tool (default: 40000)
@@ -531,10 +533,15 @@ REFORMULATE_ASSISTANT_CTX=1000            # max chars of prior assistant turns
 
 # ── Chat context window ───────────────────────────────────────────────────────
 # Context window of the main chat/thinking model in tokens. Used for three things:
-#  - conversation history is trimmed once, before a research turn starts, dropping
-#    the oldest messages once the estimated total exceeds ~80% of this limit;
-#  - the per-URL context cap for pasted URLs is derived from what's left of that
-#    80% after the system prompt and history (see FETCH_MAX_URL_CONTEXT_CHARS);
+#  - a fixed floor (TOOL_BUDGET_RESERVE_FRACTION, default 30%) of the input budget is
+#    reserved for the fetch_url/web_search tools BEFORE history trimming runs, so a
+#    long conversation can never leave the agentic loop with no room left to search/fetch;
+#  - conversation history is trimmed (or, if "Compress dropped history" is enabled in
+#    Admin → System settings, summarized by the small model and folded into the system
+#    prompt instead of discarded) to fit what's left of the budget after that floor is
+#    set aside;
+#  - the per-URL context cap for pasted URLs is derived from what's left of the 80%
+#    budget after the system prompt and history (see FETCH_MAX_URL_CONTEXT_CHARS);
 #  - a cumulative per-turn budget for the fetch_url/web_search tools: every call
 #    the model makes during one research turn draws from this same shared pool,
 #    and once it's nearly spent, further calls are refused so the prompt can't
@@ -544,9 +551,19 @@ REFORMULATE_ASSISTANT_CTX=1000            # max chars of prior assistant turns
 # over-trimmed. (~4 chars ≈ 1 token)
 # CONTEXT_TOKEN_LIMIT=32768               # ⚠ default: 8192 (too small for most modern models)
 
-# Context window of the small utility model in tokens (used for query
-# reformulation, URL summarisation, query suggestions). Used to derive safe
-# chunk sizes automatically. Default 4096.
+# Fraction of the input budget (CONTEXT_TOKEN_LIMIT × 0.8) reserved for agentic tool
+# (web_search/fetch_url) results during balanced/thorough research turns, held back from
+# conversation-history trimming so a long chat can never starve the tools of room to work.
+# Default 0.3 (30% reserved for tools; history gets the remaining 70% before trimming kicks in).
+# TOOL_BUDGET_RESERVE_FRACTION=0.3
+
+# Context window of the small utility model, in tokens. Used to derive a safe per-call input
+# chunk size for query reformulation, URL summarisation, query suggestions, and — as of the
+# history-compression feature above — chunking dropped conversation history before it's
+# summarized. This is a client-side accounting number only: it is never sent to the small-model
+# server, so it must match what that server is actually configured with (e.g. Ollama's num_ctx,
+# llama.cpp's --ctx-size) or these calls can themselves overflow the small model's real context.
+# ⚠ Default is 4096 — set this to your actual small model's context, not the main model's.
 # SMALL_MODEL_CONTEXT_TOKENS=4096
 
 # Max output tokens for flash mode responses. Default 200 (intentionally terse).
@@ -874,6 +891,9 @@ The **Admin panel > System settings** tab exposes runtime-configurable parameter
 | Reranking | Top N | 15 | Results kept after reranking (requires `RERANK_MODEL`) |
 | Search | Query reformulation | On | Use a small LLM to rewrite queries before searching. Improves relevance at the cost of a small model call. Disable on slow hardware. |
 | Search | RSS feed character budget | 50000 | Total characters of news content fetched per monitor run when RSS sources are selected. Items per feed and content length per item scale automatically to fill this budget. Increase for large-context models; decrease for small ones (8K context ≈ 20 000 chars). |
+| Search | Max pages per URL | 8 | How many paginated pages to fetch when a user provides a URL (`?page=2`, `?page=3`…). 0 = unlimited. |
+| Search | Summarize oversized URL content | Off | Summarize fetched URL content that exceeds the context budget with the small model instead of hard-truncating. Adds latency. |
+| Context | Compress dropped history | Off | When a research turn's conversation history must be trimmed to fit the context budget, summarize the dropped messages with the small model instead of discarding them, folded into the system prompt. Adds latency; only applies to balanced/thorough turns. |
 | Attachments | Max context chars | 20000 | Max characters extracted from an attached file and sent as context |
 
 The **RAG context budget** field also has a **Re-index chats** button that queues a background re-index of all chat sessions across all users — useful after changing embedding models or dimensions.

@@ -17,7 +17,7 @@ adminRouter.use('*', authMiddleware)
 adminRouter.use('*', adminMiddleware)
 
 adminRouter.get('/settings', async (c) => {
-  const [memoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchSummarizeOverflow] = await Promise.all([
+  const [memoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchSummarizeOverflow, compressHistoryOverflow] = await Promise.all([
     getAppSetting('memory_token_budget', '1000').then(Number),
     getAppSetting('dream_hour', '-1').then(Number),
     getAppSetting('dream_threshold', '1500').then(Number),
@@ -31,8 +31,9 @@ adminRouter.get('/settings', async (c) => {
     getAppSetting('rss_feed_chars_budget', '50000').then(Number),
     getAppSetting('fetch_max_pages', '8').then(Number),
     getAppSetting('fetch_summarize_overflow', 'false').then(v => v === 'true'),
+    getAppSetting('compress_history_overflow', 'false').then(v => v === 'true'),
   ])
-  return c.json({ memoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchSummarizeOverflow })
+  return c.json({ memoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchSummarizeOverflow, compressHistoryOverflow })
 })
 
 adminRouter.patch('/settings', zValidator('json', z.object({
@@ -49,6 +50,7 @@ adminRouter.patch('/settings', zValidator('json', z.object({
   rssFeedCharsBudget: z.number().int().min(5000).max(500000).optional(),
   fetchMaxPages: z.number().int().min(0).max(50).optional(),
   fetchSummarizeOverflow: z.boolean().optional(),
+  compressHistoryOverflow: z.boolean().optional(),
 })), async (c) => {
   const body = c.req.valid('json')
   if (body.dreamTarget != null && body.dreamThreshold != null && body.dreamTarget > body.dreamThreshold)
@@ -69,6 +71,7 @@ adminRouter.patch('/settings', zValidator('json', z.object({
   if (body.rssFeedCharsBudget != null) ops.push(setAppSetting('rss_feed_chars_budget', String(body.rssFeedCharsBudget)))
   if (body.fetchMaxPages != null) ops.push(setAppSetting('fetch_max_pages', String(body.fetchMaxPages)))
   if (body.fetchSummarizeOverflow != null) ops.push(setAppSetting('fetch_summarize_overflow', String(body.fetchSummarizeOverflow)))
+  if (body.compressHistoryOverflow != null) ops.push(setAppSetting('compress_history_overflow', String(body.compressHistoryOverflow)))
   await Promise.all(ops)
   return c.json({ ok: true })
 })
