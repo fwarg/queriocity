@@ -24,6 +24,7 @@ const settingsSchema = z.object({
   fontSize: z.number().min(12).max(22).optional(),
   timezone: z.string().refine(v => !v || VALID_TIMEZONES.has(v), 'Invalid timezone').optional(),
   querySuggestions: z.boolean().optional(),
+  followUpSuggestions: z.boolean().optional(),
 })
 
 usersRouter.post('/password', zValidator('json', z.object({

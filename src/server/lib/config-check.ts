@@ -30,6 +30,9 @@ export function validateConfig(): void {
   if (process.env.COOKIE_SECURE === 'false') {
     warn('COOKIE_SECURE=false — the session cookie is sent over plain http. Intended for local development only.')
   }
+  if (process.env.SEARCH_API_PROVIDER && process.env.SEARCH_API_KEY && !process.env.SEARCH_MAJOR_ENGINES) {
+    warn('SEARCH_MAJOR_ENGINES is unset, so the keyed search API only tops up on a low result count — not when a niche engine alone returns a full page of unrelated hits. List your broad engines (e.g. duckduckgo,brave,startpage) to enable that.')
+  }
   if (process.env.FETCH_ALLOW_PRIVATE_HOSTS === 'true' && !process.env.FETCH_PROXY_URL) {
     warn('FETCH_ALLOW_PRIVATE_HOSTS=true — URL fetching can reach loopback and LAN addresses, including from a link planted in a page the model reads.')
   }

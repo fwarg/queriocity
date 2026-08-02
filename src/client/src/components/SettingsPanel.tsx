@@ -20,28 +20,36 @@ const TIMEZONE_OPTIONS = [
   'Australia/Sydney', 'Pacific/Auckland',
 ]
 
-interface Props {
+/** The settings this panel owns. Passed and returned as one object rather than as positional
+ *  arguments — five of the eight fields are booleans, and transposing two of those silently
+ *  swaps unrelated features. */
+export interface UserSettingsForm {
   customPrompt: string
   showThinking: { balanced: boolean; thorough: boolean }
   useThinking: boolean
   useSpaceRag: boolean
   useChatRag: boolean
   querySuggestions: boolean
+  followUpSuggestions: boolean
   fontSize: number
   timezone: string
+}
+
+interface Props extends UserSettingsForm {
   onClose: () => void
   /** Clears the temporary-password banner once the user has set their own. */
   onPasswordChanged?: () => void
-  onSave: (customPrompt: string, showThinking: { balanced: boolean; thorough: boolean }, useThinking: boolean, useSpaceRag: boolean, useChatRag: boolean, querySuggestions: boolean, fontSize: number, timezone: string) => void
+  onSave: (settings: UserSettingsForm) => void
 }
 
-export function SettingsPanel({ customPrompt: initial, showThinking: initialShowThinking, useThinking: initialUseThinking, useSpaceRag: initialUseSpaceRag, useChatRag: initialUseChatRag, querySuggestions: initialQuerySuggestions, fontSize: initialFontSize, timezone: initialTimezone, onClose, onPasswordChanged, onSave }: Props) {
+export function SettingsPanel({ customPrompt: initial, showThinking: initialShowThinking, useThinking: initialUseThinking, useSpaceRag: initialUseSpaceRag, useChatRag: initialUseChatRag, querySuggestions: initialQuerySuggestions, followUpSuggestions: initialFollowUpSuggestions, fontSize: initialFontSize, timezone: initialTimezone, onClose, onPasswordChanged, onSave }: Props) {
   const [customPrompt, setCustomPrompt] = useState(initial)
   const [showThinking, setShowThinking] = useState(initialShowThinking)
   const [useThinking, setUseThinking] = useState(initialUseThinking)
   const [useSpaceRag, setUseSpaceRag] = useState(initialUseSpaceRag)
   const [useChatRag, setUseChatRag] = useState(initialUseChatRag)
   const [querySuggestions, setQuerySuggestions] = useState(initialQuerySuggestions)
+  const [followUpSuggestions, setFollowUpSuggestions] = useState(initialFollowUpSuggestions)
   const [fontSize, setFontSize] = useState(initialFontSize)
   const [timezone, setTimezone] = useState(initialTimezone)
   const [busy, setBusy] = useState(false)
@@ -74,8 +82,9 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
     e.preventDefault()
     setBusy(true)
     try {
-      await updateSettings({ customPrompt, showThinking, useThinking, useSpaceRag, useChatRag, querySuggestions, fontSize, timezone: timezone || undefined })
-      onSave(customPrompt, showThinking, useThinking, useSpaceRag, useChatRag, querySuggestions, fontSize, timezone)
+      const form = { customPrompt, showThinking, useThinking, useSpaceRag, useChatRag, querySuggestions, followUpSuggestions, fontSize, timezone }
+      await updateSettings({ ...form, timezone: timezone || undefined })
+      onSave(form)
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } finally {
@@ -183,6 +192,22 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
                 className="accent-blue-500"
               />
               Enable query suggestions
+            </label>
+          </div>
+          <div className="border-t border-gray-800" />
+          <div className="flex flex-col gap-2">
+            <label className="text-xs text-gray-400 font-medium">Follow-up suggestions</label>
+            <p className="text-xs text-gray-500">
+              Show up to three suggested follow-up questions as chips under a finished answer. Adds one flash-model call per answer — disable on slow setups.
+            </p>
+            <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={followUpSuggestions}
+                onChange={e => setFollowUpSuggestions(e.target.checked)}
+                className="accent-blue-500"
+              />
+              Enable follow-up suggestions
             </label>
           </div>
           <div className="border-t border-gray-800" />

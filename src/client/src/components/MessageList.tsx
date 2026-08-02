@@ -7,7 +7,7 @@ import rehypeKatex from 'rehype-katex'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { ExternalLink, FileText, Download, Volume2, VolumeX } from 'lucide-react'
-import type { Message } from '../lib/api.ts'
+import type { Message, Source } from '../lib/api.ts'
 
 function stripForSpeech(content: string): string {
   return content
@@ -97,23 +97,43 @@ function SvgBlock({ svg }: { svg: string }) {
   )
 }
 
-function makeMdComponents(highlightedSource: number | null, onCitationClick: (n: number) => void) {
+/** Bare hostname for the tooltip's source line; falls back to the raw string. */
+function hostnameOf(url: string): string {
+  try { return new URL(url).hostname.replace(/^www\./, '') } catch { return url }
+}
+
+function makeMdComponents(highlightedSource: number | null, onCitationClick: (n: number) => void, sources: Source[] = []) {
   return {
   a: ({ href, children }: { href?: string; children?: React.ReactNode }) => {
     const match = /^\[(\d+)\]$/.exec(String(children))
     const num = match ? parseInt(match[1]) : null
     const isHighlighted = num !== null && num === highlightedSource
     if (num !== null) {
+      const source = sources[num - 1]
       return (
-        <a
-          href={href}
-          target="_blank"
-          rel="noopener noreferrer"
-          className={`text-xs align-super leading-none ${isHighlighted ? 'text-yellow-400 font-bold' : 'text-blue-400 hover:text-blue-300'}`}
-          onClick={e => { e.preventDefault(); onCitationClick(num) }}
-        >
-          {children}
-        </a>
+        <span className="relative group inline-block">
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`text-xs align-super leading-none ${isHighlighted ? 'text-yellow-400 font-bold' : 'text-blue-400 hover:text-blue-300'}`}
+            onClick={e => { e.preventDefault(); onCitationClick(num) }}
+          >
+            {children}
+          </a>
+          {source && (
+            <span
+              role="tooltip"
+              className="pointer-events-none invisible group-hover:visible opacity-0 group-hover:opacity-100 transition-opacity absolute left-0 bottom-full z-30 mb-1 w-72 max-w-[80vw] rounded border border-gray-700 bg-gray-900 p-2 text-left shadow-xl"
+            >
+              <span className="block text-xs font-medium text-gray-100 line-clamp-2">{source.title || source.url}</span>
+              <span className="mt-0.5 block truncate text-[10px] text-gray-500">{hostnameOf(source.url)}</span>
+              {source.content && (
+                <span className="mt-1 block text-[11px] leading-snug text-gray-400 line-clamp-4">{source.content}</span>
+              )}
+            </span>
+          )}
+        </span>
       )
     }
     return (
@@ -263,7 +283,7 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
   const [collapsed, setCollapsed] = useState(!!defaultCollapsed)
   const [speaking, setSpeaking] = useState(false)
   const toggleSource = useCallback((n: number) => setHighlightedSource(v => v === n ? null : n), [])
-  const mdComponents = makeMdComponents(highlightedSource, toggleSource)
+  const mdComponents = makeMdComponents(highlightedSource, toggleSource, msg.sources)
 
   function handleSpeak() {
     if (speaking) {
@@ -304,7 +324,7 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
       : ''
 
   return (
-    <div className={`flex flex-col gap-1 w-full ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+    <div data-role={msg.role} className={`flex flex-col gap-1 w-full ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
       <div
         className={`w-full max-w-2xl min-w-0 overflow-x-hidden rounded-lg px-4 py-2 text-sm break-words ${
           msg.role === 'user'
@@ -361,7 +381,7 @@ export const MessageList = memo(function MessageList({ messages, streaming, stre
   }, [searchActiveIndex])
 
   return (
-    <div className="flex flex-col gap-4 p-4 overflow-y-auto overflow-x-hidden flex-1">
+    <div data-print-region className="flex flex-col gap-4 p-4 overflow-y-auto overflow-x-hidden flex-1">
       {messages.map((msg, i) => (
         <div key={i} ref={el => { if (el) msgRefs.current.set(i, el); else msgRefs.current.delete(i) }}>
           <MessageItem

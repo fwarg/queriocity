@@ -1,4 +1,4 @@
-import { searchApi, isSearchApiEnabled } from './search-api.ts'
+import { searchApi, isSearchApiEnabled, searchApiProvider } from './search-api.ts'
 
 const SEARXNG_URL = process.env.SEARXNG_URL ?? 'http://localhost:4000'
 
@@ -6,9 +6,36 @@ const SEARXNG_URL = process.env.SEARXNG_URL ?? 'http://localhost:4000'
 // empty) — e.g. when the only surviving engine returns a thin trickle. Set to 1 for empty-only.
 const API_MIN_RESULTS = parseInt(process.env.SEARCH_API_MIN_RESULTS ?? '3', 10)
 
+// Engines broad enough that results from them alone are worth trusting. Deliberately empty by
+// default: which engines a SearXNG instance runs is a deployment decision, and a list baked
+// into the code would mis-classify anyone whose set differs. Unset simply means the
+// "no major engine responded" top-up below never fires.
+const MAJOR_ENGINES = new Set(
+  (process.env.SEARCH_MAJOR_ENGINES ?? '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean),
+)
+
+/** True when a major-engine list is configured at all; without one that rule is inactive. */
+export function hasMajorEngineList(): boolean {
+  return MAJOR_ENGINES.size > 0
+}
+
+/** SearXNG names variants after their parent — "brave.news", "bing news", "startpage news",
+ *  "google scholar" — so match on the first token too, or those all read as niche engines and
+ *  trigger a paid top-up that isn't needed. */
+export function isMajorEngine(engine: string): boolean {
+  const name = engine.trim().toLowerCase()
+  return MAJOR_ENGINES.has(name) || MAJOR_ENGINES.has(name.split(/[\s.]/)[0])
+}
+
 // SearXNG aggregates many engines, so allow well over a single engine's latency — but never
 // wait indefinitely: without this a wedged instance hangs the whole chat request.
 const SEARCH_TIMEOUT_MS = parseInt(process.env.SEARCH_TIMEOUT_MS ?? '20000', 10)
+
+// Categories queried when the caller names none. SearXNG otherwise falls back to `general`
+// alone, so engines registered under another category (news, science…) are never reached at
+// all — a working news engine can sit unused while general engines return nothing useful.
+// Applied here rather than at the route so every caller benefits, agentic searches included.
+const DEFAULT_CATEGORIES = process.env.SEARCH_DEFAULT_CATEGORIES?.trim() || undefined
 
 
 export interface SearchResult {
@@ -26,6 +53,12 @@ export interface EngineError {
 /** Mutable per-request/run allowance for paid keyed-API fallback calls. */
 export interface SearchApiBudget {
   remaining: number
+}
+
+/** A `site:`-scoped query deliberately asks for one domain, so per-domain dedup would discard
+ *  everything but the first hit — turning 8 articles from the requested site into 1. */
+export function isSiteScoped(query: string): boolean {
+  return /\bsite:\S/i.test(query)
 }
 
 /** Drop results sharing a hostname (ignoring leading www.), keeping the first occurrence. */
@@ -75,7 +108,8 @@ export async function webSearch(
   url.searchParams.set('q', query)
   url.searchParams.set('format', 'json')
   if (process.env.SEARXNG_ENGINES) url.searchParams.set('engines', process.env.SEARXNG_ENGINES)
-  if (categories) url.searchParams.set('categories', categories)
+  const effectiveCategories = categories ?? DEFAULT_CATEGORIES
+  if (effectiveCategories) url.searchParams.set('categories', effectiveCategories)
   url.searchParams.set('language', 'all')
 
   const start = performance.now()
@@ -105,7 +139,8 @@ export async function webSearch(
     url: r.url,
     content: r.content ?? '',
   }))
-  const results = dedupeByDomain(mapped).slice(0, count)
+  const siteScoped = isSiteScoped(query)
+  const results = (siteScoped ? mapped : dedupeByDomain(mapped)).slice(0, count)
   const ms = (performance.now() - start).toFixed(0)
   // Which engines actually contributed (SearXNG tags each result with its source engines).
   const engines = new Set<string>()
@@ -113,20 +148,38 @@ export async function webSearch(
   const from = engines.size ? ` from ${[...engines].sort().join(', ')}` : ''
   console.log(`  [searxng] ${SEARXNG_URL} q="${query}" — ${ms}ms → ${results.length} results${from}`)
 
-  // Keyed-API top-up: when SearXNG returns too few results (blocked engines, or only a thin
-  // trickle from a survivor like Marginalia), and while the per-request budget allows. The
-  // check + decrement are synchronous (no await between) so parallel queries in webSearchMulti
-  // cannot collectively exceed the cap.
-  if (results.length < API_MIN_RESULTS && isSearchApiEnabled()) {
+  // Keyed-API top-up, on either of two conditions, while the per-request budget allows:
+  //  - too few results at all (blocked engines, or a thin trickle);
+  //  - no major engine contributed, however many results came back. A healthy-looking count
+  //    from a niche index alone (e.g. Marginalia, which doesn't carry news) is worse than it
+  //    looks: the model gets plenty to read and none of it answers the question.
+  // The check + decrement are synchronous (no await between) so parallel queries in
+  // webSearchMulti cannot collectively exceed the cap.
+  // The second rule needs both a configured list and known attribution — without either it
+  // would fire on every search, so it stays off rather than guessing.
+  const noMajorEngine = hasMajorEngineList() && engines.size > 0 && ![...engines].some(isMajorEngine)
+  const topUpReason = results.length < API_MIN_RESULTS
+    ? `only ${results.length} result(s)`
+    : noMajorEngine
+      ? `no major engine responded (got ${[...engines].sort().join(', ')})`
+      : null
+
+  if (topUpReason && isSearchApiEnabled()) {
     if (!apiBudget || apiBudget.remaining <= 0) {
       console.log(`  [search-api] budget exhausted — skipping fallback for "${query}"`)
     } else {
+      console.log(`  [search-api] topping up "${query}": ${topUpReason}`)
       apiBudget.remaining--
       const left = apiBudget.remaining   // capture before await; parallel calls decrement concurrently
       const api = await searchApi(query, count)
       if (api.length) {
-        const merged = dedupeByDomain([...results, ...api]).slice(0, count)
-        console.log(`  [search-api] fallback used — searxng ${results.length} + mojeek ${api.length} → ${merged.length}, ${left} left`)
+        // Order matters: the merge is truncated to `count`. When SearXNG already returned a
+        // full page from niche engines, appending the API results would slice them all away
+        // again — so in that case the paid results go first, which is the point of the call.
+        const apiFirst = noMajorEngine && results.length >= count
+        const combined = apiFirst ? [...api, ...results] : [...results, ...api]
+        const merged = (siteScoped ? combined : dedupeByDomain(combined)).slice(0, count)
+        console.log(`  [search-api] fallback used — searxng ${results.length} + ${searchApiProvider()} ${api.length} → ${merged.length}${apiFirst ? ' (api first)' : ''}, ${left} left`)
         return merged
       }
       console.log(`  [search-api] fallback empty, ${left} left for this request`)

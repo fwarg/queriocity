@@ -6,6 +6,11 @@ const API_KEY = process.env.SEARCH_API_KEY
 // cycle: searxng.ts already imports from this module).
 const SEARCH_TIMEOUT_MS = parseInt(process.env.SEARCH_TIMEOUT_MS ?? '20000', 10)
 
+/** Name of the configured provider, for log lines that shouldn't assume which one it is. */
+export function searchApiProvider(): string {
+  return PROVIDER ?? 'search-api'
+}
+
 /** True only when a keyed search-API fallback is fully configured. */
 export function isSearchApiEnabled(): boolean {
   return !!PROVIDER && !!API_KEY
@@ -40,7 +45,7 @@ async function mojeekSearch(query: string, count: number): Promise<SearchResult[
   const start = performance.now()
   const res = await fetch(url.toString(), { signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS) })
   if (!res.ok) {
-    console.error(`  [search-api] mojeek HTTP ${res.status} for "${query}"`)
+    console.error(`  [search-api] ${searchApiProvider()} HTTP ${res.status} for "${query}"`)
     return []
   }
   const data = await res.json() as {
@@ -48,7 +53,7 @@ async function mojeekSearch(query: string, count: number): Promise<SearchResult[
   }
   const r = data.response
   if (r?.status && r.status !== 'OK') {
-    console.error(`  [search-api] mojeek status=${r.status} for "${query}"`)
+    console.error(`  [search-api] ${searchApiProvider()} status=${r.status} for "${query}"`)
     return []
   }
   const results: SearchResult[] = (r?.results ?? [])
@@ -56,6 +61,6 @@ async function mojeekSearch(query: string, count: number): Promise<SearchResult[
     .map(x => ({ title: x.title ?? '', url: x.url as string, content: x.desc ?? '' }))
     .slice(0, count)
   const ms = (performance.now() - start).toFixed(0)
-  console.log(`  [search-api] mojeek q="${query}" — ${ms}ms → ${results.length} results`)
+  console.log(`  [search-api] ${searchApiProvider()} q="${query}" — ${ms}ms → ${results.length} results`)
   return results
 }

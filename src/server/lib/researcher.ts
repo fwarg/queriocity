@@ -4,7 +4,7 @@ import type { LanguageModel, CoreMessage } from 'ai'
 import { webSearchMulti, type SearchResult, type EngineError, type SearchApiBudget } from './searxng.ts'
 import { isSearchApiEnabled } from './search-api.ts'
 import { searchUploads } from './files/uploads-search.ts'
-import { saveMemory } from './memory.ts'
+import { saveMemory, searchSpaceHistory } from './memory.ts'
 import { fetchUrl, processUrlsForContext, MIN_URL_CONTEXT_CHARS } from './fetch-url.ts'
 import { trimMessages, compressMessages, contextCharBudget, CONTEXT_RESERVE_FRACTION } from './trim-messages.ts'
 import { RESEARCH_MAX_TOKENS } from './llm.ts'
@@ -61,6 +61,13 @@ const CONTEXT_BUDGET_DEAD_MSG = {
   error: 'The available context budget for this research turn has been used up by search/fetch results already gathered. Do NOT call web_search or fetch_url again — write your answer using the results already gathered.',
 }
 
+// Returned once too few steps remain to act on another tool result. Tools cannot be removed
+// mid-run (streamText's experimental_activeTools is fixed at call time and ai@4 has no
+// prepareStep for streaming), so the last rounds are closed off at the tool level instead.
+const FINAL_STEP_MSG = {
+  error: 'No research steps remain. Do NOT call any tool again — write your final answer NOW from the results already gathered. If they only partially cover the question, answer with what they do support and say briefly what was missing; do not reply with a refusal.',
+}
+
 export interface ResearchOptions {
   messages: Array<{ role: 'user' | 'assistant'; content: string }>
   focusMode: 'balanced' | 'thorough'
@@ -79,6 +86,10 @@ export interface ResearchOptions {
   fetchSummarize?: boolean
   /** Summarize (vs. hard-drop) conversation history that overflows the context budget. Default false. */
   compressHistory?: boolean
+  /** SearXNG category filter selected by the user; applies to the researcher's own searches
+   *  too, not just the pre-search, or the model's follow-ups silently query a different
+   *  engine set than the one the user asked for. */
+  searchCategory?: string
   maxStepsOverride?: number
   /** Called when a web_search returns no results because engines were suspended/blocked. */
   onEngineErrors?: (errors: EngineError[]) => void | Promise<void>
@@ -86,11 +97,19 @@ export interface ResearchOptions {
   apiBudget?: SearchApiBudget
 }
 
-export async function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, fetchSummarize = false, compressHistory = false, maxStepsOverride, onEngineErrors, apiBudget }: ResearchOptions) {
+export async function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, fetchSummarize = false, compressHistory = false, searchCategory, maxStepsOverride, onEngineErrors, apiBudget }: ResearchOptions) {
   const { maxSteps: defaultMaxSteps, count } = MODE_CONFIG[focusMode]
   const maxSteps = maxStepsOverride ?? defaultMaxSteps
   let nextIndex = 1
   let searchDead = false   // set once web search is confirmed unavailable for this request
+  let completedSteps = 0
+
+  // A tool result arriving on the final generation can never be used — the model has no step
+  // left to write prose, so the turn ends on finishReason=tool-calls with an empty answer.
+  // Refusing one round early leaves a generation free for the answer itself. Thorough mode is
+  // exempt: its researcher is *meant* to end without prose, and the writer pass follows.
+  const outOfResearchSteps = () =>
+    focusMode === 'balanced' && completedSteps >= Math.max(1, maxSteps - 2)
   const start = performance.now()
   console.log(`  [chat] model=${(model as LanguageModel & { modelId?: string }).modelId ?? String(model)} focusMode=${focusMode} maxSteps=${maxSteps}`)
 
@@ -100,6 +119,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
   if (customPrompt?.trim()) system += `\n\nAdditional instructions from the user:\n${customPrompt.trim()}`
   if (hasFiles) system += `\n\nYou have an uploads_search tool to search the user's uploaded documents. When the query might be answered by personal, domain-specific, or proprietary documents, call uploads_search before or alongside web_search.`
   if (spaceId) system += `\n\nYou have a save_to_memory tool. Use it when the user expresses a preference, makes a decision, or shares context that would be useful in future conversations. Do not save trivial or ephemeral details.`
+  if (spaceId) system += `\n\nYou also have a search_space_history tool for looking up earlier conversations in this space. Relevant excerpts are already provided above when they exist, so call it only when the user refers to something earlier that is not covered there.`
 
   // Inject pre-executed search results as a fake tool exchange so the model
   // sees them as already done and continues from there. Also note in the system
@@ -164,10 +184,11 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
       queries: z.array(z.string()).describe('Search queries'),
     }),
     execute: async ({ queries }) => {
+      if (outOfResearchSteps()) return FINAL_STEP_MSG
       if (searchDead) return SEARCH_DEAD_MSG
       if (toolBudgetRemaining <= MIN_URL_CONTEXT_CHARS) return CONTEXT_BUDGET_DEAD_MSG
       const errs: EngineError[] = []
-      const results = await webSearchMulti(queries.slice(0, focusMode === 'thorough' ? 3 : 2), count, undefined, e => errs.push(...e), apiBudget)
+      const results = await webSearchMulti(queries.slice(0, focusMode === 'thorough' ? 3 : 2), count, searchCategory, e => errs.push(...e), apiBudget)
       // Surface only when blocked engines left this search empty (matches pre-search semantics).
       if (results.length === 0 && errs.length) {
         await onEngineErrors?.(errs)
@@ -192,6 +213,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
       description: 'Fetch and read the full text content of a specific URL. Use when the user provides a URL to analyze, or when a search result needs to be read in full. For paginated content, call multiple times with page parameters (e.g. ?page=2).',
       parameters: z.object({ url: z.string().url() }),
       execute: async ({ url }) => {
+        if (outOfResearchSteps()) return FINAL_STEP_MSG
         if (toolBudgetRemaining <= MIN_URL_CONTEXT_CHARS) return CONTEXT_BUDGET_DEAD_MSG
         const raw = await fetchUrl(url)
         if (raw.startsWith('Error fetching')) return raw
@@ -208,7 +230,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
       parameters: z.object({
         query: z.string().describe('Semantic search query'),
       }),
-      execute: async ({ query }) => searchUploads(query, userId),
+      execute: async ({ query }) => outOfResearchSteps() ? FINAL_STEP_MSG : searchUploads(query, userId),
     })
   }
 
@@ -230,22 +252,30 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
         return 'Saved.'
       },
     })
+
+    tools.search_space_history = tool({
+      description: 'Search past conversations in this space for relevant context (e.g. what was decided or discussed earlier). Relevant excerpts are already injected automatically — only call this when you need something they do not cover.',
+      parameters: z.object({
+        query: z.string().describe('Semantic search query'),
+      }),
+      execute: async ({ query }) =>
+        outOfResearchSteps() ? FINAL_STEP_MSG : searchSpaceHistory(spaceId, query, 8, sessionId),
+    })
   }
 
   const fmt = (n: number | undefined) => (n != null && !isNaN(n)) ? String(n) : '?'
-  let stepIndex = 0
   return streamText({
     onError: ({ error }) => {
       console.error('  [chat] streamText error:', error)
     },
     onStepFinish: (step) => {
-      stepIndex++
+      completedSteps++
       const toolSummary = step.toolCalls.map(c => {
         const result = step.toolResults.find(tr => tr.toolCallId === c.toolCallId)?.result
         const size = typeof result === 'string' ? result.length : JSON.stringify(result ?? '').length
         return `${c.toolName}(${size}c)`
       }).join(', ')
-      console.log(`  [chat] step ${stepIndex}: ${fmt(step.usage.promptTokens)}p + ${fmt(step.usage.completionTokens)}c tok, finish=${step.finishReason}${toolSummary ? ` tools=[${toolSummary}]` : ''} budget=${toolBudgetRemaining}c`)
+      console.log(`  [chat] step ${completedSteps}: ${fmt(step.usage.promptTokens)}p + ${fmt(step.usage.completionTokens)}c tok, finish=${step.finishReason}${toolSummary ? ` tools=[${toolSummary}]` : ''} budget=${toolBudgetRemaining}c`)
     },
     onFinish: ({ usage }) => {
       const ms = (performance.now() - start).toFixed(0)

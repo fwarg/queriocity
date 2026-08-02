@@ -10,6 +10,9 @@ const MAX_CHARS = parseInt(process.env.FETCH_MAX_CHARS ?? '100000')
 // the char cap is applied after stripping, so without this a huge page is fully buffered first.
 const MAX_BODY_BYTES = MAX_CHARS * 5
 const MAX_REDIRECTS = 5
+// Applies per attempt (static, then Playwright), so an unreachable site costs at most roughly
+// double this before the model is told the fetch failed.
+const FETCH_TIMEOUT_MS = parseInt(process.env.FETCH_TIMEOUT_MS ?? '10000', 10)
 const PROXY_URL = process.env.FETCH_PROXY_URL
 const proxyAgent = PROXY_URL ? new ProxyAgent(PROXY_URL) : undefined
 const CACHE_TTL_MS = 5 * 60 * 1000
@@ -68,7 +71,7 @@ async function fetchStatic(url: string): Promise<string> {
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'sv-SE,sv;q=0.9,en-US;q=0.8,en;q=0.7',
       },
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     })
     if (res.status >= 300 && res.status < 400) {
       const location = res.headers.get('location')
@@ -139,7 +142,7 @@ async function fetchWithPlaywright(url: string): Promise<string> {
       }
     })
     const page = await ctx.newPage()
-    await page.goto(url, { waitUntil: 'networkidle', timeout: 15000 })
+    await page.goto(url, { waitUntil: 'networkidle', timeout: FETCH_TIMEOUT_MS })
     const text = await page.evaluate(() => document.body.innerText)
     return text.replace(/\s+/g, ' ').trim()
   } finally {

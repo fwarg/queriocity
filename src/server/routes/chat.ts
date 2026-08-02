@@ -1,14 +1,14 @@
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
-import { streamSSE } from 'hono/streaming'
+import { streamSSE, type SSEStreamingApi } from 'hono/streaming'
 import { streamText, generateText, tool } from 'ai'
 import { runResearcher } from '../lib/researcher.ts'
 import { runWriter } from '../lib/writer.ts'
 import { reformulateLLM } from '../lib/reformulate.ts'
 import { cacheKey, getCached, setCached } from '../lib/cache.ts'
 import { db, chatSessions, messages, users, uploadedFiles, parseSettings, getAppSetting } from '../lib/db.ts'
-import { eq, sql } from 'drizzle-orm'
+import { eq, and, desc, sql } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
@@ -22,6 +22,10 @@ import { trimMessages, contextCharBudget, CONTEXT_RESERVE_FRACTION } from '../li
 import { indexContents } from '../lib/chat-indexer.ts'
 import { ownsSpace, sessionOwnership } from '../lib/ownership.ts'
 import { rateLimitByUser, chatLimiter, suggestLimiter } from '../lib/rate-limit.ts'
+import {
+  startRun, getRun, appendEvent, finishRun, waitForEvents,
+  scheduleAbandon, cancelAbandon, stopRun, type LiveRun,
+} from '../lib/stream-buffer.ts'
 import { IMAGE_STORAGE_DIR, IMAGE_TIMEOUT_MS } from '../lib/image-store.ts'
 // Memo of image directories already mkdir'd, to skip the syscall. One entry per user, so it
 // only needs a sanity bound rather than real eviction.
@@ -55,6 +59,8 @@ const chatSchema = z.object({
   includeFileIds: z.array(z.string()).optional(),
   includeMemoryIds: z.array(z.string()).optional(),
   ephemeral: z.boolean().optional(),
+  /** Re-answering the last question: replaces the previous answer instead of appending. */
+  regenerate: z.boolean().optional(),
 })
 
 export const chatRouter = new Hono<AppEnv>()
@@ -79,14 +85,95 @@ chatRouter.post('/suggest', rateLimitByUser(suggestLimiter, 'suggest'), zValidat
       }
     }
   } catch (e) {
-    console.error('[suggest]', e)
+    // Autocomplete is optional; a timeout is routine and doesn't warrant a full stack dump.
+    console.warn(`  [suggest] skipped: ${e instanceof Error ? e.message : e}`)
   }
   return c.json([])
 })
 
+const RELATED_INPUT_CHARS = 1500
+// Snippet kept per stored source so citation hover previews still work after a reload —
+// short enough that it costs little in the sources JSON column.
+const STORED_SNIPPET_CHARS = 300
+
+const toStoredSource = (r: SearchResult) => ({
+  title: r.title,
+  url: r.url,
+  content: r.content ? r.content.slice(0, STORED_SNIPPET_CHARS) : undefined,
+})
+
+/** Suggests follow-up questions from a finished exchange. Best-effort: an empty array simply
+ *  means no chips are shown, so a slow or unavailable small model costs nothing. */
+chatRouter.post('/related', rateLimitByUser(suggestLimiter, 'related'), zValidator('json', z.object({
+  question: z.string().min(1).max(2000),
+  answer: z.string().min(1),
+})), async (c) => {
+  const { question, answer } = c.req.valid('json')
+  try {
+    const { text: raw } = await generateText({
+      model: getFlashModel(),
+      system: `Suggest 3 natural follow-up questions a curious reader would ask next after this exchange.
+Each must be self-contained (no "it"/"that" referring to the previous answer), under 12 words, and explore something the answer did NOT already cover.
+Write them in the same language as the question.
+Return ONLY a raw JSON array of 3 strings, no markdown, no explanation.`,
+      messages: [{
+        role: 'user',
+        content: `Question: ${question.slice(0, RELATED_INPUT_CHARS)}\n\nAnswer: ${answer.slice(0, RELATED_INPUT_CHARS)}`,
+      }],
+      maxTokens: 160,
+      abortSignal: AbortSignal.timeout(10000),
+    })
+    const match = raw.match(/\[[\s\S]*\]/)
+    if (match) {
+      const parsed = JSON.parse(match[0])
+      if (Array.isArray(parsed)) {
+        return c.json(parsed.filter((s): s is string => typeof s === 'string' && s.length > 0).slice(0, 3))
+      }
+    }
+  } catch (e) {
+    console.error('[related]', e instanceof Error ? e.message : e)
+  }
+  return c.json([])
+})
+
+/** Reattaches to a generation whose connection dropped, replaying everything after the last
+ *  event the client saw and then following along live. Returns 404 once the run has expired,
+ *  which the client treats as "give up" rather than an error. */
+chatRouter.get('/resume/:sessionId', async (c) => {
+  const userId = c.get('userId') as string
+  const sessionId = c.req.param('sessionId')
+  const run = getRun(sessionId)
+  if (!run || run.userId !== userId) return c.json({ error: 'No resumable run' }, 404)
+
+  cancelAbandon(run)
+  let index = Math.max(0, parseInt(c.req.query('from') ?? '0', 10) || 0)
+  console.log(`  [stream] client resumed session ${sessionId} from event ${index}/${run.events.length}`)
+
+  return streamSSE(c, async (stream) => {
+    c.req.raw.signal.addEventListener('abort', () => scheduleAbandon(run))
+    while (true) {
+      while (index < run.events.length) {
+        await stream.writeSSE({ data: run.events[index], id: String(index + 1) })
+        index++
+      }
+      if (run.done) break
+      // Returns early on a new event; the timeout doubles as the keepalive tick.
+      await waitForEvents(run, index, KEEPALIVE_INTERVAL_MS)
+      if (index >= run.events.length && !run.done) {
+        await stream.writeSSE({ data: JSON.stringify({ type: 'ping' }) })
+      }
+    }
+  })
+})
+
+chatRouter.post('/:sessionId/stop', async (c) => {
+  const stopped = stopRun(c.req.param('sessionId'), c.get('userId') as string)
+  return c.json({ stopped })
+})
+
 chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', chatSchema), async (c) => {
   const userId = c.get('userId') as string
-  const { sessionId, spaceId, messages: msgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, ephemeral } = c.req.valid('json')
+  const { sessionId, spaceId, messages: msgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, ephemeral, regenerate } = c.req.valid('json')
   const searchCategory = toSearxngCategories(searchCategories)
   const sid = sessionId ?? randomUUID()
 
@@ -95,7 +182,6 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   if (spaceId && !await ownsSpace(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
   if (sessionId && await sessionOwnership(sessionId, userId) === 'other') return c.json({ error: 'Not found' }, 404)
 
-  const abortSignal = c.req.raw.signal
   const lastUser = [...msgs].reverse().find(m => m.role === 'user')
   const preview = (lastUser?.content ?? '').slice(0, 100).replace(/\n/g, ' ')
   console.log(`\n━━━ [${focusMode}] ${preview}`)
@@ -113,13 +199,20 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   ].join('|')
 
   const ck = cacheKey(lastUser?.content ?? '', focusMode, cacheScope)
-  const cached = getCached<string>(ck)
+  // A retry must not be served the answer it is retrying.
+  const cached = regenerate ? null : getCached<string>(ck)
   if (cached) {
     return streamSSE(c, async (stream) => {
       await stream.writeSSE({ data: JSON.stringify({ type: 'text', delta: cached }) })
       await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, elapsedMs: 0 }) })
     })
   }
+
+  // Generation is bound to the run, not to this HTTP request, so a dropped connection can be
+  // resumed instead of losing a half-finished answer. See lib/stream-buffer.ts.
+  const run = startRun(sid, userId)
+  const abortSignal = run.controller.signal
+  c.req.raw.signal.addEventListener('abort', () => scheduleAbandon(run))
 
   if (focusMode === 'flash') {
     const [memoryBudget, ragBudget] = await Promise.all([
@@ -131,8 +224,9 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     const { block: resolvedMemoryBlock, fileSources: flashFileSources } = spaceId ? await buildMemoryBlock(spaceId, memoryBudget, effectiveRag, userQuery, includeFileIds, includeMemoryIds) : { block: '', fileSources: [] }
     const t0 = Date.now()
     let fullContent = ''
-    return streamSSE(c, async (stream) => {
-      if (flashFileSources.length > 0) await stream.writeSSE({ data: JSON.stringify({ type: 'file_sources', sources: flashFileSources }) })
+    return streamRun(c, run, async (out) => {
+      await out.writeSSE({ data: JSON.stringify({ type: 'session', sessionId: sid }) })
+      if (flashFileSources.length > 0) await out.writeSSE({ data: JSON.stringify({ type: 'file_sources', sources: flashFileSources }) })
       const flashSystem = FLASH_SYSTEM
         + (customPrompt ? `\n\nAdditional instructions:\n${customPrompt}` : '')
         + (resolvedMemoryBlock ? '\n\n' + resolvedMemoryBlock : '')
@@ -147,21 +241,21 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       for await (const part of result.fullStream) {
         if (part.type === 'text-delta') {
           fullContent += part.textDelta
-          await stream.writeSSE({ data: JSON.stringify({ type: 'text', delta: part.textDelta }) })
+          await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: part.textDelta }) })
         }
       }
       console.log(`  [flash] done in ${Date.now() - t0}ms, ${fullContent.length} chars`)
       if (fullContent.length >= 50) setCached(ck, fullContent)
       if (!ephemeral) {
-        const { title: sessionTitle } = await persistMessage(sid, userId, msgs, fullContent, [], spaceId)
-        await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title: sessionTitle, elapsedMs: Date.now() - t0 }) })
+        const { title: sessionTitle } = await persistMessage(sid, userId, msgs, fullContent, [], spaceId, regenerate)
+        await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title: sessionTitle, elapsedMs: Date.now() - t0 }) })
         if (spaceId) {
           extractMemoriesPostHoc(spaceId, sid, lastUser?.content ?? '', fullContent).catch(e => console.error('[memory]', e))
           const newContents = [lastUser?.content, fullContent].filter(Boolean) as string[]
           indexContents(sid, newContents).catch(e => console.error('[chat-index]', e))
         }
       } else {
-        await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, elapsedMs: Date.now() - t0 }) })
+        await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, elapsedMs: Date.now() - t0 }) })
       }
     })
   }
@@ -169,10 +263,10 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   if (focusMode === 'image') {
     const imageBaseUrl = process.env.IMAGE_BASE_URL?.trim() || undefined
     if (!imageBaseUrl) {
-      return streamSSE(c, async (stream) => {
-        await stream.writeSSE({ data: JSON.stringify({ type: 'text', delta: 'Image generation is not configured. Set the IMAGE_BASE_URL environment variable to enable it.' }) })
-        const { title: sessionTitle } = await persistMessage(sid, userId, msgs, '', [], spaceId)
-        await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title: sessionTitle, elapsedMs: 0 }) })
+      return streamRun(c, run, async (out) => {
+        await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: 'Image generation is not configured. Set the IMAGE_BASE_URL environment variable to enable it.' }) })
+        const { title: sessionTitle } = await persistMessage(sid, userId, msgs, '', [], spaceId, regenerate)
+        await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title: sessionTitle, elapsedMs: 0 }) })
       })
     }
     let pendingImageUrl: string | undefined
@@ -305,7 +399,8 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
 - Always respond in the same language the user used.`
     const t0 = Date.now()
     let fullContent = ''
-    return streamSSE(c, async (stream) => {
+    return streamRun(c, run, async (out) => {
+      await out.writeSSE({ data: JSON.stringify({ type: 'session', sessionId: sid }) })
       const ctxLimit = parseInt(process.env.CONTEXT_TOKEN_LIMIT ?? '8192')
       const result = streamText({
         model: getFlashModel(),
@@ -319,19 +414,19 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       for await (const part of result.fullStream) {
         if (part.type === 'text-delta') {
           fullContent += part.textDelta
-          await stream.writeSSE({ data: JSON.stringify({ type: 'text', delta: part.textDelta }) })
+          await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: part.textDelta }) })
         } else if (part.type === 'tool-call') {
           if (part.toolName === 'web_search') {
-            await stream.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Researching topic…' }) })
+            await out.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Researching topic…' }) })
           } else if (part.toolName === 'generate_image') {
-            await stream.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Generating image…' }) })
+            await out.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Generating image…' }) })
           } else if (part.toolName === 'edit_image') {
-            await stream.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Editing image…' }) })
+            await out.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Editing image…' }) })
           }
         } else if (part.type === 'tool-result' && (part.toolName === 'generate_image' || part.toolName === 'edit_image')) {
           const r = part.result as { success?: boolean; prompt?: string; error?: string }
           if (r.success && pendingImageUrl) {
-            await stream.writeSSE({ data: JSON.stringify({ type: 'image', url: pendingImageUrl, alt: r.prompt ?? '' }) })
+            await out.writeSSE({ data: JSON.stringify({ type: 'image', url: pendingImageUrl, alt: r.prompt ?? '' }) })
             fullContent += `\n\n![${r.prompt ?? ''}](${pendingImageUrl})`
             pendingImageUrl = undefined
           }
@@ -339,15 +434,15 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       }
       console.log(`  [image] done in ${Date.now() - t0}ms, ${fullContent.length} chars`)
       if (!ephemeral) {
-        const { title: sessionTitle } = await persistMessage(sid, userId, msgs, fullContent, [], spaceId)
-        await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title: sessionTitle, elapsedMs: Date.now() - t0 }) })
+        const { title: sessionTitle } = await persistMessage(sid, userId, msgs, fullContent, [], spaceId, regenerate)
+        await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title: sessionTitle, elapsedMs: Date.now() - t0 }) })
         if (spaceId) {
           extractMemoriesPostHoc(spaceId, sid, lastUser?.content ?? '', fullContent).catch(e => console.error('[memory]', e))
           const newContents = [lastUser?.content, fullContent].filter(Boolean) as string[]
           indexContents(sid, newContents).catch(e => console.error('[chat-index]', e))
         }
       } else {
-        await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, elapsedMs: Date.now() - t0 }) })
+        await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, elapsedMs: Date.now() - t0 }) })
       }
     })
   }
@@ -403,14 +498,15 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     ? await processUrlsForContext(prefetchedUrls, urlBudgetChars, fetchSummarize)
     : prefetchedUrls
 
-  return streamSSE(c, async (stream) => {
+  return streamRun(c, run, async (out) => {
+    await out.writeSSE({ data: JSON.stringify({ type: 'session', sessionId: sid }) })
     let fullContent = ''
     const sources: unknown[] = []
 
-    if (fileSources.length > 0) await stream.writeSSE({ data: JSON.stringify({ type: 'file_sources', sources: fileSources }) })
+    if (fileSources.length > 0) await out.writeSSE({ data: JSON.stringify({ type: 'file_sources', sources: fileSources }) })
 
     const emitStatus = (text: string) =>
-      stream.writeSSE({ data: JSON.stringify({ type: 'status', text }) })
+      out.writeSSE({ data: JSON.stringify({ type: 'status', text }) })
 
     // Warn when a search came back empty *because* engines were blocked/suspended
     // (rate-limit, CAPTCHA, access denied) — distinct from a query that simply matched
@@ -423,7 +519,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       const fresh = errors.filter(e => !warnedEngines.has(e.engine))
       if (!fresh.length) return
       fresh.forEach(e => warnedEngines.add(e.engine))
-      await stream.writeSSE({ data: JSON.stringify({ type: 'search_warning', engines: fresh.map(e => ({ engine: e.engine, reason: e.reason })) }) })
+      await out.writeSSE({ data: JSON.stringify({ type: 'search_warning', engines: fresh.map(e => ({ engine: e.engine, reason: e.reason })) }) })
     }
     if (!initialResults?.length && engineErrors?.length) await warnEngineErrors(engineErrors)
 
@@ -438,7 +534,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       if (initialQueries?.length) {
         await emitStatus(`Searching: ${initialQueries.map(q => `"${q}"`).join(', ')}`)
         if (showThinking) {
-          await stream.writeSSE({ data: JSON.stringify({ type: 'thinking',
+          await out.writeSSE({ data: JSON.stringify({ type: 'thinking',
             delta: `🔍 Searching: ${initialQueries.map(q => `"${q}"`).join(', ')}\n` }) })
         }
       }
@@ -446,20 +542,20 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         const snippets = initialResults.slice(0, 3)
           .map(r => `  • ${r.title}\n    ${r.url}\n    ${r.content.slice(0, 120)}…`)
           .join('\n')
-        await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: snippets + '\n\n' }) })
+        await out.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: snippets + '\n\n' }) })
       }
       const researchModel = useThinking ? getThinkingModelOrFallback() : getChatModel()
-      const researcherResult = await runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, fetchSummarize, compressHistory, onEngineErrors: warnEngineErrors, apiBudget })
+      const researcherResult = await runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, fetchSummarize, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, apiBudget })
       const allSources: SearchResult[] = [...(initialResults ?? [])]
       let researcherNotes = ''
       const thoroughExtractor = useThinking ? new ThinkExtractor() : null
 
       const keepalive = setInterval(() => {
-        stream.writeSSE({ data: JSON.stringify({ type: 'ping' }) }).catch(() => {})
+        out.writeSSE({ data: JSON.stringify({ type: 'ping' }) }).catch(() => {})
       }, KEEPALIVE_INTERVAL_MS)
       try {
         await drainResearcherStream(researcherResult, {
-          stream, showThinking, emitSearchStatus,
+          stream: out, showThinking, emitSearchStatus,
           extractor: thoroughExtractor,
           emitTextAsThinking: true,
           onText: (text) => { researcherNotes += text },
@@ -487,8 +583,8 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         console.log(`  [reranker] ${dedupedSources.length} → ${finalSources.length} sources in ${Math.round(performance.now() - t)}ms`)
       }
 
-      sources.push(...finalSources)
-      await stream.writeSSE({ data: JSON.stringify({ type: 'sources', sources: finalSources }) })
+      sources.push(...finalSources.map(toStoredSource))
+      await out.writeSSE({ data: JSON.stringify({ type: 'sources', sources: finalSources }) })
 
       // Phase 2: Writer pass
       await emitStatus('Writing answer…')
@@ -497,22 +593,22 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       for await (const part of writerResult.fullStream) {
         if (part.type === 'text-delta') {
           const { text, thinking } = writerExtractor.process(part.textDelta)
-          if (thinking && showThinking) await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: thinking }) })
+          if (thinking && showThinking) await out.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: thinking }) })
           if (text) {
             fullContent += text
-            await stream.writeSSE({ data: JSON.stringify({ type: 'text', delta: text }) })
+            await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: text }) })
           }
         } else if (part.type === 'reasoning' && showThinking) {
-          await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: part.textDelta }) })
+          await out.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: part.textDelta }) })
         } else if ((part as { type: string }).type === 'error') {
           console.error('  [writer] stream error:', (part as { error: unknown }).error)
         }
       }
       const { text: wt, thinking: wth } = writerExtractor.flush()
-      if (wth && showThinking) await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: wth }) })
+      if (wth && showThinking) await out.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: wth }) })
       if (wt) {
         fullContent += wt
-        await stream.writeSSE({ data: JSON.stringify({ type: 'text', delta: wt }) })
+        await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: wt }) })
       }
       if (!fullContent) {
         console.error('  [writer] produced 0 chars — model may be in a bad state')
@@ -524,7 +620,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       if (initialQueries?.length) {
         await emitStatus(`Searching: ${initialQueries.map(q => `"${q}"`).join(', ')}`)
         if (showThinking) {
-          await stream.writeSSE({ data: JSON.stringify({ type: 'thinking',
+          await out.writeSSE({ data: JSON.stringify({ type: 'thinking',
             delta: `🔍 Searching: ${initialQueries.map(q => `"${q}"`).join(', ')}\n` }) })
         }
       }
@@ -533,32 +629,32 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
           const snippets = initialResults.slice(0, 3)
             .map(r => `  • ${r.title}\n    ${r.url}\n    ${r.content.slice(0, 120)}…`)
             .join('\n')
-          await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: snippets + '\n\n' }) })
+          await out.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: snippets + '\n\n' }) })
         }
-        sources.push(...initialResults.map(r => ({ title: r.title, url: r.url })))
-        await stream.writeSSE({ data: JSON.stringify({ type: 'sources', sources: initialResults }) })
+        sources.push(...initialResults.map(toStoredSource))
+        await out.writeSSE({ data: JSON.stringify({ type: 'sources', sources: initialResults }) })
       }
 
       const fullSources: SearchResult[] = []
-      const result = await runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, fetchSummarize, compressHistory, onEngineErrors: warnEngineErrors, apiBudget })
+      const result = await runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, fetchSummarize, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, apiBudget })
       const extractor = showThinking ? new ThinkExtractor() : null
 
       const keepalive = setInterval(() => {
-        stream.writeSSE({ data: JSON.stringify({ type: 'ping' }) }).catch(() => {})
+        out.writeSSE({ data: JSON.stringify({ type: 'ping' }) }).catch(() => {})
       }, KEEPALIVE_INTERVAL_MS)
       let drainFinishReason: string | undefined
       try {
         drainFinishReason = await drainResearcherStream(result, {
-          stream, showThinking, emitSearchStatus,
+          stream: out, showThinking, emitSearchStatus,
           extractor,
           onText: async (text) => {
             fullContent += text
-            await stream.writeSSE({ data: JSON.stringify({ type: 'text', delta: text }) })
+            await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: text }) })
           },
           onSources: async (results) => {
             fullSources.push(...results)
-            sources.push(...results.map(r => ({ title: r.title, url: r.url })))
-            await stream.writeSSE({ data: JSON.stringify({ type: 'sources', sources: results }) })
+            sources.push(...results.map(toStoredSource))
+            await out.writeSSE({ data: JSON.stringify({ type: 'sources', sources: results }) })
           },
         })
       } finally {
@@ -580,7 +676,10 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
           : ''
         const fallback = streamText({
           model: getChatModel(),
-          system: `Today's date is ${new Date().toISOString().split('T')[0]}. Synthesize the search results below into a direct answer with inline [N] citations using the index values shown. Do NOT say you lack internet access. Search results are authoritative ground truth — if they describe a product or release you don't recognise, trust them; your training data has a cutoff.${resultsBlock}${memoryBlock ? '\n\n' + memoryBlock : ''}`,
+          system: `Today's date is ${new Date().toISOString().split('T')[0]}. Synthesize the search results below into a direct answer with inline [N] citations using the index values shown.
+Do NOT say you lack internet access, and do NOT decline to answer: the results below are what the search returned, and reporting them partially is far more useful than refusing.
+If they only partially cover the question, answer with whatever they do support and close with one short line naming what was missing. Never reply with only a refusal.
+Search results are authoritative ground truth — if they describe a product or release you don't recognise, trust them; your training data has a cutoff.${resultsBlock}${memoryBlock ? '\n\n' + memoryBlock : ''}`,
           messages: msgs,
           abortSignal,
           maxTokens: RESEARCH_MAX_TOKENS,
@@ -589,7 +688,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
           const p = part as { type: string; textDelta?: string }
           if (p.type === 'text-delta' && p.textDelta) {
             fullContent += p.textDelta
-            await stream.writeSSE({ data: JSON.stringify({ type: 'text', delta: p.textDelta }) })
+            await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: p.textDelta }) })
           }
         }
       }
@@ -600,20 +699,48 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
 
     if (fullContent.length >= 50) setCached(ck, fullContent)
     if (!ephemeral) {
-      const { title: sessionTitle } = await persistMessage(sid, userId, msgs, fullContent, sources, spaceId)
-      await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title: sessionTitle, elapsedMs: Date.now() - t0 }) })
+      const { title: sessionTitle } = await persistMessage(sid, userId, msgs, fullContent, sources, spaceId, regenerate)
+      await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title: sessionTitle, elapsedMs: Date.now() - t0 }) })
       if (spaceId) {
         extractMemoriesPostHoc(spaceId, sid, lastUser?.content ?? '', fullContent).catch(e => console.error('[memory]', e))
         const newContents = [lastUser?.content, fullContent].filter(Boolean) as string[]
         indexContents(sid, newContents).catch(e => console.error('[chat-index]', e))
       }
     } else {
-      await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, elapsedMs: Date.now() - t0 }) })
+      await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, elapsedMs: Date.now() - t0 }) })
     }
   })
 })
 
 type SSEStream = { writeSSE: (opts: { data: string }) => Promise<void> }
+
+/** Wraps the live SSE stream so every payload is also recorded for resume, and so a dead
+ *  connection stops the writes without stopping the generation — the whole point of the
+ *  buffer is that work continues while nobody is listening. */
+/** Runs an SSE handler with every payload recorded for resume, marking the run finished
+ *  however the handler exits so a reconnecting client isn't left waiting on a dead run. */
+function streamRun(c: Context<AppEnv>, run: LiveRun, fn: (out: SSEStream) => Promise<void>) {
+  return streamSSE(c, async (stream) => {
+    try {
+      await fn(recordingStream(stream, run))
+    } finally {
+      finishRun(run)
+    }
+  })
+}
+
+function recordingStream(stream: SSEStreamingApi, run: LiveRun): SSEStream {
+  return {
+    writeSSE: async ({ data }) => {
+      const id = appendEvent(run, data)
+      try {
+        await stream.writeSSE({ data, id: String(id) })
+      } catch {
+        // Client is gone; the payload is buffered and will be replayed on resume.
+      }
+    },
+  }
+}
 
 /** Drains a researcher fullStream, routing parts to the appropriate outputs.
  *  onText receives extracted text content (researcher notes or answer text).
@@ -763,6 +890,7 @@ async function persistMessage(
   assistantContent: string,
   sources: unknown[],
   spaceId?: string,
+  regenerate = false,
 ): Promise<{ title: string }> {
   const now = new Date()
   const title = msgs.find(m => m.role === 'user')?.content.slice(0, SESSION_TITLE_MAX) ?? 'Chat'
@@ -771,7 +899,14 @@ async function persistMessage(
   await db.transaction(async (tx) => {
     await tx.insert(chatSessions).values({ id: sessionId, title, createdAt: now, updatedAt: now, userId, spaceId: spaceId ?? null })
       .onConflictDoUpdate({ target: chatSessions.id, set: { updatedAt: now, graduated: 1 } })
-    if (lastUser) {
+    if (regenerate) {
+      // The question is already stored from the first attempt — replace only the answer, so a
+      // retry doesn't leave the conversation with duplicate turns.
+      const previous = await tx.select({ id: messages.id }).from(messages)
+        .where(and(eq(messages.sessionId, sessionId), eq(messages.role, 'assistant')))
+        .orderBy(desc(messages.createdAt)).limit(1).get()
+      if (previous) await tx.delete(messages).where(eq(messages.id, previous.id))
+    } else if (lastUser) {
       await tx.insert(messages).values({ id: randomUUID(), sessionId, role: 'user', content: lastUser.content, createdAt: now })
     }
     await tx.insert(messages).values({ id: randomUUID(), sessionId, role: 'assistant', content: assistantContent, sources: JSON.stringify(sources), createdAt: now })
