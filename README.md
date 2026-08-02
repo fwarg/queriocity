@@ -18,8 +18,13 @@ through a single Bun process.
 - [User guide](#user-guide)
   - [What is Queriocity](#what-is-queriocity)
   - [Chats](#chats)
-    - [Searching chats](#searching-chats)
     - [Text-to-speech](#text-to-speech)
+    - [Retrying an answer](#retrying-an-answer)
+    - [Follow-up suggestions](#follow-up-suggestions)
+    - [Exporting a chat](#exporting-a-chat)
+    - [Connection recovery](#connection-recovery)
+    - [Searching chats](#searching-chats)
+    - [Searching within a chat](#searching-within-a-chat)
   - [Research modes](#research-modes)
     - [Search category filtering](#search-category-filtering)
   - [Resources](#resources)
@@ -142,15 +147,20 @@ small/reformulation model instead of the main chat model.
 A small model first rewrites the user's question into an optimized search query, which is
 executed before the main model starts. For example, "what's the latest on the mars mission?"
 might become `NASA Mars mission 2026 latest news`. The main model then
-receives pre-fetched results and may issue one more round of searches (up to 2 queries at a
+receives pre-fetched results and may issue further searches (up to 2 queries at a
 time) before answering. Answers include inline citations `[1][2]` and are always in the same
 language as the user's question. Hovering a `[N]` marker shows the source's title, domain and
 a short snippet; clicking it highlights that source in the list below the answer.
 
+The last two steps are reserved for writing: once fewer than two steps remain, the tools
+refuse further calls and tell the model to answer now. Without this a model facing weak search
+results can spend every step searching and produce no prose at all, leaving the answer to a
+single-shot fallback pass. Thorough mode is exempt, since its writer phase always runs.
+
 Query reformulation can be disabled in **Admin > System settings > Search** for setups where small-model latency is a concern — the raw user query is then sent directly to search.
 
 - 1 LLM-reformulated pre-fetched query (or raw query when reformulation is disabled)
-- Up to 3 LLM steps; up to 2 parallel search queries per step
+- Up to 4 LLM steps, of which the first 2 may call tools; up to 2 parallel search queries per step
 - 8 results per web-search query
 
 ### Thorough
@@ -241,6 +251,8 @@ There are two ways page content reaches the model, and they share the same fetch
 - **Per-URL context cap** — before a page's content is injected into the model's context, it's capped at `FETCH_MAX_URL_CONTEXT_CHARS` (default 40 000 chars), applied identically whether the URL was pasted by the user or fetched by the model's own `fetch_url` tool. If the *Summarize oversized URL content* admin setting is enabled, content over the cap is compressed by the small model in serial chunks (`FETCH_SUMMARIZE_MAX_CHUNKS`, default 6) instead of being hard-truncated.
 - **Per-turn cumulative budget** — `fetch_url` and `web_search` calls made by the model during one research turn draw from a single shared budget, derived from `CONTEXT_TOKEN_LIMIT` (roughly 80% of the model's real context window, minus what the system prompt and conversation history already use). A fixed fraction of that budget (`TOOL_BUDGET_RESERVE_FRACTION`, default 30%) is reserved for this pool *before* conversation history is trimmed, so a long conversation can never leave the tools with no room to work. Every call consumes from the pool as it goes; once it's nearly exhausted, further `fetch_url`/`web_search` calls are refused and the model is told to answer with what it already has instead of erroring. This is what actually protects against context overflow once an agentic research turn is underway — a `thorough`-mode run can call these tools many times across several steps, and this cap holds regardless of how high `FETCH_MAX_CHARS` is set for scraping purposes.
 - **History compaction** — when conversation history must be trimmed to make room (for the tool budget above), the oldest messages are dropped by default. If the *Compress dropped history* admin setting is enabled, they're summarized by the small model and folded into the system prompt instead, preserving continuity at the cost of an extra LLM call. Only applies to balanced/thorough research turns.
+- **Blocked targets** — fetches are restricted to `http`/`https`, and the hostname is resolved and rejected if it points at a loopback, private (RFC1918/CGNAT), link-local (including the `169.254.169.254` cloud-metadata address) or otherwise internal address. The check runs on the original URL *and* on every redirect hop, so a public URL cannot bounce a fetch onto your LAN. This matters because the model can be talked into fetching a link it read in a page or a search result — without the guard, a planted URL reaches your Ollama, SearXNG or LiteLLM instance. A refusal comes back to the model as `Error fetching <url>: <reason>`. To fetch internal pages deliberately (an intranet wiki, say), set `FETCH_ALLOW_PRIVATE_HOSTS=true`; a warning is logged at startup while it is on.
+- **Timeout** — each attempt is capped at `FETCH_TIMEOUT_MS` (default 10 s), applied separately to the static fetch and to the Playwright render, so an unreachable page costs at most roughly double that before the model is told it failed.
 - **Cache** — fetched URLs are cached for 5 minutes so the model does not re-fetch during the same session.
 - **Privacy** — by default requests originate from the server's IP. Set `FETCH_PROXY_URL` to route all fetches through an HTTP or SOCKS5 proxy (e.g. [Privoxy](https://www.privoxy.org/) → Tor).
 
@@ -504,11 +516,13 @@ THINKING_MODEL=qwen3.5-thinking
 # Optional. Use a fast 1–3 B model for best latency. Falls back to CHAT_* if unset.
 # SMALL_PROVIDER=ollama
 # SMALL_BASE_URL=http://localhost:11434/api
+# SMALL_API_KEY=                            # falls back to CHAT_API_KEY
 SMALL_MODEL=qwen3.5-small
 
 # ── LLM: embedding model ─────────────────────────────────────────────────────
 # EMBED_PROVIDER=ollama
 # EMBED_BASE_URL=http://localhost:11434/api   # falls back to CHAT_BASE_URL
+# EMBED_API_KEY=                              # falls back to CHAT_API_KEY
 EMBED_MODEL=nomic-embed-text
 EMBED_DIMENSIONS=1536                       # must match the model's output size
 
@@ -528,6 +542,10 @@ RERANK_MODEL=qwen3-reranker
 # IMAGE_MODEL=                           # optional model name/alias sent to the server
 # IMAGE_TIMEOUT_MS=300000                # generation/edit timeout (default 5 min); catches a stuck
 #                                        # diffusion server without cutting off slow renders
+# IMAGE_STORAGE_DIR=/images              # where generated images are written (default: /tmp/queriocity/images).
+#                                        # In Docker this MUST point at a mounted volume — the default lives
+#                                        # inside the container and every image is lost on the next restart.
+#                                        # docker/compose.yml already sets it to /images and mounts ./data/images.
 
 # ── SearXNG ───────────────────────────────────────────────────────────────────
 SEARXNG_URL=http://localhost:4000  # url to your searxng instance
@@ -536,9 +554,10 @@ SEARXNG_URL=http://localhost:4000  # url to your searxng instance
 #                                              # SearXNG otherwise defaults to `general` alone, so engines
 #                                              # enabled under another category are never queried at all —
 #                                              # check what yours are registered under before setting this.
-# Keyed search-API fallback (optional). Called ONLY when a SearXNG query returns 0 results
-# (e.g. engines suspended on a blocked exit IP) and capped per request/monitor-run, so the
-# free SearXNG path stays primary and cost stays bounded. Unset = disabled (default).
+# Keyed search-API fallback (optional). Tops up a weak SearXNG result (e.g. engines suspended
+# on a blocked exit IP) on either of two conditions — fewer than SEARCH_API_MIN_RESULTS results,
+# or no engine from SEARCH_MAJOR_ENGINES contributed — and is capped per request/monitor-run, so
+# the free SearXNG path stays primary and cost stays bounded. Unset = disabled (default).
 # SEARCH_API_PROVIDER=mojeek                  # currently only: mojeek (get a key at mojeek.com)
 # SEARCH_API_KEY=                             # provider API key
 # SEARCH_API_MAX_PER_REQUEST=3                # max paid fallback calls per request/run (0 disables)
@@ -1142,6 +1161,7 @@ Browser (React + Vite)
 Hono server (Bun)
   ├── /api/auth      — register, login (JWT + bcrypt)
   ├── /api/chat      — reformulate → pre-search → researcher → [writer]
+  │                    (+ /suggest, /related, /resume/:id, /:id/stop)
   ├── /api/files     — upload/extract/list/delete
   ├── /api/history   — chat sessions + messages + memory lifecycle
   ├── /api/spaces    — spaces, per-space memories, compact, recreate
