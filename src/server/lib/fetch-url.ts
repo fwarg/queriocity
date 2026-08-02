@@ -180,6 +180,8 @@ const SUMMARIZE_INPUT_CHARS = Math.floor(SMALL_CTX * 0.7 * 2.5)
 const MAX_SUMMARIZE_CHUNKS = parseInt(process.env.FETCH_SUMMARIZE_MAX_CHUNKS ?? '6')
 // Hard cap per URL regardless of budget — prevents one URL from consuming the whole context
 const MAX_URL_CONTEXT_CHARS = parseInt(process.env.FETCH_MAX_URL_CONTEXT_CHARS ?? '40000')
+// Floor per URL when a budget is split across many URLs — below this, summarizing/truncating isn't worth it
+export const MIN_URL_CONTEXT_CHARS = 8000
 
 export async function summarizeContent(url: string, content: string, targetChars: number): Promise<string> {
   const hostname = new URL(url).hostname
@@ -212,7 +214,7 @@ export async function processUrlsForContext(
   summarize: boolean,
 ): Promise<Array<{ url: string; content: string }>> {
   if (!urls.length) return urls
-  const perUrlChars = Math.min(MAX_URL_CONTEXT_CHARS, Math.max(8000, Math.floor(budgetChars / urls.length)))
+  const perUrlChars = Math.min(MAX_URL_CONTEXT_CHARS, Math.max(MIN_URL_CONTEXT_CHARS, Math.floor(budgetChars / urls.length)))
   return Promise.all(urls.map(async ({ url, content }) => {
     if (content.length <= perUrlChars) return { url, content }
     const hostname = new URL(url).hostname

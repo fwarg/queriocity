@@ -191,16 +191,18 @@ Ingested URLs work the same as uploaded files: they appear in the Resources list
 
 ## URL fetching
 
-When a message contains a URL, Queriocity fetches the full page content server-side and injects it into the conversation before the model runs — no need to copy-paste text from web pages.
+There are two ways page content reaches the model, and they share the same fetching and budgeting logic below:
+- **Pasted URLs** — when a message contains a URL, Queriocity fetches the full page content server-side and injects it into the conversation before the model runs, no copy-paste needed.
+- **The `fetch_url` tool** — the model can also fetch URLs autonomously mid-research, e.g. to read a search result in full, or to follow up on a URL mentioned in conversation.
 
 - **Static fetch first** — a lightweight HTTP request strips scripts, styles, and navigation elements to extract readable text. Fast and proxy-friendly.
 - **Playwright fallback** — if the static fetch returns too little content (JS-rendered pages, login walls that redirect), a headless Chromium instance renders the page and extracts `innerText`.
-- **Pagination** — up to `FETCH_MAX_PAGES` pages are fetched automatically by appending `?page=2`, `?page=3`, etc. Stops on error, short content, duplicate content, or when two consecutive pages have the same length (e.g. file-listing pagination with identical structure). Overridable per-instance in Admin → Settings.
-- **Context budget** — fetched content is capped at `FETCH_MAX_URL_CONTEXT_CHARS` (default 40 000 chars) before injection to prevent a single large page from consuming the model's entire context window. If the *Summarize oversized URL content* admin setting is enabled, content that exceeds the cap is compressed by the small model in serial chunks (`FETCH_SUMMARIZE_MAX_CHUNKS`, default 6) rather than hard-truncated.
+- **Pagination** — for pasted URLs, up to `FETCH_MAX_PAGES` pages are fetched automatically by appending `?page=2`, `?page=3`, etc. Stops on error, short content, duplicate content, or when two consecutive pages have the same length (e.g. file-listing pagination with identical structure). Overridable per-instance in Admin → Settings. The `fetch_url` tool fetches one page per call; the model can call it again with its own `?page=2` if it needs more, subject to the per-turn budget below.
+- **Raw scrape ceiling** — each single fetch (one page) is capped at `FETCH_MAX_CHARS` chars (default 12 000) of extracted text before it's cached. This only bounds how much is scraped and kept in memory — it does *not* by itself limit what reaches the model; see the next two limits for that.
+- **Per-URL context cap** — before a page's content is injected into the model's context, it's capped at `FETCH_MAX_URL_CONTEXT_CHARS` (default 40 000 chars), applied identically whether the URL was pasted by the user or fetched by the model's own `fetch_url` tool. If the *Summarize oversized URL content* admin setting is enabled, content over the cap is compressed by the small model in serial chunks (`FETCH_SUMMARIZE_MAX_CHUNKS`, default 6) instead of being hard-truncated.
+- **Per-turn cumulative budget** — `fetch_url` and `web_search` calls made by the model during one research turn draw from a single shared budget, derived from `CONTEXT_TOKEN_LIMIT` (roughly 80% of the model's real context window, minus what the system prompt and conversation history already use). Every call consumes from this pool as it goes; once it's nearly exhausted, further `fetch_url`/`web_search` calls are refused and the model is told to answer with what it already has instead of erroring. This is what actually protects against context overflow once an agentic research turn is underway — a `thorough`-mode run can call these tools many times across several steps, and this cap holds regardless of how high `FETCH_MAX_CHARS` is set for scraping purposes.
 - **Cache** — fetched URLs are cached for 5 minutes so the model does not re-fetch during the same session.
 - **Privacy** — by default requests originate from the server's IP. Set `FETCH_PROXY_URL` to route all fetches through an HTTP or SOCKS5 proxy (e.g. [Privoxy](https://www.privoxy.org/) → Tor).
-
-The model also has an explicit `fetch_url` tool it can call autonomously — e.g. to read a search result in full, or to follow up on a URL mentioned in conversation.
 
 ---
 
@@ -494,13 +496,18 @@ SEARXNG_URL=http://localhost:4000  # url to your searxng instance
 # SEARCH_API_MIN_RESULTS=3                    # top up via the API when SearXNG returns fewer than N results (1 = empty-only)
 
 # ── URL fetching ──────────────────────────────────────────────────────────────
-# The fetch_url tool lets the LLM read full page content from a given URL.
+# Pasted URLs are prefetched before the model runs; the model can also fetch URLs
+# itself via the fetch_url tool. Both paths share the limits below — see the "URL
+# fetching" section of the user guide for how they interact.
 # By default requests come from the server's IP. Set FETCH_PROXY_URL to route
 # them through an HTTP or SOCKS5 proxy (e.g. Tor, Privoxy).
 # FETCH_PROXY_URL=socks5://127.0.0.1:9050    # optional proxy for URL fetches
-# FETCH_MAX_CHARS=12000                       # max chars returned per fetch (default: 12000)
-# FETCH_MAX_PAGES=8                           # max pages fetched via ?page=N pagination (default: 8)
-# FETCH_MAX_URL_CONTEXT_CHARS=40000           # hard cap on URL content injected into context (default: 40000)
+# FETCH_MAX_CHARS=12000                       # raw per-fetch scrape/cache ceiling (one page's extracted text, default: 12000).
+#                                              # Does NOT bound what reaches the model — see FETCH_MAX_URL_CONTEXT_CHARS and
+#                                              # CONTEXT_TOKEN_LIMIT below. Safe to raise independently for scraping/caching.
+# FETCH_MAX_PAGES=8                           # max pages fetched via ?page=N pagination (prefetch path only; default: 8)
+# FETCH_MAX_URL_CONTEXT_CHARS=40000           # hard per-URL cap on content injected into the model's context — applies to
+#                                              # both pasted URLs and the fetch_url tool (default: 40000)
 # FETCH_SUMMARIZE_MAX_CHUNKS=6               # max chunks when summarising oversized URL content (default: 6)
 
 # ── Server ────────────────────────────────────────────────────────────────────
@@ -523,10 +530,18 @@ REFORMULATE_USER_CTX=400                  # max chars of prior user turns
 REFORMULATE_ASSISTANT_CTX=1000            # max chars of prior assistant turns
 
 # ── Chat context window ───────────────────────────────────────────────────────
-# Context window of the main chat/thinking model in tokens. When a conversation
-# grows beyond 80% of this limit, the oldest messages are dropped so the
-# request always fits. ⚠ Default is 8192 — set to your actual model context or
-# history will be over-trimmed. (~4 chars ≈ 1 token)
+# Context window of the main chat/thinking model in tokens. Used for three things:
+#  - conversation history is trimmed once, before a research turn starts, dropping
+#    the oldest messages once the estimated total exceeds ~80% of this limit;
+#  - the per-URL context cap for pasted URLs is derived from what's left of that
+#    80% after the system prompt and history (see FETCH_MAX_URL_CONTEXT_CHARS);
+#  - a cumulative per-turn budget for the fetch_url/web_search tools: every call
+#    the model makes during one research turn draws from this same shared pool,
+#    and once it's nearly spent, further calls are refused so the prompt can't
+#    grow past the model's real context window — regardless of how many
+#    searches/fetches the model attempts or how high FETCH_MAX_CHARS is set.
+# ⚠ Default is 8192 — set to your actual model context or history will be
+# over-trimmed. (~4 chars ≈ 1 token)
 # CONTEXT_TOKEN_LIMIT=32768               # ⚠ default: 8192 (too small for most modern models)
 
 # Context window of the small utility model in tokens (used for query

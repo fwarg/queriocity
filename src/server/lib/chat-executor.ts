@@ -69,10 +69,11 @@ export async function executeChatAndSave({
     const { initialQueries, initialResults } = feedItems?.length
       ? { initialQueries: ['latest news from selected RSS feeds'], initialResults: feedItems }
       : await reformulateAndSearch(promptText, focusMode, undefined, apiBudget)
-    const [userRow, memoryBudget, ragBudget] = await Promise.all([
+    const [userRow, memoryBudget, ragBudget, fetchSummarize] = await Promise.all([
       db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get(),
       spaceId ? getAppSetting('memory_token_budget', '1000').then(Number) : Promise.resolve(0),
       getAppSetting('space_rag_budget', '500').then(Number),
+      getAppSetting('fetch_summarize_overflow', 'false').then(v => v === 'true'),
     ])
     const parsedSettings = parseSettings(userRow?.settings ?? '{}')
     const customPrompt = parsedSettings.customPrompt as string | undefined
@@ -84,7 +85,7 @@ export async function executeChatAndSave({
     if (focusMode === 'thorough') {
       const researcherResult = runResearcher({
         messages: msgs, focusMode, userId, model: getChatModel(), abortSignal: AbortSignal.timeout(300_000),
-        initialQueries, initialResults, customPrompt, hasFiles: false, spaceId, sessionId, memoryBlock, apiBudget,
+        initialQueries, initialResults, customPrompt, hasFiles: false, spaceId, sessionId, memoryBlock, fetchSummarize, apiBudget,
       })
       let researcherNotes = ''
       const { sources: rs } = await collectStream(researcherResult, s => { researcherNotes += s })
@@ -104,7 +105,7 @@ export async function executeChatAndSave({
       sources.push(...(initialResults ?? []))
       const researcherResult = runResearcher({
         messages: msgs, focusMode, userId, model: getChatModel(), abortSignal: AbortSignal.timeout(300_000),
-        initialQueries, initialResults, customPrompt, hasFiles: false, spaceId, sessionId, memoryBlock,
+        initialQueries, initialResults, customPrompt, hasFiles: false, spaceId, sessionId, memoryBlock, fetchSummarize,
         maxStepsOverride: 6, apiBudget,
       })
       const { text, sources: rs, finishReason } = await collectStream(researcherResult, () => {})

@@ -2,6 +2,15 @@ import type { CoreMessage } from 'ai'
 
 const estimate = (s: string) => Math.ceil(s.length / 4)
 
+// Fraction of the model's context window budgeted for input (system + history + tool content);
+// the remainder is reserved for the model's own output.
+export const CONTEXT_RESERVE_FRACTION = 0.8
+
+// Converts a token-based context limit into a char budget using the same 4 chars/token heuristic as estimate().
+export function contextCharBudget(ctxLimitTokens: number, fraction = CONTEXT_RESERVE_FRACTION): number {
+  return ctxLimitTokens * fraction * 4
+}
+
 // Trims oldest messages so estimated tokens fit within maxTokens.
 // Pass systemPrompt so its cost is reserved from the budget.
 export function trimMessages(messages: CoreMessage[], maxTokens: number, systemPrompt = ''): CoreMessage[] {

@@ -5,8 +5,8 @@ import { webSearchMulti, type SearchResult, type EngineError, type SearchApiBudg
 import { isSearchApiEnabled } from './search-api.ts'
 import { searchUploads } from './files/uploads-search.ts'
 import { saveMemory } from './memory.ts'
-import { fetchUrl } from './fetch-url.ts'
-import { trimMessages } from './trim-messages.ts'
+import { fetchUrl, processUrlsForContext, MIN_URL_CONTEXT_CHARS } from './fetch-url.ts'
+import { trimMessages, contextCharBudget, CONTEXT_RESERVE_FRACTION } from './trim-messages.ts'
 import { RESEARCH_MAX_TOKENS } from './llm.ts'
 
 
@@ -47,6 +47,12 @@ const SEARCH_DEAD_MSG = {
   error: 'Web search is unavailable right now (search engines are blocked and the fallback search quota for this request is used up). Do NOT call web_search again — write your answer using the results already gathered.',
 }
 
+// Returned from fetch_url/web_search once the shared per-turn context budget is used up,
+// so the model stops requesting more content and answers with what it already has.
+const CONTEXT_BUDGET_DEAD_MSG = {
+  error: 'The available context budget for this research turn has been used up by search/fetch results already gathered. Do NOT call web_search or fetch_url again — write your answer using the results already gathered.',
+}
+
 export interface ResearchOptions {
   messages: Array<{ role: 'user' | 'assistant'; content: string }>
   focusMode: 'balanced' | 'thorough'
@@ -61,6 +67,8 @@ export interface ResearchOptions {
   spaceId?: string
   sessionId?: string
   memoryBlock?: string
+  /** Summarize (vs. truncate) URL content that overflows the context budget. Default false. */
+  fetchSummarize?: boolean
   maxStepsOverride?: number
   /** Called when a web_search returns no results because engines were suspended/blocked. */
   onEngineErrors?: (errors: EngineError[]) => void | Promise<void>
@@ -68,7 +76,7 @@ export interface ResearchOptions {
   apiBudget?: SearchApiBudget
 }
 
-export function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, maxStepsOverride, onEngineErrors, apiBudget }: ResearchOptions) {
+export function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, fetchSummarize = false, maxStepsOverride, onEngineErrors, apiBudget }: ResearchOptions) {
   const { maxSteps: defaultMaxSteps, count } = MODE_CONFIG[focusMode]
   const maxSteps = maxStepsOverride ?? defaultMaxSteps
   let nextIndex = 1
@@ -117,7 +125,13 @@ export function runResearcher({ messages, focusMode, userId, model, abortSignal,
   }
 
   const ctxLimit = parseInt(process.env.CONTEXT_TOKEN_LIMIT ?? '8192')
-  augmentedMessages = trimMessages(augmentedMessages, ctxLimit - Math.floor(ctxLimit * 0.2), system)
+  augmentedMessages = trimMessages(augmentedMessages, Math.floor(ctxLimit * CONTEXT_RESERVE_FRACTION), system)
+
+  // Cumulative budget for search/fetch content the agentic loop is about to add, derived from what's
+  // left of the context window after the (already trimmed) system prompt + conversation history.
+  const usedChars = system.length + augmentedMessages.reduce((s, m) => s + JSON.stringify(m).length, 0)
+  let toolBudgetRemaining = Math.max(0, contextCharBudget(ctxLimit) - usedChars)
+  console.log(`  [researcher] tool budget: ${toolBudgetRemaining}c remaining (ctxLimit=${ctxLimit}tok, system+history=${usedChars}c)`)
 
   const webSearchTool = tool({
     description: `Search the web. Provide up to ${focusMode === 'thorough' ? 3 : 2} queries covering different angles.`,
@@ -126,6 +140,7 @@ export function runResearcher({ messages, focusMode, userId, model, abortSignal,
     }),
     execute: async ({ queries }) => {
       if (searchDead) return SEARCH_DEAD_MSG
+      if (toolBudgetRemaining <= MIN_URL_CONTEXT_CHARS) return CONTEXT_BUDGET_DEAD_MSG
       const errs: EngineError[] = []
       const results = await webSearchMulti(queries.slice(0, focusMode === 'thorough' ? 3 : 2), count, undefined, e => errs.push(...e), apiBudget)
       // Surface only when blocked engines left this search empty (matches pre-search semantics).
@@ -139,7 +154,9 @@ export function runResearcher({ messages, focusMode, userId, model, abortSignal,
           return SEARCH_DEAD_MSG
         }
       }
-      return results.map(r => ({ ...r, index: nextIndex++ }))
+      const indexed = results.map(r => ({ ...r, index: nextIndex++ }))
+      toolBudgetRemaining -= JSON.stringify(indexed).length
+      return indexed
     },
   })
 
@@ -149,7 +166,14 @@ export function runResearcher({ messages, focusMode, userId, model, abortSignal,
     fetch_url: tool({
       description: 'Fetch and read the full text content of a specific URL. Use when the user provides a URL to analyze, or when a search result needs to be read in full. For paginated content, call multiple times with page parameters (e.g. ?page=2).',
       parameters: z.object({ url: z.string().url() }),
-      execute: async ({ url }) => fetchUrl(url),
+      execute: async ({ url }) => {
+        if (toolBudgetRemaining <= MIN_URL_CONTEXT_CHARS) return CONTEXT_BUDGET_DEAD_MSG
+        const raw = await fetchUrl(url)
+        if (raw.startsWith('Error fetching')) return raw
+        const [{ content }] = await processUrlsForContext([{ url, content: raw }], toolBudgetRemaining, fetchSummarize)
+        toolBudgetRemaining -= content.length
+        return content
+      },
     }),
   }
 
@@ -196,7 +220,7 @@ export function runResearcher({ messages, focusMode, userId, model, abortSignal,
         const size = typeof result === 'string' ? result.length : JSON.stringify(result ?? '').length
         return `${c.toolName}(${size}c)`
       }).join(', ')
-      console.log(`  [chat] step ${stepIndex}: ${fmt(step.usage.promptTokens)}p + ${fmt(step.usage.completionTokens)}c tok, finish=${step.finishReason}${toolSummary ? ` tools=[${toolSummary}]` : ''}`)
+      console.log(`  [chat] step ${stepIndex}: ${fmt(step.usage.promptTokens)}p + ${fmt(step.usage.completionTokens)}c tok, finish=${step.finishReason}${toolSummary ? ` tools=[${toolSummary}]` : ''} budget=${toolBudgetRemaining}c`)
     },
     onFinish: ({ usage }) => {
       const ms = (performance.now() - start).toFixed(0)

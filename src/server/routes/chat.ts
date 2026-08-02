@@ -18,7 +18,7 @@ import { getFlashModel, getChatModel, getThinkingModelOrFallback, RESEARCH_MAX_T
 import { ThinkExtractor } from '../lib/think-extractor.ts'
 import { rerank, rerankEnabled } from '../lib/reranker.ts'
 import { buildMemoryBlock, buildChatFileBlock, extractMemoriesPostHoc } from '../lib/memory.ts'
-import { trimMessages } from '../lib/trim-messages.ts'
+import { trimMessages, contextCharBudget, CONTEXT_RESERVE_FRACTION } from '../lib/trim-messages.ts'
 import { indexContents } from '../lib/chat-indexer.ts'
 import { IMAGE_STORAGE_DIR } from '../lib/image-store.ts'
 const _createdImageDirs = new Set<string>()
@@ -116,7 +116,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
         model: getFlashModel(),
         abortSignal,
         system: flashSystem,
-        messages: trimMessages(msgs, ctxLimit - Math.floor(ctxLimit * 0.2), flashSystem),
+        messages: trimMessages(msgs, Math.floor(ctxLimit * CONTEXT_RESERVE_FRACTION), flashSystem),
         maxTokens: FLASH_MAX_TOKENS,
       })
       for await (const part of result.fullStream) {
@@ -285,7 +285,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
         model: getFlashModel(),
         abortSignal,
         system: imageSystem,
-        messages: trimMessages(msgs, ctxLimit - Math.floor(ctxLimit * 0.2), imageSystem),
+        messages: trimMessages(msgs, Math.floor(ctxLimit * CONTEXT_RESERVE_FRACTION), imageSystem),
         tools: imageTools,
         maxSteps: 4,
         maxTokens: RESEARCH_MAX_TOKENS,
@@ -374,7 +374,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
   const ctxTokenLimit = parseInt(process.env.CONTEXT_TOKEN_LIMIT ?? '8192')
   const estSystemChars = 500 + (memoryBlock?.length ?? 0) + (customPrompt?.length ?? 0)
   const estMsgsChars = msgs.reduce((s, m) => s + (typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content).length), 0)
-  const urlBudgetChars = Math.max(0, ctxTokenLimit * 0.8 * 4 - estSystemChars - estMsgsChars)
+  const urlBudgetChars = Math.max(0, contextCharBudget(ctxTokenLimit) - estSystemChars - estMsgsChars)
   const processedUrls = prefetchedUrls.length > 0
     ? await processUrlsForContext(prefetchedUrls, urlBudgetChars, fetchSummarize)
     : prefetchedUrls
@@ -425,7 +425,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
         await stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: snippets + '\n\n' }) })
       }
       const researchModel = useThinking ? getThinkingModelOrFallback() : getChatModel()
-      const researcherResult = runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, onEngineErrors: warnEngineErrors, apiBudget })
+      const researcherResult = runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, fetchSummarize, onEngineErrors: warnEngineErrors, apiBudget })
       const allSources: SearchResult[] = [...(initialResults ?? [])]
       let researcherNotes = ''
       const thoroughExtractor = useThinking ? new ThinkExtractor() : null
@@ -516,7 +516,7 @@ chatRouter.post('/', zValidator('json', chatSchema), async (c) => {
       }
 
       const fullSources: SearchResult[] = []
-      const result = runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, onEngineErrors: warnEngineErrors, apiBudget })
+      const result = runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, fetchSummarize, onEngineErrors: warnEngineErrors, apiBudget })
       const extractor = showThinking ? new ThinkExtractor() : null
 
       const keepalive = setInterval(() => {
