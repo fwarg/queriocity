@@ -18,7 +18,7 @@
     "@ai-sdk/openai": "^1",
     "@hono/zod-validator": "^0.2",
     "@types/react-syntax-highlighter": "^15.5.13",
-    "ai": "^4",
+    "ai": "^7",
     "bcryptjs": "^3.0.3",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.12.33",
