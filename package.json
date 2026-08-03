@@ -15,7 +15,7 @@
     "check": "bun run typecheck && bun run lint && bun run test"
   },
   "dependencies": {
-    "@ai-sdk/openai": "^1",
+    "@ai-sdk/openai": "^4",
     "@hono/zod-validator": "^0.2",
     "@types/react-syntax-highlighter": "^15.5.13",
     "ai": "^4",
