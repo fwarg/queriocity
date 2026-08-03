@@ -2,7 +2,7 @@ import { Hono, type Context } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { streamSSE, type SSEStreamingApi } from 'hono/streaming'
-import { streamText, generateText, tool, type TextStreamPart, type ToolSet } from 'ai'
+import { streamText, generateText, tool, type TextStreamPart, type ToolSet, stepCountIs } from 'ai'
 import { runResearcher } from '../lib/researcher.ts'
 import { runWriter } from '../lib/writer.ts'
 import { reformulateLLM } from '../lib/reformulate.ts'
@@ -74,7 +74,7 @@ chatRouter.post('/suggest', rateLimitByUser(suggestLimiter, 'suggest'), zValidat
       model: getFlashModel(),
       system: 'Return a JSON array of exactly 3 short search query suggestions that complete or refine the user\'s partial input. Return ONLY the raw JSON array, no markdown, no explanation.',
       messages: [{ role: 'user', content: text }],
-      maxTokens: 120,
+      maxOutputTokens: 120,
       abortSignal: AbortSignal.timeout(6000),
     })
     const match = raw.match(/\[[\s\S]*\]/)
@@ -120,7 +120,7 @@ Return ONLY a raw JSON array of 3 strings, no markdown, no explanation.`,
         role: 'user',
         content: `Question: ${question.slice(0, RELATED_INPUT_CHARS)}\n\nAnswer: ${answer.slice(0, RELATED_INPUT_CHARS)}`,
       }],
-      maxTokens: 160,
+      maxOutputTokens: 160,
       abortSignal: AbortSignal.timeout(10000),
     })
     const match = raw.match(/\[[\s\S]*\]/)
@@ -236,12 +236,12 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         abortSignal,
         system: flashSystem,
         messages: trimMessages(msgs, Math.floor(ctxLimit * CONTEXT_RESERVE_FRACTION), flashSystem),
-        maxTokens: FLASH_MAX_TOKENS,
+        maxOutputTokens: FLASH_MAX_TOKENS,
       })
-      for await (const part of result.fullStream) {
+      for await (const part of result.stream) {
         if (part.type === 'text-delta') {
-          fullContent += part.textDelta
-          await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: part.textDelta }) })
+          fullContent += part.text
+          await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: part.text }) })
         }
       }
       console.log(`  [flash] done in ${Date.now() - t0}ms, ${fullContent.length} chars`)
@@ -278,7 +278,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     const imageTools = {
       web_search: tool({
         description: 'Search the web for context about a specialized or unfamiliar subject before generating an image.',
-        parameters: z.object({
+        inputSchema: z.object({
           query: z.string(),
         }),
         execute: async ({ query }) => {
@@ -289,7 +289,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       }),
       generate_image: tool({
         description: 'Generate an image from a text description using a local diffusion model.',
-        parameters: z.object({
+        inputSchema: z.object({
           prompt: z.string().describe('Detailed visual description for image generation'),
           size: z.string().optional().describe('Image dimensions e.g. "512x512", "1024x1024", "1024x576"'),
           steps: z.number().int().optional().describe('Inference steps: ~15 draft, ~25 balanced, ~40 high quality'),
@@ -336,7 +336,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       }),
       edit_image: tool({
         description: 'Modify a previously generated image. Use when the user asks to change, edit, or iterate on an image.',
-        parameters: z.object({
+        inputSchema: z.object({
           image_url: z.string().describe('The /images/... URL of the image to edit (from chat history)'),
           prompt: z.string().describe('Full description of the desired result, including unchanged aspects'),
           strength: z.number().min(0).max(1).optional()
@@ -408,13 +408,13 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         system: imageSystem,
         messages: trimMessages(msgs, Math.floor(ctxLimit * CONTEXT_RESERVE_FRACTION), imageSystem),
         tools: imageTools,
-        maxSteps: 4,
-        maxTokens: RESEARCH_MAX_TOKENS,
+        stopWhen: stepCountIs(4),
+        maxOutputTokens: RESEARCH_MAX_TOKENS,
       })
-      for await (const part of result.fullStream) {
+      for await (const part of result.stream) {
         if (part.type === 'text-delta') {
-          fullContent += part.textDelta
-          await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: part.textDelta }) })
+          fullContent += part.text
+          await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: part.text }) })
         } else if (part.type === 'tool-call') {
           if (part.toolName === 'web_search') {
             await out.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Researching topic…' }) })
@@ -424,7 +424,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
             await out.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Editing image…' }) })
           }
         } else if (part.type === 'tool-result' && (part.toolName === 'generate_image' || part.toolName === 'edit_image')) {
-          const r = part.result as { success?: boolean; prompt?: string; error?: string }
+          const r = part.output as { success?: boolean; prompt?: string; error?: string }
           if (r.success && pendingImageUrl) {
             await out.writeSSE({ data: JSON.stringify({ type: 'image', url: pendingImageUrl, alt: r.prompt ?? '' }) })
             fullContent += `\n\n![${r.prompt ?? ''}](${pendingImageUrl})`
@@ -590,16 +590,16 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       await emitStatus('Writing answer…')
       const writerResult = runWriter(finalSources, msgs, researcherNotes.slice(0, RESEARCHER_NOTES_CAP), abortSignal)
       const writerExtractor = new ThinkExtractor()
-      for await (const part of writerResult.fullStream) {
+      for await (const part of writerResult.stream) {
         if (part.type === 'text-delta') {
-          const { text, thinking } = writerExtractor.process(part.textDelta)
+          const { text, thinking } = writerExtractor.process(part.text)
           if (thinking && showThinking) await out.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: thinking }) })
           if (text) {
             fullContent += text
             await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: text }) })
           }
-        } else if (part.type === 'reasoning' && showThinking) {
-          await out.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: part.textDelta }) })
+        } else if (part.type === 'reasoning-delta' && showThinking) {
+          await out.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: part.text }) })
         } else if (part.type === 'error') {
           console.error('  [writer] stream error:', part.error)
         }
@@ -682,12 +682,12 @@ If they only partially cover the question, answer with whatever they do support 
 Search results are authoritative ground truth — if they describe a product or release you don't recognise, trust them; your training data has a cutoff.${resultsBlock}${memoryBlock ? '\n\n' + memoryBlock : ''}`,
           messages: msgs,
           abortSignal,
-          maxTokens: RESEARCH_MAX_TOKENS,
+          maxOutputTokens: RESEARCH_MAX_TOKENS,
         })
-        for await (const part of fallback.fullStream) {
-          if (part.type === 'text-delta' && part.textDelta) {
-            fullContent += part.textDelta
-            await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: part.textDelta }) })
+        for await (const part of fallback.stream) {
+          if (part.type === 'text-delta' && part.text) {
+            fullContent += part.text
+            await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: part.text }) })
           }
         }
       }
@@ -741,17 +741,17 @@ function recordingStream(stream: SSEStreamingApi, run: LiveRun): SSEStream {
   }
 }
 
-/** The SDK's own stream-part union, rather than a hand-written structural type. Using the real
- *  union is deliberate: when the SDK renames a field (v5 renames `textDelta` to `text` and
- *  tool `args`/`result` to `input`/`output`), a structural cast keeps compiling and silently
- *  yields `undefined` — empty answers with a green typecheck. This makes the compiler the
- *  thing that finds it. See chat-stream.test.ts for the runtime counterpart. */
+/** The SDK's own stream-part union, rather than a hand-written structural type. This is what
+ *  made the v4 -> v7 upgrade tractable: the SDK renamed `textDelta` to `text` and tool
+ *  `args`/`result` to `input`/`output`, and a structural cast would have kept compiling while
+ *  silently yielding `undefined` — empty answers with a green typecheck. Keep it typed so the
+ *  compiler finds the next one. See chat-stream.test.ts for the runtime counterpart. */
 export type ResearcherStreamPart<TOOLS extends ToolSet = ToolSet> = TextStreamPart<TOOLS>
 
-/** Tool-call args arrive typed as `unknown` under a generic ToolSet, so narrow once here rather
- *  than casting at each use. */
-function toolArgs(part: { args?: unknown }): { queries?: string[]; query?: string } {
-  return (part.args ?? {}) as { queries?: string[]; query?: string }
+/** Tool-call input arrives typed as `unknown` under a generic ToolSet, so narrow once here
+ *  rather than casting at each use. (`args` in ai@4; `input` from v5 on.) */
+function toolArgs(part: { input: unknown }): { queries?: string[]; query?: string } {
+  return (part.input ?? {}) as { queries?: string[]; query?: string }
 }
 
 /** Drains a researcher fullStream, routing parts to the appropriate outputs.
@@ -759,7 +759,7 @@ function toolArgs(part: { args?: unknown }): { queries?: string[]; query?: strin
  *  onSources receives web_search tool results.
  *  Set emitTextAsThinking=true (thorough researcher) to mirror text into the thinking channel. */
 export async function drainResearcherStream<TOOLS extends ToolSet>(
-  researcherResult: { fullStream: AsyncIterable<ResearcherStreamPart<TOOLS>> },
+  researcherResult: { stream: AsyncIterable<ResearcherStreamPart<TOOLS>> },
   {
     stream, showThinking, emitSearchStatus, extractor, onText, onSources, emitTextAsThinking = false,
   }: {
@@ -776,8 +776,8 @@ export async function drainResearcherStream<TOOLS extends ToolSet>(
     stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta }) })
 
   let textDeltaCount = 0, reasoningCount = 0, finishReason = 'unknown'
-  for await (const part of researcherResult.fullStream) {
-    if (part.type === 'finish' || part.type === 'step-finish') {
+  for await (const part of researcherResult.stream) {
+    if (part.type === 'finish' || part.type === 'finish-step') {
       if (part.finishReason) finishReason = part.finishReason
     } else if (part.type === 'tool-call' && part.toolName === 'web_search') {
       const args = toolArgs(part)
@@ -789,13 +789,13 @@ export async function drainResearcherStream<TOOLS extends ToolSet>(
     } else if (part.type === 'tool-call' && part.toolName === 'uploads_search') {
       console.log(`  [uploads_search] query: ${JSON.stringify(toolArgs(part).query ?? '')}`)
     } else if (part.type === 'tool-result' && part.toolName === 'uploads_search') {
-      const results = part.result as Array<{ filename?: string; content?: string }> | undefined
+      const results = part.output as Array<{ filename?: string; content?: string }> | undefined
       console.log(`  [uploads_search] returned ${results?.length ?? 0} chunks`)
     } else if (part.type === 'tool-call' && part.toolName === 'save_to_memory') {
       await stream.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Saving to memory…' }) })
     } else if (part.type === 'tool-result' && part.toolName === 'web_search') {
       // result may be a non-array "search unavailable" message when search is exhausted.
-      const results = (Array.isArray(part.result) ? part.result : []) as SearchResult[]
+      const results = (Array.isArray(part.output) ? part.output : []) as SearchResult[]
       await onSources(results)
       if (showThinking) {
         const snippets = results.slice(0, 3)
@@ -803,21 +803,21 @@ export async function drainResearcherStream<TOOLS extends ToolSet>(
           .join('\n')
         await emitThinking(snippets + '\n\n')
       }
-    } else if (part.type === 'reasoning') {
+    } else if (part.type === 'reasoning-delta') {
       reasoningCount++
-      if (showThinking) await emitThinking(part.textDelta)
+      if (showThinking) await emitThinking(part.text)
     } else if (part.type === 'text-delta') {
       textDeltaCount++
       if (extractor) {
-        const { text, thinking } = extractor.process(part.textDelta)
+        const { text, thinking } = extractor.process(part.text)
         if (thinking && showThinking) await emitThinking(thinking)
         if (text) {
           if (emitTextAsThinking && showThinking) await emitThinking(text)
           await onText(text)
         }
       } else {
-        if (emitTextAsThinking && showThinking) await emitThinking(part.textDelta)
-        await onText(part.textDelta)
+        if (emitTextAsThinking && showThinking) await emitThinking(part.text)
+        await onText(part.text)
       }
     } else if (part.type === 'error') {
       console.error('  [researcher] stream error:', part.error)

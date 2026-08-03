@@ -39,6 +39,6 @@ export function runWriter(
     abortSignal,
     system: WRITER_SYSTEM,
     messages: [{ role: 'user', content: userContent }],
-    maxTokens: RESEARCH_MAX_TOKENS,
+    maxOutputTokens: RESEARCH_MAX_TOKENS,
   })
 }

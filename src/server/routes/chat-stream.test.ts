@@ -2,12 +2,12 @@
  *
  *  These assert on queriocity's own SSE output, not on AI SDK types, so they survive an SDK
  *  major upgrade and act as a before/after oracle for one. They exist because the stream parts
- *  are read through hand-written structural casts (`part.textDelta`, `part.args`, `part.result`),
+ *  are read through hand-written structural casts (`part.text`, `part.input`, `part.output`),
  *  which a rename in a newer SDK would satisfy at compile time while yielding `undefined` at
  *  runtime — empty answers, missing sources, and a green typecheck. */
 
 import { describe, test, expect, afterEach } from 'bun:test'
-import { streamText, tool } from 'ai'
+import { streamText, tool, stepCountIs } from 'ai'
 import { createOpenAI } from '@ai-sdk/openai'
 import { z } from 'zod'
 import { startFakeOpenAI, captureSSE } from '../lib/test-support/fake-openai.ts'
@@ -25,15 +25,15 @@ const SOURCES: SearchResult[] = [
 /** Mirrors how researcher.ts wires web_search: a tool whose result is an array of results. */
 function makeRun(script: Parameters<typeof startFakeOpenAI>[0], maxSteps = 3) {
   fake = startFakeOpenAI(script)
-  const model = createOpenAI({ baseURL: fake.baseURL, apiKey: 'test' })('fake-model')
+  const model = createOpenAI({ baseURL: fake.baseURL, apiKey: 'test' }).chat('fake-model')
   return streamText({
     model,
     messages: [{ role: 'user', content: 'question' }],
-    maxSteps,
+    stopWhen: stepCountIs(maxSteps),
     tools: {
       web_search: tool({
         description: 'search',
-        parameters: z.object({ queries: z.array(z.string()) }),
+        inputSchema: z.object({ queries: z.array(z.string()) }),
         execute: async () => SOURCES,
       }),
     },
@@ -42,7 +42,7 @@ function makeRun(script: Parameters<typeof startFakeOpenAI>[0], maxSteps = 3) {
 
 // Typed as the structural minimum drainResearcherStream needs, so the helper does not depend
 // on the SDK's generic result type (which is reshaped across major versions).
-function drain(result: { fullStream: AsyncIterable<unknown> }, cap: ReturnType<typeof captureSSE>, opts: Partial<{ showThinking: boolean; emitTextAsThinking: boolean }> = {}) {
+function drain(result: { stream: AsyncIterable<unknown> }, cap: ReturnType<typeof captureSSE>, opts: Partial<{ showThinking: boolean; emitTextAsThinking: boolean }> = {}) {
   const sources: SearchResult[] = []
   let text = ''
   return drainResearcherStream(result as never, {
@@ -74,7 +74,7 @@ describe('drainResearcherStream', () => {
       { text: ['Answer with citation [1].'] },
     ]), cap)
 
-    // Reads part.result (v4) / part.output (v5+) — the other silent-rename risk.
+    // Reads part.output (v4) / part.output (v5+) — the other silent-rename risk.
     expect(sources).toHaveLength(2)
     expect(sources[0].url).toBe('https://example.com/a')
     expect(text).toBe('Answer with citation [1].')

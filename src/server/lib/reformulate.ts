@@ -90,7 +90,7 @@ export async function reformulateLLM(
     model: getSmallModel(),
     system: REFORMULATE_SYSTEM,
     prompt: userPrompt,
-    maxTokens: 120,
+    maxOutputTokens: 120,
   })
 
   console.log(`  [reformulate] done — ${(performance.now() - start).toFixed(0)}ms → ${JSON.stringify(text.trim())}`)

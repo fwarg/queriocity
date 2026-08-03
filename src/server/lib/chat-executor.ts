@@ -57,9 +57,9 @@ export async function executeChatAndSave({
     const system = FLASH_SYSTEM
       + (customPrompt ? `\n\nAdditional instructions:\n${customPrompt}` : '')
       + (memBlock ? '\n\n' + memBlock : '')
-    const result = streamText({ model: getFlashModel(), system, messages: msgs, maxTokens: 200 })
-    for await (const part of result.fullStream) {
-      if (part.type === 'text-delta') fullContent += part.textDelta
+    const result = streamText({ model: getFlashModel(), system, messages: msgs, maxOutputTokens: 200 })
+    for await (const part of result.stream) {
+      if (part.type === 'text-delta') fullContent += part.text
     }
   } else {
     // Shared per-run allowance for paid keyed-API fallback searches (pre-search + researcher).
@@ -94,9 +94,9 @@ export async function executeChatAndSave({
 
       const writerResult = runWriter(rs, msgs, researcherNotes.slice(0, RESEARCHER_NOTES_CAP), AbortSignal.timeout(300_000))
       const writerExtractor = new ThinkExtractor()
-      for await (const part of writerResult.fullStream) {
+      for await (const part of writerResult.stream) {
         if (part.type === 'text-delta') {
-          const { text } = writerExtractor.process(part.textDelta)
+          const { text } = writerExtractor.process(part.text)
           if (text) fullContent += text
         }
       }
@@ -128,8 +128,8 @@ export async function executeChatAndSave({
           messages: msgs,
           abortSignal: AbortSignal.timeout(120_000),
         })
-        for await (const part of fallback.fullStream) {
-          if (part.type === 'text-delta' && part.textDelta) fullContent += part.textDelta
+        for await (const part of fallback.stream) {
+          if (part.type === 'text-delta' && part.text) fullContent += part.text
         }
       }
     }
@@ -175,24 +175,24 @@ async function reformulateAndSearch(
 }
 
 async function collectStream<TOOLS extends ToolSet>(
-  researcherResult: { fullStream: AsyncIterable<TextStreamPart<TOOLS>> },
+  researcherResult: { stream: AsyncIterable<TextStreamPart<TOOLS>> },
   onText: (text: string) => void,
 ): Promise<{ text: string; sources: SearchResult[]; finishReason: string }> {
   let text = ''
   let reasoning = ''
   let finishReason = 'unknown'
   const sources: SearchResult[] = []
-  for await (const part of researcherResult.fullStream) {
-    if (part.type === 'finish' || part.type === 'step-finish') {
+  for await (const part of researcherResult.stream) {
+    if (part.type === 'finish' || part.type === 'finish-step') {
       if (part.finishReason) finishReason = part.finishReason
     } else if (part.type === 'tool-result' && part.toolName === 'web_search') {
       // result may be a non-array "search unavailable" message when search is exhausted.
-      if (Array.isArray(part.result)) sources.push(...(part.result as SearchResult[]))
+      if (Array.isArray(part.output)) sources.push(...(part.output as SearchResult[]))
     } else if (part.type === 'text-delta') {
-      text += part.textDelta
-      onText(part.textDelta)
-    } else if (part.type === 'reasoning') {
-      reasoning += part.textDelta
+      text += part.text
+      onText(part.text)
+    } else if (part.type === 'reasoning-delta') {
+      reasoning += part.text
     }
   }
   // Fallback: if the model emitted only reasoning and no text, use the reasoning as content

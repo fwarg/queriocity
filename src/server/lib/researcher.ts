@@ -1,6 +1,6 @@
-import { streamText, tool, type ToolSet } from 'ai'
+import { streamText, tool, type ToolSet, stepCountIs } from 'ai'
 import { z } from 'zod'
-import type { LanguageModel, CoreMessage } from 'ai'
+import type { LanguageModel, ModelMessage } from 'ai'
 import { webSearchMulti, type SearchResult, type EngineError, type SearchApiBudget } from './searxng.ts'
 import { isSearchApiEnabled } from './search-api.ts'
 import { searchUploads } from './files/uploads-search.ts'
@@ -61,9 +61,11 @@ const CONTEXT_BUDGET_DEAD_MSG = {
   error: 'The available context budget for this research turn has been used up by search/fetch results already gathered. Do NOT call web_search or fetch_url again — write your answer using the results already gathered.',
 }
 
-// Returned once too few steps remain to act on another tool result. Tools cannot be removed
-// mid-run (streamText's experimental_activeTools is fixed at call time and ai@4 has no
-// prepareStep for streaming), so the last rounds are closed off at the tool level instead.
+// Returned once too few steps remain to act on another tool result, so the last rounds are
+// closed off at the tool level. This was forced on ai@4, whose streamText could not change
+// tools mid-run. Since the v7 upgrade `prepareStep` can disable tools for a given step, which
+// would let the reserve drop from two steps to one — deliberately not done in the upgrade
+// itself, so a behaviour change is not tangled up with the migration.
 const FINAL_STEP_MSG = {
   error: 'No research steps remain. Do NOT call any tool again — write your final answer NOW from the results already gathered. If they only partially cover the question, answer with what they do support and say briefly what was missing; do not reply with a refusal.',
 }
@@ -129,15 +131,16 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
       ? { ...m, content: typeof m.content === 'string' ? m.content.replace(/\[\d+\]/g, '') : m.content }
       : m
   )
-  let augmentedMessages: CoreMessage[] = cleanMessages
+  let augmentedMessages: ModelMessage[] = cleanMessages
   if (initialResults?.length && initialQueries?.length) {
     system += `\n\nNote: an initial search has already been performed and the results are in the conversation. Use different, more specific queries for your follow-up search.`
     const args = { queries: initialQueries }
     const indexedInitial = initialResults.map(r => ({ ...r, index: nextIndex++ }))
     augmentedMessages = [
       ...cleanMessages,
-      { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'pre-0', toolName: 'web_search', args }] },
-      { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'pre-0', toolName: 'web_search', result: indexedInitial }] },
+      { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'pre-0', toolName: 'web_search', input: args }] },
+      // v5+ wraps a tool result in a tagged output: structured results go as 'json', not raw.
+      { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'pre-0', toolName: 'web_search', output: { type: 'json', value: indexedInitial } }] },
     ]
   }
 
@@ -148,8 +151,8 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
       const callId = `pre-fetch-${i}`
       augmentedMessages = [
         ...augmentedMessages,
-        { role: 'assistant', content: [{ type: 'tool-call', toolCallId: callId, toolName: 'fetch_url', args: { url } }] },
-        { role: 'tool', content: [{ type: 'tool-result', toolCallId: callId, toolName: 'fetch_url', result: content }] },
+        { role: 'assistant', content: [{ type: 'tool-call', toolCallId: callId, toolName: 'fetch_url', input: { url } }] },
+        { role: 'tool', content: [{ type: 'tool-result', toolCallId: callId, toolName: 'fetch_url', output: { type: 'text', value: content } }] },
       ]
     }
   }
@@ -180,7 +183,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
 
   const webSearchTool = tool({
     description: `Search the web. Provide up to ${focusMode === 'thorough' ? 3 : 2} queries covering different angles.`,
-    parameters: z.object({
+    inputSchema: z.object({
       queries: z.array(z.string()).describe('Search queries'),
     }),
     execute: async ({ queries }) => {
@@ -213,7 +216,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
     web_search: webSearchTool,
     fetch_url: tool({
       description: 'Fetch and read the full text content of a specific URL. Use when the user provides a URL to analyze, or when a search result needs to be read in full. For paginated content, call multiple times with page parameters (e.g. ?page=2).',
-      parameters: z.object({ url: z.string().url() }),
+      inputSchema: z.object({ url: z.string().url() }),
       execute: async ({ url }) => {
         if (outOfResearchSteps()) return FINAL_STEP_MSG
         if (toolBudgetRemaining <= MIN_URL_CONTEXT_CHARS) return CONTEXT_BUDGET_DEAD_MSG
@@ -229,7 +232,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
   if (hasFiles) {
     tools.uploads_search = tool({
       description: 'Search uploaded documents belonging to the current user.',
-      parameters: z.object({
+      inputSchema: z.object({
         query: z.string().describe('Semantic search query'),
       }),
       execute: async ({ query }) => outOfResearchSteps() ? FINAL_STEP_MSG : searchUploads(query, userId),
@@ -239,7 +242,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
   if (focusMode === 'thorough') {
     tools.done = tool({
       description: 'Signal that research is complete. Call this when you have gathered enough information.',
-      parameters: z.object({}),
+      inputSchema: z.object({}),
       execute: async () => ({ done: true }),
     })
   }
@@ -247,7 +250,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
   if (spaceId) {
     tools.save_to_memory = tool({
       description: 'Save a noteworthy fact, preference, or decision to the space memory for future conversations. Keep entries concise (1-2 sentences).',
-      parameters: z.object({ fact: z.string().describe('The fact to remember') }),
+      inputSchema: z.object({ fact: z.string().describe('The fact to remember') }),
       execute: async ({ fact }) => {
         console.log(`  [memory] save_to_memory tool called: "${fact.slice(0, 80)}"`)
         await saveMemory(spaceId, fact, 'tool', sessionId)
@@ -257,7 +260,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
 
     tools.search_space_history = tool({
       description: 'Search past conversations in this space for relevant context (e.g. what was decided or discussed earlier). Relevant excerpts are already injected automatically — only call this when you need something they do not cover.',
-      parameters: z.object({
+      inputSchema: z.object({
         query: z.string().describe('Semantic search query'),
       }),
       execute: async ({ query }) =>
@@ -280,18 +283,18 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
         const size = typeof result === 'string' ? result.length : JSON.stringify(result ?? '').length
         return `${c.toolName}(${size}c)`
       }).join(', ')
-      console.log(`  [chat] step ${completedSteps}: ${fmt(step.usage.promptTokens)}p + ${fmt(step.usage.completionTokens)}c tok, finish=${step.finishReason}${toolSummary ? ` tools=[${toolSummary}]` : ''} budget=${toolBudgetRemaining}c`)
+      console.log(`  [chat] step ${completedSteps}: ${fmt(step.usage.inputTokens)}p + ${fmt(step.usage.outputTokens)}c tok, finish=${step.finishReason}${toolSummary ? ` tools=[${toolSummary}]` : ''} budget=${toolBudgetRemaining}c`)
     },
     onFinish: ({ usage }) => {
       const ms = (performance.now() - start).toFixed(0)
-      console.log(`  [chat] done — ${ms}ms  tokens: ${fmt(usage.promptTokens)}p + ${fmt(usage.completionTokens)}c`)
+      console.log(`  [chat] done — ${ms}ms  tokens: ${fmt(usage.inputTokens)}p + ${fmt(usage.outputTokens)}c`)
     },
     model,
     abortSignal,
     system,
     messages: augmentedMessages,
-    maxSteps,
-    maxTokens: RESEARCH_MAX_TOKENS,
+    stopWhen: stepCountIs(maxSteps),
+    maxOutputTokens: RESEARCH_MAX_TOKENS,
     tools,
   })
 }

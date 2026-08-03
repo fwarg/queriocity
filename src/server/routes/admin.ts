@@ -149,7 +149,7 @@ adminRouter.get('/models-test', async (c) => {
       const { text } = await generateText({
         model: getModel(),
         messages: [{ role: 'user', content: 'Reply with one word: OK' }],
-        maxTokens,
+        maxOutputTokens: maxTokens,
       })
       results.push({ role, model: modelName, ok: true, ms: Math.round(performance.now() - t), info: text.trim().slice(0, 80) })
     } catch (e: unknown) {

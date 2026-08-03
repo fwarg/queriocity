@@ -71,16 +71,19 @@ const embedProvider = makeProvider(embedConfig)
 const smallProvider = makeProvider(smallConfig)
 const thinkingProvider = makeProvider(thinkingConfig)
 
+// `.chat(...)` rather than `provider(...)`: from @ai-sdk/openai v2 the bare call means the
+// OpenAI *Responses* API (/v1/responses), which self-hosted backends — LiteLLM, llama.cpp,
+// Ollama's /v1 — do not implement. They speak Chat Completions, so pin to it explicitly.
 export function getChatModel() {
-  return chatProvider(process.env.CHAT_MODEL ?? 'llama3.2')
+  return chatProvider.chat(process.env.CHAT_MODEL ?? 'llama3.2')
 }
 
 export function getSmallModel() {
-  return smallProvider(process.env.SMALL_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2')
+  return smallProvider.chat(process.env.SMALL_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2')
 }
 
 export function getThinkingModel() {
-  return thinkingProvider(process.env.THINKING_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2')
+  return thinkingProvider.chat(process.env.THINKING_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2')
 }
 
 export function getThinkingModelOrFallback() {
@@ -95,7 +98,7 @@ export function getFlashModel() {
   return process.env.FLASH_MODEL === 'small' ? getSmallModel() : getChatModel()
 }
 
-export function getEmbeddingModel(): EmbeddingModel<string> {
+export function getEmbeddingModel(): EmbeddingModel {
   const model = process.env.EMBED_MODEL ?? 'nomic-embed-text'
-  return (embedProvider.embedding ? embedProvider.embedding(model) : embedProvider(model)) as EmbeddingModel<string>
+  return embedProvider.textEmbeddingModel(model) as EmbeddingModel
 }

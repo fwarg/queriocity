@@ -325,7 +325,7 @@ export async function extractMemoriesPostHoc(
     model: getSmallModel(),
     system: `Extract noteworthy facts, preferences, or decisions from this conversation that would be useful to remember for future conversations. Output one fact per line, prefixed with "- ". Only extract genuinely useful long-term facts, not ephemeral details. If there are no noteworthy facts, output "NONE".`,
     prompt: combined.slice(-maxChars),
-    maxTokens: 300,
+    maxOutputTokens: 300,
   })
 
   const lines = result.text.split('\n')
@@ -366,7 +366,7 @@ export async function compactSpaceMemories(
 Output ONLY the final list, one fact per line, prefixed with "- ". No other text. No preamble.
 Target: approximately ${targetTokens * 4} characters total.`,
     prompt: input,
-    maxTokens: targetTokens,
+    maxOutputTokens: targetTokens,
   })
 
   const newFacts = result.text.split('\n')
