@@ -6,6 +6,10 @@
  *  which a rename in a newer SDK would satisfy at compile time while yielding `undefined` at
  *  runtime — empty answers, missing sources, and a green typecheck. */
 
+// Must precede the ./chat.ts import below — it reaches lib/auth.ts, which throws at load
+// without JWT_SECRET. See the module for why.
+import '../lib/test-support/test-env.ts'
+
 import { describe, test, expect, afterEach } from 'bun:test'
 import { streamText, tool, stepCountIs } from 'ai'
 import { createOpenAI } from '@ai-sdk/openai'
