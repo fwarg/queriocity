@@ -277,10 +277,12 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
       completedSteps++
       // Diagnostic only. A generic ToolSet gives no per-tool result type (the union collapses
       // to never), so narrow structurally here rather than weakening the tools type itself.
-      const toolResults = step.toolResults as unknown as Array<{ toolCallId: string; result?: unknown }>
+      // The field is `output` from v5 on (`result` in v4) — this cast is a compiler blind spot,
+      // so if every tool starts logging (2c) the field has been renamed again.
+      const toolResults = step.toolResults as unknown as Array<{ toolCallId: string; output?: unknown }>
       const toolSummary = step.toolCalls.map(c => {
-        const result = toolResults.find(tr => tr.toolCallId === c.toolCallId)?.result
-        const size = typeof result === 'string' ? result.length : JSON.stringify(result ?? '').length
+        const output = toolResults.find(tr => tr.toolCallId === c.toolCallId)?.output
+        const size = typeof output === 'string' ? output.length : JSON.stringify(output ?? '').length
         return `${c.toolName}(${size}c)`
       }).join(', ')
       console.log(`  [chat] step ${completedSteps}: ${fmt(step.usage.inputTokens)}p + ${fmt(step.usage.outputTokens)}c tok, finish=${step.finishReason}${toolSummary ? ` tools=[${toolSummary}]` : ''} budget=${toolBudgetRemaining}c`)

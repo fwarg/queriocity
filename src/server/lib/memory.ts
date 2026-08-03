@@ -303,10 +303,21 @@ export async function saveMemory(
   const now = new Date()
   await db.insert(spaceMemories).values({
     id, spaceId, content: trimmed, source,
-    sessionId: sessionId ?? null,
+    // Provenance only, and best-effort: space_memories.session_id is a FK to chat_sessions,
+    // but the session row is not written until persistMessage runs *after* generation. The
+    // save_to_memory tool fires *during* it, so on the first turn of a new chat the id does
+    // not exist yet and the insert would fail — silently losing the memory the model chose to
+    // keep. Losing the link is acceptable; losing the fact is not.
+    sessionId: sessionId && sessionExists(sessionId) ? sessionId : null,
     createdAt: now, updatedAt: now,
   })
   return id
+}
+
+/** Whether a chat session row exists yet — see the FK note in saveMemory. */
+function sessionExists(sessionId: string): boolean {
+  const row = sqlite.prepare('SELECT 1 FROM chat_sessions WHERE id = ?').get(sessionId)
+  return row != null
 }
 
 /** Extract memories from a completed chat using the small model. */
