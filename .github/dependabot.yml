@@ -9,12 +9,23 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 5
     groups:
-      # One PR per ecosystem-ish cluster keeps the noise down; the AI SDK is deliberately
-      # excluded from grouping because a major bump there is a migration, not an update.
+      # One PR per cluster keeps the noise down; the AI SDK is excluded from grouping because
+      # a bump there is a migration, not an update.
       minor-and-patch:
         patterns: ["*"]
         exclude-patterns: ["ai", "@ai-sdk/*"]
         update-types: ["minor", "patch"]
+    ignore:
+      # `ai` and its providers must move together — `@ai-sdk/openai` v4 pairs with `ai` v7, and
+      # bumping either alone leaves makeProvider() returning `LanguageModelV1 | LanguageModelV4`,
+      # which fails at every `model:` site. Dependabot proved this with two PRs that could never
+      # go green. Majors here are a coordinated migration (see development.md); do them by hand.
+      - dependency-name: "ai"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@ai-sdk/*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "ollama-ai-provider"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
     directory: "/"

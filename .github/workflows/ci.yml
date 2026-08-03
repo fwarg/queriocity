@@ -16,6 +16,13 @@ jobs:
           bun-version: "1.3.10"
       - run: bun install --frozen-lockfile
       - run: bun run check
+      # `bun run check` is typecheck + lint + tests only — it never builds the client, so a
+      # dependency that breaks the bundler passes CI and then fails the image build instead
+      # (Dockerfile runs this same command). Caught exactly that: vite-plugin-pwa 1.3.0 pulls
+      # @rollup/plugin-terser 1.0.0 -> serialize-javascript 7, which throws
+      # "ReferenceError: crypto is not defined" at CJS load under Bun.
+      - name: Build client
+        run: bun run build:client
       # Dependabot covers bun for version updates but not security updates, so this is the
       # only automated security signal we get.
       # Fails the build on high/critical only. The remaining moderate+low findings all come
