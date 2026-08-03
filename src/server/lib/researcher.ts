@@ -1,4 +1,4 @@
-import { streamText, tool } from 'ai'
+import { streamText, tool, type ToolSet } from 'ai'
 import { z } from 'zod'
 import type { LanguageModel, CoreMessage } from 'ai'
 import { webSearchMulti, type SearchResult, type EngineError, type SearchApiBudget } from './searxng.ts'
@@ -206,8 +206,10 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
     },
   })
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const tools: Record<string, any> = {
+  // A ToolSet rather than Record<string, any>: typing it lets the stream parts downstream keep
+  // the SDK's real union type, so a future SDK field rename is a compile error instead of a
+  // silent `undefined` (see drainResearcherStream in routes/chat.ts).
+  const tools: ToolSet = {
     web_search: webSearchTool,
     fetch_url: tool({
       description: 'Fetch and read the full text content of a specific URL. Use when the user provides a URL to analyze, or when a search result needs to be read in full. For paginated content, call multiple times with page parameters (e.g. ?page=2).',
@@ -270,8 +272,11 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
     },
     onStepFinish: (step) => {
       completedSteps++
+      // Diagnostic only. A generic ToolSet gives no per-tool result type (the union collapses
+      // to never), so narrow structurally here rather than weakening the tools type itself.
+      const toolResults = step.toolResults as unknown as Array<{ toolCallId: string; result?: unknown }>
       const toolSummary = step.toolCalls.map(c => {
-        const result = step.toolResults.find(tr => tr.toolCallId === c.toolCallId)?.result
+        const result = toolResults.find(tr => tr.toolCallId === c.toolCallId)?.result
         const size = typeof result === 'string' ? result.length : JSON.stringify(result ?? '').length
         return `${c.toolName}(${size}c)`
       }).join(', ')
@@ -287,7 +292,6 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
     messages: augmentedMessages,
     maxSteps,
     maxTokens: RESEARCH_MAX_TOKENS,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    tools: tools as any,
+    tools,
   })
 }

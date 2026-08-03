@@ -495,11 +495,15 @@ Create a `.env` file (or set variables in your shell):
 # overridden by its own *_BASE_URL / *_PROVIDER vars.
 BASE_URL=http://host.docker.internal:8000/v1     # Set your url/port, e.g. localhost, host.docker.internal (if using docker on Linux, etc)
 BASE_PROVIDER=openai                             # "openai" or "ollama"; default: openai
+# Note on "ollama": Queriocity talks to Ollama through its OpenAI-compatible API at /v1
+# rather than the native /api. A base URL ending in /api (or with no path) is rewritten to
+# /v1 automatically with a startup warning, so existing setups keep working — but update the
+# value to end in /v1 to silence it.
 
 # ── LLM: chat model ──────────────────────────────────────────────────────────
 # Base chat model
 # CHAT_PROVIDER=ollama                        # falls back to BASE_PROVIDER
-# CHAT_BASE_URL=http://localhost:11434/api    # falls back to BASE_URL
+# CHAT_BASE_URL=http://localhost:11434/v1     # falls back to BASE_URL (Ollama: use /v1, not /api)
 # CHAT_API_KEY=sk-placeholder
 CHAT_MODEL=qwen3.5-instruct                      # Model name/alias from your LLM endpoint
 # FLASH_MODEL=small                              # Optional. Set to "small" to use SMALL_MODEL for flash mode instead of CHAT_MODEL
@@ -515,13 +519,13 @@ THINKING_MODEL=qwen3.5-thinking
 # ── LLM: small model (query reformulation) ───────────────────────────────────
 # Optional. Use a fast 1–3 B model for best latency. Falls back to CHAT_* if unset.
 # SMALL_PROVIDER=ollama
-# SMALL_BASE_URL=http://localhost:11434/api
+# SMALL_BASE_URL=http://localhost:11434/v1
 # SMALL_API_KEY=                            # falls back to CHAT_API_KEY
 SMALL_MODEL=qwen3.5-small
 
 # ── LLM: embedding model ─────────────────────────────────────────────────────
 # EMBED_PROVIDER=ollama
-# EMBED_BASE_URL=http://localhost:11434/api   # falls back to CHAT_BASE_URL
+# EMBED_BASE_URL=http://localhost:11434/v1    # falls back to CHAT_BASE_URL
 # EMBED_API_KEY=                              # falls back to CHAT_API_KEY
 EMBED_MODEL=nomic-embed-text
 EMBED_DIMENSIONS=1536                       # must match the model's output size
@@ -1200,7 +1204,6 @@ All direct runtime dependencies use **MIT** or **Apache 2.0** licenses.
 | `@hono/zod-validator` | MIT        | Request validation middleware         |
 | `ai` (Vercel AI SDK)  | Apache 2.0 | LLM streaming & tool-call abstraction |
 | `@ai-sdk/openai`      | Apache 2.0 | OpenAI-compatible provider adapter    |
-| `ollama-ai-provider`  | MIT        | Ollama provider adapter               |
 | `zod`                 | MIT        | Schema validation                     |
 | `jose`                | MIT        | JWT signing & verification            |
 | `bcryptjs`            | MIT        | Password hashing                      |

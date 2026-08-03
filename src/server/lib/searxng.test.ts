@@ -1,7 +1,7 @@
 import { describe, test, expect } from 'bun:test'
 
-// Set before importing: the engine list is read once at module load, and Bun auto-loads the
-// local .env — without this the test would assert against whatever the developer has configured.
+// Set before first use: the engine list is memoised on first read, and Bun auto-loads the local
+// .env — without this the test would assert against whatever the developer has configured.
 process.env.SEARCH_MAJOR_ENGINES = 'google,bing,brave,duckduckgo,startpage,mojeek,reuters'
 const { isMajorEngine, isSiteScoped, hasMajorEngineList } = await import('./searxng.ts')
 

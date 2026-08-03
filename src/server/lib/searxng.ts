@@ -10,21 +10,29 @@ const API_MIN_RESULTS = parseInt(process.env.SEARCH_API_MIN_RESULTS ?? '3', 10)
 // default: which engines a SearXNG instance runs is a deployment decision, and a list baked
 // into the code would mis-classify anyone whose set differs. Unset simply means the
 // "no major engine responded" top-up below never fires.
-const MAJOR_ENGINES = new Set(
-  (process.env.SEARCH_MAJOR_ENGINES ?? '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean),
-)
+// Read on first use rather than at module load: reading at load makes the value depend on
+// import order, which silently broke the tests as soon as another module imported this one
+// first. Memoised, so it is still read once.
+let majorEngines: Set<string> | null = null
+function getMajorEngines(): Set<string> {
+  majorEngines ??= new Set(
+    (process.env.SEARCH_MAJOR_ENGINES ?? '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean),
+  )
+  return majorEngines
+}
 
 /** True when a major-engine list is configured at all; without one that rule is inactive. */
 export function hasMajorEngineList(): boolean {
-  return MAJOR_ENGINES.size > 0
+  return getMajorEngines().size > 0
 }
 
 /** SearXNG names variants after their parent — "brave.news", "bing news", "startpage news",
  *  "google scholar" — so match on the first token too, or those all read as niche engines and
  *  trigger a paid top-up that isn't needed. */
 export function isMajorEngine(engine: string): boolean {
+  const engines = getMajorEngines()
   const name = engine.trim().toLowerCase()
-  return MAJOR_ENGINES.has(name) || MAJOR_ENGINES.has(name.split(/[\s.]/)[0])
+  return engines.has(name) || engines.has(name.split(/[\s.]/)[0])
 }
 
 // SearXNG aggregates many engines, so allow well over a single engine's latency — but never

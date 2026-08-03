@@ -1,4 +1,4 @@
-import { streamText } from 'ai'
+import { streamText, type TextStreamPart, type ToolSet } from 'ai'
 import { runResearcher } from './researcher.ts'
 import { runWriter } from './writer.ts'
 import { reformulateLLM } from './reformulate.ts'
@@ -129,8 +129,7 @@ export async function executeChatAndSave({
           abortSignal: AbortSignal.timeout(120_000),
         })
         for await (const part of fallback.fullStream) {
-          const p = part as { type: string; textDelta?: string }
-          if (p.type === 'text-delta' && p.textDelta) fullContent += p.textDelta
+          if (part.type === 'text-delta' && part.textDelta) fullContent += part.textDelta
         }
       }
     }
@@ -175,26 +174,25 @@ async function reformulateAndSearch(
   }
 }
 
-async function collectStream(
-  researcherResult: { fullStream: AsyncIterable<unknown> },
+async function collectStream<TOOLS extends ToolSet>(
+  researcherResult: { fullStream: AsyncIterable<TextStreamPart<TOOLS>> },
   onText: (text: string) => void,
 ): Promise<{ text: string; sources: SearchResult[]; finishReason: string }> {
   let text = ''
   let reasoning = ''
   let finishReason = 'unknown'
   const sources: SearchResult[] = []
-  for await (const _part of researcherResult.fullStream) {
-    const part = _part as { type: string; toolName?: string; result?: unknown; textDelta?: string; finishReason?: string }
+  for await (const part of researcherResult.fullStream) {
     if (part.type === 'finish' || part.type === 'step-finish') {
       if (part.finishReason) finishReason = part.finishReason
     } else if (part.type === 'tool-result' && part.toolName === 'web_search') {
       // result may be a non-array "search unavailable" message when search is exhausted.
       if (Array.isArray(part.result)) sources.push(...(part.result as SearchResult[]))
     } else if (part.type === 'text-delta') {
-      text += part.textDelta ?? ''
-      onText(part.textDelta ?? '')
+      text += part.textDelta
+      onText(part.textDelta)
     } else if (part.type === 'reasoning') {
-      reasoning += part.textDelta ?? ''
+      reasoning += part.textDelta
     }
   }
   // Fallback: if the model emitted only reasoning and no text, use the reasoning as content

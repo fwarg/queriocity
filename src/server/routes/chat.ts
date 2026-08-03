@@ -2,7 +2,7 @@ import { Hono, type Context } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { streamSSE, type SSEStreamingApi } from 'hono/streaming'
-import { streamText, generateText, tool } from 'ai'
+import { streamText, generateText, tool, type TextStreamPart, type ToolSet } from 'ai'
 import { runResearcher } from '../lib/researcher.ts'
 import { runWriter } from '../lib/writer.ts'
 import { reformulateLLM } from '../lib/reformulate.ts'
@@ -600,8 +600,8 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
           }
         } else if (part.type === 'reasoning' && showThinking) {
           await out.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: part.textDelta }) })
-        } else if ((part as { type: string }).type === 'error') {
-          console.error('  [writer] stream error:', (part as { error: unknown }).error)
+        } else if (part.type === 'error') {
+          console.error('  [writer] stream error:', part.error)
         }
       }
       const { text: wt, thinking: wth } = writerExtractor.flush()
@@ -685,10 +685,9 @@ Search results are authoritative ground truth — if they describe a product or 
           maxTokens: RESEARCH_MAX_TOKENS,
         })
         for await (const part of fallback.fullStream) {
-          const p = part as { type: string; textDelta?: string }
-          if (p.type === 'text-delta' && p.textDelta) {
-            fullContent += p.textDelta
-            await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: p.textDelta }) })
+          if (part.type === 'text-delta' && part.textDelta) {
+            fullContent += part.textDelta
+            await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: part.textDelta }) })
           }
         }
       }
@@ -742,12 +741,25 @@ function recordingStream(stream: SSEStreamingApi, run: LiveRun): SSEStream {
   }
 }
 
+/** The SDK's own stream-part union, rather than a hand-written structural type. Using the real
+ *  union is deliberate: when the SDK renames a field (v5 renames `textDelta` to `text` and
+ *  tool `args`/`result` to `input`/`output`), a structural cast keeps compiling and silently
+ *  yields `undefined` — empty answers with a green typecheck. This makes the compiler the
+ *  thing that finds it. See chat-stream.test.ts for the runtime counterpart. */
+export type ResearcherStreamPart<TOOLS extends ToolSet = ToolSet> = TextStreamPart<TOOLS>
+
+/** Tool-call args arrive typed as `unknown` under a generic ToolSet, so narrow once here rather
+ *  than casting at each use. */
+function toolArgs(part: { args?: unknown }): { queries?: string[]; query?: string } {
+  return (part.args ?? {}) as { queries?: string[]; query?: string }
+}
+
 /** Drains a researcher fullStream, routing parts to the appropriate outputs.
  *  onText receives extracted text content (researcher notes or answer text).
  *  onSources receives web_search tool results.
  *  Set emitTextAsThinking=true (thorough researcher) to mirror text into the thinking channel. */
-async function drainResearcherStream(
-  researcherResult: { fullStream: AsyncIterable<unknown> },
+export async function drainResearcherStream<TOOLS extends ToolSet>(
+  researcherResult: { fullStream: AsyncIterable<ResearcherStreamPart<TOOLS>> },
   {
     stream, showThinking, emitSearchStatus, extractor, onText, onSources, emitTextAsThinking = false,
   }: {
@@ -764,18 +776,18 @@ async function drainResearcherStream(
     stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta }) })
 
   let textDeltaCount = 0, reasoningCount = 0, finishReason = 'unknown'
-  for await (const _part of researcherResult.fullStream) {
-    const part = _part as { type: string; toolName?: string; args?: { queries?: string[]; query?: string }; result?: unknown; textDelta?: string; error?: unknown; finishReason?: string }
+  for await (const part of researcherResult.fullStream) {
     if (part.type === 'finish' || part.type === 'step-finish') {
       if (part.finishReason) finishReason = part.finishReason
     } else if (part.type === 'tool-call' && part.toolName === 'web_search') {
-      await emitSearchStatus(part.args ?? {})
+      const args = toolArgs(part)
+      await emitSearchStatus(args)
       if (showThinking) {
-        const queries: string[] = part.args?.queries ?? (part.args?.query ? [part.args.query] : [])
+        const queries: string[] = args.queries ?? (args.query ? [args.query] : [])
         await emitThinking(`🔍 Searching: ${queries.map((q: string) => `"${q}"`).join(', ')}\n`)
       }
     } else if (part.type === 'tool-call' && part.toolName === 'uploads_search') {
-      console.log(`  [uploads_search] query: ${JSON.stringify(part.args?.query ?? '')}`)
+      console.log(`  [uploads_search] query: ${JSON.stringify(toolArgs(part).query ?? '')}`)
     } else if (part.type === 'tool-result' && part.toolName === 'uploads_search') {
       const results = part.result as Array<{ filename?: string; content?: string }> | undefined
       console.log(`  [uploads_search] returned ${results?.length ?? 0} chunks`)
@@ -793,19 +805,19 @@ async function drainResearcherStream(
       }
     } else if (part.type === 'reasoning') {
       reasoningCount++
-      if (showThinking) await emitThinking(part.textDelta ?? '')
+      if (showThinking) await emitThinking(part.textDelta)
     } else if (part.type === 'text-delta') {
       textDeltaCount++
       if (extractor) {
-        const { text, thinking } = extractor.process(part.textDelta ?? '')
+        const { text, thinking } = extractor.process(part.textDelta)
         if (thinking && showThinking) await emitThinking(thinking)
         if (text) {
           if (emitTextAsThinking && showThinking) await emitThinking(text)
           await onText(text)
         }
       } else {
-        if (emitTextAsThinking && showThinking) await emitThinking(part.textDelta ?? '')
-        await onText(part.textDelta ?? '')
+        if (emitTextAsThinking && showThinking) await emitThinking(part.textDelta)
+        await onText(part.textDelta)
       }
     } else if (part.type === 'error') {
       console.error('  [researcher] stream error:', part.error)
