@@ -1210,7 +1210,6 @@ All direct runtime dependencies use **MIT** or **Apache 2.0** licenses.
 | `undici`              | MIT        | HTTP client with proxy agent support  |
 | `youtube-transcript`  | MIT        | YouTube video transcript fetching     |
 | `pdf-parse`           | MIT        | PDF text extraction                   |
-| `pdfjs-dist`          | Apache 2.0 | PDF rendering (canvas fallback)       |
 | `tesseract.js`        | Apache 2.0 | OCR for image attachments             |
 | `react` / `react-dom` | MIT        | UI framework                          |
 | `react-markdown`      | MIT        | Markdown rendering                    |
