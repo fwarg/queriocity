@@ -1,7 +1,8 @@
 {
   "name": "queriocity",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "type": "module",
+  "packageManager": "bun@1.3.10",
   "scripts": {
     "dev": "bun run src/server/index.ts",
     "dev:client": "vite dev --config vite.config.ts",
