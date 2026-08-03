@@ -61,15 +61,6 @@ const CONTEXT_BUDGET_DEAD_MSG = {
   error: 'The available context budget for this research turn has been used up by search/fetch results already gathered. Do NOT call web_search or fetch_url again — write your answer using the results already gathered.',
 }
 
-// Returned once too few steps remain to act on another tool result, so the last rounds are
-// closed off at the tool level. This was forced on ai@4, whose streamText could not change
-// tools mid-run. Since the v7 upgrade `prepareStep` can disable tools for a given step, which
-// would let the reserve drop from two steps to one — deliberately not done in the upgrade
-// itself, so a behaviour change is not tangled up with the migration.
-const FINAL_STEP_MSG = {
-  error: 'No research steps remain. Do NOT call any tool again — write your final answer NOW from the results already gathered. If they only partially cover the question, answer with what they do support and say briefly what was missing; do not reply with a refusal.',
-}
-
 export interface ResearchOptions {
   messages: Array<{ role: 'user' | 'assistant'; content: string }>
   focusMode: 'balanced' | 'thorough'
@@ -108,10 +99,12 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
 
   // A tool result arriving on the final generation can never be used — the model has no step
   // left to write prose, so the turn ends on finishReason=tool-calls with an empty answer.
-  // Refusing one round early leaves a generation free for the answer itself. Thorough mode is
-  // exempt: its researcher is *meant* to end without prose, and the writer pass follows.
-  const outOfResearchSteps = () =>
-    focusMode === 'balanced' && completedSteps >= Math.max(1, maxSteps - 2)
+  // The last step is therefore reserved for writing, by withholding the tools rather than by
+  // letting the call happen and refusing it: a refused call still consumes the step, which is
+  // why this used to cost *two* steps instead of one. Thorough mode is exempt — its researcher
+  // is meant to end without prose, and the writer pass follows.
+  const reserveWritingStep = focusMode === 'balanced' && maxSteps > 1
+  const isFinalStep = (stepNumber: number) => stepNumber >= maxSteps - 1
   const start = performance.now()
   console.log(`  [chat] model=${(model as LanguageModel & { modelId?: string }).modelId ?? String(model)} focusMode=${focusMode} maxSteps=${maxSteps}`)
 
@@ -187,7 +180,6 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
       queries: z.array(z.string()).describe('Search queries'),
     }),
     execute: async ({ queries }) => {
-      if (outOfResearchSteps()) return FINAL_STEP_MSG
       if (searchDead) return SEARCH_DEAD_MSG
       if (toolBudgetRemaining <= MIN_URL_CONTEXT_CHARS) return CONTEXT_BUDGET_DEAD_MSG
       const errs: EngineError[] = []
@@ -218,8 +210,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
       description: 'Fetch and read the full text content of a specific URL. Use when the user provides a URL to analyze, or when a search result needs to be read in full. For paginated content, call multiple times with page parameters (e.g. ?page=2).',
       inputSchema: z.object({ url: z.string().url() }),
       execute: async ({ url }) => {
-        if (outOfResearchSteps()) return FINAL_STEP_MSG
-        if (toolBudgetRemaining <= MIN_URL_CONTEXT_CHARS) return CONTEXT_BUDGET_DEAD_MSG
+          if (toolBudgetRemaining <= MIN_URL_CONTEXT_CHARS) return CONTEXT_BUDGET_DEAD_MSG
         const raw = await fetchUrl(url)
         if (raw.startsWith('Error fetching')) return raw
         const [{ content }] = await processUrlsForContext([{ url, content: raw }], toolBudgetRemaining, fetchSummarize)
@@ -235,7 +226,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
       inputSchema: z.object({
         query: z.string().describe('Semantic search query'),
       }),
-      execute: async ({ query }) => outOfResearchSteps() ? FINAL_STEP_MSG : searchUploads(query, userId),
+      execute: async ({ query }) => searchUploads(query, userId),
     })
   }
 
@@ -263,8 +254,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
       inputSchema: z.object({
         query: z.string().describe('Semantic search query'),
       }),
-      execute: async ({ query }) =>
-        outOfResearchSteps() ? FINAL_STEP_MSG : searchSpaceHistory(spaceId, query, 8, sessionId),
+      execute: async ({ query }) => searchSpaceHistory(spaceId, query, 8, sessionId),
     })
   }
 
@@ -298,5 +288,15 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
     stopWhen: stepCountIs(maxSteps),
     maxOutputTokens: RESEARCH_MAX_TOKENS,
     tools,
+    // Withhold the tools on the final step so it can only produce prose. `activeTools: []`
+    // rather than `toolChoice: 'none'` so the schemas are not sent at all — the model cannot
+    // be tempted by a tool it can no longer usefully call, and the last prompt is smaller.
+    prepareStep: ({ stepNumber }) => {
+      if (reserveWritingStep && isFinalStep(stepNumber)) {
+        console.log(`  [chat] step ${stepNumber + 1}/${maxSteps}: tools withheld — final step is for the answer`)
+        return { activeTools: [] }
+      }
+      return {}
+    },
   })
 }

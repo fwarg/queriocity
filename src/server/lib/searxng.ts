@@ -1,6 +1,9 @@
 import { searchApi, isSearchApiEnabled, searchApiProvider } from './search-api.ts'
 
-const SEARXNG_URL = process.env.SEARXNG_URL ?? 'http://localhost:4000'
+// Read per call, not at module load: a module-level const captures whatever was set when the
+// first importer pulled this in, which makes the value depend on import order (it silently
+// broke a test whose stub server started later). Same reasoning as getMajorEngines below.
+const searxngUrl = () => process.env.SEARXNG_URL ?? 'http://localhost:4000'
 
 // Top up via the keyed API when SearXNG returns fewer than this many results (not only when
 // empty) — e.g. when the only surviving engine returns a thin trickle. Set to 1 for empty-only.
@@ -112,7 +115,8 @@ export async function webSearch(
   onEngineErrors?: (errors: EngineError[]) => void,
   apiBudget?: SearchApiBudget,
 ): Promise<SearchResult[]> {
-  const url = new URL('/search', SEARXNG_URL)
+  const base = searxngUrl()
+  const url = new URL('/search', base)
   url.searchParams.set('q', query)
   url.searchParams.set('format', 'json')
   if (process.env.SEARXNG_ENGINES) url.searchParams.set('engines', process.env.SEARXNG_ENGINES)
@@ -154,7 +158,7 @@ export async function webSearch(
   const engines = new Set<string>()
   for (const r of data.results ?? []) for (const e of r.engines ?? (r.engine ? [r.engine] : [])) engines.add(e)
   const from = engines.size ? ` from ${[...engines].sort().join(', ')}` : ''
-  console.log(`  [searxng] ${SEARXNG_URL} q="${query}" — ${ms}ms → ${results.length} results${from}`)
+  console.log(`  [searxng] ${base} q="${query}" — ${ms}ms → ${results.length} results${from}`)
 
   // Keyed-API top-up, on either of two conditions, while the per-request budget allows:
   //  - too few results at all (blocked engines, or a thin trickle);

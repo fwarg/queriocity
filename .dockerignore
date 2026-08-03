@@ -4,3 +4,11 @@ dist
 .env
 temp
 docker/env.local
+
+# Tests stay in git and still run in CI (which builds from a checkout, not from this image) —
+# they just don't belong in the runtime image. The server runs from source, so without this
+# the container carries every *.test.ts plus test-support/fake-openai.ts, a stub HTTP server
+# that binds a port and is never imported by the app.
+**/*.test.ts
+**/*.test.tsx
+**/test-support/
