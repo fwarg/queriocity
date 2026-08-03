@@ -1,0 +1,22 @@
+version: 2
+updates:
+  # Dependabot supports bun for version updates only (security updates are not available for
+  # this ecosystem), and reads the text bun.lock — not the legacy binary bun.lockb.
+  # The security signal comes from the `bun audit` step in ci.yml instead.
+  - package-ecosystem: "bun"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      # One PR per ecosystem-ish cluster keeps the noise down; the AI SDK is deliberately
+      # excluded from grouping because a major bump there is a migration, not an update.
+      minor-and-patch:
+        patterns: ["*"]
+        exclude-patterns: ["ai", "@ai-sdk/*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"

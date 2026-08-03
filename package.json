@@ -1,7 +1,8 @@
 {
   "name": "queriocity",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "type": "module",
+  "packageManager": "bun@1.3.10",
   "scripts": {
     "dev": "bun run src/server/index.ts",
     "dev:client": "vite dev --config vite.config.ts",
@@ -19,8 +20,8 @@
     "@types/react-syntax-highlighter": "^15.5.13",
     "ai": "^4",
     "bcryptjs": "^3.0.3",
-    "drizzle-orm": "^0.30",
-    "hono": "^4",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.12.33",
     "jose": "^5",
     "katex": "^0.16.45",
     "lucide-react": "^0.400.0",
@@ -37,7 +38,7 @@
     "remark-math": "^6.0.0",
     "sqlite-vec": "^0.1",
     "tesseract.js": "^5",
-    "undici": "^8.3.0",
+    "undici": "^8.9.0",
     "youtube-transcript": "^1.3.1",
     "zod": "^3"
   },
