@@ -1,5 +1,5 @@
 import { generateText } from 'ai'
-import type { CoreMessage } from 'ai'
+import type { ModelMessage } from 'ai'
 import { getSmallModel, SMALL_MODEL_INPUT_CHARS } from './llm.ts'
 
 const estimate = (s: string) => Math.ceil(s.length / 4)
@@ -21,8 +21,8 @@ const MIN_COMPRESS_CHARS = 300
 const MAX_HISTORY_COMPRESS_CHUNKS = 6
 
 interface TrimSplit {
-  kept: CoreMessage[]
-  dropped: CoreMessage[]
+  kept: ModelMessage[]
+  dropped: ModelMessage[]
   systemCost: number
   budget: number
 }
@@ -30,7 +30,7 @@ interface TrimSplit {
 // Shared core: decides which oldest messages (plus any orphaned leading tool results) must be
 // dropped to fit `messages` within `maxTokens`, reserving `systemCost` tokens for systemPrompt.
 // Pure/sync. Used by both trimMessages (hard-drop) and compressMessages (summarize-then-fold).
-function splitForTrim(messages: CoreMessage[], maxTokens: number, systemPrompt: string): TrimSplit {
+function splitForTrim(messages: ModelMessage[], maxTokens: number, systemPrompt: string): TrimSplit {
   const systemCost = estimate(systemPrompt)
   const budget = maxTokens - systemCost
   if (budget <= 0) return { kept: messages.slice(-1), dropped: messages.slice(0, -1), systemCost, budget }
@@ -58,7 +58,7 @@ function splitForTrim(messages: CoreMessage[], maxTokens: number, systemPrompt: 
 
 // Trims oldest messages so estimated tokens fit within maxTokens.
 // Pass systemPrompt so its cost is reserved from the budget.
-export function trimMessages(messages: CoreMessage[], maxTokens: number, systemPrompt = ''): CoreMessage[] {
+export function trimMessages(messages: ModelMessage[], maxTokens: number, systemPrompt = ''): ModelMessage[] {
   const { kept, dropped, systemCost, budget } = splitForTrim(messages, maxTokens, systemPrompt)
   if (budget <= 0) {
     console.warn(`[chat] system prompt alone (~${systemCost} tok) exceeds context budget ${maxTokens}`)
@@ -70,7 +70,7 @@ export function trimMessages(messages: CoreMessage[], maxTokens: number, systemP
 }
 
 export interface CompressResult {
-  messages: CoreMessage[]
+  messages: ModelMessage[]
   /** Present only when messages were dropped AND successfully compressed into a summary. */
   summary?: string
 }
@@ -78,7 +78,7 @@ export interface CompressResult {
 // Async sibling of trimMessages for the agentic researcher path: when messages must be dropped,
 // summarizes the dropped chunk with the small model instead of discarding it, returning the
 // summary separately so the caller can fold it into the system prompt (folding into messages[]
-// itself is unsafe — CoreMessage[] role-alternation/tool-pairing constraints make inserting a
+// itself is unsafe — ModelMessage[] role-alternation/tool-pairing constraints make inserting a
 // synthetic mid-array message risky; the system string is a single always-present slot that's
 // safe to append to). Chunks the dropped content against the small model's own context window
 // (SMALL_MODEL_INPUT_CHARS), exactly like summarizeContent does for oversized URL content — if the
@@ -87,7 +87,7 @@ export interface CompressResult {
 // entirely rather than partially represented. Falls back to a plain hard-drop on any generateText
 // failure or when the summary budget is too small to be worthwhile.
 export async function compressMessages(
-  messages: CoreMessage[],
+  messages: ModelMessage[],
   maxTokens: number,
   systemPrompt: string,
   summaryBudgetChars: number,
@@ -124,7 +124,7 @@ export async function compressMessages(
 3. Write as a compact third-person briefing note, not a transcript.
 Output ONLY the summary, no preamble. Target approximately ${perChunkChars} characters.`,
         prompt: chunk,
-        maxTokens: Math.ceil(perChunkChars / 4),
+        maxOutputTokens: Math.ceil(perChunkChars / 4),
       })
       summaries.push(text.trim())
     }

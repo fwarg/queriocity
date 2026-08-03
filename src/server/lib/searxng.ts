@@ -1,6 +1,9 @@
 import { searchApi, isSearchApiEnabled, searchApiProvider } from './search-api.ts'
 
-const SEARXNG_URL = process.env.SEARXNG_URL ?? 'http://localhost:4000'
+// Read per call, not at module load: a module-level const captures whatever was set when the
+// first importer pulled this in, which makes the value depend on import order (it silently
+// broke a test whose stub server started later). Same reasoning as getMajorEngines below.
+const searxngUrl = () => process.env.SEARXNG_URL ?? 'http://localhost:4000'
 
 // Top up via the keyed API when SearXNG returns fewer than this many results (not only when
 // empty) — e.g. when the only surviving engine returns a thin trickle. Set to 1 for empty-only.
@@ -10,21 +13,29 @@ const API_MIN_RESULTS = parseInt(process.env.SEARCH_API_MIN_RESULTS ?? '3', 10)
 // default: which engines a SearXNG instance runs is a deployment decision, and a list baked
 // into the code would mis-classify anyone whose set differs. Unset simply means the
 // "no major engine responded" top-up below never fires.
-const MAJOR_ENGINES = new Set(
-  (process.env.SEARCH_MAJOR_ENGINES ?? '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean),
-)
+// Read on first use rather than at module load: reading at load makes the value depend on
+// import order, which silently broke the tests as soon as another module imported this one
+// first. Memoised, so it is still read once.
+let majorEngines: Set<string> | null = null
+function getMajorEngines(): Set<string> {
+  majorEngines ??= new Set(
+    (process.env.SEARCH_MAJOR_ENGINES ?? '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean),
+  )
+  return majorEngines
+}
 
 /** True when a major-engine list is configured at all; without one that rule is inactive. */
 export function hasMajorEngineList(): boolean {
-  return MAJOR_ENGINES.size > 0
+  return getMajorEngines().size > 0
 }
 
 /** SearXNG names variants after their parent — "brave.news", "bing news", "startpage news",
  *  "google scholar" — so match on the first token too, or those all read as niche engines and
  *  trigger a paid top-up that isn't needed. */
 export function isMajorEngine(engine: string): boolean {
+  const engines = getMajorEngines()
   const name = engine.trim().toLowerCase()
-  return MAJOR_ENGINES.has(name) || MAJOR_ENGINES.has(name.split(/[\s.]/)[0])
+  return engines.has(name) || engines.has(name.split(/[\s.]/)[0])
 }
 
 // SearXNG aggregates many engines, so allow well over a single engine's latency — but never
@@ -104,7 +115,8 @@ export async function webSearch(
   onEngineErrors?: (errors: EngineError[]) => void,
   apiBudget?: SearchApiBudget,
 ): Promise<SearchResult[]> {
-  const url = new URL('/search', SEARXNG_URL)
+  const base = searxngUrl()
+  const url = new URL('/search', base)
   url.searchParams.set('q', query)
   url.searchParams.set('format', 'json')
   if (process.env.SEARXNG_ENGINES) url.searchParams.set('engines', process.env.SEARXNG_ENGINES)
@@ -146,7 +158,7 @@ export async function webSearch(
   const engines = new Set<string>()
   for (const r of data.results ?? []) for (const e of r.engines ?? (r.engine ? [r.engine] : [])) engines.add(e)
   const from = engines.size ? ` from ${[...engines].sort().join(', ')}` : ''
-  console.log(`  [searxng] ${SEARXNG_URL} q="${query}" — ${ms}ms → ${results.length} results${from}`)
+  console.log(`  [searxng] ${base} q="${query}" — ${ms}ms → ${results.length} results${from}`)
 
   // Keyed-API top-up, on either of two conditions, while the per-request budget allows:
   //  - too few results at all (blocked engines, or a thin trickle);

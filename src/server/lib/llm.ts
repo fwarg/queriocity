@@ -1,5 +1,4 @@
 import { createOpenAI } from '@ai-sdk/openai'
-import { createOllama } from 'ollama-ai-provider'
 import type { EmbeddingModel } from 'ai'
 
 interface ProviderConfig {
@@ -8,11 +7,27 @@ interface ProviderConfig {
   apiKey?: string
 }
 
-function makeProvider({ provider, baseURL, apiKey }: ProviderConfig) {
-  if (provider === 'ollama') {
-    return createOllama({ baseURL })
+const warnedOllamaUrls = new Set<string>()
+
+/** Ollama serves an OpenAI-compatible API at `/v1` alongside its native API at `/api`.
+ *  Existing configs point at the native path (or at the bare host), so rewrite rather than
+ *  fail: `*_PROVIDER=ollama` is now served by the OpenAI provider, and the dedicated
+ *  ollama-ai-provider — which has no release line for AI SDK v5+ — is gone. */
+export function ollamaOpenAIBase(baseURL: string): string {
+  const trimmed = baseURL.replace(/\/+$/, '')
+  if (/\/v1$/.test(trimmed)) return trimmed
+  const rewritten = trimmed.replace(/\/api$/, '') + '/v1'
+  if (!warnedOllamaUrls.has(baseURL)) {
+    warnedOllamaUrls.add(baseURL)
+    console.warn(`  [llm] ollama provider now uses the OpenAI-compatible endpoint — using ${rewritten} instead of ${baseURL}. Update your *_BASE_URL to end in /v1 to silence this.`)
   }
-  return createOpenAI({ baseURL, apiKey: apiKey ?? 'sk-placeholder' })
+  return rewritten
+}
+
+function makeProvider({ provider, baseURL, apiKey }: ProviderConfig) {
+  const url = provider === 'ollama' ? ollamaOpenAIBase(baseURL) : baseURL
+  // Ollama ignores the key but the client requires one.
+  return createOpenAI({ baseURL: url, apiKey: apiKey ?? 'sk-placeholder' })
 }
 
 // Output cap for the research/writer generations. Backstop against runaway
@@ -56,16 +71,19 @@ const embedProvider = makeProvider(embedConfig)
 const smallProvider = makeProvider(smallConfig)
 const thinkingProvider = makeProvider(thinkingConfig)
 
+// `.chat(...)` rather than `provider(...)`: from @ai-sdk/openai v2 the bare call means the
+// OpenAI *Responses* API (/v1/responses), which self-hosted backends — LiteLLM, llama.cpp,
+// Ollama's /v1 — do not implement. They speak Chat Completions, so pin to it explicitly.
 export function getChatModel() {
-  return chatProvider(process.env.CHAT_MODEL ?? 'llama3.2')
+  return chatProvider.chat(process.env.CHAT_MODEL ?? 'llama3.2')
 }
 
 export function getSmallModel() {
-  return smallProvider(process.env.SMALL_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2')
+  return smallProvider.chat(process.env.SMALL_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2')
 }
 
 export function getThinkingModel() {
-  return thinkingProvider(process.env.THINKING_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2')
+  return thinkingProvider.chat(process.env.THINKING_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2')
 }
 
 export function getThinkingModelOrFallback() {
@@ -80,7 +98,7 @@ export function getFlashModel() {
   return process.env.FLASH_MODEL === 'small' ? getSmallModel() : getChatModel()
 }
 
-export function getEmbeddingModel(): EmbeddingModel<string> {
+export function getEmbeddingModel(): EmbeddingModel {
   const model = process.env.EMBED_MODEL ?? 'nomic-embed-text'
-  return (embedProvider.embedding ? embedProvider.embedding(model) : embedProvider(model)) as EmbeddingModel<string>
+  return embedProvider.textEmbeddingModel(model) as EmbeddingModel
 }

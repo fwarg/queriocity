@@ -1,6 +1,6 @@
-import { streamText, tool } from 'ai'
+import { streamText, tool, type ToolSet, stepCountIs } from 'ai'
 import { z } from 'zod'
-import type { LanguageModel, CoreMessage } from 'ai'
+import type { LanguageModel, ModelMessage } from 'ai'
 import { webSearchMulti, type SearchResult, type EngineError, type SearchApiBudget } from './searxng.ts'
 import { isSearchApiEnabled } from './search-api.ts'
 import { searchUploads } from './files/uploads-search.ts'
@@ -36,8 +36,12 @@ Format your final answer for readability: use headings, bullet lists, and short 
 Always respond in the same language the user used.`,
 }
 
+// balanced spends its last step writing (see the prepareStep reserve below), so 3 steps buys
+// 2 rounds of tool calls. It was 4 while the reserve cost two steps; keeping 4 once the reserve
+// dropped to one would have widened balanced's budget rather than made it cheaper, and the
+// point of balanced is to be faster than thorough.
 const MODE_CONFIG = {
-  balanced: { maxSteps: 4, count: 8 },
+  balanced: { maxSteps: 3, count: 8 },
   thorough: { maxSteps: 5, count: 10 },
 }
 
@@ -59,13 +63,6 @@ const SEARCH_DEAD_MSG = {
 // so the model stops requesting more content and answers with what it already has.
 const CONTEXT_BUDGET_DEAD_MSG = {
   error: 'The available context budget for this research turn has been used up by search/fetch results already gathered. Do NOT call web_search or fetch_url again — write your answer using the results already gathered.',
-}
-
-// Returned once too few steps remain to act on another tool result. Tools cannot be removed
-// mid-run (streamText's experimental_activeTools is fixed at call time and ai@4 has no
-// prepareStep for streaming), so the last rounds are closed off at the tool level instead.
-const FINAL_STEP_MSG = {
-  error: 'No research steps remain. Do NOT call any tool again — write your final answer NOW from the results already gathered. If they only partially cover the question, answer with what they do support and say briefly what was missing; do not reply with a refusal.',
 }
 
 export interface ResearchOptions {
@@ -106,10 +103,12 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
 
   // A tool result arriving on the final generation can never be used — the model has no step
   // left to write prose, so the turn ends on finishReason=tool-calls with an empty answer.
-  // Refusing one round early leaves a generation free for the answer itself. Thorough mode is
-  // exempt: its researcher is *meant* to end without prose, and the writer pass follows.
-  const outOfResearchSteps = () =>
-    focusMode === 'balanced' && completedSteps >= Math.max(1, maxSteps - 2)
+  // The last step is therefore reserved for writing, by withholding the tools rather than by
+  // letting the call happen and refusing it: a refused call still consumes the step, which is
+  // why this used to cost *two* steps instead of one. Thorough mode is exempt — its researcher
+  // is meant to end without prose, and the writer pass follows.
+  const reserveWritingStep = focusMode === 'balanced' && maxSteps > 1
+  const isFinalStep = (stepNumber: number) => stepNumber >= maxSteps - 1
   const start = performance.now()
   console.log(`  [chat] model=${(model as LanguageModel & { modelId?: string }).modelId ?? String(model)} focusMode=${focusMode} maxSteps=${maxSteps}`)
 
@@ -129,15 +128,16 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
       ? { ...m, content: typeof m.content === 'string' ? m.content.replace(/\[\d+\]/g, '') : m.content }
       : m
   )
-  let augmentedMessages: CoreMessage[] = cleanMessages
+  let augmentedMessages: ModelMessage[] = cleanMessages
   if (initialResults?.length && initialQueries?.length) {
     system += `\n\nNote: an initial search has already been performed and the results are in the conversation. Use different, more specific queries for your follow-up search.`
     const args = { queries: initialQueries }
     const indexedInitial = initialResults.map(r => ({ ...r, index: nextIndex++ }))
     augmentedMessages = [
       ...cleanMessages,
-      { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'pre-0', toolName: 'web_search', args }] },
-      { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'pre-0', toolName: 'web_search', result: indexedInitial }] },
+      { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'pre-0', toolName: 'web_search', input: args }] },
+      // v5+ wraps a tool result in a tagged output: structured results go as 'json', not raw.
+      { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'pre-0', toolName: 'web_search', output: { type: 'json', value: indexedInitial } }] },
     ]
   }
 
@@ -148,8 +148,8 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
       const callId = `pre-fetch-${i}`
       augmentedMessages = [
         ...augmentedMessages,
-        { role: 'assistant', content: [{ type: 'tool-call', toolCallId: callId, toolName: 'fetch_url', args: { url } }] },
-        { role: 'tool', content: [{ type: 'tool-result', toolCallId: callId, toolName: 'fetch_url', result: content }] },
+        { role: 'assistant', content: [{ type: 'tool-call', toolCallId: callId, toolName: 'fetch_url', input: { url } }] },
+        { role: 'tool', content: [{ type: 'tool-result', toolCallId: callId, toolName: 'fetch_url', output: { type: 'text', value: content } }] },
       ]
     }
   }
@@ -180,11 +180,10 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
 
   const webSearchTool = tool({
     description: `Search the web. Provide up to ${focusMode === 'thorough' ? 3 : 2} queries covering different angles.`,
-    parameters: z.object({
+    inputSchema: z.object({
       queries: z.array(z.string()).describe('Search queries'),
     }),
     execute: async ({ queries }) => {
-      if (outOfResearchSteps()) return FINAL_STEP_MSG
       if (searchDead) return SEARCH_DEAD_MSG
       if (toolBudgetRemaining <= MIN_URL_CONTEXT_CHARS) return CONTEXT_BUDGET_DEAD_MSG
       const errs: EngineError[] = []
@@ -206,15 +205,16 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
     },
   })
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const tools: Record<string, any> = {
+  // A ToolSet rather than Record<string, any>: typing it lets the stream parts downstream keep
+  // the SDK's real union type, so a future SDK field rename is a compile error instead of a
+  // silent `undefined` (see drainResearcherStream in routes/chat.ts).
+  const tools: ToolSet = {
     web_search: webSearchTool,
     fetch_url: tool({
       description: 'Fetch and read the full text content of a specific URL. Use when the user provides a URL to analyze, or when a search result needs to be read in full. For paginated content, call multiple times with page parameters (e.g. ?page=2).',
-      parameters: z.object({ url: z.string().url() }),
+      inputSchema: z.object({ url: z.string().url() }),
       execute: async ({ url }) => {
-        if (outOfResearchSteps()) return FINAL_STEP_MSG
-        if (toolBudgetRemaining <= MIN_URL_CONTEXT_CHARS) return CONTEXT_BUDGET_DEAD_MSG
+          if (toolBudgetRemaining <= MIN_URL_CONTEXT_CHARS) return CONTEXT_BUDGET_DEAD_MSG
         const raw = await fetchUrl(url)
         if (raw.startsWith('Error fetching')) return raw
         const [{ content }] = await processUrlsForContext([{ url, content: raw }], toolBudgetRemaining, fetchSummarize)
@@ -227,17 +227,17 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
   if (hasFiles) {
     tools.uploads_search = tool({
       description: 'Search uploaded documents belonging to the current user.',
-      parameters: z.object({
+      inputSchema: z.object({
         query: z.string().describe('Semantic search query'),
       }),
-      execute: async ({ query }) => outOfResearchSteps() ? FINAL_STEP_MSG : searchUploads(query, userId),
+      execute: async ({ query }) => searchUploads(query, userId),
     })
   }
 
   if (focusMode === 'thorough') {
     tools.done = tool({
       description: 'Signal that research is complete. Call this when you have gathered enough information.',
-      parameters: z.object({}),
+      inputSchema: z.object({}),
       execute: async () => ({ done: true }),
     })
   }
@@ -245,7 +245,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
   if (spaceId) {
     tools.save_to_memory = tool({
       description: 'Save a noteworthy fact, preference, or decision to the space memory for future conversations. Keep entries concise (1-2 sentences).',
-      parameters: z.object({ fact: z.string().describe('The fact to remember') }),
+      inputSchema: z.object({ fact: z.string().describe('The fact to remember') }),
       execute: async ({ fact }) => {
         console.log(`  [memory] save_to_memory tool called: "${fact.slice(0, 80)}"`)
         await saveMemory(spaceId, fact, 'tool', sessionId)
@@ -255,11 +255,10 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
 
     tools.search_space_history = tool({
       description: 'Search past conversations in this space for relevant context (e.g. what was decided or discussed earlier). Relevant excerpts are already injected automatically — only call this when you need something they do not cover.',
-      parameters: z.object({
+      inputSchema: z.object({
         query: z.string().describe('Semantic search query'),
       }),
-      execute: async ({ query }) =>
-        outOfResearchSteps() ? FINAL_STEP_MSG : searchSpaceHistory(spaceId, query, 8, sessionId),
+      execute: async ({ query }) => searchSpaceHistory(spaceId, query, 8, sessionId),
     })
   }
 
@@ -270,24 +269,38 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
     },
     onStepFinish: (step) => {
       completedSteps++
+      // Diagnostic only. A generic ToolSet gives no per-tool result type (the union collapses
+      // to never), so narrow structurally here rather than weakening the tools type itself.
+      // The field is `output` from v5 on (`result` in v4) — this cast is a compiler blind spot,
+      // so if every tool starts logging (2c) the field has been renamed again.
+      const toolResults = step.toolResults as unknown as Array<{ toolCallId: string; output?: unknown }>
       const toolSummary = step.toolCalls.map(c => {
-        const result = step.toolResults.find(tr => tr.toolCallId === c.toolCallId)?.result
-        const size = typeof result === 'string' ? result.length : JSON.stringify(result ?? '').length
+        const output = toolResults.find(tr => tr.toolCallId === c.toolCallId)?.output
+        const size = typeof output === 'string' ? output.length : JSON.stringify(output ?? '').length
         return `${c.toolName}(${size}c)`
       }).join(', ')
-      console.log(`  [chat] step ${completedSteps}: ${fmt(step.usage.promptTokens)}p + ${fmt(step.usage.completionTokens)}c tok, finish=${step.finishReason}${toolSummary ? ` tools=[${toolSummary}]` : ''} budget=${toolBudgetRemaining}c`)
+      console.log(`  [chat] step ${completedSteps}: ${fmt(step.usage.inputTokens)}p + ${fmt(step.usage.outputTokens)}c tok, finish=${step.finishReason}${toolSummary ? ` tools=[${toolSummary}]` : ''} budget=${toolBudgetRemaining}c`)
     },
     onFinish: ({ usage }) => {
       const ms = (performance.now() - start).toFixed(0)
-      console.log(`  [chat] done — ${ms}ms  tokens: ${fmt(usage.promptTokens)}p + ${fmt(usage.completionTokens)}c`)
+      console.log(`  [chat] done — ${ms}ms  tokens: ${fmt(usage.inputTokens)}p + ${fmt(usage.outputTokens)}c`)
     },
     model,
     abortSignal,
     system,
     messages: augmentedMessages,
-    maxSteps,
-    maxTokens: RESEARCH_MAX_TOKENS,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    tools: tools as any,
+    stopWhen: stepCountIs(maxSteps),
+    maxOutputTokens: RESEARCH_MAX_TOKENS,
+    tools,
+    // Withhold the tools on the final step so it can only produce prose. `activeTools: []`
+    // rather than `toolChoice: 'none'` so the schemas are not sent at all — the model cannot
+    // be tempted by a tool it can no longer usefully call, and the last prompt is smaller.
+    prepareStep: ({ stepNumber }) => {
+      if (reserveWritingStep && isFinalStep(stepNumber)) {
+        console.log(`  [chat] step ${stepNumber + 1}/${maxSteps}: tools withheld — final step is for the answer`)
+        return { activeTools: [] }
+      }
+      return {}
+    },
   })
 }
