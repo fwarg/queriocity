@@ -36,8 +36,12 @@ Format your final answer for readability: use headings, bullet lists, and short 
 Always respond in the same language the user used.`,
 }
 
+// balanced spends its last step writing (see the prepareStep reserve below), so 3 steps buys
+// 2 rounds of tool calls. It was 4 while the reserve cost two steps; keeping 4 once the reserve
+// dropped to one would have widened balanced's budget rather than made it cheaper, and the
+// point of balanced is to be faster than thorough.
 const MODE_CONFIG = {
-  balanced: { maxSteps: 4, count: 8 },
+  balanced: { maxSteps: 3, count: 8 },
   thorough: { maxSteps: 5, count: 10 },
 }
 

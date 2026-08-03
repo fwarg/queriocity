@@ -152,15 +152,15 @@ time) before answering. Answers include inline citations `[1][2]` and are always
 language as the user's question. Hovering a `[N]` marker shows the source's title, domain and
 a short snippet; clicking it highlights that source in the list below the answer.
 
-The last two steps are reserved for writing: once fewer than two steps remain, the tools
-refuse further calls and tell the model to answer now. Without this a model facing weak search
-results can spend every step searching and produce no prose at all, leaving the answer to a
-single-shot fallback pass. Thorough mode is exempt, since its writer phase always runs.
+The final step is reserved for writing: on it the search and fetch tools are withheld
+entirely, so the model can only produce prose. Without this a model facing weak search results
+can spend every step searching and write nothing at all, leaving the answer to a single-shot
+fallback pass. Thorough mode is exempt, since its writer phase always runs.
 
 Query reformulation can be disabled in **Admin > System settings > Search** for setups where small-model latency is a concern — the raw user query is then sent directly to search.
 
 - 1 LLM-reformulated pre-fetched query (or raw query when reformulation is disabled)
-- Up to 4 LLM steps, of which the first 2 may call tools; up to 2 parallel search queries per step
+- Up to 3 LLM steps, of which the first 2 may call tools (the last writes the answer); up to 2 parallel search queries per step
 - 8 results per web-search query
 
 ### Thorough

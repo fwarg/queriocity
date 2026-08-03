@@ -34,11 +34,13 @@ const searchStep = (n: number) => ({ toolCall: { id: `c${n}`, name: 'web_search'
 
 /** Runs the researcher against a model that always wants to search, and reports, per request,
  *  whether any tools were offered. */
-async function toolsOfferedPerStep(focusMode: 'balanced' | 'thorough', maxSteps: number) {
+async function toolsOfferedPerStep(focusMode: 'balanced' | 'thorough', maxSteps?: number) {
+  // Enough scripted steps to exhaust any plausible budget when the default is under test.
+  const scripted = maxSteps ?? 8
   searxng = startFakeSearxng()
   process.env.SEARXNG_URL = searxng.url
   // Enough scripted search steps to exhaust the budget, then prose.
-  fake = startFakeOpenAI([...Array.from({ length: maxSteps - 1 }, (_, i) => searchStep(i)), { text: ['Final answer.'] }])
+  fake = startFakeOpenAI([...Array.from({ length: scripted - 1 }, (_, i) => searchStep(i)), { text: ['Final answer.'] }])
 
   const { createOpenAI } = await import('@ai-sdk/openai')
   const { runResearcher } = await import('./researcher.ts')
@@ -46,7 +48,7 @@ async function toolsOfferedPerStep(focusMode: 'balanced' | 'thorough', maxSteps:
 
   const res = await runResearcher({
     messages: [{ role: 'user', content: 'a question' }],
-    focusMode, userId: 'u1', model, maxStepsOverride: maxSteps,
+    focusMode, userId: 'u1', model, ...(maxSteps ? { maxStepsOverride: maxSteps } : {}),
   })
   // Drain: the steps only advance as the stream is consumed.
   for await (const part of res.stream) void part
@@ -70,6 +72,13 @@ describe('balanced writing-step reserve', () => {
 
   test('reserves exactly one step, whatever the budget', async () => {
     const offered = await toolsOfferedPerStep('balanced', 3)
+    expect(offered).toEqual([true, true, false])
+  })
+
+  test('the shipped balanced budget gives two tool rounds', async () => {
+    // Pins MODE_CONFIG.balanced, deliberately set to 3 so the reserve makes balanced cheaper
+    // than thorough rather than widening its budget. Changing it should be a conscious edit.
+    const offered = await toolsOfferedPerStep('balanced')
     expect(offered).toEqual([true, true, false])
   })
 
