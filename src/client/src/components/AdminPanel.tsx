@@ -24,6 +24,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   const [rerankTopNDraft, setRerankTopNDraft] = useState('15')
   const [attachmentCharsDraft, setAttachmentCharsDraft] = useState('20000')
   const [spaceRagBudgetDraft, setSpaceRagBudgetDraft] = useState('500')
+  const [userMemoryBudgetDraft, setUserMemoryBudgetDraft] = useState('300')
   const [queryReformulationDraft, setQueryReformulationDraft] = useState(true)
   const [rssFeedCharsBudgetDraft, setRssFeedCharsBudgetDraft] = useState('50000')
   const [fetchMaxPagesDraft, setFetchMaxPagesDraft] = useState('8')
@@ -59,6 +60,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
       setRerankTopNDraft(String(s.rerankTopN))
       setAttachmentCharsDraft(String(s.attachmentChars))
       setSpaceRagBudgetDraft(String(s.spaceRagBudget))
+      setUserMemoryBudgetDraft(String(s.userMemoryTokenBudget))
       setQueryReformulationDraft(s.queryReformulation)
       setRssFeedCharsBudgetDraft(String(s.rssFeedCharsBudget))
       setFetchMaxPagesDraft(String(s.fetchMaxPages))
@@ -83,6 +85,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     const rerankTopN = parseInt(rerankTopNDraft)
     const attachmentChars = parseInt(attachmentCharsDraft)
     const spaceRagBudget = parseInt(spaceRagBudgetDraft)
+    const userMemoryTokenBudget = parseInt(userMemoryBudgetDraft)
     const rssFeedCharsBudget = parseInt(rssFeedCharsBudgetDraft)
     const fetchMaxPages = parseInt(fetchMaxPagesDraft)
     if (isNaN(budget) || budget < 100 || budget > 10000) return
@@ -93,6 +96,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     if (isNaN(rerankTopN) || rerankTopN < 1) return
     if (isNaN(attachmentChars) || attachmentChars < 1000) return
     if (isNaN(spaceRagBudget) || spaceRagBudget < 0) return
+    if (isNaN(userMemoryTokenBudget) || userMemoryTokenBudget < 0) return
     if (isNaN(rssFeedCharsBudget) || rssFeedCharsBudget < 5000) return
     if (isNaN(fetchMaxPages) || fetchMaxPages < 0) return
     if (dreamTarget > dreamThreshold) { setError('Dream target must be ≤ dream threshold.'); return }
@@ -100,7 +104,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     setError('')
     setSavingBudget(true)
     try {
-      await updateAdminSettings({ memoryTokenBudget: budget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, attachmentChars, spaceRagBudget, queryReformulation: queryReformulationDraft, rssFeedCharsBudget, fetchMaxPages, fetchSummarizeOverflow: fetchSummarizeOverflowDraft, compressHistoryOverflow: compressHistoryOverflowDraft })
+      await updateAdminSettings({ memoryTokenBudget: budget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, attachmentChars, spaceRagBudget, queryReformulation: queryReformulationDraft, rssFeedCharsBudget, fetchMaxPages, fetchSummarizeOverflow: fetchSummarizeOverflowDraft, compressHistoryOverflow: compressHistoryOverflowDraft })
 
       onBudgetChange?.(budget)
       setBudgetSaved(true)
@@ -237,6 +241,13 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                 <p className="text-xs text-gray-500">Max tokens injected from space memories into the system prompt.</p>
                 <input type="number" min={100} max={10000} step={100} value={budgetDraft}
                   onChange={e => setBudgetDraft(e.target.value)}
+                  className="w-32 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
+              </div>
+              <div className="flex flex-col gap-1.5 border-t border-gray-800/60 pt-3">
+                <p className="text-xs text-gray-400 font-medium">User memory budget</p>
+                <p className="text-xs text-gray-500">Max tokens injected from a user&apos;s <em>About you</em> memories, in every chat whether it belongs to a space or not. Applies only to users who enabled the setting; 0 disables the feature for everyone.</p>
+                <input type="number" min={0} max={5000} step={50} value={userMemoryBudgetDraft}
+                  onChange={e => setUserMemoryBudgetDraft(e.target.value)}
                   className="w-32 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
               </div>
               <div className="flex flex-col gap-1.5 border-t border-gray-800/60 pt-3">
