@@ -45,7 +45,7 @@
     "@types/katex": "^0.16.8",
     "@types/pdf-parse": "1",
     "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.3",
+    "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^4",
     "autoprefixer": "^10",
     "bun-types": "latest",
