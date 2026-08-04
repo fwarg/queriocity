@@ -9,7 +9,7 @@
 import './test-support/test-env.ts'
 
 import { describe, test, expect } from 'bun:test'
-import { selectMemories, isSensitiveFact, type MemoryCandidate } from './memory.ts'
+import { selectMemories, isSensitiveFact, isDurableUserFact, type MemoryCandidate } from './memory.ts'
 
 /** ~1 token per 4 chars, matching the estimate selectMemories uses. */
 const mem = (id: string, tokens: number): MemoryCandidate =>
@@ -70,5 +70,31 @@ describe('isSensitiveFact', () => {
     ['a date, which is not an identifier', 'The user started the project in March 2026'],
   ])('allows %s', (_label, fact) => {
     expect(isSensitiveFact(fact)).toBe(false)
+  })
+})
+
+describe('isDurableUserFact', () => {
+  // Every rejected case below was actually proposed by a 100-chat scan: two conversations (an
+  // hardware thread and a regulation thread) supplied almost the whole list, none of it about the
+  // person. The prompt asks for traits; this is the check that does not rely on the model obeying.
+  test.each([
+    ['a fact about a product', 'The XR-9000 processor has 16 cores'],
+    ['a fact about the world', 'The CEO of Acme Corp stepped down in March'],
+    ['a topic summary', 'The new AI regulation introduces risk tiers for AI systems'],
+    ['something that happened once', 'The user asked about the core count of the XR-9000'],
+    ['a conversation recap', 'The user discussed AI regulation in this conversation'],
+    ['a reported statement', 'The user mentioned that the deadline is in November'],
+  ])('rejects %s', (_label, fact) => {
+    expect(isDurableUserFact(fact)).toBe(false)
+  })
+
+  test.each([
+    ['a language preference', 'The user writes in Swedish and English'],
+    ['an infrastructure constraint', 'The user self-hosts everything and avoids cloud services'],
+    ['a role', 'The user is a software engineer working on developer tooling'],
+    ['a formatting preference', 'The user wants concise answers with inline citations'],
+    ['a bare "User" prefix', 'User prefers dark mode across all applications'],
+  ])('accepts %s', (_label, fact) => {
+    expect(isDurableUserFact(fact)).toBe(true)
   })
 })

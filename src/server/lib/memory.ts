@@ -536,6 +536,48 @@ export function isSensitiveFact(fact: string): boolean {
   return SENSITIVE_PATTERNS.some(re => re.test(fact))
 }
 
+/** At most this many candidates from any one chat, so a single long conversation cannot fill the
+ *  list with variations on its own subject. */
+const SUGGEST_PER_SESSION = 2
+
+/** Episodic phrasing: describes something that happened in a chat, not a standing trait.
+ *  "The user asked about the XR-9000" is a log entry; it is true forever and useful never. */
+const EPISODIC_PATTERNS: RegExp[] = [
+  /\b(asked|enquired|inquired|queried|wanted to know|was wondering|requested)\b/i,
+  /\b(mentioned|stated|said|noted|reported|confirmed) that\b/i,
+  /\b(discussed|explored|reviewed|analy[sz]ed|researched|investigated)\b/i,
+  /\b(in|during|from) (this|the|that|their|a) (chat|conversation|session|thread)\b/i,
+]
+
+/** Content words of a fact, for near-duplicate comparison. Stop words are dropped so that two
+ *  sentences do not look alike merely for sharing "the user is a". */
+const STOP_WORDS = new Set(['the', 'user', 'a', 'an', 'and', 'or', 'of', 'to', 'in', 'on', 'for', 'is', 'are', 'was', 'were', 'with', 'their', 'they', 'them', 'it', 'that', 'this', 'has', 'have', 'prefers', 'uses'])
+
+function tokenSet(fact: string): Set<string> {
+  return new Set(
+    fact.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/)
+      .filter(w => w.length > 2 && !STOP_WORDS.has(w)),
+  )
+}
+
+function jaccard(a: Set<string>, b: Set<string>): number {
+  if (!a.size || !b.size) return 0
+  let shared = 0
+  for (const w of a) if (b.has(w)) shared++
+  return shared / (a.size + b.size - shared)
+}
+
+/** Whether a proposed line is actually a durable fact *about the person*.
+ *
+ *  The extraction prompt asks for exactly this, but small models drift back to summarising the
+ *  topic — "the XR-9000 has 16 cores", "the CEO of Acme Corp stepped down" — which is true, useless
+ *  as a preference, and would be injected into every future prompt. Requiring the sentence to be
+ *  about the user is a cheap structural check that the model's own compliance is not. */
+export function isDurableUserFact(fact: string): boolean {
+  if (!/^(the\s+)?user\b/i.test(fact.trim())) return false
+  return !EPISODIC_PATTERNS.some(re => re.test(fact))
+}
+
 /** Propose user-level facts from the user's own recent chats. Returns candidates only — nothing
  *  is stored. Automatic extraction into a global profile is deliberately not done (a wrong fact
  *  would then apply to every future conversation); this is the reviewed version of it. */
@@ -561,7 +603,10 @@ export async function suggestUserMemories(
 
   const maxResults = suggestResultCap(sessions.length)
   const existing = (await getUserMemories(userId)).map(m => m.content)
-  const found: string[] = []
+  // Kept per session rather than in one flat list: the final selection interleaves them, so a
+  // single chatty conversation cannot crowd out twenty quieter ones.
+  const perSession: string[][] = []
+  let rejectedTopical = 0
 
   for (let i = 0; i < sessions.length; i++) {
     onProgress?.(i + 1, sessions.length)
@@ -575,43 +620,72 @@ export async function suggestUserMemories(
         model: getSmallModel(),
         // Deliberately narrower than extractMemoriesPostHoc, which also captures topical research
         // findings. Those belong to a space; only durable traits about the person belong here.
-        system: `Identify durable facts about the USER that would still be true in an unrelated future conversation: how they want answers written, languages they work in, their role or expertise, lasting tools and constraints they have committed to.
+        system: `You are building a profile of a person from one conversation they had with an assistant.
 
-Report only what the person is or prefers. In particular, do NOT report:
-- instructions addressed to the assistant, or anything phrased as a task, template or prompt — those describe a request, not the person
-- the subject matter of the conversation, or anything about the assistant itself
-- contact details, addresses, account names, keys or any other personal identifier
-- pasted or attached document content, which describes the document rather than its reader
-- anything true only today
+Report ONLY lasting characteristics of the person: how they want answers written, languages they work in, their role, expertise or employer, tools and platforms they have committed to, and constraints they always apply.
 
-If nothing qualifies, output "NONE". Otherwise output one fact per line prefixed with "- ", each a complete sentence about the user.`,
+Never report what the conversation was about. A fact about the topic is not a fact about the person, however interesting it is. Examples of what NOT to output, even if the conversation is full of them:
+- "The XR-9000 processor has 16 cores"          (a fact about a product)
+- "The CEO of Acme Corp stepped down in March"  (a fact about the world)
+- "The user asked about the new AI regulation"  (something that happened once, not a trait)
+- "The user is interested in processors"        (inferred from a single conversation; too weak)
+
+Good output looks like:
+- "The user writes in Swedish and English"
+- "The user self-hosts their infrastructure and avoids cloud services"
+- "The user is a software engineer working on developer tooling"
+
+Most conversations contain nothing that qualifies. Answering "NONE" is the expected result, and is strongly preferred over a weak guess. Output at most ${SUGGEST_PER_SESSION} lines, each a full sentence starting with "The user", prefixed with "- ".`,
         prompt: conversation.slice(0, SUGGEST_CONVERSATION_CHARS),
         maxOutputTokens: 200,
       })
-      found.push(...result.text.split('\n')
-        .map(l => l.replace(/^-\s*/, '').trim())
-        .filter(l => l && l !== 'NONE' && l.length > 10 && l.length < 300))
+      const lines = result.text.split('\n')
+        .map(l => l.replace(/^[-*]\s*/, '').trim())
+        .filter(l => l && l !== 'NONE' && l.length > 10 && l.length < 300)
+      const kept = lines.filter(l => {
+        if (isDurableUserFact(l)) return true
+        rejectedTopical++
+        return false
+      })
+      if (kept.length) perSession.push(kept.slice(0, SUGGEST_PER_SESSION))
     } catch (e) {
       console.error(`  [memory] suggestion scan failed for session ${sessions[i].id.slice(0, 8)}:`, e)
     }
   }
 
+  // Round-robin across sessions: one from each before a second from any.
+  const found: string[] = []
+  for (let round = 0; round < SUGGEST_PER_SESSION; round++) {
+    for (const facts of perSession) if (facts[round]) found.push(facts[round])
+  }
+
   // Drop anything already known, and near-identical repeats across sessions.
-  const seen = new Set<string>()
+  const chosenTokens: Array<Set<string>> = []
   const suggestions: string[] = []
   let redacted = 0
+  let nearDuplicate = 0
   for (const fact of found) {
     // Belt and braces with the prompt rule above: the model is asked not to surface identifiers,
     // and anything that slips through is dropped here rather than offered for one careless click.
     if (isSensitiveFact(fact)) { redacted++; continue }
     const key = fact.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim()
-    if (seen.has(key)) continue
-    seen.add(key)
     if (existing.some(e => e.toLowerCase().includes(key) || key.includes(e.toLowerCase()))) continue
+
+    // Exact-match dedup is not enough: several chats on one subject yield rephrasings of the same
+    // trait, which read as a list of near-copies. Compare by word overlap instead.
+    const tokens = tokenSet(fact)
+    if (chosenTokens.some(prev => jaccard(prev, tokens) >= 0.6)) { nearDuplicate++; continue }
+    chosenTokens.push(tokens)
+
     suggestions.push(fact)
     if (suggestions.length >= maxResults) break
   }
-  console.log(`  [memory] suggested ${suggestions.length} user memories from ${sessions.length} sessions${redacted ? ` (${redacted} dropped as identifying)` : ''}`)
+  const dropped = [
+    rejectedTopical && `${rejectedTopical} about the topic`,
+    nearDuplicate && `${nearDuplicate} near-duplicates`,
+    redacted && `${redacted} identifying`,
+  ].filter(Boolean).join(', ')
+  console.log(`  [memory] suggested ${suggestions.length} user memories from ${sessions.length} sessions${dropped ? ` (dropped ${dropped})` : ''}`)
   return suggestions
 }
 

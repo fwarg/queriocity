@@ -210,6 +210,48 @@ describe('write-time conflict resolution', () => {
     expect(await calls(0)).toBeGreaterThan(3)
   })
 
+  test('one chat cannot dominate the suggestion list, and near-copies collapse', async () => {
+    const { suggestUserMemories } = await import('./memory.ts')
+    const { chatSessions, messages, userMemories } = await import('./db.ts')
+    const { randomUUID } = await import('crypto')
+    const now = new Date()
+
+    await db.delete(userMemories).where(eq(userMemories.userId, 'cu'))
+    await db.delete(chatSessions).where(eq(chatSessions.userId, 'cu'))
+    for (let i = 0; i < 4; i++) {
+      const id = `dom-${i}`
+      await db.insert(chatSessions).values({
+        id, title: id, userId: 'cu', spaceId: null, createdAt: now, updatedAt: new Date(Date.now() + i * 1000), graduated: 0,
+      })
+      await db.insert(messages).values({
+        id: randomUUID(), sessionId: id, role: 'user', content: `Conversation number ${i}`, createdAt: now,
+      })
+    }
+
+    // Every chat returns six lines: four topical, plus two rephrasings of the same trait — the
+    // shape the real 100-chat scan produced.
+    plannerReply = [
+      '- The XR-9000 processor has 16 cores',
+      '- The CEO of Acme Corp stepped down in March',
+      '- The user asked about the new AI regulation',
+      '- The new AI regulation defines four risk tiers',
+      '- The user prefers concise answers with inline citations',
+      '- The user prefers short answers that cite their sources inline',
+    ].join('\n')
+
+    const suggestions = await suggestUserMemories('cu', 4)
+
+    expect(suggestions.every(s => /^(the )?user\b/i.test(s))).toBe(true)
+    expect(suggestions.some(s => s.includes('XR-9000') || s.includes('Acme'))).toBe(false)
+
+    // 24 candidates in, and no more than one row per distinct trait survives. Not exactly one:
+    // word overlap collapses repeats and rewordings, but two genuine paraphrases sharing almost
+    // no vocabulary still read as separate facts. Catching those needs semantics, and a threshold
+    // low enough to merge them would also merge unrelated preferences.
+    expect(suggestions.length).toBeLessThanOrEqual(2)
+    expect(suggestions.length).toBeLessThan(4) // i.e. it does not scale with the number of chats
+  })
+
   test('exact duplicates never reach the model at all', async () => {
     await reset()
     await saveMemory('cs', 'The user prefers concise answers with sources', 'extraction')
