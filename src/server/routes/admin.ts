@@ -28,8 +28,9 @@ adminRouter.use('*', authMiddleware)
 adminRouter.use('*', adminMiddleware)
 
 adminRouter.get('/settings', async (c) => {
-  const [memoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchSummarizeOverflow, compressHistoryOverflow] = await Promise.all([
+  const [memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchSummarizeOverflow, compressHistoryOverflow] = await Promise.all([
     getAppSetting('memory_token_budget', '1000').then(Number),
+    getAppSetting('user_memory_token_budget', '300').then(Number),
     getAppSetting('dream_hour', '-1').then(Number),
     getAppSetting('dream_threshold', '1500').then(Number),
     getAppSetting('dream_target', '700').then(Number),
@@ -44,11 +45,12 @@ adminRouter.get('/settings', async (c) => {
     getAppSetting('fetch_summarize_overflow', 'false').then(v => v === 'true'),
     getAppSetting('compress_history_overflow', 'false').then(v => v === 'true'),
   ])
-  return c.json({ memoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchSummarizeOverflow, compressHistoryOverflow })
+  return c.json({ memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchSummarizeOverflow, compressHistoryOverflow })
 })
 
 adminRouter.patch('/settings', zValidator('json', z.object({
   memoryTokenBudget: z.number().int().min(100).max(10000).optional(),
+  userMemoryTokenBudget: z.number().int().min(0).max(5000).optional(),
   dreamHour: z.number().int().min(-1).max(23).optional(),
   dreamThreshold: z.number().int().min(100).max(50000).optional(),
   dreamTarget: z.number().int().min(100).max(50000).optional(),
@@ -70,6 +72,7 @@ adminRouter.patch('/settings', zValidator('json', z.object({
     return c.json({ error: 'dreamThreshold must be <= memoryTokenBudget' }, 400)
   const ops: Promise<void>[] = []
   if (body.memoryTokenBudget != null) ops.push(setAppSetting('memory_token_budget', String(body.memoryTokenBudget)))
+  if (body.userMemoryTokenBudget != null) ops.push(setAppSetting('user_memory_token_budget', String(body.userMemoryTokenBudget)))
   if (body.dreamHour != null) ops.push(setAppSetting('dream_hour', String(body.dreamHour)))
   if (body.dreamThreshold != null) ops.push(setAppSetting('dream_threshold', String(body.dreamThreshold)))
   if (body.dreamTarget != null) ops.push(setAppSetting('dream_target', String(body.dreamTarget)))
