@@ -12,3 +12,13 @@
  *  `??=` would leave `JWT_SECRET=` in place and fail anyway. A real local value still wins. */
 
 process.env.JWT_SECRET ||= 'test-only-secret-not-used-outside-bun-test'
+
+/*  `lib/db.ts` opens `DB_PATH` and runs initSchema() at import time, so importing anything that
+ *  reaches it makes the test suite read, migrate and write the developer's real database — Bun
+ *  auto-loads `.env`, which sets DB_PATH, so this is the *normal* case rather than an edge one.
+ *
+ *  Unconditional assignment, unlike JWT_SECRET above: honouring an ambient JWT_SECRET is
+ *  harmless, but honouring an ambient DB_PATH lets tests write to real data. An in-memory
+ *  database is created fresh per process and discarded after; vec0 works there exactly as on
+ *  disk. Same import-order rule as above. */
+process.env.DB_PATH = ':memory:'

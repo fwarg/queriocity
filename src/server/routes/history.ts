@@ -18,10 +18,18 @@ historyRouter.get('/', async (c) => {
   const offset = parseInt(c.req.query('offset') ?? '0')
   const sort = c.req.query('sort') === 'created' ? 'created' : 'updated'
   const orderCol = sort === 'created' ? chatSessions.createdAt : chatSessions.updatedAt
+  // Optional server-side space filter. Without it the caller can only narrow whatever page it
+  // already holds, so a space whose chats fall outside the most recent `limit` looks empty while
+  // its chat count — computed over every chat — says otherwise.
+  const spaceId = c.req.query('spaceId')
   const baseQuery = db.select({ id: chatSessions.id, title: chatSessions.title, spaceId: chatSessions.spaceId, createdAt: chatSessions.createdAt, updatedAt: chatSessions.updatedAt })
     .from(chatSessions)
     .leftJoin(monitorRuns, eq(chatSessions.id, monitorRuns.sessionId))
-  const where = and(eq(chatSessions.userId, userId), or(isNull(monitorRuns.id), eq(chatSessions.graduated, 1)))
+  const where = and(
+    eq(chatSessions.userId, userId),
+    or(isNull(monitorRuns.id), eq(chatSessions.graduated, 1)),
+    ...(spaceId ? [eq(chatSessions.spaceId, spaceId)] : []),
+  )
   const [items, totalRow] = await Promise.all([
     baseQuery.where(where).orderBy(desc(orderCol)).limit(limit).offset(offset),
     db.select({ total: count() }).from(chatSessions).leftJoin(monitorRuns, eq(chatSessions.id, monitorRuns.sessionId)).where(where).get(),

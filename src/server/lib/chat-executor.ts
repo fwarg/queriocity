@@ -7,7 +7,7 @@ import { eq } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { webSearch, webSearchMulti, type SearchResult, type SearchApiBudget } from './searxng.ts'
 import { getFlashModel, getChatModel } from './llm.ts'
-import { buildMemoryBlock, extractMemoriesPostHoc } from './memory.ts'
+import { buildMemoryBlock, extractMemoriesPostHoc, userMemoryBlockIfEnabled, joinMemoryBlocks } from './memory.ts'
 import { ThinkExtractor } from './think-extractor.ts'
 import { indexContents } from './chat-indexer.ts'
 
@@ -53,7 +53,11 @@ export async function executeChatAndSave({
     ])
     const parsedSettings = parseSettings(userRow?.settings ?? '{}')
     const customPrompt = parsedSettings.customPrompt as string | undefined
-    const { block: memBlock } = spaceId ? await buildMemoryBlock(spaceId, memoryBudget, 0, promptText) : { block: '' }
+    const { block: scopedBlock } = spaceId ? await buildMemoryBlock(spaceId, memoryBudget, 0, promptText) : { block: '' }
+    const memBlock = joinMemoryBlocks(
+      await userMemoryBlockIfEnabled(userId, parsedSettings, promptText),
+      scopedBlock,
+    )
     const system = FLASH_SYSTEM
       + (customPrompt ? `\n\nAdditional instructions:\n${customPrompt}` : '')
       + (memBlock ? '\n\n' + memBlock : '')
@@ -79,14 +83,18 @@ export async function executeChatAndSave({
     const parsedSettings = parseSettings(userRow?.settings ?? '{}')
     const customPrompt = parsedSettings.customPrompt as string | undefined
     const effectiveRag = (parsedSettings.useSpaceRag !== false) ? ragBudget : 0
-    const { block: memoryBlock } = spaceId
+    const { block: scopedBlock } = spaceId
       ? await buildMemoryBlock(spaceId, memoryBudget, effectiveRag, promptText)
       : { block: '' }
+    const memoryBlock = joinMemoryBlocks(
+      await userMemoryBlockIfEnabled(userId, parsedSettings, promptText),
+      scopedBlock,
+    )
 
     if (focusMode === 'thorough') {
       const researcherResult = await runResearcher({
         messages: msgs, focusMode, userId, model: getChatModel(), abortSignal: AbortSignal.timeout(300_000),
-        initialQueries, initialResults, customPrompt, hasFiles: false, spaceId, sessionId, memoryBlock, fetchSummarize, compressHistory, apiBudget,
+        initialQueries, initialResults, customPrompt, hasFiles: false, spaceId, sessionId, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, compressHistory, apiBudget,
       })
       let researcherNotes = ''
       const { sources: rs } = await collectStream(researcherResult, s => { researcherNotes += s })
@@ -106,7 +114,7 @@ export async function executeChatAndSave({
       sources.push(...(initialResults ?? []))
       const researcherResult = await runResearcher({
         messages: msgs, focusMode, userId, model: getChatModel(), abortSignal: AbortSignal.timeout(300_000),
-        initialQueries, initialResults, customPrompt, hasFiles: false, spaceId, sessionId, memoryBlock, fetchSummarize, compressHistory,
+        initialQueries, initialResults, customPrompt, hasFiles: false, spaceId, sessionId, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, compressHistory,
         maxStepsOverride: 6, apiBudget,
       })
       const { text, sources: rs, finishReason } = await collectStream(researcherResult, () => {})

@@ -1,9 +1,9 @@
 import { generateText } from 'ai'
 import { randomUUID } from 'crypto'
-import { db, spaceMemories, chatSessions, messages, spaces, sqlite, getAppSetting, setAppSetting } from './db.ts'
-import { eq, desc, asc, ne, and, gt } from 'drizzle-orm'
+import { db, spaceMemories, userMemories, chatSessions, messages, spaces, monitorRuns, sqlite, getAppSetting, setAppSetting } from './db.ts'
+import { eq, desc, asc, ne, and, or, gt, isNull } from 'drizzle-orm'
 import { getSmallModel, getChatModel, getThinkingModelOrFallback } from './llm.ts'
-import { embedText } from './embeddings.ts'
+import { embedText, embedTexts } from './embeddings.ts'
 import { searchSpaceFiles, searchUploads, spaceHasTaggedFiles, type ChunkResult } from './files/uploads-search.ts'
 import { rerank, rerankEnabled } from './reranker.ts'
 
@@ -89,17 +89,23 @@ export async function searchSpaceHistory(
     return []
   }
   try {
+    // Scoping lives in a pushed-down IN, not in JOIN predicates: sqlite-vec applies `k` before
+    // joined-table filters, so filtering afterwards asks for the k nearest chunks in the entire
+    // database and keeps whichever happen to be this space's — often none. See searchSpaceFiles.
     const rows = sqlite.prepare(`
       SELECT ccm.content, cs.title, cs.updated_at
       FROM chat_chunks cc
       JOIN chat_chunk_meta ccm ON ccm.chunk_id = cc.chunk_id
       JOIN chat_sessions cs ON cs.id = ccm.session_id
       WHERE cc.embedding MATCH ?
-        AND cs.space_id = ?
-        AND cs.id IS NOT ?
         AND k = ?
+        AND cc.chunk_id IN (
+          SELECT m2.chunk_id FROM chat_chunk_meta m2
+          JOIN chat_sessions s2 ON s2.id = m2.session_id
+          WHERE s2.space_id = ? AND s2.id IS NOT ?
+        )
       ORDER BY cc.distance
-    `).all(JSON.stringify(embedding), spaceId, excludeSessionId ?? null, k) as
+    `).all(JSON.stringify(embedding), k, spaceId, excludeSessionId ?? null) as
       Array<{ content: string; title: string; updated_at: number }>
     console.log(`  [memory] search_space_history "${query.slice(0, 60)}" → ${rows.length} hits`)
     return rows.map(r => ({
@@ -121,6 +127,129 @@ export async function getSpaceMemories(spaceId: string) {
     .orderBy(desc(spaceMemories.createdAt))
 }
 
+// --- Memory embeddings (relevance-ranked recall) ---
+
+/** Store/replace the vector for one memory. Never throws: an embedding failure must not lose the
+ *  memory itself, and `backfillMemoryEmbeddings` retries on the next read. */
+export async function embedMemory(memoryId: string, content: string): Promise<void> {
+  try {
+    const embedding = await embedText(content)
+    sqlite.run('DELETE FROM memory_embeddings WHERE memory_id = ?', [memoryId])
+    sqlite.run('INSERT INTO memory_embeddings(memory_id, embedding) VALUES (?,?)',
+      [memoryId, JSON.stringify(embedding)])
+  } catch (e) {
+    console.error(`  [memory] embed failed for ${memoryId.slice(0, 8)}:`, e)
+  }
+}
+
+export function deleteMemoryEmbeddings(memoryIds: string[]): void {
+  if (!memoryIds.length) return
+  const stmt = sqlite.prepare('DELETE FROM memory_embeddings WHERE memory_id = ?')
+  sqlite.transaction(() => { for (const id of memoryIds) stmt.run(id) })()
+}
+
+/** Embed any memories that have no vector yet, in one batch. Self-healing: covers databases that
+ *  predate this table, rows written while the embedder was down, and dimension changes. */
+async function backfillMemoryEmbeddings(memories: Array<{ id: string; content: string }>): Promise<void> {
+  if (!memories.length) return
+  const placeholders = memories.map(() => '?').join(',')
+  const present = new Set((sqlite.prepare(
+    `SELECT memory_id FROM memory_embeddings WHERE memory_id IN (${placeholders})`
+  ).all(...memories.map(m => m.id)) as Array<{ memory_id: string }>).map(r => r.memory_id))
+
+  const missing = memories.filter(m => !present.has(m.id))
+  if (!missing.length) return
+  try {
+    const vectors = await embedTexts(missing.map(m => m.content))
+    const stmt = sqlite.prepare('INSERT INTO memory_embeddings(memory_id, embedding) VALUES (?,?)')
+    sqlite.transaction(() => {
+      for (let i = 0; i < missing.length; i++) stmt.run(missing[i].id, JSON.stringify(vectors[i]))
+    })()
+    console.log(`  [memory] backfilled ${missing.length} memory embeddings`)
+  } catch (e) {
+    console.error('  [memory] embedding backfill failed:', e)
+  }
+}
+
+/** Ids of the given memories ordered by distance from `embedding`, nearest first.
+ *
+ *  The `memory_id IN (...)` constraint is pushed down into the vector index, so `k` means "k
+ *  nearest *within this set*". That distinction matters: sqlite-vec applies `k` before ordinary
+ *  JOIN predicates, so scoping by joining another table instead would ask for the k nearest rows
+ *  in the whole table and keep whichever survived the filter — frequently none. */
+function nearestMemoryIds(embedding: number[], scopeIds: string[], limit?: number): string[] {
+  if (!scopeIds.length) return []
+  const placeholders = scopeIds.map(() => '?').join(',')
+  const rows = sqlite.prepare(`
+    SELECT memory_id
+    FROM memory_embeddings
+    WHERE embedding MATCH ? AND memory_id IN (${placeholders}) AND k = ?
+    ORDER BY distance
+  `).all(JSON.stringify(embedding), ...scopeIds, limit ?? scopeIds.length) as Array<{ memory_id: string }>
+  return rows.map(r => r.memory_id)
+}
+
+/** Order the given memories by relevance to the query, best first.
+ *  Returns null when ranking is unavailable, so the caller can fall back to recency. */
+async function rankMemoriesByRelevance<T extends { id: string; content: string }>(
+  memories: T[],
+  query: string,
+  embedding: number[],
+): Promise<T[] | null> {
+  await backfillMemoryEmbeddings(memories)
+  const byId = new Map(memories.map(m => [m.id, m]))
+  let ordered: T[]
+  try {
+    const ids = nearestMemoryIds(embedding, memories.map(m => m.id))
+    if (!ids.length) return null
+    ordered = ids.map(id => byId.get(id)).filter((m): m is T => m != null)
+  } catch (e) {
+    console.error('  [memory] memory ranking failed:', e)
+    return null
+  }
+
+  if (rerankEnabled && ordered.length > 1) {
+    const indices = await rerank(query, ordered.map(m => m.content), ordered.length)
+    ordered = indices.map(i => ordered[i]).filter(Boolean)
+  }
+
+  // Anything without a usable vector still belongs in the list, just last.
+  const seen = new Set(ordered.map(m => m.id))
+  return [...ordered, ...memories.filter(m => !seen.has(m.id))]
+}
+
+export interface MemoryCandidate {
+  id: string
+  content: string
+}
+
+/** Fit memories into the token budget: guaranteed entries first, then ranked ones until full.
+ *  Pure — the budget arithmetic is unit-tested without an embedder or a model. */
+export function selectMemories<T extends MemoryCandidate>(
+  guaranteed: T[],
+  ranked: T[],
+  tokenBudget: number,
+): { chosen: T[]; droppedGuaranteed: number } {
+  const cost = (m: T) => Math.ceil(`- ${m.content}`.length / 4)
+  let remaining = tokenBudget
+  const chosen: T[] = []
+  let droppedGuaranteed = 0
+
+  for (const m of guaranteed) {
+    const c = cost(m)
+    if (c > remaining) { droppedGuaranteed++; continue }
+    remaining -= c
+    chosen.push(m)
+  }
+  for (const m of ranked) {
+    const c = cost(m)
+    if (c > remaining) continue
+    remaining -= c
+    chosen.push(m)
+  }
+  return { chosen, droppedGuaranteed }
+}
+
 export interface MemoryBlock {
   block: string
   fileSources: Array<{ title: string; url: string }>
@@ -136,25 +265,40 @@ export async function buildMemoryBlock(
   includeMemoryIds?: string[],
 ): Promise<MemoryBlock> {
   const allMemories = await getSpaceMemories(spaceId)
-  const memories = includeMemoryIds?.length
-    ? allMemories.filter(m => includeMemoryIds.includes(m.id))
-    : allMemories
-  if (!memories.length) return { block: '', fileSources: [] }
+  if (!allMemories.length) return { block: '', fileSources: [] }
 
   const header = '## Space Memory\nThe following facts were accumulated from previous conversations in this space. Use them to inform your responses.'
   const headerTokens = Math.ceil(header.length / 4)
-  let remaining = tokenBudget - headerTokens
-  const lines: string[] = []
 
-  for (const m of memories) {
-    const line = `- ${m.content}`
-    const cost = Math.ceil(line.length / 4)
-    if (cost > remaining) break
-    remaining -= cost
-    lines.push(line)
+  // Embed the query once and share it: memory ranking, chat RAG and file RAG all need it.
+  let embedding: number[] | null = null
+  if (query?.trim()) {
+    try {
+      embedding = await embedText(query)
+    } catch (e) {
+      console.error('  [memory] RAG embed failed:', e)
+    }
   }
 
-  if (!lines.length) return { block: '', fileSources: [] }
+  // Pinned (this request) and always-keep (persistent) memories are guaranteed a slot; the rest
+  // compete on relevance. Without a query or an embedder we keep the historical newest-first
+  // order, which is what every install had before ranking existed.
+  const pinned = new Set(includeMemoryIds ?? [])
+  const guaranteed = allMemories.filter(m => m.alwaysKeep || pinned.has(m.id))
+  const guaranteedIds = new Set(guaranteed.map(m => m.id))
+  const rest = allMemories.filter(m => !guaranteedIds.has(m.id))
+
+  const ranked = (embedding && query?.trim() && rest.length)
+    ? (await rankMemoriesByRelevance(rest, query, embedding)) ?? rest
+    : rest
+
+  const { chosen, droppedGuaranteed } = selectMemories(guaranteed, ranked, tokenBudget - headerTokens)
+  if (droppedGuaranteed > 0) {
+    console.warn(`  [memory] ${droppedGuaranteed} pinned/always-keep memories did not fit the ${tokenBudget}-token budget`)
+  }
+  if (!chosen.length) return { block: '', fileSources: [] }
+
+  const lines = chosen.map(m => `- ${m.content}`)
   let block = header + '\n' + lines.join('\n')
   let ragInjected = 0
   const citedFiles = new Map<string, { filename: string; label: string }>()
@@ -164,26 +308,24 @@ export async function buildMemoryBlock(
     let ragRemaining = ragBudget
     const hasTaggedFiles = spaceHasTaggedFiles(spaceId)
 
-    // Embed query once — reused for both memory RAG and file RAG
-    let embedding: number[] | null = null
-    try {
-      embedding = await embedText(query)
-    } catch (e) {
-      console.error('  [memory] RAG embed failed:', e)
-    }
-
     if (embedding) {
       // Fetch candidates from both sources
       let chatRows: Array<{ chunk_id: string; content: string }> = []
       try {
+        // Space scoping via pushed-down IN rather than a JOIN predicate — with `AND cs.space_id`
+        // outside, `k = 15` means "15 nearest chunks anywhere", and a busy neighbouring space
+        // leaves this one with nothing. See the note on searchSpaceFiles.
         chatRows = sqlite.prepare(`
           SELECT ccm.chunk_id, ccm.content
           FROM chat_chunks cc
           JOIN chat_chunk_meta ccm ON ccm.chunk_id = cc.chunk_id
-          JOIN chat_sessions cs ON cs.id = ccm.session_id
           WHERE cc.embedding MATCH ?
-            AND cs.space_id = ?
             AND k = 15
+            AND cc.chunk_id IN (
+              SELECT m2.chunk_id FROM chat_chunk_meta m2
+              JOIN chat_sessions s2 ON s2.id = m2.session_id
+              WHERE s2.space_id = ?
+            )
           ORDER BY cc.distance
         `).all(JSON.stringify(embedding), spaceId) as Array<{ chunk_id: string; content: string }>
       } catch (e) {
@@ -271,8 +413,404 @@ export async function buildMemoryBlock(
   if (fileSources.length > 0) {
     block += '\n\nWhen your answer draws on document excerpts above, cite them inline using their label (e.g. [F1]). Do not add other citation formats.'
   }
-  console.log(`  [memory] injecting ${lines.length} memories + ${ragInjected} RAG + ${fileSources.length} file sources (~${Math.ceil(block.length / 4)} tokens) for space ${spaceId.slice(0, 8)}`)
+  console.log(`  [memory] injecting ${lines.length}/${allMemories.length} memories (${ranked === rest ? 'by recency' : 'by relevance'}) + ${ragInjected} RAG + ${fileSources.length} file sources (~${Math.ceil(block.length / 4)} tokens) for space ${spaceId.slice(0, 8)}`)
   return { block, fileSources }
+}
+
+// --- User-level memory ---
+//
+// Facts that hold across every chat, space or not. Deliberately narrower than space memory:
+// written only by hand or by an explicit tool call, never by automatic extraction. The asymmetry
+// is the reason — a wrong space memory is wrong in one space, a wrong user memory is wrong in
+// every future conversation.
+
+export async function getUserMemories(userId: string) {
+  return db.select().from(userMemories)
+    .where(eq(userMemories.userId, userId))
+    .orderBy(desc(userMemories.createdAt))
+}
+
+/** Store a user-level fact, skipping exact restatements of one already held. */
+export async function saveUserMemory(
+  userId: string,
+  content: string,
+  source: 'tool' | 'manual',
+): Promise<string> {
+  const trimmed = content.trim()
+  if (!trimmed) return ''
+
+  // Only the model-written path is screened. What the user types by hand is their own decision;
+  // what the model decides to file away about them, into a profile attached to every future
+  // prompt, is not — and an address or key there is a leak, not a preference.
+  if (source === 'tool' && isSensitiveFact(trimmed)) {
+    console.warn(`  [memory] refused user memory containing an identifier: "${trimmed.slice(0, 40)}…"`)
+    return ''
+  }
+
+  const existing = await getUserMemories(userId)
+  for (const m of existing) {
+    if (m.content.includes(trimmed)) return m.id
+    if (trimmed.includes(m.content)) {
+      await db.update(userMemories).set({ content: trimmed, updatedAt: new Date() })
+        .where(eq(userMemories.id, m.id))
+      await embedMemory(m.id, trimmed)
+      return m.id
+    }
+  }
+
+  const id = randomUUID()
+  const now = new Date()
+  await db.insert(userMemories).values({ id, userId, content: trimmed, source, createdAt: now, updatedAt: now })
+  await embedMemory(id, trimmed)
+  console.log(`  [memory] saved user memory (${source}): "${trimmed.slice(0, 60)}"`)
+  return id
+}
+
+export async function deleteUserMemory(userId: string, id: string): Promise<boolean> {
+  const row = await db.select().from(userMemories)
+    .where(and(eq(userMemories.id, id), eq(userMemories.userId, userId))).get()
+  if (!row) return false
+  await db.delete(userMemories).where(eq(userMemories.id, id))
+  deleteMemoryEmbeddings([id])
+  return true
+}
+
+/** Build the `## About the user` block. Placed before the space block by callers, and says so,
+ *  because the space is the more specific context when the two disagree. */
+export async function buildUserMemoryBlock(
+  userId: string,
+  tokenBudget: number,
+  query?: string,
+): Promise<string> {
+  if (tokenBudget <= 0) return ''
+  const all = await getUserMemories(userId)
+  if (!all.length) return ''
+
+  const header = '## About the user\nStable facts about the user that apply to every conversation. Where these conflict with space-specific memory below, prefer the space.'
+  const guaranteed = all.filter(m => m.alwaysKeep)
+  const rest = all.filter(m => !m.alwaysKeep)
+
+  let ranked = rest
+  if (query?.trim() && rest.length) {
+    try {
+      ranked = (await rankMemoriesByRelevance(rest, query, await embedText(query))) ?? rest
+    } catch (e) {
+      console.error('  [memory] user memory ranking failed:', e)
+    }
+  }
+
+  const { chosen } = selectMemories(guaranteed, ranked, tokenBudget - Math.ceil(header.length / 4))
+  if (!chosen.length) return ''
+  console.log(`  [memory] injecting ${chosen.length}/${all.length} user memories`)
+  return header + '\n' + chosen.map(m => `- ${m.content}`).join('\n')
+}
+
+/** Cap on how many recent sessions a suggestion scan reads. One model call each, and this runs
+ *  interactively, so the ceiling is on wall-clock patience rather than correctness. */
+const SUGGEST_SESSION_LIMIT = 20
+/** Hard ceiling regardless of what the caller asks for: the scan is one model call per session
+ *  and runs while the user waits, so this bounds a request that would otherwise be unbounded. */
+const SUGGEST_SESSION_MAX = 200
+/** More chats scanned means more distinct facts worth showing, but the list still has to be
+ *  reviewed by hand — so it grows with the scan and then stops. */
+const suggestResultCap = (sessions: number) => Math.min(25, Math.max(10, Math.round(sessions / 4)))
+/** Per-message cap applied before the conversation is assembled. A user message can carry an
+ *  inlined attachment — hundreds of thousands of characters — and without this one document
+ *  crowds out every actual exchange, so the scan ends up describing the document, not the person.
+ *  Truncating the head of each message also keeps what the user typed, which precedes any
+ *  attached payload. */
+const SUGGEST_MESSAGE_CHARS = 1200
+const SUGGEST_CONVERSATION_CHARS = 6000
+
+/** Contact details, credentials and identifiers must never reach a profile that is injected into
+ *  every future prompt: it is data the user never asked to publish, and it is useless as a
+ *  preference. Cheap and deterministic, so it does not depend on the model obeying the prompt. */
+const SENSITIVE_PATTERNS: RegExp[] = [
+  /[\w.+-]+@[\w-]+\.[\w.]+/,           // email address
+  /\+?\d[\d\s().-]{7,}\d/,             // phone number / long digit run
+  /\b(?:sk|pk|ghp|gho|xox[baprs])[-_][A-Za-z0-9]{8,}/i, // common API-key shapes
+  /\b[A-Za-z0-9+/]{40,}={0,2}\b/,      // base64-ish blobs (tokens, hashes)
+]
+
+export function isSensitiveFact(fact: string): boolean {
+  return SENSITIVE_PATTERNS.some(re => re.test(fact))
+}
+
+/** At most this many candidates from any one chat, so a single long conversation cannot fill the
+ *  list with variations on its own subject. */
+const SUGGEST_PER_SESSION = 2
+
+/** Episodic phrasing: describes something that happened in a chat, not a standing trait.
+ *  "The user asked about the XR-9000" is a log entry; it is true forever and useful never. */
+const EPISODIC_PATTERNS: RegExp[] = [
+  /\b(asked|enquired|inquired|queried|wanted to know|was wondering|requested)\b/i,
+  /\b(mentioned|stated|said|noted|reported|confirmed) that\b/i,
+  /\b(discussed|explored|reviewed|analy[sz]ed|researched|investigated)\b/i,
+  /\b(in|during|from) (this|the|that|their|a) (chat|conversation|session|thread)\b/i,
+]
+
+/** Content words of a fact, for near-duplicate comparison. Stop words are dropped so that two
+ *  sentences do not look alike merely for sharing "the user is a". */
+const STOP_WORDS = new Set(['the', 'user', 'a', 'an', 'and', 'or', 'of', 'to', 'in', 'on', 'for', 'is', 'are', 'was', 'were', 'with', 'their', 'they', 'them', 'it', 'that', 'this', 'has', 'have', 'prefers', 'uses'])
+
+function tokenSet(fact: string): Set<string> {
+  return new Set(
+    fact.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/)
+      .filter(w => w.length > 2 && !STOP_WORDS.has(w)),
+  )
+}
+
+function jaccard(a: Set<string>, b: Set<string>): number {
+  if (!a.size || !b.size) return 0
+  let shared = 0
+  for (const w of a) if (b.has(w)) shared++
+  return shared / (a.size + b.size - shared)
+}
+
+/** Whether a proposed line is actually a durable fact *about the person*.
+ *
+ *  The extraction prompt asks for exactly this, but small models drift back to summarising the
+ *  topic — "the XR-9000 has 16 cores", "the CEO of Acme Corp stepped down" — which is true, useless
+ *  as a preference, and would be injected into every future prompt. Requiring the sentence to be
+ *  about the user is a cheap structural check that the model's own compliance is not. */
+export function isDurableUserFact(fact: string): boolean {
+  if (!/^(the\s+)?user\b/i.test(fact.trim())) return false
+  return !EPISODIC_PATTERNS.some(re => re.test(fact))
+}
+
+/** Propose user-level facts from the user's own recent chats. Returns candidates only — nothing
+ *  is stored. Automatic extraction into a global profile is deliberately not done (a wrong fact
+ *  would then apply to every future conversation); this is the reviewed version of it. */
+export async function suggestUserMemories(
+  userId: string,
+  sessionLimit: number = SUGGEST_SESSION_LIMIT,
+  onProgress?: (done: number, total: number) => void,
+): Promise<string[]> {
+  const limit = Math.min(SUGGEST_SESSION_MAX, Math.max(1, Math.floor(sessionLimit) || SUGGEST_SESSION_LIMIT))
+  // Monitor-run sessions are excluded on the same rule the chat list uses: they are scheduled
+  // queries, not conversations the user had, and their recurring prompt is instruction-shaped
+  // ("report on X, be concise, cite sources") — read as a profile it yields the assistant's
+  // standing orders rather than anything about the person.
+  const sessions = await db.select({ id: chatSessions.id })
+    .from(chatSessions)
+    .leftJoin(monitorRuns, eq(chatSessions.id, monitorRuns.sessionId))
+    .where(and(
+      eq(chatSessions.userId, userId),
+      or(isNull(monitorRuns.id), eq(chatSessions.graduated, 1)),
+    ))
+    .orderBy(desc(chatSessions.updatedAt))
+    .limit(limit)
+
+  const maxResults = suggestResultCap(sessions.length)
+  const existing = (await getUserMemories(userId)).map(m => m.content)
+  // Kept per session rather than in one flat list: the final selection interleaves them, so a
+  // single chatty conversation cannot crowd out twenty quieter ones.
+  const perSession: string[][] = []
+  let rejectedTopical = 0
+
+  for (let i = 0; i < sessions.length; i++) {
+    onProgress?.(i + 1, sessions.length)
+    const msgs = await db.select().from(messages).where(eq(messages.sessionId, sessions[i].id))
+    if (!msgs.length) continue
+    const conversation = msgs
+      .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content.slice(0, SUGGEST_MESSAGE_CHARS)}`)
+      .join('\n\n')
+    try {
+      const result = await generateText({
+        model: getSmallModel(),
+        // Deliberately narrower than extractMemoriesPostHoc, which also captures topical research
+        // findings. Those belong to a space; only durable traits about the person belong here.
+        system: `You are building a profile of a person from one conversation they had with an assistant.
+
+Report ONLY lasting characteristics of the person: how they want answers written, languages they work in, their role, expertise or employer, tools and platforms they have committed to, and constraints they always apply.
+
+Never report what the conversation was about. A fact about the topic is not a fact about the person, however interesting it is. Examples of what NOT to output, even if the conversation is full of them:
+- "The XR-9000 processor has 16 cores"          (a fact about a product)
+- "The CEO of Acme Corp stepped down in March"  (a fact about the world)
+- "The user asked about the new AI regulation"  (something that happened once, not a trait)
+- "The user is interested in processors"        (inferred from a single conversation; too weak)
+
+Good output looks like:
+- "The user writes in Swedish and English"
+- "The user self-hosts their infrastructure and avoids cloud services"
+- "The user is a software engineer working on developer tooling"
+
+Most conversations contain nothing that qualifies. Answering "NONE" is the expected result, and is strongly preferred over a weak guess. Output at most ${SUGGEST_PER_SESSION} lines, each a full sentence starting with "The user", prefixed with "- ".`,
+        prompt: conversation.slice(0, SUGGEST_CONVERSATION_CHARS),
+        maxOutputTokens: 200,
+      })
+      const lines = result.text.split('\n')
+        .map(l => l.replace(/^[-*]\s*/, '').trim())
+        .filter(l => l && l !== 'NONE' && l.length > 10 && l.length < 300)
+      const kept = lines.filter(l => {
+        if (isDurableUserFact(l)) return true
+        rejectedTopical++
+        return false
+      })
+      if (kept.length) perSession.push(kept.slice(0, SUGGEST_PER_SESSION))
+    } catch (e) {
+      console.error(`  [memory] suggestion scan failed for session ${sessions[i].id.slice(0, 8)}:`, e)
+    }
+  }
+
+  // Round-robin across sessions: one from each before a second from any.
+  const found: string[] = []
+  for (let round = 0; round < SUGGEST_PER_SESSION; round++) {
+    for (const facts of perSession) if (facts[round]) found.push(facts[round])
+  }
+
+  // Drop anything already known, and near-identical repeats across sessions.
+  const chosenTokens: Array<Set<string>> = []
+  const suggestions: string[] = []
+  let redacted = 0
+  let nearDuplicate = 0
+  for (const fact of found) {
+    // Belt and braces with the prompt rule above: the model is asked not to surface identifiers,
+    // and anything that slips through is dropped here rather than offered for one careless click.
+    if (isSensitiveFact(fact)) { redacted++; continue }
+    const key = fact.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim()
+    if (existing.some(e => e.toLowerCase().includes(key) || key.includes(e.toLowerCase()))) continue
+
+    // Exact-match dedup is not enough: several chats on one subject yield rephrasings of the same
+    // trait, which read as a list of near-copies. Compare by word overlap instead.
+    const tokens = tokenSet(fact)
+    if (chosenTokens.some(prev => jaccard(prev, tokens) >= 0.6)) { nearDuplicate++; continue }
+    chosenTokens.push(tokens)
+
+    suggestions.push(fact)
+    if (suggestions.length >= maxResults) break
+  }
+  const dropped = [
+    rejectedTopical && `${rejectedTopical} about the topic`,
+    nearDuplicate && `${nearDuplicate} near-duplicates`,
+    redacted && `${redacted} identifying`,
+  ].filter(Boolean).join(', ')
+  console.log(`  [memory] suggested ${suggestions.length} user memories from ${sessions.length} sessions${dropped ? ` (dropped ${dropped})` : ''}`)
+  return suggestions
+}
+
+/** The user block, or '' when the user has not opted in. Centralises the gate so no call site can
+ *  accidentally inject it for someone who left the setting off. */
+export async function userMemoryBlockIfEnabled(
+  userId: string,
+  settings: Record<string, unknown>,
+  query?: string,
+): Promise<string> {
+  if (settings.userMemory !== true) return ''
+  const budget = await getAppSetting('user_memory_token_budget', '300').then(Number)
+  return buildUserMemoryBlock(userId, budget, query)
+}
+
+/** Join the user block ahead of the space/file block, skipping empties. */
+export function joinMemoryBlocks(...blocks: string[]): string {
+  return blocks.filter(b => b.trim()).join('\n\n')
+}
+
+// --- Write-time conflict resolution ---
+
+type MemoryRow = Awaited<ReturnType<typeof getSpaceMemories>>[number]
+
+interface MemoryWrite {
+  /** UPDATE rewrites `targetId` in place; DELETE removes it and adds the new fact separately. */
+  op: 'ADD' | 'UPDATE' | 'NOOP'
+  fact: string
+  targetId?: string
+}
+
+/** The existing memories a new fact might duplicate or contradict — its nearest neighbours. */
+async function conflictCandidates(existing: MemoryRow[], facts: string[]): Promise<MemoryRow[]> {
+  if (!existing.length) return []
+  await backfillMemoryEmbeddings(existing)
+  const byId = new Map(existing.map(m => [m.id, m]))
+  const scope = existing.map(m => m.id)
+  const picked = new Set<string>()
+  try {
+    const embeddings = await embedTexts(facts)
+    for (const embedding of embeddings) {
+      for (const id of nearestMemoryIds(embedding, scope, 5)) picked.add(id)
+    }
+  } catch (e) {
+    console.error('  [memory] conflict candidate lookup failed:', e)
+    return []
+  }
+  return [...picked].map(id => byId.get(id)!).filter(Boolean)
+}
+
+/** Ask the small model whether each fact is new, an update of an existing memory, or redundant.
+ *  On any failure every fact falls back to ADD — a duplicate is recoverable, a lost fact is not. */
+async function planMemoryWrites(facts: string[], candidates: MemoryRow[]): Promise<MemoryWrite[]> {
+  const fallback: MemoryWrite[] = facts.map(fact => ({ op: 'ADD', fact }))
+  if (!candidates.length) return fallback
+
+  const existingList = candidates.map((m, i) => `[${i}] ${m.content}`).join('\n')
+  const newList = facts.map((f, i) => `(${i}) ${f}`).join('\n')
+  try {
+    const result = await generateText({
+      model: getSmallModel(),
+      system: `You maintain a user's long-term memory. For each NEW fact decide exactly one action:
+- ADD: genuinely new information.
+- UPDATE: it supersedes an EXISTING memory (same subject, changed or more specific value). Give the existing index.
+- NOOP: already covered by an existing memory; adds nothing.
+Prefer ADD when unsure. Never merge unrelated subjects.
+Respond with ONLY a JSON array, one object per new fact, in order:
+[{"i":0,"op":"ADD"},{"i":1,"op":"UPDATE","target":3},{"i":2,"op":"NOOP"}]`,
+      prompt: `EXISTING MEMORIES:\n${existingList}\n\nNEW FACTS:\n${newList}`,
+      maxOutputTokens: 400,
+    })
+    const json = result.text.replace(/```(?:json)?/g, '').trim()
+    const start = json.indexOf('[')
+    const parsed = JSON.parse(json.slice(start, json.lastIndexOf(']') + 1)) as
+      Array<{ i: number; op: string; target?: number }>
+
+    const writes = [...fallback]
+    for (const d of parsed) {
+      if (typeof d.i !== 'number' || !writes[d.i]) continue
+      const target = typeof d.target === 'number' ? candidates[d.target] : undefined
+      // The user's own words are never overwritten or discarded by the model; downgrade to ADD
+      // so the new fact is still kept and the two can be reconciled by a human or the dream.
+      const locked = target && (target.source === 'manual' || target.alwaysKeep)
+      if (d.op === 'UPDATE' && target && !locked) writes[d.i] = { op: 'UPDATE', fact: writes[d.i].fact, targetId: target.id }
+      else if (d.op === 'NOOP' && !locked) writes[d.i] = { op: 'NOOP', fact: writes[d.i].fact }
+    }
+    return writes
+  } catch (e) {
+    console.error('  [memory] write planning failed, adding all facts:', e)
+    return fallback
+  }
+}
+
+/** Save several extracted facts in one pass — one planning call for the batch, not one per fact. */
+export async function saveMemories(
+  spaceId: string,
+  facts: string[],
+  source: 'tool' | 'extraction' | 'manual',
+  sessionId?: string,
+): Promise<void> {
+  const trimmed = facts.map(f => f.trim()).filter(Boolean)
+  if (!trimmed.length) return
+
+  const existing = await db.select().from(spaceMemories).where(eq(spaceMemories.spaceId, spaceId))
+  // Exact containment is settled without troubling the model.
+  const novel = trimmed.filter(f => !existing.some(m => m.content.includes(f)))
+  if (!novel.length) return
+
+  const candidates = await conflictCandidates(existing, novel)
+  const writes = await planMemoryWrites(novel, candidates)
+
+  let added = 0, updated = 0, skipped = 0
+  for (const w of writes) {
+    if (w.op === 'NOOP') { skipped++; continue }
+    if (w.op === 'UPDATE' && w.targetId) {
+      await db.update(spaceMemories).set({ content: w.fact, updatedAt: new Date() })
+        .where(eq(spaceMemories.id, w.targetId))
+      await embedMemory(w.targetId, w.fact)
+      updated++
+      continue
+    }
+    await saveMemory(spaceId, w.fact, source, sessionId)
+    added++
+  }
+  console.log(`  [memory] saved ${added} added, ${updated} updated, ${skipped} redundant (${candidates.length} candidates considered)`)
 }
 
 /** Save a memory with basic dedup (exact substring match). */
@@ -295,6 +833,7 @@ export async function saveMemory(
       const now = new Date()
       await db.update(spaceMemories).set({ content: trimmed, updatedAt: now })
         .where(eq(spaceMemories.id, m.id))
+      await embedMemory(m.id, trimmed)
       return m.id
     }
   }
@@ -311,6 +850,7 @@ export async function saveMemory(
     sessionId: sessionId && sessionExists(sessionId) ? sessionId : null,
     createdAt: now, updatedAt: now,
   })
+  await embedMemory(id, trimmed)
   return id
 }
 
@@ -343,9 +883,9 @@ export async function extractMemoriesPostHoc(
     .map(l => l.replace(/^-\s*/, '').trim())
     .filter(l => l && l !== 'NONE' && l.length > 5 && l.length < 300)
 
-  for (const fact of lines) {
-    await saveMemory(spaceId, fact, 'extraction', sessionId)
-  }
+  // One planning call for the whole batch: routing each fact through saveMemory individually
+  // would cost an extra small-model round-trip per fact on every turn.
+  await saveMemories(spaceId, lines, 'extraction', sessionId)
   console.log(`  [memory] post-hoc extracted ${lines.length} facts in ${Math.round(performance.now() - t0)}ms (small model)`)
 }
 
@@ -359,10 +899,14 @@ export async function compactSpaceMemories(
   targetTokens: number,
   triggerTokens = targetTokens,
 ): Promise<boolean> {
-  const memories = await getSpaceMemories(spaceId)
+  const allMemories = await getSpaceMemories(spaceId)
+  // Always-keep entries are exempt: the user asked for them verbatim, so they are neither fed to
+  // the compactor nor deleted by it. They still count towards the trigger threshold.
+  const kept = allMemories.filter(m => m.alwaysKeep)
+  const memories = allMemories.filter(m => !m.alwaysKeep)
   if (memories.length < 2) return false
 
-  const totalTokens = memories.reduce((n, m) => n + Math.ceil(m.content.length / 4), 0)
+  const totalTokens = allMemories.reduce((n, m) => n + Math.ceil(m.content.length / 4), 0)
   if (totalTokens <= triggerTokens) return false
 
   const t0 = performance.now()
@@ -392,7 +936,9 @@ Target: approximately ${targetTokens * 4} characters total.`,
   const now = new Date()
   const newMemories: Array<{ id: string; content: string }> = newFacts.map(content => ({ id: randomUUID(), content }))
   await db.transaction(async tx => {
-    await tx.delete(spaceMemories).where(eq(spaceMemories.spaceId, spaceId))
+    await tx.delete(spaceMemories).where(
+      and(eq(spaceMemories.spaceId, spaceId), eq(spaceMemories.alwaysKeep, false)),
+    )
     for (const { id, content } of newMemories) {
       await tx.insert(spaceMemories).values({
         id, spaceId, content, source: 'compact',
@@ -400,7 +946,9 @@ Target: approximately ${targetTokens * 4} characters total.`,
       })
     }
   })
-  console.log(`  [compact] ${memories.length} → ${newFacts.length} memories in ${Math.round(performance.now() - t0)}ms for space ${spaceId.slice(0, 8)}`)
+  deleteMemoryEmbeddings(memories.map(m => m.id))
+  await backfillMemoryEmbeddings(newMemories)
+  console.log(`  [compact] ${memories.length} → ${newFacts.length} memories${kept.length ? ` (+${kept.length} always-keep)` : ''} in ${Math.round(performance.now() - t0)}ms for space ${spaceId.slice(0, 8)}`)
   return true
 }
 
@@ -443,8 +991,8 @@ Output one fact per line prefixed with "- ". Be specific — capture the actual 
     allExtracted.push(...facts)
   }
 
-  // Include manual memories as seeds (they survive regardless)
-  const manualMemories = existing.filter(m => m.source === 'manual')
+  // Include manual and always-keep memories as seeds (they survive regardless)
+  const manualMemories = existing.filter(m => m.source === 'manual' || m.alwaysKeep)
   const manualLines = manualMemories.map(m => `- ${m.content}`)
   const extractedLines = allExtracted.map(f => `- ${f}`)
 
@@ -482,21 +1030,27 @@ Be ruthless: if in doubt, cut. Total output MUST NOT exceed ${targetChars} chara
     return false
   }
 
-  // Replace non-manual memories; manual ones survive untouched
+  // Replace everything except manual and always-keep memories, which survive untouched
   const now = new Date()
+  const replaced = existing.filter(m => m.source !== 'manual' && !m.alwaysKeep)
+  const newMemories = newFacts.map(content => ({ id: randomUUID(), content }))
   await db.transaction(async tx => {
-    await tx.delete(spaceMemories).where(
-      and(eq(spaceMemories.spaceId, spaceId), ne(spaceMemories.source, 'manual')),
-    )
-    for (const content of newFacts) {
+    await tx.delete(spaceMemories).where(and(
+      eq(spaceMemories.spaceId, spaceId),
+      ne(spaceMemories.source, 'manual'),
+      eq(spaceMemories.alwaysKeep, false),
+    ))
+    for (const { id, content } of newMemories) {
       await tx.insert(spaceMemories).values({
-        id: randomUUID(), spaceId, content, source: 'compact',
+        id, spaceId, content, source: 'compact',
         sessionId: null, createdAt: now, updatedAt: now,
       })
     }
   })
+  deleteMemoryEmbeddings(replaced.map(m => m.id))
+  await backfillMemoryEmbeddings(newMemories)
 
-  console.log(`  [deep-dream] ${existing.length} → ${newFacts.length} memories in ${Math.round(performance.now() - t0)}ms for space ${spaceId.slice(0, 8)}`)
+  console.log(`  [deep-dream] ${existing.length} → ${newFacts.length + manualMemories.length} memories in ${Math.round(performance.now() - t0)}ms for space ${spaceId.slice(0, 8)}`)
 
   // Stage 3: compression guard — if still over budget run a final compact
   const newTotal = newFacts.reduce((n, f) => n + Math.ceil(f.length / 4), 0)

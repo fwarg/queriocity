@@ -5,7 +5,7 @@ export interface AuthUser {
   email: string
   name: string | null
   role: 'user' | 'admin'
-  settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; useSpaceRag?: boolean; useChatRag?: boolean; querySuggestions?: boolean; followUpSuggestions?: boolean; fontSize?: number; timezone?: string }
+  settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; useSpaceRag?: boolean; useChatRag?: boolean; querySuggestions?: boolean; followUpSuggestions?: boolean; userMemory?: boolean; fontSize?: number; timezone?: string }
   memoryTokenBudget: number
   /** True after an admin issued a temporary password — the user must set their own. */
   mustChangePassword?: boolean
@@ -15,7 +15,7 @@ export interface Space { id: string; name: string; chatCount: number; memoryCoun
 
 export interface SpaceMemory {
   id: string; content: string; source: 'tool' | 'extraction' | 'manual' | 'compact'
-  sessionId: string | null; createdAt: number
+  sessionId: string | null; createdAt: number; alwaysKeep: boolean
 }
 
 /** `content` is a short snippet, shown as a preview when hovering the [N] citation. */
@@ -86,7 +86,7 @@ export async function fetchSuggestions(text: string): Promise<string[]> {
   } catch { return [] }
 }
 
-export async function updateSettings(settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; useSpaceRag?: boolean; useChatRag?: boolean; fontSize?: number; timezone?: string; querySuggestions?: boolean; followUpSuggestions?: boolean }): Promise<void> {
+export async function updateSettings(settings: AuthUser["settings"]): Promise<void> {
   await fetch(`${BASE}/users/settings`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -311,10 +311,14 @@ export async function deleteSession(id: string): Promise<void> {
 export async function fetchHistory(
   sort?: 'updated' | 'created',
   offset = 0,
+  spaceId?: string,
 ): Promise<{ items: Array<{ id: string; title: string; spaceId: string | null }>; total: number }> {
   const params = new URLSearchParams()
   if (sort) params.set('sort', sort)
   if (offset) params.set('offset', String(offset))
+  // Filtering server-side rather than in the caller: the response is one page, so a client-side
+  // filter can only ever see the chats that page happens to contain.
+  if (spaceId) params.set('spaceId', spaceId)
   const res = await fetch(`${BASE}/history?${params}`)
   return res.json()
 }
@@ -505,16 +509,86 @@ export async function createSpaceMemory(spaceId: string, content: string): Promi
   return res.json()
 }
 
-export async function updateSpaceMemory(spaceId: string, memoryId: string, content: string): Promise<void> {
+export async function updateSpaceMemory(
+  spaceId: string,
+  memoryId: string,
+  updates: { content?: string; alwaysKeep?: boolean },
+): Promise<void> {
   await fetch(`${BASE}/spaces/${spaceId}/memories/${memoryId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify(updates),
   })
 }
 
 export async function deleteSpaceMemory(spaceId: string, memoryId: string): Promise<void> {
   await fetch(`${BASE}/spaces/${spaceId}/memories/${memoryId}`, { method: 'DELETE' })
+}
+
+/** Account-wide facts, injected into every chat when the userMemory setting is on. */
+export interface UserMemory {
+  id: string; content: string; source: 'tool' | 'manual'
+  alwaysKeep: boolean; createdAt: number
+}
+
+export async function fetchUserMemories(): Promise<{ memories: UserMemory[] }> {
+  const res = await fetch(`${BASE}/users/memories`)
+  if (!res.ok) throw new Error('Failed to load user memories')
+  return res.json()
+}
+
+export async function createUserMemory(content: string): Promise<UserMemory> {
+  const res = await fetch(`${BASE}/users/memories`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  })
+  if (!res.ok) throw new Error('Failed to create user memory')
+  return res.json()
+}
+
+export async function updateUserMemory(
+  memoryId: string,
+  updates: { content?: string; alwaysKeep?: boolean },
+): Promise<void> {
+  await fetch(`${BASE}/users/memories/${memoryId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  })
+}
+
+export async function deleteUserMemory(memoryId: string): Promise<void> {
+  await fetch(`${BASE}/users/memories/${memoryId}`, { method: 'DELETE' })
+}
+
+/** Streams scan progress, then the proposed facts. Nothing is stored until the user accepts one. */
+export async function* suggestUserMemories(
+  sessionLimit?: number,
+  signal?: AbortSignal,
+): AsyncGenerator<{ processing?: number; total?: number; done?: boolean; suggestions?: string[]; error?: string }> {
+  const qs = sessionLimit ? `?limit=${sessionLimit}` : ''
+  const res = await fetch(`${BASE}/users/memories/suggest${qs}`, { method: 'POST', signal })
+  if (!res.ok || !res.body) throw new Error('Suggestion scan failed')
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() ?? ''
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try { yield JSON.parse(line.slice(6)) } catch {}
+        }
+      }
+    }
+  } finally {
+    reader.cancel().catch(() => {})
+  }
 }
 
 export async function extractFileForContext(file: File): Promise<{ filename: string; content: string }> {

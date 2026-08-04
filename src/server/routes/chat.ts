@@ -17,7 +17,7 @@ import { fetchUrlAllPages, processUrlsForContext } from '../lib/fetch-url.ts'
 import { getFlashModel, getChatModel, getThinkingModelOrFallback, RESEARCH_MAX_TOKENS } from '../lib/llm.ts'
 import { ThinkExtractor } from '../lib/think-extractor.ts'
 import { rerank, rerankEnabled } from '../lib/reranker.ts'
-import { buildMemoryBlock, buildChatFileBlock, extractMemoriesPostHoc } from '../lib/memory.ts'
+import { buildMemoryBlock, buildChatFileBlock, extractMemoriesPostHoc, userMemoryBlockIfEnabled, joinMemoryBlocks } from '../lib/memory.ts'
 import { trimMessages, contextCharBudget, CONTEXT_RESERVE_FRACTION } from '../lib/trim-messages.ts'
 import { indexContents } from '../lib/chat-indexer.ts'
 import { ownsSpace, sessionOwnership } from '../lib/ownership.ts'
@@ -221,7 +221,11 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     ])
     const userQuery = lastUser?.content ?? ''
     const effectiveRag = (parsedSettings.useSpaceRag !== false) ? ragBudget : 0
-    const { block: resolvedMemoryBlock, fileSources: flashFileSources } = spaceId ? await buildMemoryBlock(spaceId, memoryBudget, effectiveRag, userQuery, includeFileIds, includeMemoryIds) : { block: '', fileSources: [] }
+    const { block: flashScopedBlock, fileSources: flashFileSources } = spaceId ? await buildMemoryBlock(spaceId, memoryBudget, effectiveRag, userQuery, includeFileIds, includeMemoryIds) : { block: '', fileSources: [] }
+    const resolvedMemoryBlock = joinMemoryBlocks(
+      await userMemoryBlockIfEnabled(userId, parsedSettings, userQuery),
+      flashScopedBlock,
+    )
     const t0 = Date.now()
     let fullContent = ''
     return streamRun(c, run, async (out) => {
@@ -479,11 +483,16 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   const userQuery = lastUser?.content ?? ''
   const hasFiles = (fileCountRow?.count ?? 0) > 0
   const effectiveRag = (parsedSettings.useSpaceRag !== false) ? ragBudget : 0
-  const { block: memoryBlock, fileSources } = spaceId
+  const { block: scopedBlock, fileSources } = spaceId
     ? await buildMemoryBlock(spaceId, memoryBudget, effectiveRag, userQuery, includeFileIds, includeMemoryIds)
     : (hasFiles && parsedSettings.useChatRag !== false)
       ? await buildChatFileBlock(userId, userQuery, ragBudget)
       : { block: '', fileSources: [] }
+  // User memory applies to every chat, including those with no space at all.
+  const memoryBlock = joinMemoryBlocks(
+    await userMemoryBlockIfEnabled(userId, parsedSettings, userQuery),
+    scopedBlock,
+  )
   const showThinkingSettings = (parsedSettings.showThinking ?? { balanced: false, thorough: false }) as { balanced: boolean; thorough: boolean }
   const showThinking = focusMode === 'balanced' ? showThinkingSettings.balanced
                      : focusMode === 'thorough'  ? showThinkingSettings.thorough
@@ -545,7 +554,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         await out.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: snippets + '\n\n' }) })
       }
       const researchModel = useThinking ? getThinkingModelOrFallback() : getChatModel()
-      const researcherResult = await runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, fetchSummarize, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, apiBudget })
+      const researcherResult = await runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, apiBudget })
       const allSources: SearchResult[] = [...(initialResults ?? [])]
       let researcherNotes = ''
       const thoroughExtractor = useThinking ? new ThinkExtractor() : null
@@ -636,7 +645,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       }
 
       const fullSources: SearchResult[] = []
-      const result = await runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, fetchSummarize, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, apiBudget })
+      const result = await runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, apiBudget })
       const extractor = showThinking ? new ThinkExtractor() : null
 
       const keepalive = setInterval(() => {

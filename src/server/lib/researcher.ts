@@ -4,7 +4,7 @@ import type { LanguageModel, ModelMessage } from 'ai'
 import { webSearchMulti, type SearchResult, type EngineError, type SearchApiBudget } from './searxng.ts'
 import { isSearchApiEnabled } from './search-api.ts'
 import { searchUploads } from './files/uploads-search.ts'
-import { saveMemory, searchSpaceHistory } from './memory.ts'
+import { saveMemories, saveUserMemory, searchSpaceHistory } from './memory.ts'
 import { fetchUrl, processUrlsForContext, MIN_URL_CONTEXT_CHARS } from './fetch-url.ts'
 import { trimMessages, compressMessages, contextCharBudget, CONTEXT_RESERVE_FRACTION } from './trim-messages.ts'
 import { RESEARCH_MAX_TOKENS } from './llm.ts'
@@ -79,6 +79,8 @@ export interface ResearchOptions {
   spaceId?: string
   sessionId?: string
   memoryBlock?: string
+  /** Whether the user opted into user-level memory; gates the save_user_fact tool. */
+  userMemoryEnabled?: boolean
   /** Summarize (vs. truncate) URL content that overflows the context budget. Default false. */
   fetchSummarize?: boolean
   /** Summarize (vs. hard-drop) conversation history that overflows the context budget. Default false. */
@@ -94,7 +96,7 @@ export interface ResearchOptions {
   apiBudget?: SearchApiBudget
 }
 
-export async function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, fetchSummarize = false, compressHistory = false, searchCategory, maxStepsOverride, onEngineErrors, apiBudget }: ResearchOptions) {
+export async function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, userMemoryEnabled = false, fetchSummarize = false, compressHistory = false, searchCategory, maxStepsOverride, onEngineErrors, apiBudget }: ResearchOptions) {
   const { maxSteps: defaultMaxSteps, count } = MODE_CONFIG[focusMode]
   const maxSteps = maxStepsOverride ?? defaultMaxSteps
   let nextIndex = 1
@@ -118,6 +120,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
   if (customPrompt?.trim()) system += `\n\nAdditional instructions from the user:\n${customPrompt.trim()}`
   if (hasFiles) system += `\n\nYou have an uploads_search tool to search the user's uploaded documents. When the query might be answered by personal, domain-specific, or proprietary documents, call uploads_search before or alongside web_search.`
   if (spaceId) system += `\n\nYou have a save_to_memory tool. Use it when the user expresses a preference, makes a decision, or shares context that would be useful in future conversations. Do not save trivial or ephemeral details.`
+  if (userMemoryEnabled) system += `\n\nYou have a save_user_fact tool for facts about the user that hold in *every* conversation — how they want answers written, languages they work in, durable constraints. Use it rarely: anything topic-specific belongs in save_to_memory instead.`
   if (spaceId) system += `\n\nYou also have a search_space_history tool for looking up earlier conversations in this space. Relevant excerpts are already provided above when they exist, so call it only when the user refers to something earlier that is not covered there.`
 
   // Inject pre-executed search results as a fake tool exchange so the model
@@ -248,7 +251,9 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
       inputSchema: z.object({ fact: z.string().describe('The fact to remember') }),
       execute: async ({ fact }) => {
         console.log(`  [memory] save_to_memory tool called: "${fact.slice(0, 80)}"`)
-        await saveMemory(spaceId, fact, 'tool', sessionId)
+        // saveMemories, not saveMemory: a single fact still goes through conflict resolution, so
+        // "I moved to SQLite" supersedes "I use Postgres" instead of sitting beside it.
+        await saveMemories(spaceId, [fact], 'tool', sessionId)
         return 'Saved.'
       },
     })
@@ -259,6 +264,20 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
         query: z.string().describe('Semantic search query'),
       }),
       execute: async ({ query }) => searchSpaceHistory(spaceId, query, 8, sessionId),
+    })
+  }
+
+  // Registered only on opt-in, so the default tool count — and the prompt space it costs — is
+  // unchanged for everyone else.
+  if (userMemoryEnabled) {
+    tools.save_user_fact = tool({
+      description: 'Save a durable fact about the user that applies to every future conversation, not just this topic: how they want answers written, languages they work in, lasting constraints. Use sparingly.',
+      inputSchema: z.object({ fact: z.string().describe('The durable fact about the user') }),
+      execute: async ({ fact }) => {
+        console.log(`  [memory] save_user_fact tool called: "${fact.slice(0, 80)}"`)
+        await saveUserMemory(userId, fact, 'tool')
+        return 'Saved.'
+      },
     })
   }
 

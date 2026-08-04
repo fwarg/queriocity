@@ -33,6 +33,9 @@ function formatSize(bytes: number) {
 
 const MEMORY_HEADER_TOKENS = 30
 
+/** How many memories will not fit the per-request budget. They are no longer *excluded* — the
+ *  server picks the most relevant ones per query — so this is a "not all at once" hint, not a
+ *  warning that the tail is unreachable. */
 function countOverflowMemories(memories: SpaceMemory[], budget: number): number {
   let acc = MEMORY_HEADER_TOKENS
   let injected = 0
@@ -89,6 +92,8 @@ export default function App() {
   const [urlIngestError, setUrlIngestError] = useState('')
   const [pinnedFileIds, setPinnedFileIds] = useState<string[]>([])
   const [pinnedMemoryIds, setPinnedMemoryIds] = useState<string[]>([])
+  /** Chats belonging to the open space, fetched server-side. `null` while loading. */
+  const [spaceChats, setSpaceChats] = useState<Session[] | null>(null)
   const [transformStatus, setTransformStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [transformError, setTransformError] = useState('')
   const [compacting, setCompacting] = useState(false)
@@ -130,6 +135,9 @@ export default function App() {
       if (activeSpaceId) {
         setSpaces(sps => sps.map(sp => sp.id === activeSpaceId ? { ...sp, chatCount: sp.chatCount + 1 } : sp))
         fetchSpaceMemories(activeSpaceId).then(({ memories }) => setSpaceMemories(memories)).catch(() => {})
+        if (activeSpaceId === currentSpaceId) {
+          setSpaceChats(prev => prev && prev.some(s => s.id === id) ? prev : [{ id, title, spaceId: activeSpaceId }, ...(prev ?? [])])
+        }
       }
     },
   })
@@ -216,10 +224,17 @@ export default function App() {
       fetchSpaceMemories(currentSpaceId).then(({ memories }) => { setSpaceMemories(memories) }).catch(() => {})
       fetchSpaceFiles(currentSpaceId).then(setTaggedFiles).catch(() => {})
       fetchChatIndexStatus(currentSpaceId).then(setChatIndexStatus).catch(() => {})
+      // Fetched per space rather than filtered out of `sessions`: that array holds only the most
+      // recent page, so a space with no recently-updated chats would look empty.
+      setSpaceChats(null)
+      fetchHistory(chatSort, 0, currentSpaceId)
+        .then(({ items }) => setSpaceChats(items))
+        .catch(() => setSpaceChats([]))
     } else {
       setSpaceMemories([])
       setTaggedFiles([])
       setChatIndexStatus(null)
+      setSpaceChats(null)
       setPinnedFileIds([])
       setPinnedMemoryIds([])
     }
@@ -330,6 +345,7 @@ export default function App() {
     const trimmed = titleDraft.trim()
     if (!trimmed || !sessionId) { setEditingTitle(false); return }
     setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, title: trimmed } : s))
+    setSpaceChats(prev => prev?.map(s => s.id === sessionId ? { ...s, title: trimmed } : s) ?? prev)
     setEditingTitle(false)
     updateSessionTitle(sessionId, trimmed).catch(() => {})
   }
@@ -387,13 +403,15 @@ export default function App() {
     const id = confirmDeleteId
     setConfirmDeleteId(null)
     deleteSession(id).then(() => {
-      setSessions(prev => {
-        const session = prev.find(s => s.id === id)
-        if (session?.spaceId) {
-          setSpaces(sps => sps.map(sp => sp.id === session.spaceId ? { ...sp, chatCount: Math.max(0, sp.chatCount - 1) } : sp))
-        }
-        return prev.filter(x => x.id !== id)
-      })
+      // The chat may be listed only in the open space's list, so resolve its space from either.
+      const spaceOfChat = sessions.find(s => s.id === id)?.spaceId
+        ?? spaceChats?.find(s => s.id === id)?.spaceId
+        ?? null
+      if (spaceOfChat) {
+        setSpaces(sps => sps.map(sp => sp.id === spaceOfChat ? { ...sp, chatCount: Math.max(0, sp.chatCount - 1) } : sp))
+      }
+      setSessions(prev => prev.filter(x => x.id !== id))
+      setSpaceChats(prev => prev?.filter(x => x.id !== id) ?? prev)
       if (sessionId === id) newChat()
     }).catch(() => setStatus('Failed to delete chat.'))
   }
@@ -434,8 +452,20 @@ export default function App() {
   }
 
   function handleAssignToSpace(chatId: string, spaceId: string | null) {
-    const prevSpaceId = sessions.find(s => s.id === chatId)?.spaceId ?? null
+    // Look in both lists: a chat shown in the open space may be outside the loaded history page,
+    // and reading only `sessions` would mistake its old space for "none" and skew the counts.
+    const moved = sessions.find(s => s.id === chatId) ?? spaceChats?.find(s => s.id === chatId)
+    const prevSpaceId = moved?.spaceId ?? null
+    if (prevSpaceId === spaceId) { setSpacePickerOpen(null); return }
+
     setSessions(prev => prev.map(s => s.id === chatId ? { ...s, spaceId } : s))
+    setSpaceChats(prev => {
+      if (prev === null) return prev
+      if (spaceId === currentSpaceId && moved) {
+        return prev.some(s => s.id === chatId) ? prev : [{ ...moved, spaceId }, ...prev]
+      }
+      return prev.filter(s => s.id !== chatId)
+    })
     setSpaces(prev => prev.map(sp => {
       if (sp.id === prevSpaceId) return { ...sp, chatCount: Math.max(0, sp.chatCount - 1) }
       if (sp.id === spaceId) return { ...sp, chatCount: sp.chatCount + 1 }
@@ -467,7 +497,13 @@ export default function App() {
     setEditingMemoryId(null)
     if (!content || !currentSpaceId) return
     setSpaceMemories(prev => prev.map(m => m.id === id ? { ...m, content } : m))
-    updateSpaceMemory(currentSpaceId, id, content).catch(() => {})
+    updateSpaceMemory(currentSpaceId, id, { content }).catch(() => {})
+  }
+
+  function handleMemoryAlwaysKeep(id: string, alwaysKeep: boolean) {
+    if (!currentSpaceId) return
+    setSpaceMemories(prev => prev.map(m => m.id === id ? { ...m, alwaysKeep } : m))
+    updateSpaceMemory(currentSpaceId, id, { alwaysKeep }).catch(() => {})
   }
 
   const kbFileRef = useRef<HTMLInputElement>(null)
@@ -573,6 +609,7 @@ export default function App() {
           useChatRag={currentUser.settings?.useChatRag !== false}
           querySuggestions={currentUser.settings?.querySuggestions !== false}
           followUpSuggestions={currentUser.settings?.followUpSuggestions !== false}
+          userMemory={currentUser.settings?.userMemory === true}
           fontSize={currentUser.settings?.fontSize ?? 17}
           timezone={currentUser.settings?.timezone ?? ''}
           onClose={() => setShowSettings(false)}
@@ -895,8 +932,8 @@ export default function App() {
                 {memorySectionOpen && (() => {
                   const overflow = countOverflowMemories(spaceMemories, currentUser?.memoryTokenBudget ?? 1000)
                   return overflow > 0 ? (
-                    <p className="text-xs text-amber-500/80 mt-1">
-                      {overflow} {overflow === 1 ? 'memory exceeds' : 'memories exceed'} the token budget and won't be injected.
+                    <p className="text-xs text-gray-500 mt-1">
+                      {overflow} {overflow === 1 ? 'memory' : 'memories'} won't fit at once — the most relevant are selected per query. Star one to always include it.
                     </p>
                   ) : null
                 })()}
@@ -923,8 +960,19 @@ export default function App() {
                       checked={pinnedMemoryIds.includes(m.id)}
                       onChange={() => setPinnedMemoryIds(prev => prev.includes(m.id) ? prev.filter(id => id !== m.id) : [...prev, m.id])}
                       className="mt-0.5 shrink-0 accent-indigo-500 cursor-pointer"
-                      title="Pin to next query"
+                      title="Always include in the next query (on top of the memories picked by relevance)"
                     />
+                    <button
+                      onClick={() => handleMemoryAlwaysKeep(m.id, !m.alwaysKeep)}
+                      className={`shrink-0 text-xs leading-none mt-0.5 transition-colors ${m.alwaysKeep ? 'text-amber-400 hover:text-amber-300' : 'text-gray-700 hover:text-gray-500 opacity-0 group-hover:opacity-100'}`}
+                      title={m.alwaysKeep
+                        ? 'Always kept: injected in every query and never merged away by compaction. Click to unset.'
+                        : 'Always keep: inject in every query and protect from compaction'}
+                      aria-label={m.alwaysKeep ? 'Unset always keep' : 'Always keep'}
+                      aria-pressed={m.alwaysKeep}
+                    >
+                      {m.alwaysKeep ? '★' : '☆'}
+                    </button>
                     {editingMemoryId === m.id ? (
                       <input
                         autoFocus
@@ -1079,8 +1127,8 @@ export default function App() {
               )}
 
               {(() => {
-                const spaceChats = sessions.filter(s => s.spaceId === currentSpaceId)
-                const filtered = spaceChats.filter(s => !sessionSearch || s.title.toLowerCase().includes(sessionSearch.toLowerCase()))
+                const loaded = spaceChats ?? []
+                const filtered = loaded.filter(s => !sessionSearch || s.title.toLowerCase().includes(sessionSearch.toLowerCase()))
                 return (
                   <>
                     <input
@@ -1090,8 +1138,10 @@ export default function App() {
                       onChange={e => setSessionSearch(e.target.value)}
                       className="px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-300 focus:outline-none focus:border-blue-500"
                     />
-                    {filtered.length === 0 ? (
-                      <p className="text-gray-500 text-sm">{spaceChats.length === 0 ? 'No chats in this space yet.' : 'No chats match your search.'}</p>
+                    {spaceChats === null ? (
+                      <p className="text-gray-500 text-sm">Loading chats…</p>
+                    ) : filtered.length === 0 ? (
+                      <p className="text-gray-500 text-sm">{loaded.length === 0 ? 'No chats in this space yet.' : 'No chats match your search.'}</p>
                     ) : filtered.map(s => {
                 const spaceName = spaces.find(sp => sp.id === s.spaceId)?.name ?? null
                 return (

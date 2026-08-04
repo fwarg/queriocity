@@ -27,9 +27,39 @@ export function startFakeOpenAI(script: ScriptedStep[]) {
       if (!url.pathname.endsWith('/chat/completions')) {
         return new Response('not found', { status: 404 })
       }
-      requests.push(await req.json().catch(() => null))
+      const body = await req.json().catch(() => null) as { stream?: boolean } | null
+      requests.push(body)
       const step = script[Math.min(call, script.length - 1)]
       call++
+
+      // generateText omits `stream` (or sends false) and expects a single JSON body rather than
+      // an SSE stream; only streamText sets it true.
+      if (body?.stream !== true) {
+        return Response.json({
+          id: 'chatcmpl-test',
+          object: 'chat.completion',
+          created: 0,
+          model: 'fake-model',
+          choices: [{
+            index: 0,
+            message: {
+              role: 'assistant',
+              content: (step.text ?? []).join(''),
+              ...(step.toolCall
+                ? {
+                  tool_calls: [{
+                    id: step.toolCall.id,
+                    type: 'function',
+                    function: { name: step.toolCall.name, arguments: JSON.stringify(step.toolCall.args) },
+                  }],
+                }
+                : {}),
+            },
+            finish_reason: step.toolCall ? 'tool_calls' : 'stop',
+          }],
+          usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        })
+      }
 
       const chunk = (delta: unknown, finish: string | null = null) =>
         `data: ${JSON.stringify({

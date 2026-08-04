@@ -79,6 +79,21 @@ export const spaceMemories = sqliteTable('space_memories', {
   content: text('content').notNull(),
   source: text('source', { enum: ['tool', 'extraction', 'manual', 'compact'] }).notNull().default('tool'),
   sessionId: text('session_id').references(() => chatSessions.id, { onDelete: 'set null' }),
+  /** User-set: always injected regardless of relevance, and never merged away by compaction. */
+  alwaysKeep: integer('always_keep', { mode: 'boolean' }).notNull().default(false),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+})
+
+/** Facts about the user that apply in any chat, space or not. Deliberately has no `sessionId`:
+ *  the FK-timing bug that silently dropped the first memory of a new chat lives in that column,
+ *  and provenance is not needed for a set this small and this hand-curated. */
+export const userMemories = sqliteTable('user_memories', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  content: text('content').notNull(),
+  source: text('source', { enum: ['tool', 'manual'] }).notNull().default('manual'),
+  alwaysKeep: integer('always_keep', { mode: 'boolean' }).notNull().default(false),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 })
@@ -247,13 +262,14 @@ function initSchema() {
       value TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS space_memories (
-      id         TEXT PRIMARY KEY,
-      space_id   TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
-      content    TEXT NOT NULL,
-      source     TEXT NOT NULL DEFAULT 'tool' CHECK(source IN ('tool','extraction','manual')),
-      session_id TEXT REFERENCES chat_sessions(id) ON DELETE SET NULL,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
+      id          TEXT PRIMARY KEY,
+      space_id    TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+      content     TEXT NOT NULL,
+      source      TEXT NOT NULL DEFAULT 'tool' CHECK(source IN ('tool','extraction','manual','compact')),
+      session_id  TEXT REFERENCES chat_sessions(id) ON DELETE SET NULL,
+      always_keep INTEGER NOT NULL DEFAULT 0,
+      created_at  INTEGER NOT NULL,
+      updated_at  INTEGER NOT NULL
     );
   `)
   sqlite.run(`CREATE VIRTUAL TABLE IF NOT EXISTS file_chunks USING vec0(
@@ -267,6 +283,21 @@ function initSchema() {
   )`)
   sqlite.run(`CREATE VIRTUAL TABLE IF NOT EXISTS chat_chunks USING vec0(
     chunk_id TEXT PRIMARY KEY,
+    embedding FLOAT[${EMBED_DIMS}]
+  )`)
+  // One vector per memory, keyed by the memory's own id — memories are single short facts, so
+  // unlike chat/file content they need no chunking and no meta table; the text stays in
+  // space_memories. Purely derived data: on a dimension change we drop and re-embed rather than
+  // demanding ALLOW_EMBED_RESET, because nothing is lost. buildMemoryBlock backfills lazily.
+  const existingMemVec = sqlite.query(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='memory_embeddings'"
+  ).get() as { sql: string } | null
+  if (existingMemVec && !existingMemVec.sql.includes(`FLOAT[${EMBED_DIMS}]`)) {
+    console.log(`[db] Embedding dimension changed → recreating memory_embeddings (${EMBED_DIMS} dims)`)
+    sqlite.run('DROP TABLE IF EXISTS memory_embeddings')
+  }
+  sqlite.run(`CREATE VIRTUAL TABLE IF NOT EXISTS memory_embeddings USING vec0(
+    memory_id TEXT PRIMARY KEY,
     embedding FLOAT[${EMBED_DIMS}]
   )`)
   sqlite.run(`CREATE TABLE IF NOT EXISTS chat_chunk_meta (
@@ -294,9 +325,17 @@ function initSchema() {
     sqlite.run(`ALTER TABLE chat_sessions ADD COLUMN graduated INTEGER NOT NULL DEFAULT 0`)
   } catch {}
 
-  // Migration: add 'compact' to space_memories source CHECK constraint
-  try {
-    sqlite.run(`CREATE TABLE IF NOT EXISTS space_memories_v2 (
+  // Migration: add 'compact' to space_memories source CHECK constraint.
+  // Guarded on the constraint actually being stale — the rebuild used to run on every boot
+  // (CREATE IF NOT EXISTS → INSERT SELECT * → DROP → RENAME round-trips the table each start),
+  // which is both wasteful and unsafe once the table gains columns the v2 definition lacks:
+  // `SELECT *` would quietly copy them into the wrong slots or drop them.
+  const memoriesSql = (sqlite.query(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='space_memories'"
+  ).get() as { sql: string } | null)?.sql ?? ''
+  if (memoriesSql && !memoriesSql.includes("'compact'")) {
+    sqlite.run(`DROP TABLE IF EXISTS space_memories_v2`)
+    sqlite.run(`CREATE TABLE space_memories_v2 (
       id         TEXT PRIMARY KEY,
       space_id   TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
       content    TEXT NOT NULL,
@@ -305,10 +344,32 @@ function initSchema() {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     )`)
-    sqlite.run(`INSERT OR IGNORE INTO space_memories_v2 SELECT * FROM space_memories`)
+    // Explicit column list, not SELECT *, so the copy cannot silently misalign.
+    sqlite.run(`INSERT OR IGNORE INTO space_memories_v2
+      (id, space_id, content, source, session_id, created_at, updated_at)
+      SELECT id, space_id, content, source, session_id, created_at, updated_at FROM space_memories`)
     sqlite.run(`DROP TABLE space_memories`)
     sqlite.run(`ALTER TABLE space_memories_v2 RENAME TO space_memories`)
+    console.log('[db] Migrated space_memories to allow source=compact')
+  }
+  // Leftover from when the rebuild above ran unconditionally.
+  sqlite.run(`DROP TABLE IF EXISTS space_memories_v2`)
+
+  // Migration: per-memory "always keep" flag (see spaceMemories schema).
+  try {
+    sqlite.run(`ALTER TABLE space_memories ADD COLUMN always_keep INTEGER NOT NULL DEFAULT 0`)
   } catch {}
+
+  sqlite.run(`CREATE TABLE IF NOT EXISTS user_memories (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    content     TEXT NOT NULL,
+    source      TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('tool','manual')),
+    always_keep INTEGER NOT NULL DEFAULT 0,
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL
+  )`)
+  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_user_memories_user_id ON user_memories(user_id)`)
 
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_spaces_user_id ON spaces(user_id)`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_id ON chat_sessions(user_id)`)

@@ -37,6 +37,8 @@ through a single Bun process.
   - [Settings](#settings)
   - [Image generation](#image-generation)
   - [Spaces](#spaces)
+    - [How memory works](#how-memory-works)
+    - [Memory about you](#memory-about-you)
   - [Monitors](#monitors)
 - [Installation guide](#installation-guide)
   - [Requirements](#requirements)
@@ -66,6 +68,7 @@ Queriocity is a private research assistant you run on your own hardware. It is d
 - **Document Q&A** — attach PDFs, images, or text files and interrogate them in conversation
 - **Persistent knowledge base** — upload documents to your library so the assistant can draw on them across many conversations
 - **Contextual workspaces** — group related chats into spaces with shared memory and file references
+- **An assistant that remembers** — spaces accumulate facts from your conversations and recall the ones relevant to each question; optionally, a short personal profile applies across every chat
 
 ## Chats
 
@@ -305,6 +308,7 @@ Open **Settings** from the bottom of the sidebar. Settings are saved per user.
 | **Chat RAG** | When chatting outside a space, automatically retrieve relevant excerpts from your uploaded file library and inject them as context. |
 | **Query suggestions** | Show AI-generated query completions as you type in the chat input (debounced, min 8 characters). Powered by the flash model. Disable on slow setups or if the extra latency is distracting. |
 | **Follow-up suggestions** | Show up to three suggested follow-up questions as chips under a finished answer. Powered by the flash model, one call per answer. Disabling it skips the call entirely. |
+| **About you** | Off by default. Keeps a short list of facts about you that apply in *every* chat, space or not, and lets you build it by hand or from a reviewed scan of your recent chats. See [Memory about you](#memory-about-you). |
 | **Font size** | UI font size: Small (15 px), Normal (17 px), Large (19 px), XL (21 px). Sizes scale up automatically on narrow viewports. |
 | **Timezone** | IANA timezone (e.g. `Europe/Stockholm`) used when scheduling monitors at a specific hour of the day. Defaults to server time (UTC in Docker) if not set. |
 | **Password** | Change your password. Requires the current one; the new one needs 8+ characters with upper and lower case, a digit and a symbol. Changing it signs out your other devices but keeps the current session. |
@@ -386,7 +390,12 @@ Any file in your library can be tagged to a space from the space detail view. Ta
 
 #### Fine-grained context control
 
-Each tagged resource and each space memory has a **checkbox** in the space detail panel. When one or more boxes are checked, only those items are included in the next query's context — all unchecked items are excluded. When nothing is checked, all memories and tagged resources are included as usual. This lets you focus a query on a specific document or set of notes without removing them from the space permanently.
+Each tagged resource and each space memory has a **checkbox** in the space detail panel.
+
+- **Tagged resources** — checking one or more restricts the next query to those documents; unchecked resources are excluded. When nothing is checked, all tagged resources are searched as usual.
+- **Space memories** — checking one *guarantees* it a place in the next query's context. The rest of the memory budget is still filled with whatever else is most relevant, so pinning adds to the selection rather than replacing it.
+
+This lets you focus a query on a specific document or make sure a particular note is present, without removing anything from the space permanently.
 
 #### Summarize resources
 
@@ -395,19 +404,35 @@ The tagged resources section has a **Summarize resources** button. Clicking it s
 ### How memory works
 
 - After each assistant response, the small model extracts noteworthy facts, preferences, and decisions and saves them to the space.
-- Memories are injected into the system prompt up to the configured token budget (newest first).
+- **New facts are reconciled against existing ones on write.** Rather than appending everything, the small model decides whether each fact is genuinely new, supersedes an existing memory, or is already covered — so "I've moved to SQLite" replaces "I use Postgres" instead of sitting next to it. A memory you wrote yourself, or marked *always keep*, is never overwritten or discarded this way.
+- **Memories are selected by relevance to the question**, not by age. Each memory is embedded, and the ones nearest the current query (re-scored by the reranker when one is configured) are injected up to the token budget. A space can therefore hold far more memories than fit in one request without the older ones becoming unreachable. Without a configured embedder, or on a request with no query text, selection falls back to newest-first.
 - You can view, add, edit, and delete individual memories in the space detail view.
+- **★ Always keep** — starring a memory (the star appears on hover) injects it in every request regardless of relevance, and protects it from being merged away by compaction. Use it for standing instructions and facts that must never be dropped.
 
 ### Memory compaction and management
 
 The memory panel header exposes several actions:
 
-- **Compact** — feeds all memories to the small model, which merges near-duplicates and removes redundant entries. No-ops if already within the target token budget.
-- **Recreate all** — clears all auto-extracted memories and re-runs extraction across all chats. Manual memories are preserved. Shows live `Processing (x/y)` progress.
+- **Compact** — feeds all memories to the small model, which merges near-duplicates and removes redundant entries. No-ops if already within the target token budget. Always-keep memories are left untouched.
+- **Recreate all** — clears all auto-extracted memories and re-runs extraction across all chats. Manual and always-keep memories are preserved. Shows live `Processing (x/y)` progress.
 - **Clear all** — deletes all memories in the space (with confirmation).
-- **Dream** — optional nightly scheduled pass. Configured by an administrator in Admin > System settings (hour, threshold, target). This mode either compacts any space whose memories exceed the size threshold, or (in deep dream mode) recreates memories from chats using a more capable thinking model for increased memory quality.
+- **Dream** — optional nightly scheduled pass. Configured by an administrator in Admin > System settings (hour, threshold, target). This mode either compacts any space whose memories exceed the size threshold, or (in deep dream mode) recreates memories from chats using a more capable thinking model for increased memory quality. Manual and always-keep memories survive both passes.
 
 Individual chats in a space also have a **Recreate memories** action that re-extracts memories for that chat only.
+
+### Memory about you
+
+Space memory is scoped to one space. Some things are true everywhere — the language you work in, how you want answers written, lasting constraints — and repeating them in every space is tedious. **Settings > About you** keeps a short list of such facts and injects them into *every* chat, including chats with no space at all.
+
+It is **off by default**, and deliberately narrower than space memory:
+
+- **Nothing is written automatically.** Facts arrive only when you type one, when the assistant calls its `save_user_fact` tool, or when you accept a suggestion. Space memory can afford automatic extraction because a wrong fact is wrong in one space; a wrong fact here would colour every future conversation.
+- **Suggest from my chats** reads your most recent chats and proposes durable facts about you, which you accept or dismiss one at a time. Nothing is stored until you accept it. The scan reads only your own chats, and skips monitor runs — a recurring monitor prompt describes a scheduled task, not you. Choose the depth (20 / 50 / 100 / 200 chats) next to the button: it is one small-model call per chat, so a deeper scan takes proportionally longer. Progress is streamed as it goes.
+- **Expect few suggestions, and expect them to be about you.** Most conversations contain nothing that belongs in a permanent profile, so a scan of 100 chats commonly yields a handful of entries. Facts about a conversation's *subject* — a product's specifications, who runs which company, what you asked about once — are rejected: they are true but say nothing about how you want to be helped, and they would be injected into every future prompt. Each chat may contribute at most two suggestions and they are taken in rotation, so one long conversation cannot fill the list, and rewordings of the same trait are collapsed.
+- Contact details, phone numbers and anything resembling a key are never suggested, and the assistant's `save_user_fact` tool refuses to store them — a profile injected into every prompt is the wrong place for an identifier. Facts you type yourself are not filtered.
+- Entries are relevance-ranked and starrable exactly like space memories, against a separate, smaller token budget (Admin > System settings, default 300).
+- Where a user memory and a space memory disagree, the prompt tells the model to prefer the space — the more specific context wins.
+- When the setting is off, neither the block nor the `save_user_fact` tool is added, so prompt size and tool count are unchanged.
 
 ---
 
@@ -1093,7 +1118,8 @@ The **Admin panel > System settings** tab exposes runtime-configurable parameter
 
 | Section | Setting | Default | Description |
 |---|---|---|---|
-| Memory | Token budget | 1000 | Max tokens of fixed space memory injected into each request |
+| Memory | Token budget | 1000 | Max tokens of space memory injected into each request. Memories are chosen by relevance to the query, so this caps how many appear at once, not how many a space may hold |
+| Memory | User memory budget | 300 | Max tokens of *About you* memory injected into every chat, space or not. Only applies to users who enabled the setting; 0 disables it globally |
 | Memory | RAG budget | 500 | Additional tokens reserved for RAG results (chat history + tagged files); 0 disables RAG |
 | Memory | Dream hour | Disabled | Server hour (0–23) to run nightly compaction, or disabled |
 | Memory | Dream threshold | 1500 | Compaction triggers when space memory exceeds this many tokens |
@@ -1174,7 +1200,7 @@ Hono server (Bun)
   ├── /api/templates  — custom prompt templates (CRUD, per-user)
   ├── /api/monitors   — monitors (CRUD, run, subscribe, global)
   ├── /api/feeds      — RSS feed catalog (served from news_feeds.json)
-  └── /api/users      — user settings
+  └── /api/users      — user settings, per-user memories (CRUD, suggest)
         │
         ├── SearXNG   (meta-search)
         ├── RSS feeds (fetched at monitor run time from news_feeds.json)

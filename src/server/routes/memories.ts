@@ -4,7 +4,7 @@ import { eq, and, ne, sql } from 'drizzle-orm'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
-import { getSpaceMemories, saveMemory, compactSpaceMemories, extractMemoriesPostHoc } from '../lib/memory.ts'
+import { getSpaceMemories, saveMemory, compactSpaceMemories, extractMemoriesPostHoc, embedMemory, deleteMemoryEmbeddings } from '../lib/memory.ts'
 import { getAppSetting } from '../lib/db.ts'
 import { indexSession } from '../lib/chat-indexer.ts'
 import { generateText } from 'ai'
@@ -82,7 +82,8 @@ memoriesRouter.post('/:spaceId/memories', zValidator('json', z.object({
 })
 
 memoriesRouter.patch('/:spaceId/memories/:id', zValidator('json', z.object({
-  content: z.string().min(1).max(500),
+  content: z.string().min(1).max(500).optional(),
+  alwaysKeep: z.boolean().optional(),
 })), async (c) => {
   const userId = c.get('userId') as string
   const spaceId = c.req.param('spaceId')
@@ -93,9 +94,17 @@ memoriesRouter.patch('/:spaceId/memories/:id', zValidator('json', z.object({
     .where(and(eq(spaceMemories.id, id), eq(spaceMemories.spaceId, spaceId))).get()
   if (!memory) return c.json({ error: 'Not found' }, 404)
 
-  const { content } = c.req.valid('json')
-  await db.update(spaceMemories).set({ content, updatedAt: new Date() })
-    .where(eq(spaceMemories.id, id))
+  const { content, alwaysKeep } = c.req.valid('json')
+  if (content == null && alwaysKeep == null) return c.json({ error: 'Nothing to update' }, 400)
+
+  await db.update(spaceMemories).set({
+    ...(content != null ? { content } : {}),
+    ...(alwaysKeep != null ? { alwaysKeep } : {}),
+    updatedAt: new Date(),
+  }).where(eq(spaceMemories.id, id))
+
+  // Edited text must be re-embedded or relevance ranking keeps scoring the old wording.
+  if (content != null && content !== memory.content) await embedMemory(id, content)
   return c.json({ ok: true })
 })
 
@@ -110,6 +119,7 @@ memoriesRouter.delete('/:spaceId/memories/:id', async (c) => {
   if (!memory) return c.json({ error: 'Not found' }, 404)
 
   await db.delete(spaceMemories).where(eq(spaceMemories.id, id))
+  deleteMemoryEmbeddings([id])
   return c.json({ ok: true })
 })
 
@@ -117,7 +127,9 @@ memoriesRouter.delete('/:spaceId/memories', async (c) => {
   const userId = c.get('userId') as string
   const spaceId = c.req.param('spaceId')
   if (!await verifySpaceOwner(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
+  const ids = (await getSpaceMemories(spaceId)).map(m => m.id)
   await db.delete(spaceMemories).where(eq(spaceMemories.spaceId, spaceId))
+  deleteMemoryEmbeddings(ids)
   return c.json({ ok: true })
 })
 
@@ -137,9 +149,16 @@ memoriesRouter.post('/:spaceId/recreate-memories', async (c) => {
   const spaceId = c.req.param('spaceId')
   if (!await verifySpaceOwner(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
 
-  // Delete all auto-extracted memories, keep manual ones
-  await db.delete(spaceMemories)
-    .where(and(eq(spaceMemories.spaceId, spaceId), ne(spaceMemories.source, 'manual')))
+  // Delete all auto-extracted memories, keep manual and always-keep ones
+  const discarded = (await getSpaceMemories(spaceId))
+    .filter(m => m.source !== 'manual' && !m.alwaysKeep)
+    .map(m => m.id)
+  await db.delete(spaceMemories).where(and(
+    eq(spaceMemories.spaceId, spaceId),
+    ne(spaceMemories.source, 'manual'),
+    eq(spaceMemories.alwaysKeep, false),
+  ))
+  deleteMemoryEmbeddings(discarded)
 
   const chats = await db.select().from(chatSessions).where(eq(chatSessions.spaceId, spaceId))
   const total = chats.length
