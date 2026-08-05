@@ -557,7 +557,9 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       const researcherResult = await runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, apiBudget })
       const allSources: SearchResult[] = [...(initialResults ?? [])]
       let researcherNotes = ''
-      const thoroughExtractor = useThinking ? new ThinkExtractor() : null
+      // Unconditional: the extractor also drops leaked tool-call markup, which has to be stripped
+      // whether or not the user is shown thinking. Displaying thinking is gated separately.
+      const thoroughExtractor = new ThinkExtractor()
 
       const keepalive = setInterval(() => {
         out.writeSSE({ data: JSON.stringify({ type: 'ping' }) }).catch(() => {})
@@ -646,7 +648,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
 
       const fullSources: SearchResult[] = []
       const result = await runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, apiBudget })
-      const extractor = showThinking ? new ThinkExtractor() : null
+      const extractor = new ThinkExtractor()   // see thoroughExtractor above
 
       const keepalive = setInterval(() => {
         out.writeSSE({ data: JSON.stringify({ type: 'ping' }) }).catch(() => {})

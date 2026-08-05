@@ -36,6 +36,18 @@ Format your final answer for readability: use headings, bullet lists, and short 
 Always respond in the same language the user used.`,
 }
 
+/** Appended to the system prompt on the step where prepareStep withholds the tools.
+ *
+ *  Withholding alone leaves the prompt telling the model to call web_search while giving it no
+ *  way to, and a tool-trained model obeys the instruction the only way left: it writes the call
+ *  as prose. Nothing catches that — the request carried no tool schemas, so the provider's
+ *  tool-call parser is off and the markup streams to the user as the answer. */
+const FINAL_STEP_INSTRUCTION = `
+
+Your tools have now been withdrawn for this final step: there is no search left to run and no way to call one. Write the answer now from the search results already in this conversation, and ignore any instruction above to search first.
+Never emit a tool call in any syntax. There is nothing to parse it, so it would be shown to the user as your answer.
+If the results do not fully cover the question, answer with what they do support and close with one short line naming what is missing. Never reply with only a refusal.`
+
 // balanced spends its last step writing (see the prepareStep reserve below), so 3 steps buys
 // 2 rounds of tool calls. It was 4 while the reserve cost two steps; keeping 4 once the reserve
 // dropped to one would have widened balanced's budget rather than made it cheaper, and the
@@ -314,10 +326,12 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
     // Withhold the tools on the final step so it can only produce prose. `activeTools: []`
     // rather than `toolChoice: 'none'` so the schemas are not sent at all — the model cannot
     // be tempted by a tool it can no longer usefully call, and the last prompt is smaller.
+    // The prompt has to be told as well, or the two contradict each other — see
+    // FINAL_STEP_INSTRUCTION.
     prepareStep: ({ stepNumber }) => {
       if (reserveWritingStep && isFinalStep(stepNumber)) {
         console.log(`  [chat] step ${stepNumber + 1}/${maxSteps}: tools withheld — final step is for the answer`)
-        return { activeTools: [] }
+        return { activeTools: [], instructions: system + FINAL_STEP_INSTRUCTION }
       }
       return {}
     },
