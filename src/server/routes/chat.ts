@@ -415,26 +415,34 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         stopWhen: stepCountIs(4),
         maxOutputTokens: RESEARCH_MAX_TOKENS,
       })
-      for await (const part of result.stream) {
-        if (part.type === 'text-delta') {
-          fullContent += part.text
-          await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: part.text }) })
-        } else if (part.type === 'tool-call') {
-          if (part.toolName === 'web_search') {
-            await out.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Researching topic…' }) })
-          } else if (part.toolName === 'generate_image') {
-            await out.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Generating image…' }) })
-          } else if (part.toolName === 'edit_image') {
-            await out.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Editing image…' }) })
-          }
-        } else if (part.type === 'tool-result' && (part.toolName === 'generate_image' || part.toolName === 'edit_image')) {
-          const r = part.output as { success?: boolean; prompt?: string; error?: string }
-          if (r.success && pendingImageUrl) {
-            await out.writeSSE({ data: JSON.stringify({ type: 'image', url: pendingImageUrl, alt: r.prompt ?? '' }) })
-            fullContent += `\n\n![${r.prompt ?? ''}](${pendingImageUrl})`
-            pendingImageUrl = undefined
+      // Diffusion emits nothing until the image is finished, so this stream can go minutes
+      // without a byte — far longer than the other modes, which are at worst waiting on a
+      // search. Without the ping an idle-timeout upstream reaps the connection mid-generation.
+      const keepalive = setInterval(() => { out.ping().catch(() => {}) }, KEEPALIVE_INTERVAL_MS)
+      try {
+        for await (const part of result.stream) {
+          if (part.type === 'text-delta') {
+            fullContent += part.text
+            await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: part.text }) })
+          } else if (part.type === 'tool-call') {
+            if (part.toolName === 'web_search') {
+              await out.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Researching topic…' }) })
+            } else if (part.toolName === 'generate_image') {
+              await out.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Generating image…' }) })
+            } else if (part.toolName === 'edit_image') {
+              await out.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Editing image…' }) })
+            }
+          } else if (part.type === 'tool-result' && (part.toolName === 'generate_image' || part.toolName === 'edit_image')) {
+            const r = part.output as { success?: boolean; prompt?: string; error?: string }
+            if (r.success && pendingImageUrl) {
+              await out.writeSSE({ data: JSON.stringify({ type: 'image', url: pendingImageUrl, alt: r.prompt ?? '' }) })
+              fullContent += `\n\n![${r.prompt ?? ''}](${pendingImageUrl})`
+              pendingImageUrl = undefined
+            }
           }
         }
+      } finally {
+        clearInterval(keepalive)
       }
       console.log(`  [image] done in ${Date.now() - t0}ms, ${fullContent.length} chars`)
       if (!ephemeral) {
@@ -562,7 +570,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       const thoroughExtractor = new ThinkExtractor()
 
       const keepalive = setInterval(() => {
-        out.writeSSE({ data: JSON.stringify({ type: 'ping' }) }).catch(() => {})
+        out.ping().catch(() => {})
       }, KEEPALIVE_INTERVAL_MS)
       try {
         await drainResearcherStream(researcherResult, {
@@ -651,7 +659,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       const extractor = new ThinkExtractor()   // see thoroughExtractor above
 
       const keepalive = setInterval(() => {
-        out.writeSSE({ data: JSON.stringify({ type: 'ping' }) }).catch(() => {})
+        out.ping().catch(() => {})
       }, KEEPALIVE_INTERVAL_MS)
       let drainFinishReason: string | undefined
       try {
@@ -722,7 +730,13 @@ Search results are authoritative ground truth — if they describe a product or 
   })
 })
 
-type SSEStream = { writeSSE: (opts: { data: string }) => Promise<void> }
+type SSEStream = {
+  writeSSE: (opts: { data: string }) => Promise<void>
+  /** Keepalive tick. Deliberately not recorded for resume: a ping carries nothing to replay,
+   *  and the client counts recorded events to know where to resume from, so buffering pings
+   *  would drift that cursor against the connection-local pings the resume route sends. */
+  ping: () => Promise<void>
+}
 
 /** Wraps the live SSE stream so every payload is also recorded for resume, and so a dead
  *  connection stops the writes without stopping the generation — the whole point of the
@@ -739,7 +753,7 @@ function streamRun(c: Context<AppEnv>, run: LiveRun, fn: (out: SSEStream) => Pro
   })
 }
 
-function recordingStream(stream: SSEStreamingApi, run: LiveRun): SSEStream {
+export function recordingStream(stream: SSEStreamingApi, run: LiveRun): SSEStream {
   return {
     writeSSE: async ({ data }) => {
       const id = appendEvent(run, data)
@@ -747,6 +761,13 @@ function recordingStream(stream: SSEStreamingApi, run: LiveRun): SSEStream {
         await stream.writeSSE({ data, id: String(id) })
       } catch {
         // Client is gone; the payload is buffered and will be replayed on resume.
+      }
+    },
+    ping: async () => {
+      try {
+        await stream.writeSSE({ data: JSON.stringify({ type: 'ping' }) })
+      } catch {
+        // Client is gone; nothing to buffer — the next real event carries the state.
       }
     },
   }

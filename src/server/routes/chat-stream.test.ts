@@ -15,7 +15,8 @@ import { streamText, tool, stepCountIs } from 'ai'
 import { createOpenAI } from '@ai-sdk/openai'
 import { z } from 'zod'
 import { startFakeOpenAI, captureSSE } from '../lib/test-support/fake-openai.ts'
-import { drainResearcherStream } from './chat.ts'
+import { drainResearcherStream, recordingStream } from './chat.ts'
+import { startRun } from '../lib/stream-buffer.ts'
 import type { SearchResult } from '../lib/searxng.ts'
 
 let fake: ReturnType<typeof startFakeOpenAI> | null = null
@@ -115,5 +116,48 @@ describe('drainResearcherStream', () => {
     ]), cap, { showThinking: false })
 
     expect(cap.ofType('thinking')).toHaveLength(0)
+  })
+})
+
+/** The resume cursor is a count of buffered events, so what does *not* get buffered matters as
+ *  much as what does. Keepalives are connection-local on both the live and the resumed path; if
+ *  one side records them and the other does not, `?from=` lands in the wrong place and the
+ *  client silently loses that many events on reconnect. */
+describe('keepalive pings and the resume buffer', () => {
+  const fakeSSE = () => {
+    const written: string[] = []
+    return {
+      written,
+      api: { writeSSE: async ({ data }: { data: string }) => { written.push(data) } } as never,
+    }
+  }
+
+  test('a ping reaches the client but is never recorded for replay', async () => {
+    const run = startRun('sess-ping', 'u1')
+    const sink = fakeSSE()
+    const out = recordingStream(sink.api, run)
+
+    await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: 'hi' }) })
+    await out.ping()
+    await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: ' there' }) })
+
+    // Delivered live, so an idle connection stays warm...
+    expect(sink.written.filter(d => d.includes('"ping"'))).toHaveLength(1)
+    // ...but absent from the replay log, which holds only the two real events.
+    expect(run.events).toHaveLength(2)
+    expect(run.events.some(e => e.includes('"ping"'))).toBe(false)
+  })
+
+  test('a dead connection does not stop the run', async () => {
+    const run = startRun('sess-dead', 'u1')
+    const dead = { writeSSE: async () => { throw new Error('broken pipe') } } as never
+    const out = recordingStream(dead, run)
+
+    // Neither call may throw: the generation outlives the connection by design, and the
+    // buffered events are what the client resumes from.
+    await out.ping()
+    await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: 'kept' }) })
+
+    expect(run.events).toEqual([JSON.stringify({ type: 'text', delta: 'kept' })])
   })
 })

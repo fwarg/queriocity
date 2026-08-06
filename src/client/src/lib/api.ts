@@ -226,10 +226,13 @@ export async function* streamChat(
           if (!line.startsWith('data: ')) continue
           let payload: { type: string; [k: string]: unknown }
           try { payload = JSON.parse(line.slice(6)) } catch { continue }
+          // Before the cursor bump: pings are keepalives, never recorded in the resume buffer
+          // on either the live or the resumed connection, so counting them would make `seen`
+          // overshoot and the next resume would skip that many real events.
+          if (payload.type === 'ping') continue
           seen++
           if (payload.type === 'session') { sid = payload.sessionId as string; continue }
           if (payload.type === 'done') finished = true
-          if (payload.type === 'ping') continue
           yield payload
         }
       }
