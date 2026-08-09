@@ -294,6 +294,11 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     const imageApiBudget: SearchApiBudget = { remaining: parseInt(process.env.SEARCH_API_MAX_PER_REQUEST ?? '3', 10) }
     const imageEngineErrors = new Map<string, EngineError>()
     const warnImageEngineErrors = (errors: EngineError[]) => errors.forEach(e => imageEngineErrors.set(e.engine, e))
+    // Same buffering as the engine errors, and for the same reason. Without these the client
+    // saw zero sources whether or not image searched, so a blocked engine that the keyed
+    // fallback covered still read as "answered without web results".
+    const imageSources: SearchResult[] = []
+    const pendingImageSources: SearchResult[] = []
     const imageTools = {
       web_search: tool({
         description: 'Search the web for context about a specialized or unfamiliar subject before generating an image.',
@@ -303,6 +308,13 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         execute: async ({ query }) => {
           console.log(`  [image] web_search "${query}"`)
           const results = await webSearch(query, 10, undefined, warnImageEngineErrors, imageApiBudget)
+          const seen = new Set(imageSources.map(s => s.url))
+          for (const r of results) {
+            if (seen.has(r.url)) continue
+            seen.add(r.url)
+            imageSources.push(r)
+            pendingImageSources.push(r)
+          }
           return results.map(r => `${r.title}: ${r.content}`).join('\n\n')
         },
       }),
@@ -451,6 +463,9 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
               await out.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Editing image…' }) })
             }
           } else if (part.type === 'tool-result' && part.toolName === 'web_search') {
+            if (pendingImageSources.length) {
+              await out.writeSSE({ data: JSON.stringify({ type: 'sources', sources: pendingImageSources.splice(0) }) })
+            }
             if (imageEngineErrors.size) {
               const engines = [...imageEngineErrors.values()].map(e => ({ engine: e.engine, reason: e.reason }))
               imageEngineErrors.clear()
@@ -469,7 +484,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         clearInterval(keepalive)
       }
       console.log(`  [image] done in ${Date.now() - t0}ms, ${fullContent.length} chars`)
-      await finishTurn(out, { sid, userId, msgs, fullContent, sources: [], spaceId, regenerate, ephemeral, t0 })
+      await finishTurn(out, { sid, userId, msgs, fullContent, sources: imageSources, spaceId, regenerate, ephemeral, t0 })
     })
   }
 

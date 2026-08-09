@@ -1489,19 +1489,6 @@ export default function App() {
                 )}
               </div>
             )}
-            {related.length > 0 && !busy && (
-              <div className="px-4 pb-1 flex flex-wrap gap-1.5">
-                {related.map((q, i) => (
-                  <button
-                    key={i}
-                    onClick={() => { setRelated([]); submit(q) }}
-                    className="rounded-full border border-gray-700 bg-gray-800/60 px-2.5 py-1 text-xs text-gray-300 hover:border-gray-600 hover:text-gray-100"
-                  >
-                    {q}
-                  </button>
-                ))}
-              </div>
-            )}
             {sessionId && messages.length > 0 && !busy && (
               <div className="px-4 py-1 relative flex items-center">
                 <div className="relative">
@@ -1542,6 +1529,8 @@ export default function App() {
               searchCategories={searchCategories}
               onSearchCategoriesChange={setSearchCategories}
               suggestionsEnabled={currentUser?.settings?.querySuggestions !== false}
+              related={related}
+              onRelatedSelect={q => { setRelated([]); submit(q) }}
             />
           </>
         )}

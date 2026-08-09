@@ -98,10 +98,14 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
           if (chunk.elapsedMs) {
             const label = images.length > 0 ? 'Generated in' : 'Answered in'
             const srcCount = sources.length
+            // Zero sources only means "the search came up empty" in the modes that always
+            // search. Flash never searches, and image searches at its own discretion without
+            // reporting sources, so for those a count of zero says nothing and is left out.
+            const alwaysSearches = focusMode === 'balanced' || focusMode === 'thorough'
             let srcLabel: string
             if (srcCount > 0) srcLabel = ` · ${srcCount} search result${srcCount === 1 ? '' : 's'}`
             else if (blockedEngines.length) srcLabel = ` · search engines unavailable (${blockedEngines.map(e => e.engine).join(', ')}) — answered without web results`
-            else srcLabel = ' · no search results'
+            else srcLabel = alwaysSearches ? ' · no search results' : ''
             setAnswerTime(`${label} ${(chunk.elapsedMs as number / 1000).toFixed(1)} seconds${srcLabel}.`)
           }
           liveSessionRef.current = chunk.sessionId as string
