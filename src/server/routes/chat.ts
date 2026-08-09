@@ -2,9 +2,11 @@ import { Hono, type Context } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { streamSSE, type SSEStreamingApi } from 'hono/streaming'
-import { streamText, generateText, tool, type TextStreamPart, type ToolSet, stepCountIs } from 'ai'
+import { streamText, generateText, tool, stepCountIs } from 'ai'
 import { runResearcher } from '../lib/researcher.ts'
 import { runWriter } from '../lib/writer.ts'
+import { drainResearcherStream, type SSEStream } from '../lib/researcher-stream.ts'
+import { FLASH_SYSTEM, RESEARCHER_NOTES_CAP, EMPTY_ANSWER_MESSAGE, runSynthesisFallback } from '../lib/answer.ts'
 import { reformulateLLM } from '../lib/reformulate.ts'
 import { cacheKey, getCached, setCached } from '../lib/cache.ts'
 import { db, chatSessions, messages, users, uploadedFiles, parseSettings, getAppSetting } from '../lib/db.ts'
@@ -16,7 +18,7 @@ import { webSearch, webSearchMulti, type SearchResult, type EngineError, type Se
 import { fetchUrlAllPages, processUrlsForContext } from '../lib/fetch-url.ts'
 import { getFlashModel, getChatModel, getThinkingModelOrFallback, RESEARCH_MAX_TOKENS } from '../lib/llm.ts'
 import { ThinkExtractor } from '../lib/think-extractor.ts'
-import { rerank, rerankEnabled } from '../lib/reranker.ts'
+import { rerankSearchResults } from '../lib/reranker.ts'
 import { buildMemoryBlock, buildChatFileBlock, extractMemoriesPostHoc, userMemoryBlockIfEnabled, joinMemoryBlocks } from '../lib/memory.ts'
 import { trimMessages, contextCharBudget, CONTEXT_RESERVE_FRACTION } from '../lib/trim-messages.ts'
 import { indexContents } from '../lib/chat-indexer.ts'
@@ -36,19 +38,12 @@ function rememberImageDir(dir: string) {
   _createdImageDirs.add(dir)
 }
 
-const FLASH_SYSTEM = `Answer in at most 5 sentences using only your training knowledge. Be direct and factual.
-Do not search the web. If you cannot answer confidently, say so briefly.
-Always respond in the same language the user used.`
-
-const FLASH_MAX_TOKENS = parseInt(process.env.FLASH_MAX_TOKENS ?? '200')
+// 200 was too tight against FLASH_SYSTEM's "at most 5 sentences" — a dense answer hit the cap
+// mid-sentence with nothing to show for it. Raised to leave headroom for the requested length,
+// including the reasoning tokens a thinking-capable flash model spends before it writes.
+const FLASH_MAX_TOKENS = parseInt(process.env.FLASH_MAX_TOKENS ?? '400')
 const KEEPALIVE_INTERVAL_MS = 15000
-const RESEARCHER_NOTES_CAP = 12000
 const SESSION_TITLE_MAX = 60
-
-/** Shown as the answer when the model produced nothing the whole way down, fallback included.
- *  Sending it as answer text rather than a status is deliberate: an empty `done` is
- *  indistinguishable from a dead server on the client, so the failure has to name itself. */
-const EMPTY_ANSWER_MESSAGE = 'The model returned an empty response — it produced no answer text on either the main pass or the fallback. Try again, or restart the model server if it repeats.'
 
 // Content is generously bounded rather than tightly: a user message can carry an inlined
 // attachment, capped separately by the attachment_chars setting (admin max 500000).
@@ -100,6 +95,10 @@ const RELATED_INPUT_CHARS = 1500
 // Snippet kept per stored source so citation hover previews still work after a reload —
 // short enough that it costs little in the sources JSON column.
 const STORED_SNIPPET_CHARS = 300
+
+/** Latest user message, the query every relevance decision is made against. */
+const userQueryOf = (msgs: Array<{ role: string; content: string }>) =>
+  [...msgs].reverse().find(m => m.role === 'user')?.content ?? ''
 
 const toStoredSource = (r: SearchResult) => ({
   title: r.title,
@@ -203,21 +202,29 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     customPrompt ?? '',
   ].join('|')
 
-  const ck = cacheKey(lastUser?.content ?? '', focusMode, cacheScope)
+  // History is part of the key: without it, two unrelated conversations ending in the same
+  // follow-up ("Is it officially shut down?") collide and the second gets the first's answer.
+  const ck = cacheKey(lastUser?.content ?? '', focusMode, cacheScope, msgs.slice(0, -1))
   // A retry must not be served the answer it is retrying.
-  const cached = regenerate ? null : getCached<string>(ck)
-  if (cached) {
-    return streamSSE(c, async (stream) => {
-      await stream.writeSSE({ data: JSON.stringify({ type: 'text', delta: cached }) })
-      await stream.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, elapsedMs: 0 }) })
-    })
-  }
+  const cached = regenerate ? null : getCached<CachedAnswer>(ck)
 
   // Generation is bound to the run, not to this HTTP request, so a dropped connection can be
   // resumed instead of losing a half-finished answer. See lib/stream-buffer.ts.
   const run = startRun(sid, userId)
   const abortSignal = run.controller.signal
   c.req.raw.signal.addEventListener('abort', () => scheduleAbandon(run))
+
+  // A cache hit is a real turn, not a shortcut around one: it emits the same events and runs the
+  // same tail as a generated answer, so the exchange is saved and its citations still resolve.
+  if (cached) {
+    const t0 = Date.now()
+    return streamRun(c, run, async (out) => {
+      await out.writeSSE({ data: JSON.stringify({ type: 'session', sessionId: sid }) })
+      await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: cached.content }) })
+      if (cached.sources.length) await out.writeSSE({ data: JSON.stringify({ type: 'sources', sources: cached.sources }) })
+      await finishTurn(out, { sid, userId, msgs, fullContent: cached.content, sources: cached.sources, spaceId, regenerate, ephemeral, t0 })
+    })
+  }
 
   if (focusMode === 'flash') {
     const [memoryBudget, ragBudget] = await Promise.all([
@@ -247,25 +254,22 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         messages: trimMessages(msgs, Math.floor(ctxLimit * CONTEXT_RESERVE_FRACTION), flashSystem),
         maxOutputTokens: FLASH_MAX_TOKENS,
       })
+      // Flash runs getFlashModel(), which is the full chat model unless FLASH_MODEL=small — the
+      // same reasoning-capable model whose <think> output the other modes strip. Flash has no
+      // thinking channel, so the extracted thinking is discarded rather than shown.
+      const flashExtractor = new ThinkExtractor()
+      const emitFlash = async (text: string) => {
+        if (!text) return
+        fullContent += text
+        await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: text }) })
+      }
       for await (const part of result.stream) {
-        if (part.type === 'text-delta') {
-          fullContent += part.text
-          await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: part.text }) })
-        }
+        if (part.type === 'text-delta') await emitFlash(flashExtractor.process(part.text).text)
       }
+      await emitFlash(flashExtractor.flush().text)
       console.log(`  [flash] done in ${Date.now() - t0}ms, ${fullContent.length} chars`)
-      if (fullContent.length >= 50) setCached(ck, fullContent)
-      if (!ephemeral) {
-        const { title: sessionTitle } = await persistMessage(sid, userId, msgs, fullContent, [], spaceId, regenerate)
-        await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title: sessionTitle, elapsedMs: Date.now() - t0 }) })
-        if (spaceId) {
-          extractMemoriesPostHoc(spaceId, sid, lastUser?.content ?? '', fullContent).catch(e => console.error('[memory]', e))
-          const newContents = [lastUser?.content, fullContent].filter(Boolean) as string[]
-          indexContents(sid, newContents).catch(e => console.error('[chat-index]', e))
-        }
-      } else {
-        await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, elapsedMs: Date.now() - t0 }) })
-      }
+      if (fullContent.length >= 50) setCached(ck, { content: fullContent, sources: [] })
+      await finishTurn(out, { sid, userId, msgs, fullContent, sources: [], spaceId, regenerate, ephemeral, t0 })
     })
   }
 
@@ -284,6 +288,12 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     for (const m of msgs) {
       for (const [, url] of (m.content as string).matchAll(IMAGE_MD_RE)) lastGeneratedImageUrl = url
     }
+    // Image's search runs through the same plumbing as the other modes: blocked engines reach the
+    // user instead of vanishing, and the paid-fallback cap covers this path too. Errors are
+    // buffered rather than emitted directly — the tool closure is built before the SSE stream is.
+    const imageApiBudget: SearchApiBudget = { remaining: parseInt(process.env.SEARCH_API_MAX_PER_REQUEST ?? '3', 10) }
+    const imageEngineErrors = new Map<string, EngineError>()
+    const warnImageEngineErrors = (errors: EngineError[]) => errors.forEach(e => imageEngineErrors.set(e.engine, e))
     const imageTools = {
       web_search: tool({
         description: 'Search the web for context about a specialized or unfamiliar subject before generating an image.',
@@ -292,7 +302,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         }),
         execute: async ({ query }) => {
           console.log(`  [image] web_search "${query}"`)
-          const results = await webSearch(query)
+          const results = await webSearch(query, 10, undefined, warnImageEngineErrors, imageApiBudget)
           return results.map(r => `${r.title}: ${r.content}`).join('\n\n')
         },
       }),
@@ -411,8 +421,11 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     return streamRun(c, run, async (out) => {
       await out.writeSSE({ data: JSON.stringify({ type: 'session', sessionId: sid }) })
       const ctxLimit = parseInt(process.env.CONTEXT_TOKEN_LIMIT ?? '8192')
+      // Not the flash model: this drives a multi-step tool loop with five typed parameters, and
+      // with FLASH_MODEL=small that is a small model doing the least reliable thing asked of it —
+      // a misparsed size/steps degrades the image with no visible error.
       const result = streamText({
-        model: getFlashModel(),
+        model: getChatModel(),
         abortSignal,
         system: imageSystem,
         messages: trimMessages(msgs, Math.floor(ctxLimit * CONTEXT_RESERVE_FRACTION), imageSystem),
@@ -437,6 +450,12 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
             } else if (part.toolName === 'edit_image') {
               await out.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Editing image…' }) })
             }
+          } else if (part.type === 'tool-result' && part.toolName === 'web_search') {
+            if (imageEngineErrors.size) {
+              const engines = [...imageEngineErrors.values()].map(e => ({ engine: e.engine, reason: e.reason }))
+              imageEngineErrors.clear()
+              await out.writeSSE({ data: JSON.stringify({ type: 'search_warning', engines }) })
+            }
           } else if (part.type === 'tool-result' && (part.toolName === 'generate_image' || part.toolName === 'edit_image')) {
             const r = part.output as { success?: boolean; prompt?: string; error?: string }
             if (r.success && pendingImageUrl) {
@@ -450,17 +469,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         clearInterval(keepalive)
       }
       console.log(`  [image] done in ${Date.now() - t0}ms, ${fullContent.length} chars`)
-      if (!ephemeral) {
-        const { title: sessionTitle } = await persistMessage(sid, userId, msgs, fullContent, [], spaceId, regenerate)
-        await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title: sessionTitle, elapsedMs: Date.now() - t0 }) })
-        if (spaceId) {
-          extractMemoriesPostHoc(spaceId, sid, lastUser?.content ?? '', fullContent).catch(e => console.error('[memory]', e))
-          const newContents = [lastUser?.content, fullContent].filter(Boolean) as string[]
-          indexContents(sid, newContents).catch(e => console.error('[chat-index]', e))
-        }
-      } else {
-        await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, elapsedMs: Date.now() - t0 }) })
-      }
+      await finishTurn(out, { sid, userId, msgs, fullContent, sources: [], spaceId, regenerate, ephemeral, t0 })
     })
   }
 
@@ -476,59 +485,65 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
 
   const t0 = Date.now()
 
-  const [fetchMaxPages, fetchSummarize, compressHistory] = await Promise.all([
-    getAppSetting('fetch_max_pages', '8').then(Number),
-    getAppSetting('fetch_summarize_overflow', 'false').then(v => v === 'true'),
-    getAppSetting('compress_history_overflow', 'false').then(v => v === 'true'),
-  ])
-
-  // Shared per-request allowance for paid keyed-API fallback searches (pre-search + researcher).
-  const apiBudget: SearchApiBudget = { remaining: parseInt(process.env.SEARCH_API_MAX_PER_REQUEST ?? '3', 10) }
-
-  // Fetch user settings + file count + reformulate/pre-search + memory + URL prefetch in parallel
-  const [fileCountRow, { initialQueries, initialResults, engineErrors }, memoryBudget, ragBudget, prefetchedUrls] = await Promise.all([
-    db.select({ count: sql<number>`count(*)` }).from(uploadedFiles).where(eq(uploadedFiles.userId, userId)).get(),
-    runReformulateAndPreSearch(msgsForReformulate, focusMode as 'balanced' | 'thorough', hasAttachment, searchCategory, apiBudget),
-    spaceId ? getAppSetting('memory_token_budget', '1000').then(Number) : Promise.resolve(1000),
-    getAppSetting('space_rag_budget', '500').then(Number),
-    prefetchUrlsFromMessage(lastUser?.content ?? '', hasAttachment, fetchMaxPages),
-  ])
-  const userQuery = lastUser?.content ?? ''
-  const hasFiles = (fileCountRow?.count ?? 0) > 0
-  const effectiveRag = (parsedSettings.useSpaceRag !== false) ? ragBudget : 0
-  const { block: scopedBlock, fileSources } = spaceId
-    ? await buildMemoryBlock(spaceId, memoryBudget, effectiveRag, userQuery, includeFileIds, includeMemoryIds)
-    : (hasFiles && parsedSettings.useChatRag !== false)
-      ? await buildChatFileBlock(userId, userQuery, ragBudget)
-      : { block: '', fileSources: [] }
-  // User memory applies to every chat, including those with no space at all.
-  const memoryBlock = joinMemoryBlocks(
-    await userMemoryBlockIfEnabled(userId, parsedSettings, userQuery),
-    scopedBlock,
-  )
-  const showThinkingSettings = (parsedSettings.showThinking ?? { balanced: false, thorough: false }) as { balanced: boolean; thorough: boolean }
-  const showThinking = focusMode === 'balanced' ? showThinkingSettings.balanced
-                     : focusMode === 'thorough'  ? showThinkingSettings.thorough
-                     : false
-  const useThinking: boolean = !!(parsedSettings.useThinking) && focusMode === 'thorough'
-
-  const ctxTokenLimit = parseInt(process.env.CONTEXT_TOKEN_LIMIT ?? '8192')
-  const estSystemChars = 500 + (memoryBlock?.length ?? 0) + (customPrompt?.length ?? 0)
-  const estMsgsChars = msgs.reduce((s, m) => s + (typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content).length), 0)
-  const urlBudgetChars = Math.max(0, contextCharBudget(ctxTokenLimit) - estSystemChars - estMsgsChars)
-  const processedUrls = prefetchedUrls.length > 0
-    ? await processUrlsForContext(prefetchedUrls, urlBudgetChars, fetchSummarize)
-    : prefetchedUrls
-
   return streamRun(c, run, async (out) => {
+    // The stream opens before any of the preparation below. Reformulation, pre-search, memory
+    // building and URL prefetching together cost ~2s, and until this point the client held an
+    // open request with nothing on it — indistinguishable from a server that has stopped
+    // responding. Everything here is awaited inside the handler so the wait is narrated.
     await out.writeSSE({ data: JSON.stringify({ type: 'session', sessionId: sid }) })
+
+    const emitStatus = (text: string) =>
+      out.writeSSE({ data: JSON.stringify({ type: 'status', text }) })
+    await emitStatus('Understanding your question…')
+
+    const [fetchMaxPages, fetchSummarize, compressHistory] = await Promise.all([
+      getAppSetting('fetch_max_pages', '8').then(Number),
+      getAppSetting('fetch_summarize_overflow', 'false').then(v => v === 'true'),
+      getAppSetting('compress_history_overflow', 'false').then(v => v === 'true'),
+    ])
+
+    // Shared per-request allowance for paid keyed-API fallback searches (pre-search + researcher).
+    const apiBudget: SearchApiBudget = { remaining: parseInt(process.env.SEARCH_API_MAX_PER_REQUEST ?? '3', 10) }
+
+    // Fetch user settings + file count + reformulate/pre-search + memory + URL prefetch in parallel
+    const [fileCountRow, { initialQueries, initialResults, engineErrors }, memoryBudget, ragBudget, prefetchedUrls] = await Promise.all([
+      db.select({ count: sql<number>`count(*)` }).from(uploadedFiles).where(eq(uploadedFiles.userId, userId)).get(),
+      runReformulateAndPreSearch(msgsForReformulate, focusMode as 'balanced' | 'thorough', hasAttachment, searchCategory, apiBudget, abortSignal),
+      spaceId ? getAppSetting('memory_token_budget', '1000').then(Number) : Promise.resolve(1000),
+      getAppSetting('space_rag_budget', '500').then(Number),
+      prefetchUrlsFromMessage(lastUser?.content ?? '', hasAttachment, fetchMaxPages),
+    ])
+    const userQuery = lastUser?.content ?? ''
+    const hasFiles = (fileCountRow?.count ?? 0) > 0
+    const effectiveRag = (parsedSettings.useSpaceRag !== false) ? ragBudget : 0
+    const { block: scopedBlock, fileSources } = spaceId
+      ? await buildMemoryBlock(spaceId, memoryBudget, effectiveRag, userQuery, includeFileIds, includeMemoryIds)
+      : (hasFiles && parsedSettings.useChatRag !== false)
+        ? await buildChatFileBlock(userId, userQuery, ragBudget)
+        : { block: '', fileSources: [] }
+    // User memory applies to every chat, including those with no space at all.
+    const memoryBlock = joinMemoryBlocks(
+      await userMemoryBlockIfEnabled(userId, parsedSettings, userQuery),
+      scopedBlock,
+    )
+    const showThinkingSettings = (parsedSettings.showThinking ?? { balanced: false, thorough: false }) as { balanced: boolean; thorough: boolean }
+    const showThinking = focusMode === 'balanced' ? showThinkingSettings.balanced
+                       : focusMode === 'thorough'  ? showThinkingSettings.thorough
+                       : false
+    const useThinking: boolean = !!(parsedSettings.useThinking) && focusMode === 'thorough'
+
+    const ctxTokenLimit = parseInt(process.env.CONTEXT_TOKEN_LIMIT ?? '8192')
+    const estSystemChars = 500 + (memoryBlock?.length ?? 0) + (customPrompt?.length ?? 0)
+    const estMsgsChars = msgs.reduce((s, m) => s + (typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content).length), 0)
+    const urlBudgetChars = Math.max(0, contextCharBudget(ctxTokenLimit) - estSystemChars - estMsgsChars)
+    const processedUrls = prefetchedUrls.length > 0
+      ? await processUrlsForContext(prefetchedUrls, urlBudgetChars, fetchSummarize)
+      : prefetchedUrls
+
     let fullContent = ''
     const sources: unknown[] = []
 
     if (fileSources.length > 0) await out.writeSSE({ data: JSON.stringify({ type: 'file_sources', sources: fileSources }) })
-
-    const emitStatus = (text: string) =>
-      out.writeSSE({ data: JSON.stringify({ type: 'status', text }) })
 
     // Warn when a search came back empty *because* engines were blocked/suspended
     // (rate-limit, CAPTCHA, access denied) — distinct from a query that simply matched
@@ -598,21 +613,16 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         return true
       })
 
-      let finalSources = dedupedSources
-      if (rerankEnabled && dedupedSources.length > 0) {
-        const userQuery = msgs.findLast(m => m.role === 'user')?.content ?? ''
-        const t = performance.now()
-        const indices = await rerank(userQuery, dedupedSources.map(s => s.content), dedupedSources.length)
-        finalSources = indices.map(i => dedupedSources[i])
-        console.log(`  [reranker] ${dedupedSources.length} → ${finalSources.length} sources in ${Math.round(performance.now() - t)}ms`)
-      }
+      // Prunes as well as orders: previously this passed the full length as topN, so the
+      // configured rerank_top_n was bypassed and every source reached the writer.
+      const finalSources = await rerankSearchResults(userQueryOf(msgs), dedupedSources)
 
       sources.push(...finalSources.map(toStoredSource))
       await out.writeSSE({ data: JSON.stringify({ type: 'sources', sources: finalSources }) })
 
       // Phase 2: Writer pass
       await emitStatus('Writing answer…')
-      const writerResult = runWriter(finalSources, msgs, researcherNotes.slice(0, RESEARCHER_NOTES_CAP), abortSignal)
+      const writerResult = runWriter(finalSources, msgs, researcherNotes.slice(0, RESEARCHER_NOTES_CAP), abortSignal, { customPrompt, memoryBlock })
       const writerExtractor = new ThinkExtractor()
       for await (const part of writerResult.stream) {
         if (part.type === 'text-delta') {
@@ -694,22 +704,11 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         console.warn(`  [${focusMode}] no answer (finish=${drainFinishReason}, ${fullContent.length} chars) — running no-tool synthesis fallback`)
         fullContent = ''
         await emitStatus('Synthesising answer…')
-        const allResults = [...(initialResults ?? []), ...fullSources]
-        const resultsBlock = allResults.length > 0
-          ? '\n\nSearch results:\n' + allResults.map((r, i) => {
-              const idx = (r as SearchResult & { index?: number }).index ?? (i + 1)
-              return `[${idx}] ${r.title}\n${r.url}\n${r.content.slice(0, 500)}`
-            }).join('\n\n')
-          : ''
-        const fallback = streamText({
-          model: getChatModel(),
-          system: `Today's date is ${new Date().toISOString().split('T')[0]}. Synthesize the search results below into a direct answer with inline [N] citations using the index values shown.
-Do NOT say you lack internet access, and do NOT decline to answer: the results below are what the search returned, and reporting them partially is far more useful than refusing.
-If they only partially cover the question, answer with whatever they do support and close with one short line naming what was missing. Never reply with only a refusal.
-Search results are authoritative ground truth — if they describe a product or release you don't recognise, trust them; your training data has a cutoff.${resultsBlock}${memoryBlock ? '\n\n' + memoryBlock : ''}`,
+        const fallback = runSynthesisFallback({
+          results: [...(initialResults ?? []), ...fullSources],
           messages: msgs,
+          memoryBlock,
           abortSignal,
-          maxOutputTokens: RESEARCH_MAX_TOKENS,
         })
         // Same extraction as the main pass: this call carries no tool schemas either, so a model
         // that emits <think> or <tool_call> markup would otherwise stream it as the answer.
@@ -742,27 +741,47 @@ Search results are authoritative ground truth — if they describe a product or 
 
     // Never cache the failure notice — it would be replayed as the answer for every repeat of
     // this question until the entry expires.
-    if (!emptyAnswer && fullContent.length >= 50) setCached(ck, fullContent)
-    if (!ephemeral) {
-      const { title: sessionTitle } = await persistMessage(sid, userId, msgs, fullContent, sources, spaceId, regenerate)
-      await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title: sessionTitle, elapsedMs: Date.now() - t0 }) })
-      if (spaceId) {
-        extractMemoriesPostHoc(spaceId, sid, lastUser?.content ?? '', fullContent).catch(e => console.error('[memory]', e))
-        const newContents = [lastUser?.content, fullContent].filter(Boolean) as string[]
-        indexContents(sid, newContents).catch(e => console.error('[chat-index]', e))
-      }
-    } else {
-      await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, elapsedMs: Date.now() - t0 }) })
-    }
+    if (!emptyAnswer && fullContent.length >= 50) setCached(ck, { content: fullContent, sources })
+    await finishTurn(out, { sid, userId, msgs, fullContent, sources, spaceId, regenerate, ephemeral, t0 })
   })
 })
 
-type SSEStream = {
-  writeSSE: (opts: { data: string }) => Promise<void>
-  /** Keepalive tick. Deliberately not recorded for resume: a ping carries nothing to replay,
-   *  and the client counts recorded events to know where to resume from, so buffering pings
-   *  would drift that cursor against the connection-local pings the resume route sends. */
-  ping: () => Promise<void>
+/** What a cached answer has to carry. Content alone is not enough: the client resolves `[N]`
+ *  positionally against the sources it was sent, so replaying text without them renders every
+ *  citation dead. */
+interface CachedAnswer {
+  content: string
+  sources: unknown[]
+}
+
+/** Common tail for every mode: persist the exchange, close the stream, and kick off the
+ *  background memory/index work. Centralised because four branches ran their own copy and the
+ *  cached-answer path quietly omitted all of it — losing the turn from the conversation. */
+async function finishTurn(out: SSEStream, {
+  sid, userId, msgs, fullContent, sources, spaceId, regenerate, ephemeral, t0,
+}: {
+  sid: string
+  userId: string
+  msgs: Array<{ role: 'user' | 'assistant'; content: string }>
+  fullContent: string
+  sources: unknown[]
+  spaceId?: string
+  regenerate?: boolean
+  ephemeral?: boolean
+  t0: number
+}): Promise<void> {
+  const elapsedMs = Date.now() - t0
+  if (ephemeral) {
+    await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, elapsedMs }) })
+    return
+  }
+  const { title } = await persistMessage(sid, userId, msgs, fullContent, sources, spaceId, regenerate)
+  await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title, elapsedMs }) })
+  if (spaceId) {
+    const lastUserContent = userQueryOf(msgs)
+    extractMemoriesPostHoc(spaceId, sid, lastUserContent, fullContent).catch(e => console.error('[memory]', e))
+    indexContents(sid, [lastUserContent, fullContent].filter(Boolean)).catch(e => console.error('[chat-index]', e))
+  }
 }
 
 /** Wraps the live SSE stream so every payload is also recorded for resume, and so a dead
@@ -800,100 +819,6 @@ export function recordingStream(stream: SSEStreamingApi, run: LiveRun): SSEStrea
   }
 }
 
-/** The SDK's own stream-part union, rather than a hand-written structural type. This is what
- *  made the v4 -> v7 upgrade tractable: the SDK renamed `textDelta` to `text` and tool
- *  `args`/`result` to `input`/`output`, and a structural cast would have kept compiling while
- *  silently yielding `undefined` — empty answers with a green typecheck. Keep it typed so the
- *  compiler finds the next one. See chat-stream.test.ts for the runtime counterpart. */
-export type ResearcherStreamPart<TOOLS extends ToolSet = ToolSet> = TextStreamPart<TOOLS>
-
-/** Tool-call input arrives typed as `unknown` under a generic ToolSet, so narrow once here
- *  rather than casting at each use. (`args` in ai@4; `input` from v5 on.) */
-function toolArgs(part: { input: unknown }): { queries?: string[]; query?: string } {
-  return (part.input ?? {}) as { queries?: string[]; query?: string }
-}
-
-/** Drains a researcher fullStream, routing parts to the appropriate outputs.
- *  onText receives extracted text content (researcher notes or answer text).
- *  onSources receives web_search tool results.
- *  Set emitTextAsThinking=true (thorough researcher) to mirror text into the thinking channel. */
-export async function drainResearcherStream<TOOLS extends ToolSet>(
-  researcherResult: { stream: AsyncIterable<ResearcherStreamPart<TOOLS>> },
-  {
-    stream, showThinking, emitSearchStatus, extractor, onText, onSources, emitTextAsThinking = false,
-  }: {
-    stream: SSEStream
-    showThinking: boolean
-    emitSearchStatus: (args: { queries?: string[]; query?: string }) => void | Promise<void>
-    extractor: ThinkExtractor | null
-    onText: (text: string) => void | Promise<void>
-    onSources: (results: SearchResult[]) => void | Promise<void>
-    emitTextAsThinking?: boolean
-  },
-): Promise<string> {
-  const emitThinking = (delta: string) =>
-    stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta }) })
-
-  let textDeltaCount = 0, reasoningCount = 0, finishReason = 'unknown'
-  for await (const part of researcherResult.stream) {
-    if (part.type === 'finish' || part.type === 'finish-step') {
-      if (part.finishReason) finishReason = part.finishReason
-    } else if (part.type === 'tool-call' && part.toolName === 'web_search') {
-      const args = toolArgs(part)
-      await emitSearchStatus(args)
-      if (showThinking) {
-        const queries: string[] = args.queries ?? (args.query ? [args.query] : [])
-        await emitThinking(`🔍 Searching: ${queries.map((q: string) => `"${q}"`).join(', ')}\n`)
-      }
-    } else if (part.type === 'tool-call' && part.toolName === 'uploads_search') {
-      console.log(`  [uploads_search] query: ${JSON.stringify(toolArgs(part).query ?? '')}`)
-    } else if (part.type === 'tool-result' && part.toolName === 'uploads_search') {
-      const results = part.output as Array<{ filename?: string; content?: string }> | undefined
-      console.log(`  [uploads_search] returned ${results?.length ?? 0} chunks`)
-    } else if (part.type === 'tool-call' && part.toolName === 'save_to_memory') {
-      await stream.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Saving to memory…' }) })
-    } else if (part.type === 'tool-result' && part.toolName === 'web_search') {
-      // result may be a non-array "search unavailable" message when search is exhausted.
-      const results = (Array.isArray(part.output) ? part.output : []) as SearchResult[]
-      await onSources(results)
-      if (showThinking) {
-        const snippets = results.slice(0, 3)
-          .map(r => `  • ${r.title}\n    ${r.url}\n    ${r.content.slice(0, 120)}…`)
-          .join('\n')
-        await emitThinking(snippets + '\n\n')
-      }
-    } else if (part.type === 'reasoning-delta') {
-      reasoningCount++
-      if (showThinking) await emitThinking(part.text)
-    } else if (part.type === 'text-delta') {
-      textDeltaCount++
-      if (extractor) {
-        const { text, thinking } = extractor.process(part.text)
-        if (thinking && showThinking) await emitThinking(thinking)
-        if (text) {
-          if (emitTextAsThinking && showThinking) await emitThinking(text)
-          await onText(text)
-        }
-      } else {
-        if (emitTextAsThinking && showThinking) await emitThinking(part.text)
-        await onText(part.text)
-      }
-    } else if (part.type === 'error') {
-      console.error('  [researcher] stream error:', part.error)
-    }
-  }
-  if (extractor) {
-    const { text, thinking } = extractor.flush()
-    if (thinking && showThinking) await emitThinking(thinking)
-    if (text) {
-      if (emitTextAsThinking && showThinking) await emitThinking(text)
-      await onText(text)
-    }
-  }
-  console.log(`  [drain] textDelta=${textDeltaCount} reasoning=${reasoningCount} finishReason=${finishReason}`)
-  return finishReason
-}
-
 function extractUrls(text: string): string[] {
   return [...text.matchAll(/https?:\/\/[^\s<>"')\]]+/g)]
     .map(m => m[0].replace(/[.,;!?]+$/, ''))
@@ -921,6 +846,7 @@ async function runReformulateAndPreSearch(
   hasAttachment: boolean,
   categories?: string,
   apiBudget?: SearchApiBudget,
+  abortSignal?: AbortSignal,
 ): Promise<{ initialQueries?: string[]; initialResults?: SearchResult[]; engineErrors?: EngineError[] }> {
   // Dedup engine errors by name across the (possibly multiple) pre-search queries.
   const errByEngine = new Map<string, EngineError>()
@@ -942,12 +868,13 @@ async function runReformulateAndPreSearch(
     }
 
     const countEach = focusMode === 'thorough' ? 10 : 6
-    const queries = await reformulateLLM(msgsForReformulate, focusMode)
+    // reformulateLLM caps the list for the mode (and may add the raw query as a safety net), so
+    // it is used as returned — slicing here again would drop that safety net.
+    const queries = await reformulateLLM(msgsForReformulate, focusMode, abortSignal)
     if (queries.length === 0) return {}
 
-    const maxQueries = focusMode === 'thorough' ? 3 : 2
-    const initialResults = await webSearchMulti(queries.slice(0, maxQueries), countEach, categories, collect, apiBudget)
-    return { initialQueries: queries, initialResults, engineErrors: engineErrors() }
+    const found = await webSearchMulti(queries, countEach, categories, collect, apiBudget)
+    return { initialQueries: queries, initialResults: await rerankSearchResults(userQueryOf(msgsForReformulate), found), engineErrors: engineErrors() }
   } catch (e) {
     console.error('[reformulate] error:', e)
     return {}

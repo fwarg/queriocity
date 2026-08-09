@@ -1,4 +1,4 @@
-import { streamText, tool, type ToolSet, stepCountIs } from 'ai'
+import { streamText, tool, type ToolSet, stepCountIs, hasToolCall } from 'ai'
 import { z } from 'zod'
 import type { LanguageModel, ModelMessage } from 'ai'
 import { webSearchMulti, type SearchResult, type EngineError, type SearchApiBudget } from './searxng.ts'
@@ -7,6 +7,7 @@ import { searchUploads } from './files/uploads-search.ts'
 import { saveMemories, saveUserMemory, searchSpaceHistory } from './memory.ts'
 import { fetchUrl, processUrlsForContext, MIN_URL_CONTEXT_CHARS } from './fetch-url.ts'
 import { trimMessages, compressMessages, contextCharBudget, CONTEXT_RESERVE_FRACTION } from './trim-messages.ts'
+import { queryTerms, querySimilarity, QUERY_DUPLICATE_THRESHOLD } from './query-terms.ts'
 import { RESEARCH_MAX_TOKENS } from './llm.ts'
 
 
@@ -71,6 +72,12 @@ const SEARCH_DEAD_MSG = {
   error: 'Web search is unavailable right now (search engines are blocked and the fallback search quota for this request is used up). Do NOT call web_search again — write your answer using the results already gathered.',
 }
 
+// Returned when every query in a web_search call repeats one already run. Names the constraint
+// rather than returning an empty array, which the model reads as "nothing exists on this topic".
+const DUPLICATE_QUERY_MSG = {
+  error: 'Every query in this call repeats a search already performed this turn, so it was not run. The results you already have are all these queries would return. Either search a genuinely different angle — a different entity, time period, or sub-question — or write your answer now.',
+}
+
 // Returned from fetch_url/web_search once the shared per-turn context budget is used up,
 // so the model stops requesting more content and answers with what it already has.
 const CONTEXT_BUDGET_DEAD_MSG = {
@@ -114,6 +121,9 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
   let nextIndex = 1
   let searchDead = false   // set once web search is confirmed unavailable for this request
   let completedSteps = 0
+  // Term sets of every query already run this turn, pre-search included — the model is told the
+  // initial search happened but still re-runs variants of it. See QUERY_DUPLICATE_THRESHOLD.
+  const executedQueries: Array<Set<string>> = (initialQueries ?? []).map(queryTerms)
 
   // A tool result arriving on the final generation can never be used — the model has no step
   // left to write prose, so the turn ends on finishReason=tool-calls with an empty answer.
@@ -201,8 +211,24 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
     execute: async ({ queries }) => {
       if (searchDead) return SEARCH_DEAD_MSG
       if (toolBudgetRemaining <= MIN_URL_CONTEXT_CHARS) return CONTEXT_BUDGET_DEAD_MSG
+      const requested = queries.slice(0, focusMode === 'thorough' ? 3 : 2)
+      // Drop queries that merely rephrase one already run — including within this same call,
+      // where the model sometimes asks for two near-identical angles at once.
+      const fresh: string[] = []
+      const skipped: string[] = []
+      for (const q of requested) {
+        const terms = queryTerms(q)
+        if (executedQueries.some(prev => querySimilarity(terms, prev) >= QUERY_DUPLICATE_THRESHOLD)) {
+          skipped.push(q)
+          continue
+        }
+        executedQueries.push(terms)
+        fresh.push(q)
+      }
+      if (skipped.length) console.log(`  [researcher] skipped ${skipped.length} duplicate quer${skipped.length === 1 ? 'y' : 'ies'}: ${skipped.map(q => JSON.stringify(q)).join(', ')}`)
+      if (!fresh.length) return DUPLICATE_QUERY_MSG
       const errs: EngineError[] = []
-      const results = await webSearchMulti(queries.slice(0, focusMode === 'thorough' ? 3 : 2), count, searchCategory, e => errs.push(...e), apiBudget)
+      const results = await webSearchMulti(fresh, count, searchCategory, e => errs.push(...e), apiBudget)
       // Surface only when blocked engines left this search empty (matches pre-search semantics).
       if (results.length === 0 && errs.length) {
         await onEngineErrors?.(errs)
@@ -320,7 +346,10 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
     abortSignal,
     system,
     messages: augmentedMessages,
-    stopWhen: stepCountIs(maxSteps),
+    // `done` is thorough's "research finished" signal. Without it as a stop condition the tool
+    // returns {done:true} and the loop keeps going to the step cap, so every run that finished
+    // early still paid for the remaining steps. Harmless in balanced, which registers no `done`.
+    stopWhen: [stepCountIs(maxSteps), hasToolCall('done')],
     maxOutputTokens: RESEARCH_MAX_TOKENS,
     tools,
     // Withhold the tools on the final step so it can only produce prose. `activeTools: []`

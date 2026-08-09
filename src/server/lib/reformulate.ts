@@ -1,5 +1,6 @@
 import { generateText } from 'ai'
 import { getSmallModel } from './llm.ts'
+import { queryTerms, querySimilarity, hasMangledToken, QUERY_DUPLICATE_THRESHOLD } from './query-terms.ts'
 
 const PRONOUN_RE = /\b(it|its|they|their|them|this|that|these|those|he|him|his|she|her|hers|we|us|our|ours)\b/i
 
@@ -30,6 +31,11 @@ export function reformulateSpeed(messages: Array<{ role: string; content: string
   return q
 }
 
+// Reformulation sits on the critical path of every balanced/thorough query, before a single byte
+// reaches the client, so it must never be the thing that hangs a request. The caller degrades to
+// no pre-search on failure, which is far better than an unbounded wait.
+const REFORMULATE_TIMEOUT_MS = parseInt(process.env.REFORMULATE_TIMEOUT_MS ?? '8000', 10)
+
 const NOW = new Date()
 const TODAY = NOW.toISOString().split('T')[0]
 const YEAR = NOW.getFullYear()
@@ -38,15 +44,20 @@ const REFORMULATE_SYSTEM = `You are a search query optimizer. Rewrite the user q
 
 Rules:
 1. Strip conversational filler. Output short keywords, not sentences — a search engine, not a human, reads this.
-2. For products, technologies, companies, software, or other topics primarily covered in English sources, write the query in English regardless of the user's language.
-3. Append the year ${YEAR} ONLY when the answer depends on what is newest or current right now: latest versions/releases, prices, rankings, schedules, ongoing events, news, or questions that say "latest/current/newest/now". Do NOT add a year to definitions, explanations, how-to, or conceptual questions ("what is X", "how does Y work") — even for cutting-edge or AI topics. When unsure, do not add a year.
-4. Output ONLY the search string. No explanations, no quotes, no preamble.
+2. KEEP any wording that pins down WHICH thing the user means: an apposition ("DOGE, the department run by Elon Musk"), a field, a company, a location, a time period. This overrides rule 1 — dropping it sends the search to a different subject entirely, which is worse than a slightly longer query. Never resolve an ambiguous name to one sense on your own; carry the user's qualifier through.
+3. Never split or respell a name the user wrote. Copy it exactly as it appears.
+4. For products, technologies, companies, software, or other topics primarily covered in English sources, write the query in English regardless of the user's language.
+5. Append the year ${YEAR} ONLY when the answer depends on what is newest or current right now: latest versions/releases, prices, rankings, schedules, ongoing events, news, or questions that say "latest/current/newest/now". Do NOT add a year to definitions, explanations, how-to, or conceptual questions ("what is X", "how does Y work") — even for cutting-edge or AI topics. When unsure, do not add a year.
+6. Output ONLY the search string. No explanations, no quotes, no preamble.
 
 Examples:
 - "vad är hidden state engineering" → hidden state engineering        (concept — no year)
 - "how does RAG work" → retrieval augmented generation how it works   (concept — no year)
 - "senaste iPhone" → latest iPhone ${YEAR}                            (newest — add year)
-- "best LLM for coding right now" → best LLM coding ${YEAR}           (current ranking — add year)`
+- "best LLM for coding right now" → best LLM coding ${YEAR}           (current ranking — add year)
+- "What happened to DOGE, the department run by Elon Musk?"
+  → DOGE Department of Government Efficiency status ${YEAR}           (keep the qualifier — "DOGE" alone finds the cryptocurrency)
+- "Hur gick det för Vasaloppet i år?" → Vasaloppet results ${YEAR}    (English for an international topic, name kept verbatim)`
 
 /** Returns true if the string looks like a natural language sentence rather than a search query. */
 function looksLikeSentence(s: string): boolean {
@@ -54,10 +65,16 @@ function looksLikeSentence(s: string): boolean {
     || s.endsWith('.')
 }
 
-/** Balanced/thorough mode: small LLM rewrites query as optimized search queries. */
+// A raw user question longer than this makes a poor search query — which is the whole reason
+// reformulation exists — so the raw-query safety net below only applies to short ones.
+const RAW_QUERY_MAX_WORDS = 12
+
+/** Balanced/thorough mode: small LLM rewrites query as optimized search queries.
+ *  Owns the query cap for the mode; callers should not slice the result further. */
 export async function reformulateLLM(
   messages: Array<{ role: string; content: string }>,
   mode: 'balanced' | 'thorough',
+  abortSignal?: AbortSignal,
 ): Promise<string[]> {
   const lastUser = [...messages].reverse().find(m => m.role === 'user')
   if (!lastUser) return []
@@ -86,11 +103,13 @@ export async function reformulateLLM(
   console.log(`  [reformulate] ${SMALL_TARGET} mode=${mode} count=${count}`)
   const start = performance.now()
 
+  const timeout = AbortSignal.timeout(REFORMULATE_TIMEOUT_MS)
   const { text } = await generateText({
     model: getSmallModel(),
     system: REFORMULATE_SYSTEM,
     prompt: userPrompt,
     maxOutputTokens: 120,
+    abortSignal: abortSignal ? AbortSignal.any([abortSignal, timeout]) : timeout,
   })
 
   console.log(`  [reformulate] done — ${(performance.now() - start).toFixed(0)}ms → ${JSON.stringify(text.trim())}`)
@@ -102,7 +121,31 @@ export async function reformulateLLM(
 
   // Dedup (normalized): the small model sometimes repeats a line, wasting a search.
   const seen = new Set<string>()
-  return lines
+  const deduped = lines
     .filter(l => { const k = l.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true })
     .slice(0, count)
+
+  // Drop a query that splits a name the user wrote ("DOGE" → "do ge"), which searches as two
+  // meaningless tokens. Compared against the whole context, not just the latest message: on a
+  // follow-up the mangled name usually comes from the previous turn.
+  const usable = deduped.filter(q => {
+    if (!hasMangledToken(q, contextPart)) return true
+    console.warn(`  [reformulate] discarded mangled query ${JSON.stringify(q)}`)
+    return false
+  })
+
+  // Safety net for the failure this cannot detect any other way: the model silently resolving an
+  // ambiguous name to the wrong sense ("DOGE, the department run by Elon Musk" → "DOGE stock
+  // price"). Searching the user's own short question alongside the rewrites costs one parallel
+  // query and reliably surfaces the intended subject. Skipped when a rewrite already covers it.
+  const raw = lastUser.content.trim()
+  const rawTerms = queryTerms(raw)
+  const rawIsUsable = raw.split(/\s+/).length <= RAW_QUERY_MAX_WORDS && rawTerms.size > 0
+  const alreadyCovered = usable.some(q => querySimilarity(queryTerms(q), rawTerms) >= QUERY_DUPLICATE_THRESHOLD)
+  if (rawIsUsable && !alreadyCovered) {
+    console.log(`  [reformulate] adding raw query as safety net: ${JSON.stringify(raw)}`)
+    usable.push(raw)
+  }
+
+  return usable
 }

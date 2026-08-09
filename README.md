@@ -91,6 +91,15 @@ rather than appending a second one. To retry *differently*, change the research 
 search categories) first and then hit Retry — the retry uses whatever is selected at that
 moment. Retries always bypass the short-lived answer cache, so you get a genuinely new run.
 
+### Answer cache
+
+Identical questions are cached for 5 minutes and replayed instantly. The cache key covers the
+question, the research mode, your user and space, any pinned files or memories, your custom
+prompt, **and the preceding conversation** — so the same follow-up wording ("Is it officially
+shut down?") in two different chats does not collide. A replayed answer is a full turn: it is
+saved to the conversation and carries its sources, so citations remain clickable. Failed
+generations are never cached.
+
 ### Follow-up suggestions
 
 After a substantial answer, up to three suggested follow-up questions appear as chips below
@@ -143,17 +152,31 @@ and web freshness is not needed. Attachments are disabled in this mode. Query le
 capped at 200 characters.
 
 The model used in flash mode can be overridden via `FLASH_MODEL=small` to use the 
-small/reformulation model instead of the main chat model.
+small/reformulation model instead of the main chat model. Leaving it unset is a perfectly good
+setup: flash is fast because it skips search, reformulation, tool calls and multi-step rounds —
+that is where the time goes — not because of which model answers.
 
 ### Balanced *(default)*
 
-A small model first rewrites the user's question into an optimized search query, which is
+A small model first rewrites the user's question into optimized search queries, which are
 executed before the main model starts. For example, "what's the latest on the mars mission?"
 might become `NASA Mars mission 2026 latest news`. The main model then
 receives pre-fetched results and may issue further searches (up to 2 queries at a
 time) before answering. Answers include inline citations `[1][2]` and are always in the same
 language as the user's question. Hovering a `[N]` marker shows the source's title, domain and
 a short snippet; clicking it highlights that source in the list below the answer.
+
+The rewrite is instructed to keep any wording that pins down *which* thing you mean — an
+apposition ("DOGE, the department run by Elon Musk"), a field, a company, a time period — even
+though it otherwise strips the question down to keywords. Dropping such a qualifier sends the
+search to a different subject entirely. As a backstop, your original question is searched
+alongside the rewrites whenever it is short enough (≤12 words) to make a usable query and no
+rewrite already covers it, and a rewrite that mangles a name you wrote (splitting "DOGE" into
+"do ge") is discarded.
+
+Within a turn, a follow-up search that merely rephrases one already run is skipped and the model
+is told to try a different angle instead — with only two tool rounds, a repeated query costs a
+quarter of the mode's entire search budget.
 
 The final step is reserved for writing: on it the search and fetch tools are withheld
 entirely, so the model can only produce prose. Without this a model facing weak search results
@@ -162,23 +185,30 @@ fallback pass. Thorough mode is exempt, since its writer phase always runs.
 
 Query reformulation can be disabled in **Admin > System settings > Search** for setups where small-model latency is a concern — the raw user query is then sent directly to search.
 
-- 1 LLM-reformulated pre-fetched query (or raw query when reformulation is disabled)
+- 2 LLM-reformulated pre-fetched queries, plus your raw question when it qualifies as a backstop (or the raw query alone when reformulation is disabled)
 - Up to 3 LLM steps, of which the first 2 may call tools (the last writes the answer); up to 2 parallel search queries per step
 - 8 results per web-search query
+- If `RERANK_MODEL` is configured, pre-fetched results are reranked by relevance and pruned to **Top N** before the model sees them
 
 ### Thorough
 
 A two-phase pipeline. Phase 1 is a dedicated **researcher** run: the model explores the
 topic from multiple angles, calling `web_search` (up to 3 queries per call) up to 5 times
-in total, finishing by calling a `done` tool. Phase 2 is a separate **writer** pass
-that receives all deduplicated sources and synthesises a final, well-structured answer.
-Slower, but significantly more comprehensive. Responses are always in the same language as
-the user's question.
+in total, finishing by calling a `done` tool — which ends the research phase immediately,
+so a run that gathers what it needs early doesn't pay for the remaining steps. Phase 2 is a
+separate **writer** pass that receives all deduplicated sources and synthesises a final,
+well-structured answer. Slower, but significantly more comprehensive. Responses are always in
+the same language as the user's question.
 
-- Up to 3 pre-fetched queries (10 results each)
-- Up to 5 LLM steps in the researcher; up to 3 search queries per step
+Your custom prompt (**Settings → Personalization**) and any injected memories apply to the
+writer pass as well as the researcher, so an instruction like "always answer in Swedish" or
+"be concise" governs the answer you actually see.
+
+- Up to 3 pre-fetched queries (10 results each), plus your raw question as a backstop on the same terms as balanced
+- Up to 5 LLM steps in the researcher; up to 3 search queries per step, with repeats of an earlier query skipped
 - Separate writer model pass for the final answer
-- If `RERANK_MODEL` is configured, accumulated sources are reranked by relevance before the writer pass, improving synthesis quality
+- If `RERANK_MODEL` is configured, accumulated sources are reranked by relevance and pruned to **Top N** before the writer pass, improving synthesis quality
+- The sources handed to the writer are fitted to the context budget (`CONTEXT_TOKEN_LIMIT`): each is trimmed to an equal share, and the lowest-ranked are dropped rather than clipping every source below the length that can support a citation
 
 ### Search category filtering
 
@@ -323,7 +353,7 @@ When `IMAGE_BASE_URL` is configured, Queriocity gains a dedicated **Image** mode
 - **`generate_image`** — creates a new image from a text description
 - **`edit_image`** — modifies a previously generated image based on a new description
 
-The model decides whether to search first based on topic familiarity. If it does, a one-sentence summary of what was learned appears above the image.
+The model decides whether to search first based on topic familiarity. If it does, a one-sentence summary of what was learned appears above the image. Tool orchestration always runs on `CHAT_MODEL` — `FLASH_MODEL=small` does not apply here, because choosing sizes, step counts and edit strengths reliably needs the larger model. Blocked search engines are reported the same way as in the other modes, and image-mode searches draw on the same `SEARCH_API_MAX_PER_REQUEST` fallback budget.
 
 ### Usage
 
@@ -601,6 +631,16 @@ SEARXNG_URL=http://localhost:4000  # url to your searxng instance
 # SEARCH_TIMEOUT_MS=20000                     # per-query timeout; on timeout the search yields no results
 #                                              # instead of hanging the whole chat request
 
+# Query reformulation runs on the critical path of every balanced/thorough request, before any
+# output reaches the browser, so it is bounded like every other network call here. On timeout
+# the request proceeds without pre-search rather than hanging.
+# REFORMULATE_TIMEOUT_MS=8000
+
+# How similar two search queries must be (Jaccard overlap of content words, 0–1) before the
+# second is treated as a repeat and skipped. Raise towards 1.0 to suppress less; lower it if the
+# model still wastes its limited tool rounds re-asking the same thing in different words.
+# QUERY_DUPLICATE_THRESHOLD=0.8
+
 # ── URL fetching ──────────────────────────────────────────────────────────────
 # Pasted URLs are prefetched before the model runs; the model can also fetch URLs
 # itself via the fetch_url tool. Both paths share the limits below — see the "URL
@@ -695,8 +735,11 @@ REFORMULATE_ASSISTANT_CTX=1000            # max chars of prior assistant turns
 # ⚠ Default is 4096 — set this to your actual small model's context, not the main model's.
 # SMALL_MODEL_CONTEXT_TOKENS=4096
 
-# Max output tokens for flash mode responses. Default 200 (intentionally terse).
-# FLASH_MAX_TOKENS=200
+# Max output tokens for flash mode responses. Default 400 (intentionally terse, but with
+# headroom for the "at most 5 sentences" the flash prompt asks for — plus the reasoning
+# tokens a thinking-capable model spends before it writes. At 200 dense answers were cut
+# off mid-sentence).
+# FLASH_MAX_TOKENS=400
 
 # Max output tokens for balanced/thorough research, the writer, and synthesis
 # fallbacks. Backstop against runaway generation (especially thinking-model
@@ -1126,7 +1169,7 @@ The **Admin panel > System settings** tab exposes runtime-configurable parameter
 | Memory | Dream target | 700 | Token target after compaction |
 | Memory | Dream deep | Off | Re-extract memories from source conversations using the thinking model during the dream pass |
 | Memory | Extraction context | 6000 | Max characters of conversation fed to the small model when extracting memories |
-| Reranking | Top N | 15 | Results kept after reranking (requires `RERANK_MODEL`) |
+| Reranking | Top N | 15 | Results kept after reranking (requires `RERANK_MODEL`). Applies to pre-search results in balanced and thorough, and to the accumulated sources handed to the thorough writer — lower it to shrink prompts, raise it to give the model more to work with |
 | Search | Query reformulation | On | Use a small LLM to rewrite queries before searching. Improves relevance at the cost of a small model call. Disable on slow hardware. |
 | Search | RSS feed character budget | 50000 | Total characters of news content fetched per monitor run when RSS sources are selected. Items per feed and content length per item scale automatically to fill this budget. Increase for large-context models; decrease for small ones (8K context ≈ 20 000 chars). |
 | Search | Max pages per URL | 8 | How many paginated pages to fetch when a user provides a URL (`?page=2`, `?page=3`…). 0 = unlimited. |

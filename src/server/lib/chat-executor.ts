@@ -1,4 +1,4 @@
-import { streamText, type TextStreamPart, type ToolSet } from 'ai'
+import { streamText, type ToolSet } from 'ai'
 import { runResearcher } from './researcher.ts'
 import { runWriter } from './writer.ts'
 import { reformulateLLM } from './reformulate.ts'
@@ -10,12 +10,9 @@ import { getFlashModel, getChatModel } from './llm.ts'
 import { buildMemoryBlock, extractMemoriesPostHoc, userMemoryBlockIfEnabled, joinMemoryBlocks } from './memory.ts'
 import { ThinkExtractor } from './think-extractor.ts'
 import { indexContents } from './chat-indexer.ts'
-
-const FLASH_SYSTEM = `Answer in at most 5 sentences using only your training knowledge. Be direct and factual.
-Do not search the web. If you cannot answer confidently, say so briefly.
-Always respond in the same language the user used.`
-
-const RESEARCHER_NOTES_CAP = 12000
+import { drainResearcherStream, nullStream, type ResearcherStreamPart } from './researcher-stream.ts'
+import { rerankSearchResults } from './reranker.ts'
+import { FLASH_SYSTEM, RESEARCHER_NOTES_CAP, EMPTY_ANSWER_MESSAGE, runSynthesisFallback } from './answer.ts'
 
 /** Run a single-message chat non-interactively and save the session to DB. */
 export async function executeChatAndSave({
@@ -62,9 +59,13 @@ export async function executeChatAndSave({
       + (customPrompt ? `\n\nAdditional instructions:\n${customPrompt}` : '')
       + (memBlock ? '\n\n' + memBlock : '')
     const result = streamText({ model: getFlashModel(), system, messages: msgs, maxOutputTokens: 200 })
+    // getFlashModel() is the full chat model unless FLASH_MODEL=small, so the same <think> markup
+    // the other paths strip can appear here too.
+    const flashExtractor = new ThinkExtractor()
     for await (const part of result.stream) {
-      if (part.type === 'text-delta') fullContent += part.text
+      if (part.type === 'text-delta') fullContent += flashExtractor.process(part.text).text
     }
+    fullContent += flashExtractor.flush().text
   } else {
     // Shared per-run allowance for paid keyed-API fallback searches (pre-search + researcher).
     const apiBudget: SearchApiBudget = { remaining: parseInt(process.env.SEARCH_API_MAX_PER_REQUEST ?? '3', 10) }
@@ -100,7 +101,7 @@ export async function executeChatAndSave({
       const { sources: rs } = await collectStream(researcherResult, s => { researcherNotes += s })
       sources.push(...rs)
 
-      const writerResult = runWriter(rs, msgs, researcherNotes.slice(0, RESEARCHER_NOTES_CAP), AbortSignal.timeout(300_000))
+      const writerResult = runWriter(rs, msgs, researcherNotes.slice(0, RESEARCHER_NOTES_CAP), AbortSignal.timeout(300_000), { customPrompt, memoryBlock })
       const writerExtractor = new ThinkExtractor()
       for await (const part of writerResult.stream) {
         if (part.type === 'text-delta') {
@@ -121,26 +122,32 @@ export async function executeChatAndSave({
       fullContent = text
       sources.push(...rs)
 
-      // Fallback: researcher exhausted all steps on tool calls (any accumulated text is preamble, not an answer)
-      if (finishReason === 'tool-calls') {
-        console.warn('  [monitor-executor] maxSteps exhausted without answer — running no-tool synthesis fallback')
-        const resultsBlock = rs.length > 0
-          ? '\n\nSearch results:\n' + rs.map((r, i) => {
-              const idx = (r as SearchResult & { index?: number }).index ?? (i + 1)
-              return `[${idx}] ${r.title}\n${r.url}\n${r.content.slice(0, 500)}`
-            }).join('\n\n')
-          : ''
-        const fallback = streamText({
-          model: getChatModel(),
-          system: `Today's date is ${new Date().toISOString().split('T')[0]}. Synthesize the search results below into a direct answer with inline [N] citations using the index values shown. Do NOT say you lack internet access.${resultsBlock}${memoryBlock ? '\n\n' + memoryBlock : ''}`,
+      // Same two failure shapes the route handles: the researcher spent its steps on tool calls
+      // (any accumulated text is preamble, not an answer), or it produced only markup that the
+      // extractor dropped. Either way there is nothing to save without this pass.
+      if (finishReason === 'tool-calls' || !fullContent.trim()) {
+        console.warn(`  [monitor-executor] no answer (finish=${finishReason}, ${fullContent.length} chars) — running no-tool synthesis fallback`)
+        fullContent = ''
+        const fallback = runSynthesisFallback({
+          results: rs,
           messages: msgs,
+          memoryBlock,
           abortSignal: AbortSignal.timeout(120_000),
         })
+        const fallbackExtractor = new ThinkExtractor()
         for await (const part of fallback.stream) {
-          if (part.type === 'text-delta' && part.text) fullContent += part.text
+          if (part.type === 'text-delta' && part.text) fullContent += fallbackExtractor.process(part.text).text
         }
+        fullContent += fallbackExtractor.flush().text
       }
     }
+  }
+
+  // Nothing survived. Save the failure rather than an empty assistant message, which reads in the
+  // monitor UI as a run that succeeded and found nothing to say.
+  if (!fullContent.trim()) {
+    console.error('  [monitor-executor] empty answer after fallback — saving failure notice')
+    fullContent = EMPTY_ANSWER_MESSAGE
   }
 
   const savedAt = new Date()
@@ -171,42 +178,34 @@ async function reformulateAndSearch(
     }
     const msgs = [{ role: 'user' as const, content: query }]
     const countEach = focusMode === 'thorough' ? 10 : 6
+    // reformulateLLM caps the list for the mode (and may add the raw query as a safety net), so
+    // it is used as returned — slicing here again would drop that safety net.
     const queries = await reformulateLLM(msgs, focusMode)
     if (queries.length === 0) return {}
-    const maxQueries = focusMode === 'thorough' ? 3 : 2
-    const results = await webSearchMulti(queries.slice(0, maxQueries), countEach, categories, undefined, apiBudget)
-    return { initialQueries: queries, initialResults: results }
+    const results = await webSearchMulti(queries, countEach, categories, undefined, apiBudget)
+    return { initialQueries: queries, initialResults: await rerankSearchResults(query, results) }
   } catch (e) {
     console.error('[monitor-reformulate]', e)
     return {}
   }
 }
 
+/** Non-interactive counterpart of the route's drain: same extraction, no client attached.
+ *  Delegates rather than reimplementing — the private copy this replaced had no ThinkExtractor,
+ *  so monitor answers were saved with <think> and <tool_call> markup intact. */
 async function collectStream<TOOLS extends ToolSet>(
-  researcherResult: { stream: AsyncIterable<TextStreamPart<TOOLS>> },
+  researcherResult: { stream: AsyncIterable<ResearcherStreamPart<TOOLS>> },
   onText: (text: string) => void,
 ): Promise<{ text: string; sources: SearchResult[]; finishReason: string }> {
   let text = ''
-  let reasoning = ''
-  let finishReason = 'unknown'
   const sources: SearchResult[] = []
-  for await (const part of researcherResult.stream) {
-    if (part.type === 'finish' || part.type === 'finish-step') {
-      if (part.finishReason) finishReason = part.finishReason
-    } else if (part.type === 'tool-result' && part.toolName === 'web_search') {
-      // result may be a non-array "search unavailable" message when search is exhausted.
-      if (Array.isArray(part.output)) sources.push(...(part.output as SearchResult[]))
-    } else if (part.type === 'text-delta') {
-      text += part.text
-      onText(part.text)
-    } else if (part.type === 'reasoning-delta') {
-      reasoning += part.text
-    }
-  }
-  // Fallback: if the model emitted only reasoning and no text, use the reasoning as content
-  if (!text && reasoning) {
-    text = reasoning
-    onText(reasoning)
-  }
+  const finishReason = await drainResearcherStream(researcherResult, {
+    stream: nullStream,
+    showThinking: false,
+    emitSearchStatus: () => {},
+    extractor: new ThinkExtractor(),
+    onText: (t) => { text += t; onText(t) },
+    onSources: (results) => { sources.push(...results) },
+  })
   return { text, sources, finishReason }
 }

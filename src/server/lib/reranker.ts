@@ -12,6 +12,18 @@ const RERANK_TIMEOUT_MS = parseInt(process.env.RERANK_TIMEOUT_MS ?? '30000', 10)
  * Reranks documents by relevance to query. Returns indices sorted best-first.
  * Falls back to identity order if reranker is not configured or call fails.
  */
+/** Orders search results by relevance, best-first, and prunes to the configured `rerank_top_n`.
+ *  Identity when no reranker is configured, so callers need no branch of their own. Pruning is
+ *  as much the point as ordering: everything kept here is paid for in the prompt downstream. */
+export async function rerankSearchResults<T extends { content: string }>(query: string, results: T[]): Promise<T[]> {
+  if (!rerankEnabled || results.length === 0 || !query) return results
+  const t = performance.now()
+  const indices = await rerank(query, results.map(r => r.content))
+  const ranked = indices.map(i => results[i]).filter(Boolean)
+  console.log(`  [reranker] ${results.length} → ${ranked.length} sources in ${Math.round(performance.now() - t)}ms`)
+  return ranked
+}
+
 export async function rerank(query: string, documents: string[], topN?: number): Promise<number[]> {
   if (!rerankEnabled || documents.length === 0) return documents.map((_, i) => i)
   const n = topN ?? parseInt(await getAppSetting('rerank_top_n', '15'), 10)

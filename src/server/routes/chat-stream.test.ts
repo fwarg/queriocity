@@ -15,8 +15,10 @@ import { streamText, tool, stepCountIs } from 'ai'
 import { createOpenAI } from '@ai-sdk/openai'
 import { z } from 'zod'
 import { startFakeOpenAI, captureSSE } from '../lib/test-support/fake-openai.ts'
-import { drainResearcherStream, recordingStream } from './chat.ts'
+import { drainResearcherStream } from '../lib/researcher-stream.ts'
+import { recordingStream } from './chat.ts'
 import { startRun } from '../lib/stream-buffer.ts'
+import { ThinkExtractor } from '../lib/think-extractor.ts'
 import type { SearchResult } from '../lib/searxng.ts'
 
 let fake: ReturnType<typeof startFakeOpenAI> | null = null
@@ -47,14 +49,14 @@ function makeRun(script: Parameters<typeof startFakeOpenAI>[0], maxSteps = 3) {
 
 // Typed as the structural minimum drainResearcherStream needs, so the helper does not depend
 // on the SDK's generic result type (which is reshaped across major versions).
-function drain(result: { stream: AsyncIterable<unknown> }, cap: ReturnType<typeof captureSSE>, opts: Partial<{ showThinking: boolean; emitTextAsThinking: boolean }> = {}) {
+function drain(result: { stream: AsyncIterable<unknown> }, cap: ReturnType<typeof captureSSE>, opts: Partial<{ showThinking: boolean; emitTextAsThinking: boolean; extractor: ThinkExtractor }> = {}) {
   const sources: SearchResult[] = []
   let text = ''
   return drainResearcherStream(result as never, {
     stream: cap.stream as never,
     showThinking: opts.showThinking ?? false,
     emitSearchStatus: () => {},
-    extractor: null,
+    extractor: opts.extractor ?? null,
     onText: async (t) => { text += t; await cap.stream.writeSSE({ data: JSON.stringify({ type: 'text', delta: t }) }) },
     onSources: (r) => { sources.push(...r) },
     emitTextAsThinking: opts.emitTextAsThinking ?? false,
@@ -94,6 +96,39 @@ describe('drainResearcherStream', () => {
 
     expect(text).toBe('')
     expect(finishReason).toBe('tool-calls')
+  })
+
+  // The extractor is what every caller now passes — the route's three branches and the monitor
+  // executor. These cover the shared path rather than each caller's copy of it.
+  test('with an extractor, <think> is routed to thinking and kept out of the answer', async () => {
+    const cap = captureSSE()
+    const { text } = await drain(
+      makeRun([{ text: ['<think>weighing', ' options</think>', 'The answer.'] }]),
+      cap,
+      { extractor: new ThinkExtractor(), showThinking: true },
+    )
+
+    expect(text).toBe('The answer.')
+    expect(cap.concat('thinking')).toBe('weighing options')
+  })
+
+  // The 2026-08-09 production failure: a withheld-tools final step wrote its call out as prose,
+  // the extractor dropped all of it, and the turn ended with no answer at all. The drain is
+  // correct to yield nothing here; the caller's job is to notice and run the fallback.
+  test('with an extractor, leaked <tool_call> markup is dropped entirely', async () => {
+    const cap = captureSSE()
+    const { text, finishReason } = await drain(
+      makeRun([{ text: ['<tool_call>{"name":', ' "web_search"}</tool_call>'] }]),
+      cap,
+      { extractor: new ThinkExtractor(), showThinking: true },
+    )
+
+    expect(text).toBe('')
+    expect(cap.concat('text')).toBe('')
+    // Dropped rather than shown as reasoning — it is a failed action, not thinking.
+    expect(cap.concat('thinking')).toBe('')
+    // Crucially not 'tool-calls': this is the case the old fallback condition missed.
+    expect(finishReason).toBe('stop')
   })
 
   test('emits search queries and snippets on the thinking channel when enabled', async () => {
