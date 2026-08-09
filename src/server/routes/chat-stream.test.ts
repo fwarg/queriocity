@@ -16,7 +16,7 @@ import { createOpenAI } from '@ai-sdk/openai'
 import { z } from 'zod'
 import { startFakeOpenAI, captureSSE } from '../lib/test-support/fake-openai.ts'
 import { drainResearcherStream } from '../lib/researcher-stream.ts'
-import { recordingStream } from './chat.ts'
+import { recordingStream, flushPreamble } from './chat.ts'
 import { startRun } from '../lib/stream-buffer.ts'
 import { ThinkExtractor } from '../lib/think-extractor.ts'
 import type { SearchResult } from '../lib/searxng.ts'
@@ -181,6 +181,27 @@ describe('keepalive pings and the resume buffer', () => {
     // ...but absent from the replay log, which holds only the two real events.
     expect(run.events).toHaveLength(2)
     expect(run.events.some(e => e.includes('"ping"'))).toBe(false)
+  })
+
+  // The preamble exists to defeat proxy buffering, so it is written raw rather than as an event.
+  // If it ever went through recordingStream it would occupy a slot in the replay log that the
+  // resumed connection does not reproduce, and `?from=` would skip a real event on every reconnect.
+  test('the anti-buffering preamble reaches the wire but is never recorded for replay', async () => {
+    const run = startRun('sess-preamble', 'u1')
+    const raw: string[] = []
+    const api = {
+      write: async (s: string) => { raw.push(s) },
+      writeSSE: async ({ data }: { data: string }) => { raw.push(data) },
+    } as never
+
+    await flushPreamble(api)
+    await recordingStream(api, run).writeSSE({ data: JSON.stringify({ type: 'text', delta: 'hi' }) })
+
+    expect(raw[0].startsWith(': ')).toBe(true)
+    expect(raw[0].length).toBeGreaterThan(2048)
+    // A comment line carries no `data: `, so the client parser skips it and the cursor is untouched.
+    expect(raw[0].split('\n').some(l => l.startsWith('data: '))).toBe(false)
+    expect(run.events).toHaveLength(1)
   })
 
   test('a dead connection does not stop the run', async () => {

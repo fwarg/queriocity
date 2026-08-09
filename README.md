@@ -895,6 +895,12 @@ The settings below matter regardless of where nginx runs; set `proxy_pass` to wh
 target applies from the section above. In Nginx Proxy Manager, the streaming and timeout
 directives go in the proxy host's **Advanced** tab, and "Websockets Support" should be on.
 
+Streaming should work without any of this: every SSE response carries `X-Accel-Buffering: no`,
+which disables nginx buffering for that response alone. Set the directives below anyway if your
+proxy is not nginx-based, or if answers still arrive in bursts rather than word by word — that
+symptom, and progress messages never appearing under the chat, both mean the stream is being
+held somewhere in front of the app.
+
 ```nginx
 server {
     listen 443 ssl http2;
@@ -919,8 +925,10 @@ server {
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
 
-        # Required for streamed answers: with buffering on, nginx holds the SSE stream and
-        # the answer appears all at once (or the connection times out mid-generation).
+        # Belt-and-braces for streamed answers. The app already sends
+        # `X-Accel-Buffering: no` on its SSE responses, which nginx honours on its own, so
+        # this is here for proxies that ignore that header. With buffering on and the header
+        # ignored, progress messages never appear and the answer lands in bursts.
         proxy_buffering off;
         proxy_cache off;
         proxy_read_timeout 600s;

@@ -153,7 +153,9 @@ chatRouter.get('/resume/:sessionId', async (c) => {
   let index = Math.max(0, parseInt(c.req.query('from') ?? '0', 10) || 0)
   console.log(`  [stream] client resumed session ${sessionId} from event ${index}/${run.events.length}`)
 
+  c.header('X-Accel-Buffering', 'no')
   return streamSSE(c, async (stream) => {
+    await flushPreamble(stream)
     c.req.raw.signal.addEventListener('abort', () => scheduleAbandon(run))
     while (true) {
       while (index < run.events.length) {
@@ -799,13 +801,29 @@ async function finishTurn(out: SSEStream, {
   }
 }
 
-/** Wraps the live SSE stream so every payload is also recorded for resume, and so a dead
- *  connection stops the writes without stopping the generation — the whole point of the
- *  buffer is that work continues while nobody is listening. */
+/** 2 KB of SSE comment, written before any real event.
+ *
+ *  Status events are ~60 bytes. A proxy that buffers by byte count holds them until something
+ *  fills its 4–8 KB buffer, which in practice is the answer text — by which time the client has
+ *  already cleared the status line, so the whole progress narration is invisible and the answer
+ *  arrives in bursts. This forces the first flush immediately.
+ *
+ *  Written raw rather than through `recordingStream`: the resume cursor counts recorded events
+ *  and padding is not one, the same reason pings are excluded. A `:` comment line is ignored by
+ *  the client parser, which reads only lines starting with `data: `. */
+export const flushPreamble = (stream: SSEStreamingApi) =>
+  stream.write(': ' + ' '.repeat(2048) + '\n\n')
+
 /** Runs an SSE handler with every payload recorded for resume, marking the run finished
- *  however the handler exits so a reconnecting client isn't left waiting on a dead run. */
+ *  however the handler exits so a reconnecting client isn't left waiting on a dead run.
+ *
+ *  `X-Accel-Buffering: no` disables nginx's response buffering for this response alone, so
+ *  streaming works behind a reverse proxy whether or not `proxy_buffering off` is configured
+ *  there. Hono's streamSSE does not set it; routes/users.ts sets the same pair. */
 function streamRun(c: Context<AppEnv>, run: LiveRun, fn: (out: SSEStream) => Promise<void>) {
+  c.header('X-Accel-Buffering', 'no')
   return streamSSE(c, async (stream) => {
+    await flushPreamble(stream)
     try {
       await fn(recordingStream(stream, run))
     } finally {
@@ -814,6 +832,9 @@ function streamRun(c: Context<AppEnv>, run: LiveRun, fn: (out: SSEStream) => Pro
   })
 }
 
+/** Wraps the live SSE stream so every payload is also recorded for resume, and so a dead
+ *  connection stops the writes without stopping the generation — the whole point of the
+ *  buffer is that work continues while nobody is listening. */
 export function recordingStream(stream: SSEStreamingApi, run: LiveRun): SSEStream {
   return {
     writeSSE: async ({ data }) => {
