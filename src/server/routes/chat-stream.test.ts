@@ -15,7 +15,10 @@ import { streamText, tool, stepCountIs } from 'ai'
 import { createOpenAI } from '@ai-sdk/openai'
 import { z } from 'zod'
 import { startFakeOpenAI, captureSSE } from '../lib/test-support/fake-openai.ts'
-import { drainResearcherStream } from './chat.ts'
+import { drainResearcherStream } from '../lib/researcher-stream.ts'
+import { recordingStream, flushPreamble } from './chat.ts'
+import { startRun } from '../lib/stream-buffer.ts'
+import { ThinkExtractor } from '../lib/think-extractor.ts'
 import type { SearchResult } from '../lib/searxng.ts'
 
 let fake: ReturnType<typeof startFakeOpenAI> | null = null
@@ -46,17 +49,18 @@ function makeRun(script: Parameters<typeof startFakeOpenAI>[0], maxSteps = 3) {
 
 // Typed as the structural minimum drainResearcherStream needs, so the helper does not depend
 // on the SDK's generic result type (which is reshaped across major versions).
-function drain(result: { stream: AsyncIterable<unknown> }, cap: ReturnType<typeof captureSSE>, opts: Partial<{ showThinking: boolean; emitTextAsThinking: boolean }> = {}) {
+function drain(result: { stream: AsyncIterable<unknown> }, cap: ReturnType<typeof captureSSE>, opts: Partial<{ showThinking: boolean; emitTextAsThinking: boolean; extractor: ThinkExtractor; maxSteps: number }> = {}) {
   const sources: SearchResult[] = []
   let text = ''
   return drainResearcherStream(result as never, {
     stream: cap.stream as never,
     showThinking: opts.showThinking ?? false,
     emitSearchStatus: () => {},
-    extractor: null,
+    extractor: opts.extractor ?? null,
     onText: async (t) => { text += t; await cap.stream.writeSSE({ data: JSON.stringify({ type: 'text', delta: t }) }) },
     onSources: (r) => { sources.push(...r) },
     emitTextAsThinking: opts.emitTextAsThinking ?? false,
+    maxSteps: opts.maxSteps,
   }).then(finishReason => ({ finishReason, sources, text }))
 }
 
@@ -95,6 +99,56 @@ describe('drainResearcherStream', () => {
     expect(finishReason).toBe('tool-calls')
   })
 
+  // The extractor is what every caller now passes — the route's three branches and the monitor
+  // executor. These cover the shared path rather than each caller's copy of it.
+  test('with an extractor, <think> is routed to thinking and kept out of the answer', async () => {
+    const cap = captureSSE()
+    const { text } = await drain(
+      makeRun([{ text: ['<think>weighing', ' options</think>', 'The answer.'] }]),
+      cap,
+      { extractor: new ThinkExtractor(), showThinking: true },
+    )
+
+    expect(text).toBe('The answer.')
+    expect(cap.concat('thinking')).toBe('weighing options')
+  })
+
+  // The 2026-08-09 production failure: a withheld-tools final step wrote its call out as prose,
+  // the extractor dropped all of it, and the turn ended with no answer at all. The drain is
+  // correct to yield nothing here; the caller's job is to notice and run the fallback.
+  test('with an extractor, leaked <tool_call> markup is dropped entirely', async () => {
+    const cap = captureSSE()
+    const { text, finishReason } = await drain(
+      makeRun([{ text: ['<tool_call>{"name":', ' "web_search"}</tool_call>'] }]),
+      cap,
+      { extractor: new ThinkExtractor(), showThinking: true },
+    )
+
+    expect(text).toBe('')
+    expect(cap.concat('text')).toBe('')
+    // Dropped rather than shown as reasoning — it is a failed action, not thinking.
+    expect(cap.concat('thinking')).toBe('')
+    // Crucially not 'tool-calls': this is the case the old fallback condition missed.
+    expect(finishReason).toBe('stop')
+  })
+
+  // The progress log's two hardest-won entries. Both read SDK-shaped fields that a rename would
+  // turn into undefined while typechecking cleanly — 'start-step' as a part type, and the length
+  // of part.output. Without the reason steps the log freezes for the whole of each model
+  // generation, which is exactly the silence the log exists to remove.
+  test('reports each model step and each search result count as log steps', async () => {
+    const cap = captureSSE()
+    await drain(makeRun([
+      { toolCall: { id: 'call_1', name: 'web_search', args: { queries: ['climate'] } } },
+      { text: ['Done.'] },
+    ]), cap, { maxSteps: 3 })
+
+    const steps = cap.ofType('status').map(e => e.step as { kind: string; index?: number; total?: number; count?: number })
+    expect(steps.filter(s => s.kind === 'reason').map(s => s.index)).toEqual([1, 2])
+    expect(steps.filter(s => s.kind === 'reason').every(s => s.total === 3)).toBe(true)
+    expect(steps.find(s => s.kind === 'results')?.count).toBe(2)
+  })
+
   test('emits search queries and snippets on the thinking channel when enabled', async () => {
     const cap = captureSSE()
     await drain(makeRun([
@@ -115,5 +169,69 @@ describe('drainResearcherStream', () => {
     ]), cap, { showThinking: false })
 
     expect(cap.ofType('thinking')).toHaveLength(0)
+  })
+})
+
+/** The resume cursor is a count of buffered events, so what does *not* get buffered matters as
+ *  much as what does. Keepalives are connection-local on both the live and the resumed path; if
+ *  one side records them and the other does not, `?from=` lands in the wrong place and the
+ *  client silently loses that many events on reconnect. */
+describe('keepalive pings and the resume buffer', () => {
+  const fakeSSE = () => {
+    const written: string[] = []
+    return {
+      written,
+      api: { writeSSE: async ({ data }: { data: string }) => { written.push(data) } } as never,
+    }
+  }
+
+  test('a ping reaches the client but is never recorded for replay', async () => {
+    const run = startRun('sess-ping', 'u1')
+    const sink = fakeSSE()
+    const out = recordingStream(sink.api, run)
+
+    await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: 'hi' }) })
+    await out.ping()
+    await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: ' there' }) })
+
+    // Delivered live, so an idle connection stays warm...
+    expect(sink.written.filter(d => d.includes('"ping"'))).toHaveLength(1)
+    // ...but absent from the replay log, which holds only the two real events.
+    expect(run.events).toHaveLength(2)
+    expect(run.events.some(e => e.includes('"ping"'))).toBe(false)
+  })
+
+  // The preamble exists to defeat proxy buffering, so it is written raw rather than as an event.
+  // If it ever went through recordingStream it would occupy a slot in the replay log that the
+  // resumed connection does not reproduce, and `?from=` would skip a real event on every reconnect.
+  test('the anti-buffering preamble reaches the wire but is never recorded for replay', async () => {
+    const run = startRun('sess-preamble', 'u1')
+    const raw: string[] = []
+    const api = {
+      write: async (s: string) => { raw.push(s) },
+      writeSSE: async ({ data }: { data: string }) => { raw.push(data) },
+    } as never
+
+    await flushPreamble(api)
+    await recordingStream(api, run).writeSSE({ data: JSON.stringify({ type: 'text', delta: 'hi' }) })
+
+    expect(raw[0].startsWith(': ')).toBe(true)
+    expect(raw[0].length).toBeGreaterThan(2048)
+    // A comment line carries no `data: `, so the client parser skips it and the cursor is untouched.
+    expect(raw[0].split('\n').some(l => l.startsWith('data: '))).toBe(false)
+    expect(run.events).toHaveLength(1)
+  })
+
+  test('a dead connection does not stop the run', async () => {
+    const run = startRun('sess-dead', 'u1')
+    const dead = { writeSSE: async () => { throw new Error('broken pipe') } } as never
+    const out = recordingStream(dead, run)
+
+    // Neither call may throw: the generation outlives the connection by design, and the
+    // buffered events are what the client resumes from.
+    await out.ping()
+    await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: 'kept' }) })
+
+    expect(run.events).toEqual([JSON.stringify({ type: 'text', delta: 'kept' })])
   })
 })

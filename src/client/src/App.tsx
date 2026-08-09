@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { RotateCcw } from 'lucide-react'
 import { MessageList } from './components/MessageList.tsx'
+import { ProgressLog, Elapsed } from './components/ProgressLog.tsx'
 import { ChatInput } from './components/ChatInput.tsx'
 import { LoginPage } from './components/LoginPage.tsx'
 import { RegisterPage } from './components/RegisterPage.tsx'
@@ -121,7 +122,7 @@ export default function App() {
     ? sessions.find(s => s.id === sessionId)?.spaceId ?? null
     : currentSpaceId
 
-  const { messages, setMessages, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, regenerate, cancel, reset, related, setRelated } = useChat({
+  const { messages, setMessages, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, regenerate, cancel, reset, related, setRelated, steps, runStartedAt } = useChat({
     sessionId,
     focusMode,
     searchCategories,
@@ -248,7 +249,9 @@ export default function App() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, streaming])
+    // `steps` included: the progress log grows below the last message, so without it the log
+    // is pushed off the bottom of a long conversation exactly when it is worth reading.
+  }, [messages, streaming, steps])
 
   const chatMatchIndices = useMemo(() => {
     if (!chatSearchOpen || !chatSearchQuery.trim()) return []
@@ -1472,8 +1475,12 @@ export default function App() {
                 searchMatchIndices={chatSearchOpen ? chatMatchIndices : []}
               />
             )}
+            <ProgressLog steps={steps} collapsed={!busy || !!streaming} />
             {status && (
-              <div className="px-4 py-1 text-xs text-gray-500 italic animate-pulse">{status}</div>
+              <div className="px-4 py-1 text-xs text-gray-500 italic animate-pulse">
+                {status}
+                {busy && runStartedAt !== null && <> · <Elapsed from={runStartedAt} /></>}
+              </div>
             )}
             {answerTime && !busy && (
               <div className="px-4 py-1 text-xs text-gray-500 flex items-center gap-3">
@@ -1487,19 +1494,6 @@ export default function App() {
                     <RotateCcw size={11} /> Retry
                   </button>
                 )}
-              </div>
-            )}
-            {related.length > 0 && !busy && (
-              <div className="px-4 pb-1 flex flex-wrap gap-1.5">
-                {related.map((q, i) => (
-                  <button
-                    key={i}
-                    onClick={() => { setRelated([]); submit(q) }}
-                    className="rounded-full border border-gray-700 bg-gray-800/60 px-2.5 py-1 text-xs text-gray-300 hover:border-gray-600 hover:text-gray-100"
-                  >
-                    {q}
-                  </button>
-                ))}
               </div>
             )}
             {sessionId && messages.length > 0 && !busy && (
@@ -1542,6 +1536,8 @@ export default function App() {
               searchCategories={searchCategories}
               onSearchCategoriesChange={setSearchCategories}
               suggestionsEnabled={currentUser?.settings?.querySuggestions !== false}
+              related={related}
+              onRelatedSelect={q => { setRelated([]); submit(q) }}
             />
           </>
         )}

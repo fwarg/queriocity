@@ -115,6 +115,10 @@ describe('buildMemoryBlock relevance recall', () => {
 
   test('user memory is injected only for users who opted in', async () => {
     const { saveUserMemory, userMemoryBlockIfEnabled } = await import('./memory.ts')
+    const { setAppSetting } = await import('./db.ts')
+    // Set explicitly rather than relying on the default: app_settings is shared across the whole
+    // suite, so another file's admin test could otherwise decide this one's outcome.
+    await setAppSetting('user_memory_token_budget', '300')
     await saveUserMemory('u1', 'The user prefers concise answers in Swedish', 'manual')
 
     const off = await userMemoryBlockIfEnabled('u1', {}, 'anything')

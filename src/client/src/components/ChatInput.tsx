@@ -17,6 +17,10 @@ interface Props {
   searchCategories: SearchCategory[]
   onSearchCategoriesChange: (cats: SearchCategory[]) => void
   suggestionsEnabled?: boolean
+  /** Follow-up questions for the last answer. Rendered here rather than above the input so they
+   *  collapse with it — on a phone they otherwise eat the message list. */
+  related?: string[]
+  onRelatedSelect?: (question: string) => void
 }
 
 interface Attachment {
@@ -33,7 +37,7 @@ const MODE_DESCRIPTIONS: Record<FocusMode, string> = {
   image: 'Generate or edit images — researches unfamiliar topics automatically for better results.',
 }
 
-export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, suggestionsEnabled }: Props) {
+export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, suggestionsEnabled, related = [], onRelatedSelect }: Props) {
   const [value, setValue] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [extractStatus, setExtractStatus] = useState<'idle' | 'loading' | 'error'>('idle')
@@ -122,7 +126,9 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
       >
         {collapsed ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
       </button>
-      <div className={`overflow-hidden transition-all duration-300 flex flex-col gap-2 px-4 ${collapsed ? 'max-h-0' : 'max-h-96 pb-4'}`}>
+      {/* max-h is the transition target, not a layout budget — it must clear the tallest case
+          (follow-up chips wrapping to several lines on a phone) or overflow-hidden clips it. */}
+      <div className={`overflow-hidden transition-all duration-300 flex flex-col gap-2 px-4 ${collapsed ? 'max-h-0' : 'max-h-[34rem] pb-4'}`}>
       {showTemplates && (
         <TemplateSelector
           onSelect={(text, mode) => {
@@ -179,6 +185,20 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
               className={`px-2 py-0.5 rounded capitalize text-xs ${searchCategories.includes(cat) ? 'bg-indigo-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'}`}
             >
               {cat}
+            </button>
+          ))}
+        </div>
+      )}
+      {related.length > 0 && !disabled && (
+        <div className="flex flex-wrap gap-1.5">
+          {related.map((q, i) => (
+            <button
+              key={i}
+              type="button"
+              onClick={() => onRelatedSelect?.(q)}
+              className="rounded-full border border-gray-700 bg-gray-800/60 px-2.5 py-1 text-xs text-left text-gray-300 hover:border-gray-600 hover:text-gray-100"
+            >
+              {q}
             </button>
           ))}
         </div>

@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react'
 import { streamChat, stopChat, fetchRelatedQuestions } from '../lib/api.ts'
 import type { Message, Source } from '../lib/api.ts'
+import type { LogStep } from '../components/ProgressLog.tsx'
 
 interface UseChatOptions {
   sessionId: string | undefined
@@ -23,6 +24,9 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
   const [busy, setBusy] = useState(false)
 
   const [related, setRelated] = useState<string[]>([])
+  const [steps, setSteps] = useState<LogStep[]>([])
+  /** Start of the current run, for the timer on the transient status line (flash has no log). */
+  const [runStartedAt, setRunStartedAt] = useState<number | null>(null)
 
   const abortRef = useRef<AbortController | null>(null)
   const rafRef = useRef<number>(0)
@@ -59,10 +63,26 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
     const ctrl = new AbortController()
     abortRef.current = ctrl
     setRelated([])
+    setSteps([])
+    setRunStartedAt(Date.now())
     setBusy(true)
     setAnswerTime('')
+    setStatus('')
     setStreaming('')
     setStreamingThinking('')
+
+    // Built here rather than in the component so a step's end time is the moment the next one
+    // arrives, not the moment React happened to re-render.
+    const log: LogStep[] = []
+    const closeLastStep = () => {
+      const last = log[log.length - 1]
+      if (last && last.endedAt === undefined) last.endedAt = Date.now()
+    }
+    const pushStep = (step: Omit<LogStep, 'startedAt'>) => {
+      closeLastStep()
+      log.push({ ...step, startedAt: Date.now() })
+      setSteps([...log])
+    }
 
     let accumulated = ''
     let thinkingAccumulated = ''
@@ -80,6 +100,11 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
           const snap = accumulated
           rafRef.current = requestAnimationFrame(() => setStreaming(snap))
           setStatus('')
+          // The answer starting is what ends the last step and collapses the log.
+          if (log.length && log[log.length - 1].endedAt === undefined) {
+            closeLastStep()
+            setSteps([...log])
+          }
         } else if (chunk.type === 'image') {
           images.push({ url: chunk.url as string, alt: chunk.alt as string })
           setStatus('')
@@ -87,7 +112,10 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
           thinkingAccumulated += chunk.delta as string
           setStreamingThinking(thinkingAccumulated)
         } else if (chunk.type === 'status') {
-          setStatus(chunk.text as string)
+          // A status carrying `step` is a log entry; a bare one is the transient line it has
+          // always been (errors, and flash, which has a single phase and so no log to build).
+          if (chunk.step) pushStep({ ...(chunk.step as Omit<LogStep, 'startedAt' | 'text'>), text: chunk.text as string })
+          else setStatus(chunk.text as string)
         } else if (chunk.type === 'sources') {
           sources.push(...(chunk.sources as Source[]))
         } else if (chunk.type === 'file_sources') {
@@ -98,10 +126,14 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
           if (chunk.elapsedMs) {
             const label = images.length > 0 ? 'Generated in' : 'Answered in'
             const srcCount = sources.length
+            // Zero sources only means "the search came up empty" in the modes that always
+            // search. Flash never searches, and image searches at its own discretion without
+            // reporting sources, so for those a count of zero says nothing and is left out.
+            const alwaysSearches = focusMode === 'balanced' || focusMode === 'thorough'
             let srcLabel: string
             if (srcCount > 0) srcLabel = ` · ${srcCount} search result${srcCount === 1 ? '' : 's'}`
             else if (blockedEngines.length) srcLabel = ` · search engines unavailable (${blockedEngines.map(e => e.engine).join(', ')}) — answered without web results`
-            else srcLabel = ' · no search results'
+            else srcLabel = alwaysSearches ? ' · no search results' : ''
             setAnswerTime(`${label} ${(chunk.elapsedMs as number / 1000).toFixed(1)} seconds${srcLabel}.`)
           }
           liveSessionRef.current = chunk.sessionId as string
@@ -129,6 +161,8 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
       }
       setStreaming('')
       setStreamingThinking('')
+      closeLastStep()
+      setSteps([...log])
       if (!accumulated && !wasAborted) setStatus('No response received — search may be temporarily unavailable. Try again.')
       else if (wasAborted && !accumulated && images.length === 0) {
         setMessages(prev => prev.slice(0, -1))
@@ -148,8 +182,9 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
     setStreamingThinking('')
     setStatus('')
     setRelated([])
+    setSteps([])
     liveSessionRef.current = undefined
   }
 
-  return { messages, setMessages, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, regenerate, cancel, reset, related, setRelated }
+  return { messages, setMessages, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, regenerate, cancel, reset, related, setRelated, steps, runStartedAt }
 }

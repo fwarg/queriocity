@@ -39,51 +39,68 @@ const SMALL_MODEL_CONTEXT_TOKENS = parseInt(process.env.SMALL_MODEL_CONTEXT_TOKE
 // system prompt + output, 2.5 chars/token for dense/technical text.
 export const SMALL_MODEL_INPUT_CHARS = Math.floor(SMALL_MODEL_CONTEXT_TOKENS * 0.7 * 2.5)
 
-const BASE_URL = process.env.BASE_URL
-const BASE_PROVIDER = process.env.BASE_PROVIDER ?? 'openai'
-
-const chatConfig: ProviderConfig = {
-  provider: process.env.CHAT_PROVIDER ?? BASE_PROVIDER,
-  baseURL: process.env.CHAT_BASE_URL ?? BASE_URL ?? 'http://localhost:11434/api',
+// Config is resolved per call, not at module load. A module-level const captures whatever the
+// environment held when the first importer pulled this in, which makes the value depend on
+// import order — the same trap searxng.ts documents, and the reason a test could not point the
+// chat model at a stub server. Providers are memoised per resolved target so the per-call cost
+// stays a Map lookup.
+const chatConfig = (): ProviderConfig => ({
+  provider: process.env.CHAT_PROVIDER ?? process.env.BASE_PROVIDER ?? 'openai',
+  baseURL: process.env.CHAT_BASE_URL ?? process.env.BASE_URL ?? 'http://localhost:11434/api',
   apiKey: process.env.CHAT_API_KEY,
+})
+
+const embedConfig = (): ProviderConfig => {
+  const chat = chatConfig()
+  return {
+    provider: process.env.EMBED_PROVIDER ?? chat.provider,
+    baseURL: process.env.EMBED_BASE_URL ?? chat.baseURL,
+    apiKey: process.env.EMBED_API_KEY ?? chat.apiKey,
+  }
 }
 
-const embedConfig: ProviderConfig = {
-  provider: process.env.EMBED_PROVIDER ?? chatConfig.provider,
-  baseURL: process.env.EMBED_BASE_URL ?? chatConfig.baseURL,
-  apiKey: process.env.EMBED_API_KEY ?? chatConfig.apiKey,
+const smallConfig = (): ProviderConfig => {
+  const chat = chatConfig()
+  return {
+    provider: process.env.SMALL_PROVIDER ?? chat.provider,
+    baseURL: process.env.SMALL_BASE_URL ?? chat.baseURL,
+    apiKey: process.env.SMALL_API_KEY ?? chat.apiKey,
+  }
 }
 
-const smallConfig: ProviderConfig = {
-  provider: process.env.SMALL_PROVIDER ?? chatConfig.provider,
-  baseURL: process.env.SMALL_BASE_URL ?? chatConfig.baseURL,
-  apiKey: process.env.SMALL_API_KEY ?? chatConfig.apiKey,
+const thinkingConfig = (): ProviderConfig => {
+  const chat = chatConfig()
+  return {
+    provider: process.env.THINKING_PROVIDER ?? chat.provider,
+    baseURL: process.env.THINKING_BASE_URL ?? chat.baseURL,
+    apiKey: process.env.THINKING_API_KEY ?? chat.apiKey,
+  }
 }
 
-const thinkingConfig: ProviderConfig = {
-  provider: process.env.THINKING_PROVIDER ?? chatConfig.provider,
-  baseURL: process.env.THINKING_BASE_URL ?? chatConfig.baseURL,
-  apiKey: process.env.THINKING_API_KEY ?? chatConfig.apiKey,
+const providers = new Map<string, ReturnType<typeof createOpenAI>>()
+function provider(config: ProviderConfig) {
+  const key = `${config.provider}|${config.baseURL}|${config.apiKey ?? ''}`
+  let p = providers.get(key)
+  if (!p) {
+    p = makeProvider(config)
+    providers.set(key, p)
+  }
+  return p
 }
-
-const chatProvider = makeProvider(chatConfig)
-const embedProvider = makeProvider(embedConfig)
-const smallProvider = makeProvider(smallConfig)
-const thinkingProvider = makeProvider(thinkingConfig)
 
 // `.chat(...)` rather than `provider(...)`: from @ai-sdk/openai v2 the bare call means the
 // OpenAI *Responses* API (/v1/responses), which self-hosted backends — LiteLLM, llama.cpp,
 // Ollama's /v1 — do not implement. They speak Chat Completions, so pin to it explicitly.
 export function getChatModel() {
-  return chatProvider.chat(process.env.CHAT_MODEL ?? 'llama3.2')
+  return provider(chatConfig()).chat(process.env.CHAT_MODEL ?? 'llama3.2')
 }
 
 export function getSmallModel() {
-  return smallProvider.chat(process.env.SMALL_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2')
+  return provider(smallConfig()).chat(process.env.SMALL_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2')
 }
 
 export function getThinkingModel() {
-  return thinkingProvider.chat(process.env.THINKING_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2')
+  return provider(thinkingConfig()).chat(process.env.THINKING_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2')
 }
 
 export function getThinkingModelOrFallback() {
@@ -100,5 +117,5 @@ export function getFlashModel() {
 
 export function getEmbeddingModel(): EmbeddingModel {
   const model = process.env.EMBED_MODEL ?? 'nomic-embed-text'
-  return embedProvider.textEmbeddingModel(model) as EmbeddingModel
+  return provider(embedConfig()).textEmbeddingModel(model) as EmbeddingModel
 }

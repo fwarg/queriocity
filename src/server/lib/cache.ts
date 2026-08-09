@@ -10,10 +10,20 @@ interface Entry<T> {
 const store = new Map<string, Entry<unknown>>()
 const MAX_ENTRIES = 500
 
+// Turns of conversation folded into the key alongside the question. Enough to separate two
+// discussions that happen to end in the same words; short enough that it is still the *question*
+// being keyed, not the entire session.
+const HISTORY_TURNS = 4
+
 /** `scope` must capture everything that personalises an answer (user, space, custom prompt,
- *  pinned resources) — without it a cached reply can be served to a different user. */
-export function cacheKey(query: string, focusMode: string, scope: string): string {
-  return createHash('sha256').update(`${focusMode}:${scope}:${query}`).digest('hex')
+ *  pinned resources) — without it a cached reply can be served to a different user.
+ *
+ *  `history` is required for the same reason: keyed on the last message alone, two unrelated
+ *  conversations that both end in "Is it officially shut down?" collide, and the second is served
+ *  the first's answer. Pass the preceding turns; the last `HISTORY_TURNS` of them are hashed in. */
+export function cacheKey(query: string, focusMode: string, scope: string, history: Array<{ role: string; content: string }> = []): string {
+  const context = history.slice(-HISTORY_TURNS).map(m => `${m.role}:${m.content}`).join('\n')
+  return createHash('sha256').update(`${focusMode}:${scope}:${context}:${query}`).digest('hex')
 }
 
 export function getCached<T>(key: string): T | null {

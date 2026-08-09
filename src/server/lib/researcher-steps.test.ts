@@ -32,9 +32,9 @@ afterEach(() => { fake?.stop(); fake = null; searxng?.stop(); searxng = null })
 
 const searchStep = (n: number) => ({ toolCall: { id: `c${n}`, name: 'web_search', args: { queries: [`q${n}`] } } })
 
-/** Runs the researcher against a model that always wants to search, and reports, per request,
- *  whether any tools were offered. */
-async function toolsOfferedPerStep(focusMode: 'balanced' | 'thorough', maxSteps?: number) {
+/** Runs the researcher against a model that always wants to search, and returns the request body
+ *  sent for each step. */
+async function requestsPerStep(focusMode: 'balanced' | 'thorough', maxSteps?: number) {
   // Enough scripted steps to exhaust any plausible budget when the default is under test.
   const scripted = maxSteps ?? 8
   searxng = startFakeSearxng()
@@ -53,11 +53,23 @@ async function toolsOfferedPerStep(focusMode: 'balanced' | 'thorough', maxSteps?
   // Drain: the steps only advance as the stream is consumed.
   for await (const part of res.stream) void part
 
-  return fake.requests.map(r => {
+  return fake.requests
+}
+
+/** Per request, whether any tools were offered. */
+async function toolsOfferedPerStep(focusMode: 'balanced' | 'thorough', maxSteps?: number) {
+  return (await requestsPerStep(focusMode, maxSteps)).map(r => {
     const tools = (r as { tools?: unknown[] } | null)?.tools
     return Array.isArray(tools) && tools.length > 0
   })
 }
+
+/** Per request, the system prompt the model was given. */
+const systemPromptsPerStep = async (focusMode: 'balanced' | 'thorough', maxSteps?: number) =>
+  (await requestsPerStep(focusMode, maxSteps)).map(r => {
+    const messages = (r as { messages?: Array<{ role: string; content: string }> } | null)?.messages
+    return messages?.find(m => m.role === 'system')?.content ?? ''
+  })
 
 describe('balanced writing-step reserve', () => {
   test('offers tools on every step but the last', async () => {
@@ -85,5 +97,34 @@ describe('balanced writing-step reserve', () => {
   test('thorough is exempt — its writer pass supplies the prose', async () => {
     const offered = await toolsOfferedPerStep('thorough', 3)
     expect(offered.every(Boolean)).toBe(true)
+  })
+})
+
+/** Withholding the tools without saying so leaves the prompt demanding a search the model can no
+ *  longer make. A tool-trained model complies the only way left — it writes the call out as text,
+ *  and with no tool schemas in the request there is nothing to parse it, so the markup lands in
+ *  the user's answer. Observed 2026-08-05; ThinkExtractor drops such markup as a second line of
+ *  defence. */
+describe('the final step is told its tools are gone', () => {
+  test('the last prompt withdraws them and forbids writing a call out', async () => {
+    const prompts = await systemPromptsPerStep('balanced', 3)
+    const last = prompts[2]
+
+    expect(last).toContain('tools have now been withdrawn')
+    expect(last).toContain('Never emit a tool call')
+  })
+
+  test('earlier steps are left alone, and the last still gets the base prompt', async () => {
+    const prompts = await systemPromptsPerStep('balanced', 3)
+
+    expect(prompts.slice(0, 2).some(p => p.includes('withdrawn'))).toBe(false)
+    // Appended, not substituted: citation rules and the answer language still apply.
+    expect(prompts[2]).toContain('You are a research assistant')
+  })
+
+  test('thorough keeps its tools, so nothing is withdrawn', async () => {
+    const prompts = await systemPromptsPerStep('thorough', 3)
+
+    expect(prompts.some(p => p.includes('withdrawn'))).toBe(false)
   })
 })
