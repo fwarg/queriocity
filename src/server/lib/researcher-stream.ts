@@ -1,6 +1,7 @@
 import type { TextStreamPart, ToolSet } from 'ai'
 import type { SearchResult } from './searxng.ts'
 import type { ThinkExtractor } from './think-extractor.ts'
+import { stepEvent } from './progress.ts'
 
 /** The SSE surface the drain needs. Kept minimal so non-interactive callers (the monitor
  *  executor) can pass `nullStream` instead of inventing a connection. */
@@ -38,7 +39,7 @@ function toolArgs(part: { input: unknown }): { queries?: string[]; query?: strin
 export async function drainResearcherStream<TOOLS extends ToolSet>(
   researcherResult: { stream: AsyncIterable<ResearcherStreamPart<TOOLS>> },
   {
-    stream, showThinking, emitSearchStatus, extractor, onText, onSources, emitTextAsThinking = false,
+    stream, showThinking, emitSearchStatus, extractor, onText, onSources, emitTextAsThinking = false, maxSteps,
   }: {
     stream: SSEStream
     showThinking: boolean
@@ -47,15 +48,23 @@ export async function drainResearcherStream<TOOLS extends ToolSet>(
     onText: (text: string) => void | Promise<void>
     onSources: (results: SearchResult[]) => void | Promise<void>
     emitTextAsThinking?: boolean
+    /** Only for the "step N of M" label; omit when the cap is not known to the caller. */
+    maxSteps?: number
   },
 ): Promise<string> {
   const emitThinking = (delta: string) =>
     stream.writeSSE({ data: JSON.stringify({ type: 'thinking', delta }) })
 
   let textDeltaCount = 0, reasoningCount = 0, finishReason = 'unknown'
+  let stepIndex = 0
   for await (const part of researcherResult.stream) {
     if (part.type === 'finish' || part.type === 'finish-step') {
       if (part.finishReason) finishReason = part.finishReason
+    } else if (part.type === 'start-step') {
+      // The long silences are here, not at the tool calls: each step is one full model
+      // generation. Without this the log sits on the previous entry for 5-15s at a time.
+      stepIndex++
+      await stream.writeSSE({ data: stepEvent({ kind: 'reason', index: stepIndex, total: maxSteps }) })
     } else if (part.type === 'tool-call' && part.toolName === 'web_search') {
       const args = toolArgs(part)
       await emitSearchStatus(args)
@@ -69,10 +78,11 @@ export async function drainResearcherStream<TOOLS extends ToolSet>(
       const results = part.output as Array<{ filename?: string; content?: string }> | undefined
       console.log(`  [uploads_search] returned ${results?.length ?? 0} chunks`)
     } else if (part.type === 'tool-call' && part.toolName === 'save_to_memory') {
-      await stream.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Saving to memory…' }) })
+      await stream.writeSSE({ data: stepEvent({ kind: 'memory' }) })
     } else if (part.type === 'tool-result' && part.toolName === 'web_search') {
       // result may be a non-array "search unavailable" message when search is exhausted.
       const results = (Array.isArray(part.output) ? part.output : []) as SearchResult[]
+      await stream.writeSSE({ data: stepEvent({ kind: 'results', count: results.length }) })
       await onSources(results)
       if (showThinking) {
         const snippets = results.slice(0, 3)

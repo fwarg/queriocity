@@ -3,9 +3,10 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { streamSSE, type SSEStreamingApi } from 'hono/streaming'
 import { streamText, generateText, tool, stepCountIs } from 'ai'
-import { runResearcher } from '../lib/researcher.ts'
+import { runResearcher, maxStepsFor } from '../lib/researcher.ts'
 import { runWriter } from '../lib/writer.ts'
 import { drainResearcherStream, type SSEStream } from '../lib/researcher-stream.ts'
+import { stepEvent, type ProgressStep } from '../lib/progress.ts'
 import { FLASH_SYSTEM, RESEARCHER_NOTES_CAP, EMPTY_ANSWER_MESSAGE, runSynthesisFallback } from '../lib/answer.ts'
 import { reformulateLLM } from '../lib/reformulate.ts'
 import { cacheKey, getCached, setCached } from '../lib/cache.ts'
@@ -244,6 +245,9 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     let fullContent = ''
     return streamRun(c, run, async (out) => {
       await out.writeSSE({ data: JSON.stringify({ type: 'session', sessionId: sid }) })
+      // Plain status rather than a log step: flash has exactly one phase, so a log of it would
+      // be a list of length one. The client pairs this with a ticking timer.
+      await out.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Thinking…' }) })
       if (flashFileSources.length > 0) await out.writeSSE({ data: JSON.stringify({ type: 'file_sources', sources: flashFileSources }) })
       const flashSystem = FLASH_SYSTEM
         + (customPrompt ? `\n\nAdditional instructions:\n${customPrompt}` : '')
@@ -458,14 +462,16 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
             await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: part.text }) })
           } else if (part.type === 'tool-call') {
             if (part.toolName === 'web_search') {
-              await out.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Researching topic…' }) })
+              const q = (part.input as { query?: string } | undefined)?.query
+              await out.writeSSE({ data: stepEvent({ kind: 'search', queries: q ? [q] : [] }) })
             } else if (part.toolName === 'generate_image') {
-              await out.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Generating image…' }) })
+              await out.writeSSE({ data: stepEvent({ kind: 'image' }) })
             } else if (part.toolName === 'edit_image') {
-              await out.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Editing image…' }) })
+              await out.writeSSE({ data: stepEvent({ kind: 'image', detail: 'Editing image…' }) })
             }
           } else if (part.type === 'tool-result' && part.toolName === 'web_search') {
             if (pendingImageSources.length) {
+              await out.writeSSE({ data: stepEvent({ kind: 'results', count: pendingImageSources.length }) })
               await out.writeSSE({ data: JSON.stringify({ type: 'sources', sources: pendingImageSources.splice(0) }) })
             }
             if (imageEngineErrors.size) {
@@ -509,9 +515,11 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     // responding. Everything here is awaited inside the handler so the wait is narrated.
     await out.writeSSE({ data: JSON.stringify({ type: 'session', sessionId: sid }) })
 
+    // Plain status = the transient one-liner (errors). emitStep = an entry in the activity log.
     const emitStatus = (text: string) =>
       out.writeSSE({ data: JSON.stringify({ type: 'status', text }) })
-    await emitStatus('Understanding your question…')
+    const emitStep = (step: ProgressStep) => out.writeSSE({ data: stepEvent(step) })
+    await emitStep({ kind: 'understand' })
 
     const [fetchMaxPages, fetchSummarize, compressHistory] = await Promise.all([
       getAppSetting('fetch_max_pages', '8').then(Number),
@@ -579,19 +587,28 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
 
     const emitSearchStatus = (args: { queries?: string[]; query?: string }) => {
       const queries: string[] = args.queries ?? (args.query ? [args.query] : [])
-      if (queries.length) emitStatus(`Searching: ${queries.map(q => `"${q}"`).join(', ')}`)
+      if (queries.length) emitStep({ kind: 'search', queries })
+    }
+
+    /** Pre-search runs before the stream opens, so its steps are reported after the fact —
+     *  the log still needs them, or the first thing the user sees is the researcher's
+     *  second-round query with no sign of where the initial results came from. */
+    const emitPreSearchSteps = async () => {
+      if (processedUrls.length) {
+        await emitStep({ kind: 'read', hosts: processedUrls.map(f => new URL(f.url).hostname) })
+      }
+      if (!initialQueries?.length) return
+      await emitStep({ kind: 'search', queries: initialQueries })
+      if (initialResults?.length) await emitStep({ kind: 'results', count: initialResults.length })
+      if (showThinking) {
+        await out.writeSSE({ data: JSON.stringify({ type: 'thinking',
+          delta: `🔍 Searching: ${initialQueries.map(q => `"${q}"`).join(', ')}\n` }) })
+      }
     }
 
     if (focusMode === 'thorough') {
       // Phase 1: Research (collect sources, no text to client)
-      if (processedUrls.length) await emitStatus(`Reading: ${processedUrls.map(f => new URL(f.url).hostname).join(', ')}`)
-      if (initialQueries?.length) {
-        await emitStatus(`Searching: ${initialQueries.map(q => `"${q}"`).join(', ')}`)
-        if (showThinking) {
-          await out.writeSSE({ data: JSON.stringify({ type: 'thinking',
-            delta: `🔍 Searching: ${initialQueries.map(q => `"${q}"`).join(', ')}\n` }) })
-        }
-      }
+      await emitPreSearchSteps()
       if (showThinking && initialResults?.length) {
         const snippets = initialResults.slice(0, 3)
           .map(r => `  • ${r.title}\n    ${r.url}\n    ${r.content.slice(0, 120)}…`)
@@ -611,7 +628,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       }, KEEPALIVE_INTERVAL_MS)
       try {
         await drainResearcherStream(researcherResult, {
-          stream: out, showThinking, emitSearchStatus,
+          stream: out, showThinking, emitSearchStatus, maxSteps: maxStepsFor('thorough'),
           extractor: thoroughExtractor,
           emitTextAsThinking: true,
           onText: (text) => { researcherNotes += text },
@@ -638,7 +655,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       await out.writeSSE({ data: JSON.stringify({ type: 'sources', sources: finalSources }) })
 
       // Phase 2: Writer pass
-      await emitStatus('Writing answer…')
+      await emitStep({ kind: 'write' })
       const writerResult = runWriter(finalSources, msgs, researcherNotes.slice(0, RESEARCHER_NOTES_CAP), abortSignal, { customPrompt, memoryBlock })
       const writerExtractor = new ThinkExtractor()
       for await (const part of writerResult.stream) {
@@ -667,14 +684,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       }
     } else {
       // Speed / balanced: stream researcher output directly
-      if (processedUrls.length) await emitStatus(`Reading: ${processedUrls.map(f => new URL(f.url).hostname).join(', ')}`)
-      if (initialQueries?.length) {
-        await emitStatus(`Searching: ${initialQueries.map(q => `"${q}"`).join(', ')}`)
-        if (showThinking) {
-          await out.writeSSE({ data: JSON.stringify({ type: 'thinking',
-            delta: `🔍 Searching: ${initialQueries.map(q => `"${q}"`).join(', ')}\n` }) })
-        }
-      }
+      await emitPreSearchSteps()
       if (initialResults?.length) {
         if (showThinking) {
           const snippets = initialResults.slice(0, 3)
@@ -696,7 +706,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       let drainFinishReason: string | undefined
       try {
         drainFinishReason = await drainResearcherStream(result, {
-          stream: out, showThinking, emitSearchStatus,
+          stream: out, showThinking, emitSearchStatus, maxSteps: maxStepsFor('balanced'),
           extractor,
           onText: async (text) => {
             fullContent += text
@@ -720,7 +730,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       if (drainFinishReason === 'tool-calls' || !fullContent.trim()) {
         console.warn(`  [${focusMode}] no answer (finish=${drainFinishReason}, ${fullContent.length} chars) — running no-tool synthesis fallback`)
         fullContent = ''
-        await emitStatus('Synthesising answer…')
+        await emitStep({ kind: 'write', detail: 'Synthesising answer…' })
         const fallback = runSynthesisFallback({
           results: [...(initialResults ?? []), ...fullSources],
           messages: msgs,

@@ -58,6 +58,9 @@ const MODE_CONFIG = {
   thorough: { maxSteps: 5, count: 10 },
 }
 
+/** The step cap the researcher will actually use, for the progress log's "step N of M". */
+export const maxStepsFor = (focusMode: 'balanced' | 'thorough') => MODE_CONFIG[focusMode].maxSteps
+
 // Fraction of the total input budget reserved for agentic tool (web_search/fetch_url) results,
 // held back from history trimming so a long conversation can't leave the tools starved of room,
 // however much history exists.

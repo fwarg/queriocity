@@ -49,7 +49,7 @@ function makeRun(script: Parameters<typeof startFakeOpenAI>[0], maxSteps = 3) {
 
 // Typed as the structural minimum drainResearcherStream needs, so the helper does not depend
 // on the SDK's generic result type (which is reshaped across major versions).
-function drain(result: { stream: AsyncIterable<unknown> }, cap: ReturnType<typeof captureSSE>, opts: Partial<{ showThinking: boolean; emitTextAsThinking: boolean; extractor: ThinkExtractor }> = {}) {
+function drain(result: { stream: AsyncIterable<unknown> }, cap: ReturnType<typeof captureSSE>, opts: Partial<{ showThinking: boolean; emitTextAsThinking: boolean; extractor: ThinkExtractor; maxSteps: number }> = {}) {
   const sources: SearchResult[] = []
   let text = ''
   return drainResearcherStream(result as never, {
@@ -60,6 +60,7 @@ function drain(result: { stream: AsyncIterable<unknown> }, cap: ReturnType<typeo
     onText: async (t) => { text += t; await cap.stream.writeSSE({ data: JSON.stringify({ type: 'text', delta: t }) }) },
     onSources: (r) => { sources.push(...r) },
     emitTextAsThinking: opts.emitTextAsThinking ?? false,
+    maxSteps: opts.maxSteps,
   }).then(finishReason => ({ finishReason, sources, text }))
 }
 
@@ -129,6 +130,23 @@ describe('drainResearcherStream', () => {
     expect(cap.concat('thinking')).toBe('')
     // Crucially not 'tool-calls': this is the case the old fallback condition missed.
     expect(finishReason).toBe('stop')
+  })
+
+  // The progress log's two hardest-won entries. Both read SDK-shaped fields that a rename would
+  // turn into undefined while typechecking cleanly — 'start-step' as a part type, and the length
+  // of part.output. Without the reason steps the log freezes for the whole of each model
+  // generation, which is exactly the silence the log exists to remove.
+  test('reports each model step and each search result count as log steps', async () => {
+    const cap = captureSSE()
+    await drain(makeRun([
+      { toolCall: { id: 'call_1', name: 'web_search', args: { queries: ['climate'] } } },
+      { text: ['Done.'] },
+    ]), cap, { maxSteps: 3 })
+
+    const steps = cap.ofType('status').map(e => e.step as { kind: string; index?: number; total?: number; count?: number })
+    expect(steps.filter(s => s.kind === 'reason').map(s => s.index)).toEqual([1, 2])
+    expect(steps.filter(s => s.kind === 'reason').every(s => s.total === 3)).toBe(true)
+    expect(steps.find(s => s.kind === 'results')?.count).toBe(2)
   })
 
   test('emits search queries and snippets on the thinking channel when enabled', async () => {
