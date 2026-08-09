@@ -45,6 +45,11 @@ const KEEPALIVE_INTERVAL_MS = 15000
 const RESEARCHER_NOTES_CAP = 12000
 const SESSION_TITLE_MAX = 60
 
+/** Shown as the answer when the model produced nothing the whole way down, fallback included.
+ *  Sending it as answer text rather than a status is deliberate: an empty `done` is
+ *  indistinguishable from a dead server on the client, so the failure has to name itself. */
+const EMPTY_ANSWER_MESSAGE = 'The model returned an empty response — it produced no answer text on either the main pass or the fallback. Try again, or restart the model server if it repeats.'
+
 // Content is generously bounded rather than tightly: a user message can carry an inlined
 // attachment, capped separately by the attachment_chars setting (admin max 500000).
 const chatSchema = z.object({
@@ -680,11 +685,14 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         clearInterval(keepalive)
       }
 
-      // Fallback: if the researcher exhausted its step budget on tool calls, synthesise an answer.
-      // finishReason=tool-calls means the model's last action was a tool call, not a final answer —
-      // so any accumulated content is just intermediate reasoning preamble, not a real response.
-      if (drainFinishReason === 'tool-calls') {
-        console.warn('  [balanced] maxSteps exhausted without answer — running no-tool synthesis fallback')
+      // Fallback: synthesise an answer when the researcher ended without producing one.
+      // Two ways that happens: finishReason=tool-calls (the model's last action was a tool call, so
+      // any accumulated content is intermediate reasoning preamble, not a real response), or
+      // finishReason=stop with nothing left after extraction — the withheld-tools final step wrote
+      // its call out as <tool_call> prose, which ThinkExtractor drops. See think-extractor.ts.
+      if (drainFinishReason === 'tool-calls' || !fullContent.trim()) {
+        console.warn(`  [${focusMode}] no answer (finish=${drainFinishReason}, ${fullContent.length} chars) — running no-tool synthesis fallback`)
+        fullContent = ''
         await emitStatus('Synthesising answer…')
         const allResults = [...(initialResults ?? []), ...fullSources]
         const resultsBlock = allResults.length > 0
@@ -703,19 +711,38 @@ Search results are authoritative ground truth — if they describe a product or 
           abortSignal,
           maxOutputTokens: RESEARCH_MAX_TOKENS,
         })
-        for await (const part of fallback.stream) {
-          if (part.type === 'text-delta' && part.text) {
-            fullContent += part.text
-            await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: part.text }) })
+        // Same extraction as the main pass: this call carries no tool schemas either, so a model
+        // that emits <think> or <tool_call> markup would otherwise stream it as the answer.
+        const fallbackExtractor = new ThinkExtractor()
+        const emitFallback = async ({ text, thinking }: { text: string; thinking: string }) => {
+          if (thinking && showThinking) await out.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: thinking }) })
+          if (text) {
+            fullContent += text
+            await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: text }) })
           }
         }
+        for await (const part of fallback.stream) {
+          if (part.type === 'text-delta' && part.text) await emitFallback(fallbackExtractor.process(part.text))
+        }
+        await emitFallback(fallbackExtractor.flush())
       }
+    }
+
+    // Last line of defence: nothing survived the main pass or the fallback. Name the failure in
+    // the answer body — an empty `done` reads to the client as an unreachable server.
+    const emptyAnswer = !fullContent.trim()
+    if (emptyAnswer) {
+      console.error(`  [${focusMode}] empty answer after fallback — reporting failure to the client`)
+      fullContent = EMPTY_ANSWER_MESSAGE
+      await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: fullContent }) })
     }
 
     if (fullContent.length < 50) console.log(`  [debug] short content: ${JSON.stringify(fullContent)}`)
     console.log(`  [${focusMode}] done in ${Date.now() - t0}ms, ${fullContent.length} chars`)
 
-    if (fullContent.length >= 50) setCached(ck, fullContent)
+    // Never cache the failure notice — it would be replayed as the answer for every repeat of
+    // this question until the entry expires.
+    if (!emptyAnswer && fullContent.length >= 50) setCached(ck, fullContent)
     if (!ephemeral) {
       const { title: sessionTitle } = await persistMessage(sid, userId, msgs, fullContent, sources, spaceId, regenerate)
       await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title: sessionTitle, elapsedMs: Date.now() - t0 }) })
