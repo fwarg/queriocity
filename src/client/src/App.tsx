@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import { RotateCcw } from 'lucide-react'
 import { MessageList, ImageCaptionContext } from './components/MessageList.tsx'
 import { ProgressLog, Elapsed } from './components/ProgressLog.tsx'
+import { ApprovalPrompt } from './components/ApprovalPrompt.tsx'
 import { ChatInput } from './components/ChatInput.tsx'
 import { LoginPage } from './components/LoginPage.tsx'
 import { RegisterPage } from './components/RegisterPage.tsx'
@@ -122,7 +123,7 @@ export default function App() {
     ? sessions.find(s => s.id === sessionId)?.spaceId ?? null
     : currentSpaceId
 
-  const { messages, setMessages, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, regenerate, cancel, reset, related, setRelated, steps, runStartedAt } = useChat({
+  const { messages, setMessages, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, regenerate, cancel, reset, related, setRelated, steps, runStartedAt, approval, decideApproval } = useChat({
     sessionId,
     focusMode,
     searchCategories,
@@ -1498,6 +1499,11 @@ export default function App() {
               </ImageCaptionContext.Provider>
             )}
             <ProgressLog steps={steps} collapsed={!busy || !!streaming} />
+            {approval && (
+              <div className="px-4">
+                <ApprovalPrompt approval={approval} onDecide={decideApproval} />
+              </div>
+            )}
             {status && (
               <div className="px-4 py-1 text-xs text-gray-500 italic animate-pulse">
                 {status}

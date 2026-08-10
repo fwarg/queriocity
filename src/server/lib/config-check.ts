@@ -42,6 +42,13 @@ export function validateConfig(): void {
     warn(`IMAGE_API="${process.env.IMAGE_API}" is not recognised; falling back to openai. Valid values: openai, sdapi.`)
   }
 
+  const rawGuard = process.env.EGRESS_GUARD?.trim().toLowerCase()
+  if (rawGuard && !['enforce', 'log', 'off'].includes(rawGuard)) {
+    warn(`EGRESS_GUARD="${process.env.EGRESS_GUARD}" is not recognised; falling back to enforce. Valid values: enforce, log, off.`)
+  } else if (rawGuard === 'off') {
+    warn('EGRESS_GUARD=off — fetch_url URLs and web_search queries are not screened, so nothing checks whether the model is sending your documents somewhere.')
+  }
+
   if (process.env.FETCH_ALLOW_PRIVATE_HOSTS === 'true' && !process.env.FETCH_PROXY_URL) {
     warn('FETCH_ALLOW_PRIVATE_HOSTS=true — URL fetching can reach loopback and LAN addresses, including from a link planted in a page the model reads.')
   }

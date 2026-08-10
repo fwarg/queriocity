@@ -32,6 +32,7 @@ through a single Bun process.
     - [Library upload (persistent)](#library-upload-persistent-vector-searchable)
     - [URL and YouTube ingestion](#url-and-youtube-ingestion)
   - [URL fetching](#url-fetching)
+  - [Preventing data exfiltration](#preventing-data-exfiltration)
   - [Prompt templates](#prompt-templates)
     - [Prompt Studio](#prompt-studio)
   - [Settings](#settings)
@@ -293,6 +294,60 @@ There are two ways page content reaches the model, and they share the same fetch
 - **Timeout** — each attempt is capped at `FETCH_TIMEOUT_MS` (default 10 s), applied separately to the static fetch and to the Playwright render, so an unreachable page costs at most roughly double that before the model is told it failed.
 - **Cache** — fetched URLs are cached for 5 minutes so the model does not re-fetch during the same session.
 - **Privacy** — by default requests originate from the server's IP. Set `FETCH_PROXY_URL` to route all fetches through an HTTP or SOCKS5 proxy (e.g. [Privoxy](https://www.privoxy.org/) → Tor).
+
+---
+
+## Preventing data exfiltration
+
+Once the assistant has read a document you gave it, anything it can send outwards is a way for that
+document to leave. This is not only a question of trusting the model: a document or a web page can
+*contain instructions*, and an instruction-following model will follow them. Assume the content the
+model reads is hostile — a poisoned PDF is far likelier than a maliciously trained model, and both
+produce the same behaviour.
+
+There are three outbound channels, and they are not equally dangerous.
+
+**1. Images in the answer — closed.** An answer containing `![](https://somewhere/x?d=…)` is
+rendered as an ordinary image, so the browser fetches it the moment the answer appears: no tool
+call, nothing in the activity log, and no server-side check involved. The
+`Content-Security-Policy` set by the app restricts images to Queriocity's own origin, which closes
+this off completely. Override with `CONTENT_SECURITY_POLICY` only if you know you need remote
+images, and understand that you are reopening this when you do.
+
+**2. `fetch_url`, and 3. `web_search`** — mitigated, not closed. Both send text the model chooses to
+a destination the model chooses. Note that the loopback/private-address blocking described above is
+a *different* protection: it stops fetches reaching inward, onto your LAN. It has nothing to say
+about a request going outward to a public host with your document's contents in the query string.
+
+`EGRESS_GUARD` scores each outbound request for signs of carrying data rather than asking for it:
+
+- an unbroken 32-character run mixing letters and digits — what an encoder emits, and what written
+  language never contains
+- heavy percent-encoding, or a URL far longer than the task needs
+- a destination host that appeared in no search result and in nothing you wrote, a bare IP, or a
+  hostname label long enough to be the payload itself
+- **terms from your own documents that you never mentioned** — the sharpest signal, because it asks
+  whether document content is leaving rather than guessing at the shape of a payload
+
+Above a threshold you are asked before the request is sent, with the full target shown. Declining is
+the default: the prompt refuses on its own after `EGRESS_APPROVAL_TIMEOUT_MS` (60 s), and also if you
+close the tab or stop the run. Monitors run with nobody watching, so a flagged request there is
+refused outright rather than waiting.
+
+**When it will ask you and needn't have.** Looking up a term found in one of your documents is both
+a completely normal request and exactly what exfiltrating that term looks like — the guard cannot
+tell them apart. So "what does *this* mean?" about something you just read, where you did not type
+the term yourself, is the case most likely to prompt unnecessarily. Approving is the right answer
+there; it is asking because the request is genuinely ambiguous, not because it has spotted an
+attack. The same goes for a URL the model guessed rather than took from a search result.
+
+**What this does not do.** Every signal keys on how a payload *looks*, so a patient attacker can
+leak a little at a time in ordinary-looking words and score nothing. Treat a clean run as "nothing
+obvious was spotted", never as proof nothing left. If a document genuinely must not leave the
+machine, the reliable control is not to give it to a session that has web access at all.
+
+Run `EGRESS_GUARD=log` first if you want to see what would have been flagged against your own usage
+before letting it act; `off` disables the checks.
 
 ---
 
@@ -780,6 +835,15 @@ JWT_SECRET=change-me-in-production-32chars!!
 #                                            # Do NOT set when exposed directly — the header is
 #                                            # then client-forgeable.
 
+# ── Exfiltration controls (see "Preventing data exfiltration") ───────────────
+# CONTENT_SECURITY_POLICY=                   # replaces the app's default policy wholesale; empty
+#                                            # disables it. The default stops the browser loading
+#                                            # remote images out of an answer, which is otherwise a
+#                                            # silent way for conversation content to leave.
+# EGRESS_GUARD=enforce                       # screening of fetch_url URLs and web_search queries:
+#                                            # enforce | log (score and log only) | off
+# EGRESS_APPROVAL_TIMEOUT_MS=60000           # how long an approval prompt waits before refusing
+
 # ── Rate limits (per user, per minute; 0 disables one) ───────────────────────
 # RATE_LIMIT_CHAT_PER_MIN=30
 # RATE_LIMIT_SUGGEST_PER_MIN=60
@@ -1042,13 +1106,11 @@ user shares one login rate-limit bucket keyed on the proxy's own address. Nginx 
 sets that header itself, so the same applies there. Leave `COOKIE_SECURE` unset (it defaults
 to on) and `ALLOWED_ORIGIN` unset (same-origin only).
 
-A Content-Security-Policy is not set by the app, because an untested policy silently breaks
-KaTeX, syntax highlighting, or the service worker. To enable one, add it here and verify the
-browser console is clean before trusting it:
-
-```nginx
-    # add_header Content-Security-Policy "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'" always;
-```
+**A Content-Security-Policy is set by the app itself**, so it applies whether or not you run a
+proxy — see [Preventing data exfiltration](#preventing-data-exfiltration) for what it is for. Do
+not add one here as well: two `Content-Security-Policy` headers are intersected by the browser, so
+a proxy-level copy can only break things the app already allows. Override it with the
+`CONTENT_SECURITY_POLICY` env var instead.
 
 ---
 

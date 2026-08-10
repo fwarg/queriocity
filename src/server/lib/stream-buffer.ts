@@ -12,6 +12,17 @@ const GRACE_MS = parseInt(process.env.STREAM_RESUME_GRACE_MS ?? '90000', 10)
 const FINISHED_TTL_MS = 2 * 60 * 1000
 const MAX_RUNS = 200
 
+/** How long an egress approval waits for the user before it is refused. */
+export const APPROVAL_TIMEOUT_MS = parseInt(process.env.EGRESS_APPROVAL_TIMEOUT_MS ?? '60000', 10)
+
+interface PendingApproval {
+  decide: (allow: boolean) => void
+  timer: ReturnType<typeof setTimeout>
+  /** So a client that reconnects mid-decision is told how long is actually left, rather than
+   *  being shown a fresh countdown against a timer that has been running the whole time. */
+  expiresAt: number
+}
+
 export interface LiveRun {
   sessionId: string
   userId: string
@@ -24,6 +35,8 @@ export interface LiveRun {
   cleanupTimer?: ReturnType<typeof setTimeout>
   /** Resolvers for readers parked on `waitForEvents`. */
   waiters: Array<() => void>
+  /** Outbound requests parked waiting on the user, keyed by approval id. */
+  approvals: Map<string, PendingApproval>
 }
 
 const runs = new Map<string, LiveRun>()
@@ -48,6 +61,7 @@ export function startRun(sessionId: string, userId: string): LiveRun {
   const run: LiveRun = {
     sessionId, userId, events: [], done: false,
     controller: new AbortController(), updatedAt: Date.now(), waiters: [],
+    approvals: new Map(),
   }
   runs.set(sessionId, run)
   return run
@@ -69,9 +83,46 @@ export function finishRun(run: LiveRun): void {
   run.done = true
   run.updatedAt = Date.now()
   if (run.graceTimer) clearTimeout(run.graceTimer)
+  // Anything still parked can never be answered now, and every path out of an approval must
+  // resolve it — an unresolved one leaves the generation awaiting a promise forever.
+  for (const id of [...run.approvals.keys()]) settleApproval(run, id, false)
   wake(run)
   run.cleanupTimer = setTimeout(() => runs.delete(run.sessionId), FINISHED_TTL_MS)
   run.cleanupTimer.unref?.()
+}
+
+/** Parks an outbound request until the user answers, the timeout expires, or the run ends.
+ *
+ *  Refusal is the default for every one of those, so a user who closes the tab, loses their
+ *  connection, or simply ignores the prompt does not thereby permit the request.
+ *
+ *  `timeoutMs` is a parameter rather than read straight from the constant so the expiry path can
+ *  be tested without a 60-second wait. */
+export function awaitApproval(run: LiveRun, id: string, timeoutMs = APPROVAL_TIMEOUT_MS): Promise<boolean> {
+  return new Promise<boolean>(resolve => {
+    const timer = setTimeout(() => {
+      console.warn(`  [egress] approval ${id} timed out after ${timeoutMs}ms — refused`)
+      settleApproval(run, id, false)
+    }, timeoutMs)
+    timer.unref?.()
+    run.approvals.set(id, { decide: resolve, timer, expiresAt: Date.now() + timeoutMs })
+  })
+}
+
+/** Resolves a parked approval. Returns false when there was nothing waiting under that id. */
+export function settleApproval(run: LiveRun, id: string, allow: boolean): boolean {
+  const pending = run.approvals.get(id)
+  if (!pending) return false
+  clearTimeout(pending.timer)
+  run.approvals.delete(id)
+  pending.decide(allow)
+  return true
+}
+
+/** Milliseconds left on a parked approval, for a client that reconnected mid-decision. */
+export function approvalTimeLeft(run: LiveRun, id: string): number | null {
+  const pending = run.approvals.get(id)
+  return pending ? Math.max(0, pending.expiresAt - Date.now()) : null
 }
 
 function wake(run: LiveRun): void {

@@ -3,7 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { streamSSE, type SSEStreamingApi } from 'hono/streaming'
 import { streamText, generateText, tool, stepCountIs } from 'ai'
-import { runResearcher, maxStepsFor } from '../lib/researcher.ts'
+import { runResearcher, maxStepsFor, type EgressApprovalRequest } from '../lib/researcher.ts'
 import { runWriter } from '../lib/writer.ts'
 import { drainResearcherStream, type SSEStream } from '../lib/researcher-stream.ts'
 import { stepEvent, type ProgressStep } from '../lib/progress.ts'
@@ -27,7 +27,8 @@ import { ownsSpace, sessionOwnership } from '../lib/ownership.ts'
 import { rateLimitByUser, chatLimiter, suggestLimiter } from '../lib/rate-limit.ts'
 import {
   startRun, getRun, appendEvent, finishRun, waitForEvents,
-  scheduleAbandon, cancelAbandon, stopRun, type LiveRun,
+  scheduleAbandon, cancelAbandon, stopRun, awaitApproval, settleApproval, approvalTimeLeft,
+  APPROVAL_TIMEOUT_MS, type LiveRun,
 } from '../lib/stream-buffer.ts'
 import { IMAGE_API, IMAGE_STORAGE_DIR, randomSeed, resolveSteps, saveGeneratedImage } from '../lib/image-store.ts'
 import { imageBackend, compensateSteps, DEFAULT_EDIT_STRENGTH } from '../lib/image-api.ts'
@@ -187,6 +188,16 @@ chatRouter.get('/resume/:sessionId', async (c) => {
       while (index < run.events.length) {
         await stream.writeSSE({ data: run.events[index], id: String(index + 1) })
         index++
+        // A replayed approval prompt carries the timeout it was created with, but the server's
+        // clock has been running the whole time. Correct the countdown for any still parked;
+        // ones already settled replay their approval_closed event and need nothing.
+        const pending = JSON.parse(run.events[index - 1]) as { type?: string; id?: string }
+        if (pending.type === 'approval' && pending.id) {
+          const left = approvalTimeLeft(run, pending.id)
+          if (left !== null) {
+            await stream.writeSSE({ data: JSON.stringify({ type: 'approval_time', id: pending.id, timeoutMs: left }) })
+          }
+        }
       }
       if (run.done) break
       // Returns early on a new event; the timeout doubles as the keepalive tick.
@@ -201,6 +212,19 @@ chatRouter.get('/resume/:sessionId', async (c) => {
 chatRouter.post('/:sessionId/stop', async (c) => {
   const stopped = stopRun(c.req.param('sessionId'), c.get('userId') as string)
   return c.json({ stopped })
+})
+
+/** The user's answer to an egress approval prompt. Ownership is checked the same way `stop` does
+ *  it: the run is looked up by session and must belong to the caller, so one user cannot release
+ *  another's parked request. */
+chatRouter.post('/:sessionId/approve', zValidator('json', z.object({
+  id: z.string(),
+  allow: z.boolean(),
+})), async (c) => {
+  const { id, allow } = c.req.valid('json')
+  const run = getRun(c.req.param('sessionId'))
+  if (!run || run.userId !== (c.get('userId') as string)) return c.json({ settled: false }, 404)
+  return c.json({ settled: settleApproval(run, id, allow) })
 })
 
 chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', chatSchema), async (c) => {
@@ -519,6 +543,23 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     const emitStep = (step: ProgressStep) => out.writeSSE({ data: stepEvent(step) })
     await emitStep({ kind: 'understand' })
 
+    /** Ask the user whether an outbound request the egress guard flagged may be sent.
+     *
+     *  The generation parks here until they answer. The keepalive pings already running around
+     *  each researcher stream hold the connection open meanwhile, and every way out of the wait
+     *  other than an explicit Allow resolves to false. */
+    const requestApproval = async (req: EgressApprovalRequest): Promise<boolean> => {
+      const id = randomUUID()
+      await out.writeSSE({ data: JSON.stringify({
+        type: 'approval', id, kind: req.kind, target: req.target,
+        reasons: req.reasons, timeoutMs: APPROVAL_TIMEOUT_MS,
+      }) })
+      const allowed = await awaitApproval(run, id)
+      console.log(`  [egress] ${req.kind} ${allowed ? 'allowed' : 'refused'} by user — ${req.target.slice(0, 120)}`)
+      await out.writeSSE({ data: JSON.stringify({ type: 'approval_closed', id, allowed }) })
+      return allowed
+    }
+
     const [fetchMaxPages, fetchSummarize, compressHistory] = await Promise.all([
       getAppSetting('fetch_max_pages', '8').then(Number),
       getAppSetting('fetch_summarize_overflow', 'false').then(v => v === 'true'),
@@ -614,7 +655,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         await out.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: snippets + '\n\n' }) })
       }
       const researchModel = useThinking ? getThinkingModelOrFallback() : getChatModel()
-      const researcherResult = await runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, apiBudget })
+      const researcherResult = await runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, apiBudget, requestApproval })
       const allSources: SearchResult[] = [...(initialResults ?? [])]
       let researcherNotes = ''
       // Unconditional: the extractor also drops leaked tool-call markup, which has to be stripped
@@ -695,7 +736,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       }
 
       const fullSources: SearchResult[] = []
-      const result = await runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, apiBudget })
+      const result = await runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, apiBudget, requestApproval })
       const extractor = new ThinkExtractor()   // see thoroughExtractor above
 
       const keepalive = setInterval(() => {

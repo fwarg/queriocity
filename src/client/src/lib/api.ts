@@ -270,6 +270,22 @@ export async function stopChat(sessionId: string): Promise<void> {
   } catch { /* nothing useful to do */ }
 }
 
+/** Answers an egress approval prompt. Returns false when the server had nothing parked under that
+ *  id — it already timed out, or the run ended — so the caller can drop a prompt gone stale. */
+export async function decideEgress(sessionId: string, id: string, allow: boolean): Promise<boolean> {
+  try {
+    const res = await fetch(`${BASE}/chat/${sessionId}/approve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, allow }),
+    })
+    if (!res.ok) return false
+    return (await res.json() as { settled: boolean }).settled
+  } catch {
+    return false
+  }
+}
+
 export async function fetchRelatedQuestions(question: string, answer: string): Promise<string[]> {
   try {
     const res = await fetch(`${BASE}/chat/related`, {
