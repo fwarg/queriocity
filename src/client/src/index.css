@@ -1,6 +1,14 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+/* Tailwind v3's preflight set `cursor: pointer` on buttons; v4 defers to the browser default,
+   which is `default`. Restored here rather than accepted: the app drives almost everything from
+   <button> (142 of them), so losing the pointer changes the feel of every control. */
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
 
 body {
   @apply bg-gray-950 text-gray-100 min-h-screen overflow-x-hidden;

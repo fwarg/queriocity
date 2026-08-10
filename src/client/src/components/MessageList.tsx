@@ -273,7 +273,7 @@ function HighlightedText({ text, query }: { text: string; query: string }) {
   const parts = text.split(new RegExp(`(${escapeRegex(query)})`, 'gi'))
   return <>{parts.map((p, i) =>
     i % 2 === 1
-      ? <mark key={i} className="bg-yellow-500/50 text-white rounded-sm">{p}</mark>
+      ? <mark key={i} className="bg-yellow-500/50 text-white rounded-xs">{p}</mark>
       : p
   )}</>
 }
