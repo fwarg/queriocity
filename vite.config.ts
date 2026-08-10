@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
@@ -32,6 +33,11 @@ export default defineConfig(({ mode }) => {
         },
       }),
     ],
+    // src/shared holds the few modules both halves need; the client root is src/client, so it
+    // sits outside and needs an alias rather than a relative path.
+    resolve: {
+      alias: { '@shared': fileURLToPath(new URL('./src/shared', import.meta.url)) },
+    },
     build: {
       outDir: '../../dist/client',
       emptyOutDir: true,

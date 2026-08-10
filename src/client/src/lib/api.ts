@@ -5,7 +5,7 @@ export interface AuthUser {
   email: string
   name: string | null
   role: 'user' | 'admin'
-  settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; useSpaceRag?: boolean; useChatRag?: boolean; querySuggestions?: boolean; followUpSuggestions?: boolean; userMemory?: boolean; fontSize?: number; timezone?: string }
+  settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; useSpaceRag?: boolean; useChatRag?: boolean; querySuggestions?: boolean; followUpSuggestions?: boolean; userMemory?: boolean; imageWatermark?: boolean; fontSize?: number; timezone?: string }
   memoryTokenBudget: number
   /** True after an admin issued a temporary password — the user must set their own. */
   mustChangePassword?: boolean

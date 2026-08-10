@@ -207,6 +207,7 @@ export interface UserSettingsForm {
   querySuggestions: boolean
   followUpSuggestions: boolean
   userMemory: boolean
+  imageWatermark: boolean
   fontSize: number
   timezone: string
 }
@@ -218,7 +219,7 @@ interface Props extends UserSettingsForm {
   onSave: (settings: UserSettingsForm) => void
 }
 
-export function SettingsPanel({ customPrompt: initial, showThinking: initialShowThinking, useThinking: initialUseThinking, useSpaceRag: initialUseSpaceRag, useChatRag: initialUseChatRag, querySuggestions: initialQuerySuggestions, followUpSuggestions: initialFollowUpSuggestions, userMemory: initialUserMemory, fontSize: initialFontSize, timezone: initialTimezone, onClose, onPasswordChanged, onSave }: Props) {
+export function SettingsPanel({ customPrompt: initial, showThinking: initialShowThinking, useThinking: initialUseThinking, useSpaceRag: initialUseSpaceRag, useChatRag: initialUseChatRag, querySuggestions: initialQuerySuggestions, followUpSuggestions: initialFollowUpSuggestions, userMemory: initialUserMemory, imageWatermark: initialImageWatermark, fontSize: initialFontSize, timezone: initialTimezone, onClose, onPasswordChanged, onSave }: Props) {
   const [customPrompt, setCustomPrompt] = useState(initial)
   const [showThinking, setShowThinking] = useState(initialShowThinking)
   const [useThinking, setUseThinking] = useState(initialUseThinking)
@@ -227,6 +228,7 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
   const [querySuggestions, setQuerySuggestions] = useState(initialQuerySuggestions)
   const [followUpSuggestions, setFollowUpSuggestions] = useState(initialFollowUpSuggestions)
   const [userMemory, setUserMemory] = useState(initialUserMemory)
+  const [imageWatermark, setImageWatermark] = useState(initialImageWatermark)
   const [fontSize, setFontSize] = useState(initialFontSize)
   const [timezone, setTimezone] = useState(initialTimezone)
   const [busy, setBusy] = useState(false)
@@ -259,7 +261,7 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
     e.preventDefault()
     setBusy(true)
     try {
-      const form = { customPrompt, showThinking, useThinking, useSpaceRag, useChatRag, querySuggestions, followUpSuggestions, userMemory, fontSize, timezone }
+      const form = { customPrompt, showThinking, useThinking, useSpaceRag, useChatRag, querySuggestions, followUpSuggestions, userMemory, imageWatermark, fontSize, timezone }
       await updateSettings({ ...form, timezone: timezone || undefined })
       onSave(form)
       setSaved(true)
@@ -403,6 +405,24 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
               Enable memory about me
             </label>
             {userMemory && <UserMemoryList />}
+          </div>
+          <div className="border-t border-gray-800" />
+          <div className="flex flex-col gap-2">
+            <label className="text-xs text-gray-400 font-medium">Image labelling</label>
+            <p className="text-xs text-gray-500">
+              Add a visible &ldquo;AI-generated&rdquo; caption below downloaded images. Generated images always carry
+              machine-readable provenance metadata; the caption also survives sites that strip metadata on upload.
+              Turn it off only for images you keep to yourself.
+            </p>
+            <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={imageWatermark}
+                onChange={e => setImageWatermark(e.target.checked)}
+                className="accent-blue-500"
+              />
+              Caption downloaded images
+            </label>
           </div>
           <div className="border-t border-gray-800" />
           <div className="flex flex-col gap-2">
