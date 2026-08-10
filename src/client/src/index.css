@@ -122,4 +122,14 @@ body {
     max-width: 100% !important;
     page-break-inside: avoid;
   }
+
+  /* AI disclosure — the on-screen cues (badges, the "Assistant" colour) are all gone on paper. */
+  #print-root .print-ai-notice {
+    margin-top: 16pt;
+    padding-top: 6pt;
+    border-top: 1px solid #bbb;
+    font-family: system-ui, sans-serif;
+    font-size: 8pt;
+    color: #555 !important;
+  }
 }

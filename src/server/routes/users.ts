@@ -29,6 +29,10 @@ const settingsSchema = z.object({
   /** Off by default: when disabled neither the block nor the save_user_fact tool is added, so
    *  prompt size and tool count are unchanged for anyone who has not opted in. */
   userMemory: z.boolean().optional(),
+  /** Visible "AI-generated" caption burned into downloaded images. On by default — the AI Act's
+   *  disclosure duty (Art 50(4)) falls on whoever deploys the app, and only a visible mark
+   *  survives a platform stripping the file's metadata. Metadata marking is unconditional. */
+  imageWatermark: z.boolean().optional(),
 })
 
 usersRouter.post('/password', zValidator('json', z.object({

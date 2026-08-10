@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { login } from '../lib/api.ts'
+import { AI_SYSTEM_NOTICE } from '../lib/ai-notice.ts'
 import type { AuthUser } from '../lib/api.ts'
 
 interface Props {
@@ -33,6 +34,7 @@ export function LoginPage({ onLogin, showRegisterLink, onRegister }: Props) {
       <div className="w-full max-w-sm bg-gray-900 rounded-xl p-8 flex flex-col gap-5 border border-gray-800">
         <div className="flex flex-col gap-1">
           <h1 className="text-xl font-semibold text-gray-100">Sign in to Queriocity</h1>
+          <p className="text-xs text-gray-500">{AI_SYSTEM_NOTICE}</p>
         </div>
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
           <input

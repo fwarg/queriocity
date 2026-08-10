@@ -29,7 +29,9 @@ import {
   startRun, getRun, appendEvent, finishRun, waitForEvents,
   scheduleAbandon, cancelAbandon, stopRun, type LiveRun,
 } from '../lib/stream-buffer.ts'
-import { IMAGE_STORAGE_DIR, IMAGE_TIMEOUT_MS } from '../lib/image-store.ts'
+import { IMAGE_CREATOR_TOOL, IMAGE_STORAGE_DIR, IMAGE_TIMEOUT_MS, randomSeed, resolveSteps } from '../lib/image-store.ts'
+import { markPng } from '../../shared/ai-provenance.ts'
+
 // Memo of image directories already mkdir'd, to skip the syscall. One entry per user, so it
 // only needs a sanity bound rather than real eviction.
 const _createdImageDirs = new Set<string>()
@@ -329,15 +331,18 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         inputSchema: z.object({
           prompt: z.string().describe('Detailed visual description for image generation'),
           size: z.string().optional().describe('Image dimensions e.g. "512x512", "1024x1024", "1024x576"'),
-          steps: z.number().int().optional().describe('Inference steps: ~15 draft, ~25 balanced, ~40 high quality'),
+          quality: z.enum(['draft', 'balanced', 'high']).optional().describe('Quality tier taken from the user\'s wording. Resolved to a step count by the server; prefer this over steps'),
+          steps: z.number().int().optional().describe('Explicit step count. Only when the user names a number outright; otherwise leave unset and use quality'),
+          seed: z.number().int().optional().describe('Random seed. Only set when the user explicitly asks for a specific seed or to reproduce an earlier image; omit otherwise so the result varies'),
         }),
-        execute: async ({ prompt, size, steps }) => {
+        execute: async ({ prompt, size, quality, steps, seed }) => {
           try {
-            const body: Record<string, unknown> = { prompt, n: 1, response_format: 'b64_json' }
+            const usedSeed = seed ?? randomSeed()
+            const usedSteps = resolveSteps(quality, steps)
+            const body: Record<string, unknown> = { prompt, n: 1, response_format: 'b64_json', seed: usedSeed, steps: usedSteps }
             if (size) body.size = size
-            if (steps) body.steps = steps
             if (process.env.IMAGE_MODEL) body.model = process.env.IMAGE_MODEL
-            console.log(`  [image] → ${imageBaseUrl}  prompt="${prompt}"  size=${size ?? 'default'}  steps=${steps ?? 'default'}`)
+            console.log(`  [image] → ${imageBaseUrl}  prompt="${prompt}"  size=${size ?? 'default'}  steps=${usedSteps} (${quality ?? (steps ? 'explicit' : 'default')})  seed=${usedSeed}${seed === undefined ? ' (random)' : ''}`)
             const res = await fetch(`${imageBaseUrl}/v1/images/generations`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -360,7 +365,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
               rememberImageDir(imagesDir)
             }
             const filename = `${randomUUID()}.png`
-            await writeFile(`${imagesDir}/${filename}`, Buffer.from(b64, 'base64'))
+            await writeFile(`${imagesDir}/${filename}`, markPng(Buffer.from(b64, 'base64'), IMAGE_CREATOR_TOOL, process.env.IMAGE_MODEL))
             console.log(`  [image] saved ${userId}/${filename}`)
             pendingImageUrl = `/images/${userId}/${filename}`
             lastGeneratedImageUrl = pendingImageUrl
@@ -379,9 +384,11 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
           strength: z.number().min(0).max(1).optional()
             .describe('How much to change (0.0=unchanged, 1.0=completely new). Default 0.75.'),
           size: z.string().optional().describe('Output dimensions e.g. "512x512". Defaults to source size.'),
-          steps: z.number().int().optional().describe('Inference steps: ~15 draft, ~25 balanced, ~40 high'),
+          quality: z.enum(['draft', 'balanced', 'high']).optional().describe('Quality tier taken from the user\'s wording. Resolved to a step count by the server; prefer this over steps'),
+          steps: z.number().int().optional().describe('Explicit step count. Only when the user names a number outright; otherwise leave unset and use quality'),
+          seed: z.number().int().optional().describe('Random seed. Only set when the user explicitly asks for a specific seed or to reproduce an earlier image; omit otherwise so the result varies'),
         }),
-        execute: async ({ image_url, prompt, strength, size, steps }) => {
+        execute: async ({ image_url, prompt, strength, size, quality, steps, seed }) => {
           try {
             if (!image_url.startsWith(`/images/${userId}/`)) {
               return { success: false, error: 'Invalid image reference', prompt }
@@ -395,9 +402,12 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
             form.append('response_format', 'b64_json')
             if (strength !== undefined) form.append('strength', String(strength))
             if (size) form.append('size', size)
-            if (steps) form.append('steps', String(steps))
+            const usedSteps = resolveSteps(quality, steps)
+            form.append('steps', String(usedSteps))
             if (process.env.IMAGE_MODEL) form.append('model', process.env.IMAGE_MODEL)
-            console.log(`  [image] edit → ${imageBaseUrl}  prompt="${prompt}"  strength=${strength ?? 0.75}`)
+            const usedSeed = seed ?? randomSeed()
+            form.append('seed', String(usedSeed))
+            console.log(`  [image] edit → ${imageBaseUrl}  prompt="${prompt}"  strength=${strength ?? 0.75}  steps=${usedSteps}  seed=${usedSeed}${seed === undefined ? ' (random)' : ''}`)
             const res = await fetch(`${imageBaseUrl}/v1/images/edits`, { method: 'POST', body: form, signal: AbortSignal.timeout(IMAGE_TIMEOUT_MS) })
             if (!res.ok) {
               console.error(`  [image] edit server error ${res.status}`)
@@ -415,7 +425,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
               rememberImageDir(imagesDir)
             }
             const filename = `${randomUUID()}.png`
-            await writeFile(`${imagesDir}/${filename}`, Buffer.from(b64, 'base64'))
+            await writeFile(`${imagesDir}/${filename}`, markPng(Buffer.from(b64, 'base64'), IMAGE_CREATOR_TOOL, process.env.IMAGE_MODEL))
             console.log(`  [image] saved edited ${userId}/${filename}`)
             pendingImageUrl = `/images/${userId}/${filename}`
             lastGeneratedImageUrl = pendingImageUrl
@@ -431,7 +441,8 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
 - When asked to draw, illustrate, create, or generate an image, call generate_image with a detailed visual prompt.
 - When asked to edit, change, or modify a previously generated image, call edit_image.${lastGeneratedImageUrl ? ` The most recently generated image is at ${lastGeneratedImageUrl}.` : ''}
 - If the subject is specialized, technical, or you are uncertain what it looks like visually, call web_search first to gather context, then use what you learned to write a richer prompt.
-- Extract size from resolution strings and steps from quality hints (draft→15, balanced→25, high→40).
+- Extract size from resolution strings, and set quality to draft, balanced or high from wording like "quick sketch", "high quality" or "detailed". Do not convert quality into a step count yourself — pass the word and let the server decide. Use steps only if the user names a number outright.
+- Pass seed only when the user names one, or asks to reuse or reproduce a previous image's seed. Never invent one: omitting it makes each render vary.
 - If you used web_search, respond with one sentence summarizing what you learned that shaped the prompt. Otherwise output nothing — do not add any text, URLs, or commentary after the image tool call.
 - Always respond in the same language the user used.`
     const t0 = Date.now()

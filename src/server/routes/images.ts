@@ -3,12 +3,14 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { rateLimitByUser, imageLimiter } from '../lib/rate-limit.ts'
-import { IMAGE_TIMEOUT_MS } from '../lib/image-store.ts'
+import { IMAGE_CREATOR_TOOL, IMAGE_TIMEOUT_MS, randomSeed, resolveSteps } from '../lib/image-store.ts'
+import { markPng } from '../../shared/ai-provenance.ts'
 
 const generateSchema = z.object({
   prompt: z.string().min(1),
   size: z.string().optional(),
   steps: z.number().int().optional(),
+  seed: z.number().int().optional(),
 })
 
 export const imagesRouter = new Hono<AppEnv>()
@@ -19,10 +21,17 @@ imagesRouter.post('/generate', rateLimitByUser(imageLimiter, 'image'), zValidato
   const imageBaseUrl = process.env.IMAGE_BASE_URL?.trim()
   if (!imageBaseUrl) return c.json({ error: 'Image generation not configured' }, 503)
 
-  const { prompt, size, steps } = c.req.valid('json')
-  const body: Record<string, unknown> = { prompt, n: 1, response_format: 'b64_json' }
+  const { prompt, size, steps, seed } = c.req.valid('json')
+  // Seeded explicitly for the same reason as the chat tools: an unset seed is a fixed constant on
+  // some servers, which would make repeat renders of one prompt identical.
+  // Steps and seed are always sent: an omitted field means the diffusion server's own default,
+  // which ignores the configured tiers and, for the seed, is a constant on some servers.
+  const body: Record<string, unknown> = {
+    prompt, n: 1, response_format: 'b64_json',
+    seed: seed ?? randomSeed(),
+    steps: resolveSteps(undefined, steps),
+  }
   if (size) body.size = size
-  if (steps) body.steps = steps
   if (process.env.IMAGE_MODEL) body.model = process.env.IMAGE_MODEL
 
   let res: Response
@@ -49,5 +58,8 @@ imagesRouter.post('/generate', rateLimitByUser(imageLimiter, 'image'), zValidato
   const b64 = json.data?.[0]?.b64_json
   if (!b64) return c.json({ error: 'No image data in response' }, 502)
 
-  return c.json({ data: b64 })
+  // Marked here rather than at the call site: this endpoint hands raw bytes to the client, so it
+  // would otherwise be an unmarked route around the image tools in chat.ts.
+  const marked = markPng(Buffer.from(b64, 'base64'), IMAGE_CREATOR_TOOL, process.env.IMAGE_MODEL)
+  return c.json({ data: Buffer.from(marked).toString('base64') })
 })

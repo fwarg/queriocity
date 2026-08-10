@@ -219,13 +219,21 @@ export const TEMPLATES: Template[] = [
         placeholder: '',
         required: false,
         type: 'select',
-        options: ['draft (fast, ~15 steps)', 'balanced (~25 steps)', 'high (~40 steps)'],
-        defaultValue: 'balanced (~25 steps)',
+        // No step counts here: the actual values live in IMAGE_STEPS on the server, where they are
+        // configurable per deployment, so a number printed in this label would go stale silently.
+        options: ['draft (fast)', 'balanced', 'high (slow)'],
+        defaultValue: 'balanced',
       },
       {
         id: 'negative',
         label: 'Avoid (optional)',
         placeholder: 'e.g. blurry, low quality, text, watermark',
+        required: false,
+      },
+      {
+        id: 'seed',
+        label: 'Seed (optional)',
+        placeholder: 'blank for a new image each time',
         required: false,
       },
     ],
@@ -236,6 +244,7 @@ export const TEMPLATES: Template[] = [
       if (v.resolution) parts.push(`Resolution: ${v.resolution}.`)
       if (v.quality) parts.push(`Quality: ${v.quality}.`)
       if (v.negative?.trim()) parts.push(`Avoid: ${v.negative.trim()}.`)
+      if (v.seed?.trim()) parts.push(`Seed: ${v.seed.trim()}.`)
       return parts.join(' ')
     },
   },

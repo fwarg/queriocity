@@ -54,6 +54,7 @@ through a single Bun process.
   - [Backup](#backup)
 - [Architecture overview](#architecture-overview)
 - [Dependencies and licenses](#dependencies-and-licenses)
+- [AI transparency (EU AI Act Article 50)](#ai-transparency-eu-ai-act-article-50)
 - [License](#license)
 
 ---
@@ -342,6 +343,7 @@ Open **Settings** from the bottom of the sidebar. Settings are saved per user.
 | **Chat RAG** | When chatting outside a space, automatically retrieve relevant excerpts from your uploaded file library and inject them as context. |
 | **Query suggestions** | Show AI-generated query completions as you type in the chat input (debounced, min 8 characters). Powered by the flash model. Disable on slow setups or if the extra latency is distracting. |
 | **Follow-up suggestions** | Show up to three suggested follow-up questions as chips under a finished answer. Powered by the flash model, one call per answer. Disabling it skips the call entirely. |
+| **Image labelling** | On by default. Adds a visible "AI-generated" caption bar beneath images saved with the **Download PNG** link. Machine-readable provenance metadata is embedded either way; the caption is what survives a site that strips metadata on upload. Note that the download link always re-encodes, which drops the diffusion server's prompt metadata — right-click if you want the file exactly as stored. See [AI transparency](#ai-transparency-eu-ai-act-article-50). |
 | **About you** | Off by default. Keeps a short list of facts about you that apply in *every* chat, space or not, and lets you build it by hand or from a reviewed scan of your recent chats. See [Memory about you](#memory-about-you). |
 | **Font size** | UI font size: Small (15 px), Normal (17 px), Large (19 px), XL (21 px). Sizes scale up automatically on narrow viewports. |
 | **Timezone** | IANA timezone (e.g. `Europe/Stockholm`) used when scheduling monitors at a specific hour of the day. Defaults to server time (UTC in Docker) if not set. |
@@ -367,19 +369,48 @@ Select **Image** mode and describe what you want:
 > *"Generate a portrait of a robot reading a book, high quality"*
 > *"Make it raining"* — (edits the most recently generated image)
 
-The model calls the appropriate tool automatically. While the image is being generated, a **"Generating image…"** or **"Editing image…"** status indicator is shown. When done, the image is displayed inline with a **Download PNG** link.
+The model calls the appropriate tool automatically. While the image is being generated, a **"Generating image…"** or **"Editing image…"** status indicator is shown. When done, the image is displayed inline with a **Download PNG** link and an **AI-generated** badge.
+
+Every generated image carries machine-readable provenance metadata — IPTC `DigitalSourceType` plus
+the name of the model that produced it — and downloads optionally get a visible caption bar. See
+[AI transparency](#ai-transparency-eu-ai-act-article-50) for what that is and why it is there.
 
 ### Quality hints
 
 The model maps quality keywords to inference step counts:
 
-| Hint in your message | Steps |
-|---|---|
-| *draft*, *quick*, *fast* | ~15 |
-| *(none / default)* | ~25 |
-| *high quality*, *detailed*, *best* | ~40 |
+| Hint in your message | Steps | Override |
+|---|---|---|
+| *draft*, *quick*, *fast* | 5 | `IMAGE_STEPS_DRAFT` |
+| *(none / default)* | 15 | `IMAGE_STEPS_BALANCED` |
+| *high quality*, *detailed*, *best* | 25 | `IMAGE_STEPS_HIGH` |
+
+**These defaults suit a guidance-distilled FLUX-class model and are almost certainly wrong for
+yours.** Step counts are a property of the model, not of this app: a timestep-distilled model
+(schnell, turbo, LCM) is finished in a handful of steps, while an SD1.5-era one still wants 25+.
+Find your own numbers by rendering one prompt at a fixed seed across a range and stopping where the
+improvement does, then set the three variables.
+
+The values live only on the server, which is why the Draw template's quality dropdown says
+"balanced" rather than naming a step count — a number in the UI would go stale the moment the
+environment changed.
 
 You can also request a specific resolution: *"512×512"*, *"1024×576"*, etc.
+
+### Seeds
+
+Each render gets a fresh random seed, so asking for the same thing twice gives two different
+images. Name a seed — *"use seed 12345"* — to make a render reproducible, which is what makes
+controlled iteration possible: pin the seed, change one thing in the prompt, and the difference you
+see is the change you made. The Draw template has a **Seed** field for the same purpose; leave it
+blank for a new image each time.
+
+The seed is sent explicitly rather than left for the diffusion server to choose, because servers
+disagree about what an unset seed means — stable-diffusion.cpp substitutes a constant, which made
+every render of a given prompt identical. The seed used is written to the server log, and to the
+image's own `parameters` metadata by most diffusion servers (visible with `exiftool`, though note
+that downloading through the **Download PNG** link strips it — see
+[AI transparency](#ai-transparency-eu-ai-act-article-50)).
 
 ### Image storage
 
@@ -602,7 +633,14 @@ RERANK_MODEL=qwen3-reranker
 # When set, enables the Image mode for generating and editing images.
 # Point to any OpenAI-compatible diffusion server (ComfyUI, A1111, etc.).
 # IMAGE_BASE_URL=http://localhost:8188   # base URL of diffusion server
-# IMAGE_MODEL=                           # optional model name/alias sent to the server
+# IMAGE_MODEL=                           # optional model name/alias sent to the server. Also recorded
+#                                        # in each generated image's provenance metadata — left unset,
+#                                        # the server picks its own default and the metadata names no
+#                                        # model, since the app cannot know what was chosen
+# IMAGE_STEPS_DRAFT=5                    # inference steps behind the draft/balanced/high quality
+# IMAGE_STEPS_BALANCED=15                # hints. Model-dependent: a distilled model (schnell, turbo,
+# IMAGE_STEPS_HIGH=25                    # LCM) needs a handful, an SD1.5-era one 25+. Defaults suit
+#                                        # a guidance-distilled FLUX-class model
 # IMAGE_TIMEOUT_MS=300000                # generation/edit timeout (default 5 min); catches a stuck
 #                                        # diffusion server without cutting off slow renders
 # IMAGE_STORAGE_DIR=/images              # where generated images are written (default: /tmp/queriocity/images).
@@ -1306,6 +1344,123 @@ This project is licensed under **MIT**. It is compatible with all dependencies l
 above: MIT packages impose no downstream restrictions, and Apache 2.0 packages may be
 included in MIT-licensed projects provided their copyright and license notices are
 retained (which standard `node_modules` handling already does).
+
+---
+
+## AI transparency (EU AI Act Article 50)
+
+Queriocity is an AI system that talks to users directly and generates synthetic images and text, so
+[Article 50](https://artificialintelligenceact.eu/article/50/) of the EU AI Act applies to it. Its
+transparency obligations have applied since **2 August 2026**, with marking of generated content
+required on pre-existing systems from **2 December 2026**.
+
+Being open source does not exempt it. Article 2(12) exempts free-and-open-source AI systems from
+the Regulation *except* those falling under Articles 5 and 50 — which is precisely why that carve-out
+exists.
+
+### Two roles: provider and deployer
+
+Article 50 splits its duties between two roles, and the split decides which of them is the software's
+job and which is yours.
+
+A **provider** (Art 3(3)) develops an AI system and places it on the market under its own name,
+whether for payment or free of charge. Whoever publishes Queriocity is a provider. A **deployer**
+(Art 3(4)) uses an AI system under their own authority — *except* where the use is "in the course of
+a personal non-professional activity". Running an instance for yourself, your family or your friends
+therefore falls outside the deployer definition; running one in any professional capacity does not.
+
+| | Provider duties | Deployer duties |
+|---|---|---|
+| **50(1)** | Design the system so users are told they are dealing with an AI | — |
+| **50(2)** | Mark synthetic output machine-readably | — |
+| **50(3)** | — | Tell people exposed to emotion recognition or biometric categorisation |
+| **50(4)** | — | Disclose deepfakes, and AI text published on matters of public interest |
+
+The practical consequence: **the provider duties are the ones the code can actually discharge**, and
+Queriocity does so unconditionally — you cannot turn the AI notice or the metadata marking off. The
+deployer duties are judgement calls about *how a particular output is used*, which no program can
+make. The app can only supply the means: the on-screen badge and the optional caption bar exist so a
+deployer has something to disclose *with*.
+
+If you deploy this professionally, that judgement is yours. Queriocity cannot tell whether a given
+image is a deepfake under Art 3(60) — whether it resembles a real person, place or event closely
+enough to pass as authentic — so leave the image caption setting on unless you are making that call
+yourself, output by output.
+
+### What the app does
+
+| Obligation | How it is met |
+|---|---|
+| **50(1)** — tell users they are dealing with an AI | Notice on the sign-in and registration pages, and a standing line under the chat input for sessions restored from a cookie or the PWA |
+| **50(2)** — mark generated output machine-readably | Every generated PNG carries an XMP packet with IPTC `DigitalSourceType: trainedAlgorithmicMedia` in an `iTXt` chunk; downloaded SVGs get the same in a `<metadata>` element; exported chats carry provenance front-matter |
+| **50(3)** — emotion recognition, biometric categorisation | Not applicable — Queriocity does neither |
+| **50(4)** — visible disclosure of deepfakes | An "AI-generated" badge next to every generated image, plus an optional caption composited into downloads (Settings → Image labelling, on by default) and a disclosure footer on printed chats |
+| **50(5)** — clear, at the first interaction | The sign-in notice precedes any use |
+
+Marking is applied in `src/shared/ai-provenance.ts`, shared by the server (which marks images as it
+writes them) and the client (which re-applies it after a download redraw, since a canvas re-encode
+discards every chunk it does not understand). The XMP packet records three things:
+
+```xml
+<photoshop:DigitalSourceType>…/digitalsourcetype/trainedAlgorithmicMedia</photoshop:DigitalSourceType>
+<xmp:CreatorTool>Queriocity 0.18.0 (model: stable-diffusion-xl-base-1.0)</xmp:CreatorTool>
+<q:GenerativeModel>stable-diffusion-xl-base-1.0</q:GenerativeModel>
+```
+
+`DigitalSourceType` is the standard IPTC field and the one that matters for Article 50.
+`CreatorTool` is free text, so the model is named there too — many readers show only that field.
+`q:GenerativeModel` is a Queriocity namespace: there is no agreed XMP property for the generating
+model yet, and `CreatorTool` means the *software*, so a separate machine-readable field avoids
+overloading it.
+
+**The model is only recorded if `IMAGE_MODEL` is set.** It is optional — without it the diffusion
+server picks its own default, which the app has no way of learning — so both mentions are omitted
+rather than guessed at, and `CreatorTool` reads as a bare `Queriocity 0.18.0`. Set it if you want
+the model in your image metadata, even when you only serve one model. Note also that it records what
+was *requested*: a server that aliases or ignores the name will not be reflected.
+
+### The generation prompt in image metadata
+
+Most diffusion servers write the prompt they were given into a `parameters` text chunk in the PNG.
+Queriocity does not add this and does not remove it — it is genuinely useful for reproducing or
+tweaking a generation later, and these are your own images on your own server.
+
+It does mean the prompt travels with any image you share, so **the two ways of saving an image
+differ deliberately**:
+
+| How the image is saved | Caption bar | `parameters` prompt chunk | Provenance metadata |
+|---|---|---|---|
+| Right-click → *Save image as* | no | **kept** | yes |
+| **Download PNG** link | per setting | **stripped** | yes |
+
+The download link always redraws the image through a canvas, whether or not it is captioning, and
+the browser's encoder discards every chunk it does not recognise. That makes the link a single
+predictable "sanitised copy" action — the caption setting changes only whether the file is labelled,
+never what else is in it. Right-click remains the way to get the file exactly as the server stored
+it, prompt included.
+
+Queriocity re-applies its own provenance marking after the redraw, which is why the last column holds
+in both rows. It carries the *original* chunk across rather than building a new one, so the model
+name survives — the browser has no way of knowing which model produced the image.
+
+### Known limits
+
+- **Text marking is weak.** No interoperable machine-readable marking exists for plain text, and
+  Queriocity does not control the model, so it cannot apply anything at generation time. Exports get
+  front-matter and printed copies get a footer; that is the extent of what is feasible. Article
+  50(2) qualifies the duty by what is "technically feasible" and by the state of the art.
+- **Metadata does not survive everything.** Most social platforms re-encode uploads and drop the
+  chunk. That is what the optional burned-in caption is for.
+- **No C2PA.** Signed [Content Credentials](https://c2pa.org/) would be the rigorous answer, but they
+  need a signing certificate and a trusted issuer — self-signed manifests verify as untrusted. This
+  is the natural upgrade path if the project ever needs it.
+- **Text-to-speech is out of scope.** It uses the browser's own `speechSynthesis` voice, not a model
+  Queriocity provides, and produces no file.
+- **The caption only covers the download link.** Saving an image straight out of the browser skips
+  it, and a screenshot defeats it entirely. The machine-readable marking — the part that is actually
+  a provider duty — is present on every path regardless.
+
+None of the above is legal advice.
 
 ---
 

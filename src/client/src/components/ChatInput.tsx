@@ -1,5 +1,6 @@
 import { useState, useRef, type FormEvent, type KeyboardEvent } from 'react'
 import { Send, Paperclip, X, Square, LayoutGrid, ChevronDown, ChevronUp } from 'lucide-react'
+import { AI_SYSTEM_NOTICE_SHORT } from '../lib/ai-notice.ts'
 import { extractFileForContext, fetchSuggestions } from '../lib/api.ts'
 import { TemplateSelector } from './TemplateSelector.tsx'
 
@@ -294,6 +295,10 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
         <input ref={fileRef} type="file" className="hidden" onChange={handleFile} />
       </div>
       </div>
+      {/* Outside the collapsible block, so it stays visible and does not eat into that block's
+          max-height budget. A session restored from a cookie or the PWA never passes the login
+          screen, so this is the only AI notice such a user sees. */}
+      <p className="pb-1 text-center text-[11px] text-gray-600">{AI_SYSTEM_NOTICE_SHORT}</p>
     </form>
   )
 }
