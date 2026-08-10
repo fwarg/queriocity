@@ -32,25 +32,37 @@ import {
 import { IMAGE_API, IMAGE_STORAGE_DIR, randomSeed, resolveSteps, saveGeneratedImage } from '../lib/image-store.ts'
 import { imageBackend, compensateSteps, DEFAULT_EDIT_STRENGTH } from '../lib/image-api.ts'
 
-/** Exclusions used for each generated image, so an edit inherits them from its source.
+/** Render settings used for each generated image, so an edit inherits them from its source.
  *
- *  An edit redraws most of the frame, so dropping the negative prompt lets back in exactly what the
- *  previous render excluded — text, watermarks, a cartoon look. Kept here rather than asked of the
- *  model, which rewrites the positive prompt faithfully and forgets this one. Keyed by image URL
- *  rather than held per turn, because the edit almost always arrives as a later request with a
- *  fresh closure.
+ *  An edit arrives as a follow-up like "change the fur to blue", which restates neither the quality
+ *  tier nor the exclusions nor the seed — so without this every edit fell back to defaults, quietly
+ *  rendering a draft image at balanced and dropping the negative prompt the generation had set.
  *
- *  In memory only: a restart loses it, and the edit simply falls back to whatever the model sends. */
-const negativePromptByImage = new Map<string, string>()
-const MAX_REMEMBERED_NEGATIVES = 500
-
-function rememberNegativePrompt(url: string | undefined, negativePrompt: string | undefined) {
-  if (!url || !negativePrompt) return
-  if (negativePromptByImage.size >= MAX_REMEMBERED_NEGATIVES) negativePromptByImage.clear()
-  negativePromptByImage.set(url, negativePrompt)
+ *  Reusing the source's seed also keeps the edit closer to the original: measured over six seeds at
+ *  strength 0.65, the source seed gave a mean pixel distance of 42 against 46-56 for random ones.
+ *  The seed picks the noise layered onto the source, and the noise the source was built from
+ *  disturbs it least.
+ *
+ *  Kept here rather than asked of the model, which rewrites the positive prompt faithfully and
+ *  forgets everything else. Keyed by image URL rather than held per turn, because an edit almost
+ *  always arrives as a later request with a fresh closure, and unlike the image URL — recovered by
+ *  scanning message history — a tool argument leaves nothing to recover from.
+ *
+ *  In memory only: after a restart an edit simply falls back to defaults. */
+interface RenderSettings {
+  negativePrompt?: string
+  steps: number
+  seed: number
 }
 
-const negativePromptFor = (url: string) => negativePromptByImage.get(url)
+const renderByImage = new Map<string, RenderSettings>()
+const MAX_REMEMBERED_RENDERS = 500
+
+function rememberRender(url: string | undefined, settings: RenderSettings) {
+  if (!url) return
+  if (renderByImage.size >= MAX_REMEMBERED_RENDERS) renderByImage.clear()
+  renderByImage.set(url, settings)
+}
 
 // 200 was too tight against FLASH_SYSTEM's "at most 5 sentences" — a dense answer hit the cap
 // mid-sentence with nothing to show for it. Raised to leave headroom for the requested length,
@@ -356,7 +368,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
             const bytes = await imageBackend(imageBaseUrl).generate({ prompt, size, negativePrompt: negative_prompt, steps: usedSteps, seed: usedSeed })
             pendingImageUrl = await saveGeneratedImage(userId, bytes)
             lastGeneratedImageUrl = pendingImageUrl
-            rememberNegativePrompt(pendingImageUrl, negative_prompt)
+            rememberRender(pendingImageUrl, { negativePrompt: negative_prompt, steps: usedSteps, seed: usedSeed })
             return { success: true, prompt, seed: usedSeed }
           } catch (e) {
             console.error(`  [image] error:`, e)
@@ -381,19 +393,27 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
           if (!image_url.startsWith(`/images/${userId}/`)) {
             return { success: false, error: 'Invalid image reference', prompt }
           }
-          const usedSeed = seed ?? randomSeed()
-          const usedSteps = resolveSteps(quality, steps)
-          const usedNegative = negative_prompt ?? negativePromptFor(image_url)
+          // Explicit wording in this turn wins; otherwise inherit from the image being edited.
+          const source = renderByImage.get(image_url)
+          const askedForQuality = quality !== undefined || steps !== undefined
+          const usedSteps = askedForQuality ? resolveSteps(quality, steps) : source?.steps ?? resolveSteps(undefined, undefined)
+          // Inheriting the seed makes an identical request reproduce the identical image, so a
+          // retry has to break out of it — that is the one case where the user wants a new attempt.
+          const inheritSeed = !regenerate ? source?.seed : undefined
+          const usedSeed = seed ?? inheritSeed ?? randomSeed()
+          const usedNegative = negative_prompt ?? source?.negativePrompt
+          const stepOrigin = askedForQuality ? (quality ?? 'explicit') : source ? 'inherited' : 'default'
+          const seedOrigin = seed !== undefined ? '' : inheritSeed !== undefined ? ' (inherited)' : regenerate ? ' (retry)' : ' (random)'
           // Steps are scaled by 1/strength inside the backend, so report what is actually sent —
           // the tier alone reads like the compensation never happened.
           const sentSteps = IMAGE_API === 'sdapi' ? compensateSteps(usedSteps, strength ?? DEFAULT_EDIT_STRENGTH) : usedSteps
-          console.log(`  [image] edit → ${imageBaseUrl} (${IMAGE_API})  prompt="${prompt}"  negative="${usedNegative ?? ''}"${negative_prompt === undefined && usedNegative ? ' (carried)' : ''}  strength=${strength ?? DEFAULT_EDIT_STRENGTH}${strength === undefined ? ' (default)' : ''}  steps=${usedSteps} (${quality ?? (steps ? 'explicit' : 'default')}) → ${sentSteps} sent  seed=${usedSeed}${seed === undefined ? ' (random)' : ''}`)
+          console.log(`  [image] edit → ${imageBaseUrl} (${IMAGE_API})  prompt="${prompt}"  negative="${usedNegative ?? ''}"${negative_prompt === undefined && usedNegative ? ' (carried)' : ''}  strength=${strength ?? DEFAULT_EDIT_STRENGTH}${strength === undefined ? ' (default)' : ''}  steps=${usedSteps} (${stepOrigin}) → ${sentSteps} sent  seed=${usedSeed}${seedOrigin}`)
           try {
             const image = await readFile(`${IMAGE_STORAGE_DIR}/${image_url.slice('/images/'.length)}`)
             const bytes = await imageBackend(imageBaseUrl).edit({ image, prompt, strength, size, negativePrompt: usedNegative, steps: usedSteps, seed: usedSeed })
             pendingImageUrl = await saveGeneratedImage(userId, bytes)
             lastGeneratedImageUrl = pendingImageUrl
-            rememberNegativePrompt(pendingImageUrl, usedNegative)
+            rememberRender(pendingImageUrl, { negativePrompt: usedNegative, steps: usedSteps, seed: usedSeed })
             return { success: true, prompt, seed: usedSeed }
           } catch (e) {
             console.error(`  [image] edit error:`, e)

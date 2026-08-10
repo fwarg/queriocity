@@ -419,6 +419,13 @@ a small object, 0.5–0.65 recolours the main subject or changes style and light
 reimagines it. The model picks a value from how much your request asks to change, so *"make the wolf
 grey"* should not repaint the street behind it.
 
+An edit **inherits the settings of the image it is editing** — quality tier, exclusions and seed —
+because a follow-up like *"make the fur blue"* restates none of them. Reusing the source's seed also
+keeps the result closer to the original: the seed chooses the noise layered onto the source, and the
+noise it was built from disturbs it least. Anything you state in the request still wins, and
+retrying an answer deliberately picks a new seed so you get a different attempt rather than the same
+image back.
+
 **Recolouring needs more strength than it sounds like.** A low-strength pass keeps the source pixels
 in play, so the original hue bleeds through and you get a half-changed result — a red wolf with some
 blue in it rather than a blue one. Ask for a stronger change, or name a strength outright
