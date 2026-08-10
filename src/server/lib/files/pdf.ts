@@ -1,11 +1,17 @@
-import pdfParse from 'pdf-parse'
+import { PDFParse } from 'pdf-parse'
 
-/** Extract text from a PDF buffer, one chunk per page. */
+/** Extract text from a PDF buffer, one chunk per page.
+ *
+ *  v2 reports pages individually, so this no longer splits the whole document on form feeds —
+ *  a heuristic that merged pages whenever the producer omitted the break, and split mid-page
+ *  whenever a form feed appeared in the content. */
 export async function extractPdfChunks(buffer: ArrayBuffer): Promise<string[]> {
-  const { text } = await pdfParse(Buffer.from(buffer))
-  // pdf-parse joins all pages; split on form-feed characters (page breaks)
-  return text
-    .split(/\f/)
-    .map(p => p.trim())
-    .filter(p => p.length > 0)
+  const parser = new PDFParse({ data: new Uint8Array(buffer) })
+  try {
+    const { pages } = await parser.getText()
+    return pages.map(p => p.text.trim()).filter(p => p.length > 0)
+  } finally {
+    // Holds a pdf.js worker open otherwise, which keeps the process alive.
+    await parser.destroy()
+  }
 }
