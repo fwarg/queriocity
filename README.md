@@ -381,11 +381,16 @@ The model maps quality keywords to inference step counts:
 
 | Hint in your message | Steps | Override |
 |---|---|---|
-| *draft*, *quick*, *fast* | 5 | `IMAGE_STEPS_DRAFT` |
-| *(none / default)* | 15 | `IMAGE_STEPS_BALANCED` |
-| *high quality*, *detailed*, *best* | 25 | `IMAGE_STEPS_HIGH` |
+| *draft*, *quick*, *fast* | 8 | `IMAGE_STEPS_DRAFT` |
+| *(none / default)* | 16 | `IMAGE_STEPS_BALANCED` |
+| *high quality*, *detailed*, *best* | 24 | `IMAGE_STEPS_HIGH` |
 
-**These defaults suit a guidance-distilled FLUX-class model and are almost certainly wrong for
+**These require `IMAGE_API=sdapi`.** The OpenAI image schema has no step-count field, so a server
+implementing it faithfully discards the value and renders at its own default — silently, with a
+normal-looking image coming back. If image mode is on and `IMAGE_API` is left at `openai`, the
+startup log warns about exactly this.
+
+**The defaults suit a guidance-distilled FLUX-class model and are almost certainly wrong for
 yours.** Step counts are a property of the model, not of this app: a timestep-distilled model
 (schnell, turbo, LCM) is finished in a handful of steps, while an SD1.5-era one still wants 25+.
 Find your own numbers by rendering one prompt at a fixed seed across a range and stopping where the
@@ -397,6 +402,34 @@ environment changed.
 
 You can also request a specific resolution: *"512×512"*, *"1024×576"*, etc.
 
+### Negative prompts
+
+Anything you ask to keep out of an image — *"no text"*, *"avoid blurry"*, or the Draw template's
+**Avoid** field — is sent as a proper negative prompt under `sdapi`, which is how diffusion models
+are meant to receive exclusions. Stating them inside the prompt works poorly: the model has no
+reliable way to represent negation, so "no text" can just as easily produce text.
+
+Under `openai` there is no field for it, so the exclusions are appended to the prompt as
+*"Avoid: …"* — the behaviour before this existed, kept rather than dropped.
+
+### Editing an image
+
+`edit_image` redraws part of an existing image, governed by **strength**: 0.3–0.45 alters or removes
+a small object, 0.5–0.65 recolours the main subject or changes style and lighting, 0.8 and up
+reimagines it. The model picks a value from how much your request asks to change, so *"make the wolf
+grey"* should not repaint the street behind it.
+
+**Recolouring needs more strength than it sounds like.** A low-strength pass keeps the source pixels
+in play, so the original hue bleeds through and you get a half-changed result — a red wolf with some
+blue in it rather than a blue one. Ask for a stronger change, or name a strength outright
+(*"redo it at strength 0.6"*), if a colour swap comes back partial.
+
+A wrinkle worth knowing if you set steps by hand: a diffusion server runs `steps × strength` real
+denoising steps on an edit, so a light change at the draft tier would run one or two and come back
+rough. Queriocity scales the requested steps up by `1 / strength` so the *effective* count matches
+the tier you configured. This costs nothing — the work performed is unchanged — and the number in
+the server log is therefore higher than the tier for any edit below full strength.
+
 ### Seeds
 
 Each render gets a fresh random seed, so asking for the same thing twice gives two different
@@ -404,6 +437,8 @@ images. Name a seed — *"use seed 12345"* — to make a render reproducible, wh
 controlled iteration possible: pin the seed, change one thing in the prompt, and the difference you
 see is the change you made. The Draw template has a **Seed** field for the same purpose; leave it
 blank for a new image each time.
+
+Like step counts, this requires `IMAGE_API=sdapi` — the OpenAI schema has no seed field either.
 
 The seed is sent explicitly rather than left for the diffusion server to choose, because servers
 disagree about what an unset seed means — stable-diffusion.cpp substitutes a constant, which made
@@ -418,7 +453,18 @@ Generated images are stored on the server (per user) and served via `/images/<us
 
 ### Requirements
 
-A diffusion server that exposes OpenAI-compatible `/v1/images/generations` and `/v1/images/edits` endpoints is required. [ComfyUI](https://github.com/comfyanonymous/ComfyUI) with the openai-compatible API, [A1111](https://github.com/AUTOMATIC1111/stable-diffusion-webui) with the `--api` flag, or any server that implements the OpenAI image API will work.
+A diffusion server is required, in one of two dialects selected by `IMAGE_API`:
+
+| `IMAGE_API` | Endpoints | Steps & seed |
+|---|---|---|
+| `openai` (default) | `/v1/images/generations`, `/v1/images/edits` | **Ignored** — not in the OpenAI schema |
+| `sdapi` | `/sdapi/v1/txt2img`, `/sdapi/v1/img2img` | Honoured, plus a real `negative_prompt` and `cfg_scale` |
+
+[ComfyUI](https://github.com/comfyanonymous/ComfyUI) with the openai-compatible API works on
+`openai`. [A1111](https://github.com/AUTOMATIC1111/stable-diffusion-webui) with `--api`, and
+stable-diffusion.cpp's server, expose `/sdapi` and should use `sdapi` — otherwise quality tiers and
+seeds are quietly discarded. If unsure, try `sdapi` first and fall back to `openai` if the
+endpoints 404.
 
 Set `IMAGE_BASE_URL` in your environment to enable the feature (see [Environment variables](#environment-variables)).
 
@@ -633,13 +679,17 @@ RERANK_MODEL=qwen3-reranker
 # When set, enables the Image mode for generating and editing images.
 # Point to any OpenAI-compatible diffusion server (ComfyUI, A1111, etc.).
 # IMAGE_BASE_URL=http://localhost:8188   # base URL of diffusion server
+# IMAGE_API=sdapi                        # request dialect: "openai" (default, portable but cannot
+#                                        # express steps or seed) or "sdapi" (A1111 shape, where both
+#                                        # work). See Quality hints below
+# IMAGE_CFG_SCALE=                       # guidance/CFG scale, sdapi only; unset keeps the server default
 # IMAGE_MODEL=                           # optional model name/alias sent to the server. Also recorded
 #                                        # in each generated image's provenance metadata — left unset,
 #                                        # the server picks its own default and the metadata names no
 #                                        # model, since the app cannot know what was chosen
-# IMAGE_STEPS_DRAFT=5                    # inference steps behind the draft/balanced/high quality
-# IMAGE_STEPS_BALANCED=15                # hints. Model-dependent: a distilled model (schnell, turbo,
-# IMAGE_STEPS_HIGH=25                    # LCM) needs a handful, an SD1.5-era one 25+. Defaults suit
+# IMAGE_STEPS_DRAFT=8                    # inference steps behind the draft/balanced/high quality
+# IMAGE_STEPS_BALANCED=16               # hints. Model-dependent: a distilled model (schnell, turbo,
+# IMAGE_STEPS_HIGH=24                    # LCM) needs a handful, an SD1.5-era one 25+. Defaults suit
 #                                        # a guidance-distilled FLUX-class model
 # IMAGE_TIMEOUT_MS=300000                # generation/edit timeout (default 5 min); catches a stuck
 #                                        # diffusion server without cutting off slow renders

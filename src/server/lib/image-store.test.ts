@@ -49,9 +49,10 @@ describe('resolveSteps', () => {
   })
 })
 
-// Diffusion servers take a 32-bit unsigned seed; anything wider is wrapped or rejected.
-test('randomSeed stays inside the 32-bit unsigned range and varies', () => {
-  const seeds = Array.from({ length: 50 }, randomSeed)
-  expect(seeds.every(s => Number.isInteger(s) && s >= 0 && s <= 0xffffffff)).toBe(true)
+// Signed, not unsigned: a value above 2^31-1 parses as negative on the server, which means
+// "randomise" — so half of all seeds were being discarded and renders could not be reproduced.
+test('randomSeed stays inside the signed 32-bit range and varies', () => {
+  const seeds = Array.from({ length: 200 }, randomSeed)
+  expect(seeds.every(s => Number.isInteger(s) && s >= 0 && s <= 0x7fffffff)).toBe(true)
   expect(new Set(seeds).size).toBeGreaterThan(1)
 })

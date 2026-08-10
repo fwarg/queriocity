@@ -32,7 +32,7 @@ import { runDream } from './lib/memory.ts'
 import { runDueMonitors } from './lib/monitor-runner.ts'
 import { validateConfig, checkEmbeddingDimensions } from './lib/config-check.ts'
 
-import { IMAGE_STORAGE_DIR } from './lib/image-store.ts'
+import { IMAGE_API, IMAGE_STEPS, IMAGE_STORAGE_DIR } from './lib/image-store.ts'
 
 const app = new Hono<AppEnv>()
 
@@ -99,7 +99,7 @@ console.log(`  embed:  ${process.env.EMBED_PROVIDER ?? process.env.CHAT_PROVIDER
 console.log(`  searxng: ${process.env.SEARXNG_URL ?? 'http://localhost:4000'}`)
 if (process.env.IMAGE_BASE_URL) {
   const imageDir = IMAGE_STORAGE_DIR
-  console.log(`  image:  ${process.env.IMAGE_BASE_URL}  model=${process.env.IMAGE_MODEL ?? 'default'}  storage=${imageDir}`)
+  console.log(`  image:  ${process.env.IMAGE_BASE_URL}  api=${IMAGE_API}  model=${process.env.IMAGE_MODEL ?? 'default'}  steps=${IMAGE_STEPS.draft}/${IMAGE_STEPS.balanced}/${IMAGE_STEPS.high}  storage=${imageDir}`)
 }
 
 function shutdown() {

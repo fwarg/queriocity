@@ -13,7 +13,7 @@ import { cacheKey, getCached, setCached } from '../lib/cache.ts'
 import { db, chatSessions, messages, users, uploadedFiles, parseSettings, getAppSetting } from '../lib/db.ts'
 import { eq, and, desc, sql } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { webSearch, webSearchMulti, type SearchResult, type EngineError, type SearchApiBudget } from '../lib/searxng.ts'
 import { fetchUrlAllPages, processUrlsForContext } from '../lib/fetch-url.ts'
@@ -29,17 +29,28 @@ import {
   startRun, getRun, appendEvent, finishRun, waitForEvents,
   scheduleAbandon, cancelAbandon, stopRun, type LiveRun,
 } from '../lib/stream-buffer.ts'
-import { IMAGE_CREATOR_TOOL, IMAGE_STORAGE_DIR, IMAGE_TIMEOUT_MS, randomSeed, resolveSteps } from '../lib/image-store.ts'
-import { markPng } from '../../shared/ai-provenance.ts'
+import { IMAGE_API, IMAGE_STORAGE_DIR, randomSeed, resolveSteps, saveGeneratedImage } from '../lib/image-store.ts'
+import { imageBackend, compensateSteps, DEFAULT_EDIT_STRENGTH } from '../lib/image-api.ts'
 
-// Memo of image directories already mkdir'd, to skip the syscall. One entry per user, so it
-// only needs a sanity bound rather than real eviction.
-const _createdImageDirs = new Set<string>()
-const MAX_MEMOIZED_IMAGE_DIRS = 1000
-function rememberImageDir(dir: string) {
-  if (_createdImageDirs.size >= MAX_MEMOIZED_IMAGE_DIRS) _createdImageDirs.clear()
-  _createdImageDirs.add(dir)
+/** Exclusions used for each generated image, so an edit inherits them from its source.
+ *
+ *  An edit redraws most of the frame, so dropping the negative prompt lets back in exactly what the
+ *  previous render excluded — text, watermarks, a cartoon look. Kept here rather than asked of the
+ *  model, which rewrites the positive prompt faithfully and forgets this one. Keyed by image URL
+ *  rather than held per turn, because the edit almost always arrives as a later request with a
+ *  fresh closure.
+ *
+ *  In memory only: a restart loses it, and the edit simply falls back to whatever the model sends. */
+const negativePromptByImage = new Map<string, string>()
+const MAX_REMEMBERED_NEGATIVES = 500
+
+function rememberNegativePrompt(url: string | undefined, negativePrompt: string | undefined) {
+  if (!url || !negativePrompt) return
+  if (negativePromptByImage.size >= MAX_REMEMBERED_NEGATIVES) negativePromptByImage.clear()
+  negativePromptByImage.set(url, negativePrompt)
 }
+
+const negativePromptFor = (url: string) => negativePromptByImage.get(url)
 
 // 200 was too tight against FLASH_SYSTEM's "at most 5 sentences" — a dense answer hit the cap
 // mid-sentence with nothing to show for it. Raised to leave headroom for the requested length,
@@ -331,48 +342,25 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         inputSchema: z.object({
           prompt: z.string().describe('Detailed visual description for image generation'),
           size: z.string().optional().describe('Image dimensions e.g. "512x512", "1024x1024", "1024x576"'),
+          negative_prompt: z.string().optional().describe('What to keep out of the image, comma-separated (e.g. "blurry, text, watermark"). Put anything the user says to avoid here rather than in prompt'),
           quality: z.enum(['draft', 'balanced', 'high']).optional().describe('Quality tier taken from the user\'s wording. Resolved to a step count by the server; prefer this over steps'),
           steps: z.number().int().optional().describe('Explicit step count. Only when the user names a number outright; otherwise leave unset and use quality'),
           seed: z.number().int().optional().describe('Random seed. Only set when the user explicitly asks for a specific seed or to reproduce an earlier image; omit otherwise so the result varies'),
         }),
-        execute: async ({ prompt, size, quality, steps, seed }) => {
+        execute: async ({ prompt, size, negative_prompt, quality, steps, seed }) => {
+          const usedSeed = seed ?? randomSeed()
+          const usedSteps = resolveSteps(quality, steps)
+          const origin = quality ?? (steps ? 'explicit' : 'default')
+          console.log(`  [image] → ${imageBaseUrl} (${IMAGE_API})  prompt="${prompt}"  negative="${negative_prompt ?? ''}"  size=${size ?? 'default'}  steps=${usedSteps} (${origin})  seed=${usedSeed}${seed === undefined ? ' (random)' : ''}`)
           try {
-            const usedSeed = seed ?? randomSeed()
-            const usedSteps = resolveSteps(quality, steps)
-            const body: Record<string, unknown> = { prompt, n: 1, response_format: 'b64_json', seed: usedSeed, steps: usedSteps }
-            if (size) body.size = size
-            if (process.env.IMAGE_MODEL) body.model = process.env.IMAGE_MODEL
-            console.log(`  [image] → ${imageBaseUrl}  prompt="${prompt}"  size=${size ?? 'default'}  steps=${usedSteps} (${quality ?? (steps ? 'explicit' : 'default')})  seed=${usedSeed}${seed === undefined ? ' (random)' : ''}`)
-            const res = await fetch(`${imageBaseUrl}/v1/images/generations`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(body),
-              signal: AbortSignal.timeout(IMAGE_TIMEOUT_MS),
-            })
-            if (!res.ok) {
-              console.error(`  [image] diffusion server error ${res.status}`)
-              return { success: false, error: `Image server returned ${res.status}`, prompt }
-            }
-            const json = await res.json()
-            const b64: string = json.data?.[0]?.b64_json
-            if (!b64) {
-              console.error(`  [image] no b64_json in response:`, JSON.stringify(json).slice(0, 200))
-              return { success: false, error: 'No image data in response', prompt }
-            }
-            const imagesDir = `${IMAGE_STORAGE_DIR}/${userId}`
-            if (!_createdImageDirs.has(imagesDir)) {
-              await mkdir(imagesDir, { recursive: true })
-              rememberImageDir(imagesDir)
-            }
-            const filename = `${randomUUID()}.png`
-            await writeFile(`${imagesDir}/${filename}`, markPng(Buffer.from(b64, 'base64'), IMAGE_CREATOR_TOOL, process.env.IMAGE_MODEL))
-            console.log(`  [image] saved ${userId}/${filename}`)
-            pendingImageUrl = `/images/${userId}/${filename}`
+            const bytes = await imageBackend(imageBaseUrl).generate({ prompt, size, negativePrompt: negative_prompt, steps: usedSteps, seed: usedSeed })
+            pendingImageUrl = await saveGeneratedImage(userId, bytes)
             lastGeneratedImageUrl = pendingImageUrl
-            return { success: true, prompt }
+            rememberNegativePrompt(pendingImageUrl, negative_prompt)
+            return { success: true, prompt, seed: usedSeed }
           } catch (e) {
             console.error(`  [image] error:`, e)
-            return { success: false, error: String(e), prompt }
+            return { success: false, error: e instanceof Error ? e.message : String(e), prompt }
           }
         },
       }),
@@ -382,57 +370,34 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
           image_url: z.string().describe('The /images/... URL of the image to edit (from chat history)'),
           prompt: z.string().describe('Full description of the desired result, including unchanged aspects'),
           strength: z.number().min(0).max(1).optional()
-            .describe('How much to change (0.0=unchanged, 1.0=completely new). Default 0.75.'),
+            .describe('How much of the image to redraw. 0.3-0.45 to alter or remove a small object; 0.5-0.65 to recolour the main subject, or to change style or lighting; 0.8+ to reimagine it. Colour survives a low-strength pass — the original hue bleeds through — so recolouring needs more than its size suggests. Always set this: the 0.75 default redraws most of the picture.'),
           size: z.string().optional().describe('Output dimensions e.g. "512x512". Defaults to source size.'),
+          negative_prompt: z.string().optional().describe('What to keep out of the image, comma-separated (e.g. "blurry, text, watermark"). Put anything the user says to avoid here rather than in prompt'),
           quality: z.enum(['draft', 'balanced', 'high']).optional().describe('Quality tier taken from the user\'s wording. Resolved to a step count by the server; prefer this over steps'),
           steps: z.number().int().optional().describe('Explicit step count. Only when the user names a number outright; otherwise leave unset and use quality'),
           seed: z.number().int().optional().describe('Random seed. Only set when the user explicitly asks for a specific seed or to reproduce an earlier image; omit otherwise so the result varies'),
         }),
-        execute: async ({ image_url, prompt, strength, size, quality, steps, seed }) => {
+        execute: async ({ image_url, prompt, strength, size, negative_prompt, quality, steps, seed }) => {
+          if (!image_url.startsWith(`/images/${userId}/`)) {
+            return { success: false, error: 'Invalid image reference', prompt }
+          }
+          const usedSeed = seed ?? randomSeed()
+          const usedSteps = resolveSteps(quality, steps)
+          const usedNegative = negative_prompt ?? negativePromptFor(image_url)
+          // Steps are scaled by 1/strength inside the backend, so report what is actually sent —
+          // the tier alone reads like the compensation never happened.
+          const sentSteps = IMAGE_API === 'sdapi' ? compensateSteps(usedSteps, strength ?? DEFAULT_EDIT_STRENGTH) : usedSteps
+          console.log(`  [image] edit → ${imageBaseUrl} (${IMAGE_API})  prompt="${prompt}"  negative="${usedNegative ?? ''}"${negative_prompt === undefined && usedNegative ? ' (carried)' : ''}  strength=${strength ?? DEFAULT_EDIT_STRENGTH}${strength === undefined ? ' (default)' : ''}  steps=${usedSteps} (${quality ?? (steps ? 'explicit' : 'default')}) → ${sentSteps} sent  seed=${usedSeed}${seed === undefined ? ' (random)' : ''}`)
           try {
-            if (!image_url.startsWith(`/images/${userId}/`)) {
-              return { success: false, error: 'Invalid image reference', prompt }
-            }
-            const relPath = image_url.slice('/images/'.length)
-            const imageBuffer = await readFile(`${IMAGE_STORAGE_DIR}/${relPath}`)
-            const form = new FormData()
-            form.append('image', new Blob([imageBuffer], { type: 'image/png' }), 'image.png')
-            form.append('prompt', prompt)
-            form.append('n', '1')
-            form.append('response_format', 'b64_json')
-            if (strength !== undefined) form.append('strength', String(strength))
-            if (size) form.append('size', size)
-            const usedSteps = resolveSteps(quality, steps)
-            form.append('steps', String(usedSteps))
-            if (process.env.IMAGE_MODEL) form.append('model', process.env.IMAGE_MODEL)
-            const usedSeed = seed ?? randomSeed()
-            form.append('seed', String(usedSeed))
-            console.log(`  [image] edit → ${imageBaseUrl}  prompt="${prompt}"  strength=${strength ?? 0.75}  steps=${usedSteps}  seed=${usedSeed}${seed === undefined ? ' (random)' : ''}`)
-            const res = await fetch(`${imageBaseUrl}/v1/images/edits`, { method: 'POST', body: form, signal: AbortSignal.timeout(IMAGE_TIMEOUT_MS) })
-            if (!res.ok) {
-              console.error(`  [image] edit server error ${res.status}`)
-              return { success: false, error: `Image server returned ${res.status}`, prompt }
-            }
-            const json = await res.json()
-            const b64: string = json.data?.[0]?.b64_json
-            if (!b64) {
-              console.error(`  [image] no b64_json in edit response:`, JSON.stringify(json).slice(0, 200))
-              return { success: false, error: 'No image data in response', prompt }
-            }
-            const imagesDir = `${IMAGE_STORAGE_DIR}/${userId}`
-            if (!_createdImageDirs.has(imagesDir)) {
-              await mkdir(imagesDir, { recursive: true })
-              rememberImageDir(imagesDir)
-            }
-            const filename = `${randomUUID()}.png`
-            await writeFile(`${imagesDir}/${filename}`, markPng(Buffer.from(b64, 'base64'), IMAGE_CREATOR_TOOL, process.env.IMAGE_MODEL))
-            console.log(`  [image] saved edited ${userId}/${filename}`)
-            pendingImageUrl = `/images/${userId}/${filename}`
+            const image = await readFile(`${IMAGE_STORAGE_DIR}/${image_url.slice('/images/'.length)}`)
+            const bytes = await imageBackend(imageBaseUrl).edit({ image, prompt, strength, size, negativePrompt: usedNegative, steps: usedSteps, seed: usedSeed })
+            pendingImageUrl = await saveGeneratedImage(userId, bytes)
             lastGeneratedImageUrl = pendingImageUrl
-            return { success: true, prompt }
+            rememberNegativePrompt(pendingImageUrl, usedNegative)
+            return { success: true, prompt, seed: usedSeed }
           } catch (e) {
             console.error(`  [image] edit error:`, e)
-            return { success: false, error: String(e), prompt }
+            return { success: false, error: e instanceof Error ? e.message : String(e), prompt }
           }
         },
       }),
@@ -442,6 +407,8 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
 - When asked to edit, change, or modify a previously generated image, call edit_image.${lastGeneratedImageUrl ? ` The most recently generated image is at ${lastGeneratedImageUrl}.` : ''}
 - If the subject is specialized, technical, or you are uncertain what it looks like visually, call web_search first to gather context, then use what you learned to write a richer prompt.
 - Extract size from resolution strings, and set quality to draft, balanced or high from wording like "quick sketch", "high quality" or "detailed". Do not convert quality into a step count yourself — pass the word and let the server decide. Use steps only if the user names a number outright.
+- Put every exclusion in negative_prompt, never in prompt — both what the user asked to avoid and any boilerplate you would add yourself ("no text", "no watermark", "not blurry"). A diffusion model cannot represent negation inside a prompt, so "no text" there tends to produce text. prompt describes only what should be present.
+- On edit_image, choose strength from how much the user asked to change: altering or removing a small object is 0.3-0.45, recolouring the main subject or changing style or lighting is 0.5-0.65, a full reimagining is 0.8+. Recolouring needs a mid strength even though it sounds small — at 0.35 the original colour bleeds through and you get a half-changed result. Leaving it unset redraws most of the image.
 - Pass seed only when the user names one, or asks to reuse or reproduce a previous image's seed. Never invent one: omitting it makes each render vary.
 - If you used web_search, respond with one sentence summarizing what you learned that shaped the prompt. Otherwise output nothing — do not add any text, URLs, or commentary after the image tool call.
 - Always respond in the same language the user used.`

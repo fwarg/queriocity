@@ -1,5 +1,6 @@
 import { embed } from 'ai'
 import { getEmbeddingModel } from './llm.ts'
+import { IMAGE_API } from './image-store.ts'
 
 // The value printed in the README's env example — a live deployment using it has an
 // effectively public signing key.
@@ -33,6 +34,14 @@ export function validateConfig(): void {
   if (process.env.SEARCH_API_PROVIDER && process.env.SEARCH_API_KEY && !process.env.SEARCH_MAJOR_ENGINES) {
     warn('SEARCH_MAJOR_ENGINES is unset, so the keyed search API only tops up on a low result count — not when a niche engine alone returns a full page of unrelated hits. List your broad engines (e.g. duckduckgo,brave,startpage) to enable that.')
   }
+  if (process.env.IMAGE_BASE_URL && IMAGE_API === 'openai') {
+    warn('IMAGE_API is openai — the OpenAI image schema has no step-count or seed field, so servers drop both and the quality tiers do nothing. Set IMAGE_API=sdapi if your server exposes /sdapi/v1/txt2img.')
+  }
+  const rawApi = process.env.IMAGE_API?.trim().toLowerCase()
+  if (rawApi && rawApi !== 'openai' && rawApi !== 'sdapi') {
+    warn(`IMAGE_API="${process.env.IMAGE_API}" is not recognised; falling back to openai. Valid values: openai, sdapi.`)
+  }
+
   if (process.env.FETCH_ALLOW_PRIVATE_HOSTS === 'true' && !process.env.FETCH_PROXY_URL) {
     warn('FETCH_ALLOW_PRIVATE_HOSTS=true — URL fetching can reach loopback and LAN addresses, including from a link planted in a page the model reads.')
   }
