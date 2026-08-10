@@ -22,7 +22,7 @@
     "bcryptjs": "^3.0.3",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.13.1",
-    "jose": "^5",
+    "jose": "^6",
     "katex": "^0.18.1",
     "lucide-react": "^1.29.0",
     "pdf-parse": "^2",
