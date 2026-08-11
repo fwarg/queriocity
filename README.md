@@ -765,11 +765,11 @@ SMALL_MODEL=qwen3.5-small
 # EMBED_API_KEY=                              # falls back to CHAT_API_KEY
 EMBED_MODEL=nomic-embed-text
 EMBED_DIMENSIONS=1536                       # must match the model's output size
-# EMBED_MAX_CHARS=4000                      # hard cap per embedding call. Embedding servers reject
-#                                            # oversized input outright, and a *query* embedding is
-#                                            # the user's message — which can carry an inlined
-#                                            # attachment of any size. Raise if your endpoint has a
-#                                            # bigger context; keep it above 2000 (largest chunk).
+# EMBED_MAX_CHARS=4000                      # hard cap per embedding *request*: one oversized string
+#                                            # is truncated, and a batch of small chunks is split
+#                                            # across requests (the server counts a request's tokens
+#                                            # as a whole). Raise to ~(n_ctx x 4) minus headroom;
+#                                            # keep it above 2000 (largest chunk).
 
 # ── Reranker (optional) ───────────────────────────────────────────────────────
 # When RERANK_MODEL is set, a cross-encoder reranker reorders accumulated sources

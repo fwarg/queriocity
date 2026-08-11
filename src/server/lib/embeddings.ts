@@ -35,11 +35,46 @@ export async function embedText(text: string): Promise<number[]> {
   })
 }
 
+/** Split values into batches whose *combined* size stays under the cap.
+ *
+ *  `embedMany` puts the whole array in one HTTP request, and an embedding server counts the tokens
+ *  of that request as a whole — so bounding each string individually is not enough. Eighteen
+ *  800-character chunks are each comfortably within a 1024-token context and still add up to about
+ *  3600 tokens in a single call, which is rejected exactly like one oversized string. That is the
+ *  shape of every indexing call this app makes, so without this the per-string cap would look
+ *  correct while chat and file indexing kept failing.
+ *
+ *  A single value already longer than the cap is impossible here — `bound` runs first — but one is
+ *  still given a batch of its own rather than being dropped. */
+function batchByTotalChars(values: string[], maxChars: number): string[][] {
+  const batches: string[][] = []
+  let current: string[] = []
+  let size = 0
+  for (const v of values) {
+    if (current.length && size + v.length > maxChars) {
+      batches.push(current)
+      current = []
+      size = 0
+    }
+    current.push(v)
+    size += v.length
+  }
+  if (current.length) batches.push(current)
+  return batches
+}
+
 export async function embedTexts(texts: string[]): Promise<number[][]> {
-  return timed('embed', `${EMBED_TARGET} ×${texts.length}`, async () => {
-    const { embeddings } = await embedMany({ model: getEmbeddingModel(), values: texts.map(bound) })
-    return embeddings
+  const batches = batchByTotalChars(texts.map(bound), EMBED_MAX_CHARS)
+  return timed('embed', `${EMBED_TARGET} ×${texts.length}${batches.length > 1 ? ` in ${batches.length} batches` : ''}`, async () => {
+    const out: number[][] = []
+    // Serial rather than parallel: these servers are usually a single local process, and firing
+    // every batch at once is how a working configuration turns into timeouts under load.
+    for (const values of batches) {
+      const { embeddings } = await embedMany({ model: getEmbeddingModel(), values })
+      out.push(...embeddings)
+    }
+    return out
   })
 }
 
-export const _test = { bound, EMBED_MAX_CHARS }
+export const _test = { bound, batchByTotalChars, EMBED_MAX_CHARS }
