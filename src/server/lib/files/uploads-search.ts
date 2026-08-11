@@ -1,6 +1,7 @@
 import { sqlite } from '../db.ts'
 import { embedText } from '../embeddings.ts'
 import { rerank, rerankEnabled } from '../reranker.ts'
+import { ragTopK } from '../rag-settings.ts'
 
 export interface ChunkResult {
   chunkId: string
@@ -23,12 +24,13 @@ export function spaceHasTaggedFiles(spaceId: string): boolean {
  *  5 nearest chunks in the whole database and only then keeps this space's — which returns nothing
  *  at all once other spaces hold enough closer chunks. A pushed-down `IN` makes `k` mean "k nearest
  *  within this space", which is what every caller assumes. */
-export async function searchSpaceFiles(spaceId: string, query: string, embedding: number[], limit = 5, skipRerank = false, fileIds?: string[]): Promise<ChunkResult[]> {
+export async function searchSpaceFiles(spaceId: string, query: string, embedding: number[], limit?: number, skipRerank = false, fileIds?: string[]): Promise<ChunkResult[]> {
+  const topK = limit ?? await ragTopK()
   const fileFilter = fileIds?.length
     ? `AND m2.file_id IN (${fileIds.map(() => '?').join(',')})`
     : ''
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const params: any[] = [JSON.stringify(embedding), limit, spaceId, ...(fileIds ?? [])]
+  const params: any[] = [JSON.stringify(embedding), topK, spaceId, ...(fileIds ?? [])]
   const rows = sqlite.prepare(`
     SELECT m.chunk_id AS chunkId, m.file_id AS fileId, f.filename, m.content, v.distance
     FROM file_chunks v
@@ -50,7 +52,8 @@ export async function searchSpaceFiles(spaceId: string, query: string, embedding
   return indices.map(i => rows[i])
 }
 
-export async function searchUploads(query: string, userId: string, limit = 5): Promise<ChunkResult[]> {
+export async function searchUploads(query: string, userId: string, limit?: number): Promise<ChunkResult[]> {
+  const topK = limit ?? await ragTopK()
   const embedding = await embedText(query)
   const embeddingJson = JSON.stringify(embedding)
 
@@ -69,7 +72,7 @@ export async function searchUploads(query: string, userId: string, limit = 5): P
         WHERE f2.user_id = ?
       )
     ORDER BY v.distance
-  `).all(embeddingJson, limit, userId) as ChunkResult[]
+  `).all(embeddingJson, topK, userId) as ChunkResult[]
 
   if (!rerankEnabled || rows.length === 0) return rows
   const indices = await rerank(query, rows.map(r => r.content), rows.length)

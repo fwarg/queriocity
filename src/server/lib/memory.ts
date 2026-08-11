@@ -2,10 +2,11 @@ import { generateText } from 'ai'
 import { randomUUID } from 'crypto'
 import { db, spaceMemories, userMemories, chatSessions, messages, spaces, monitorRuns, sqlite, getAppSetting, setAppSetting } from './db.ts'
 import { eq, desc, asc, ne, and, or, gt, isNull } from 'drizzle-orm'
-import { getSmallModel, getChatModel, getThinkingModelOrFallback } from './llm.ts'
+import { getSmallModel, getChatModel, getThinkingModelOrFallback, SMALL_MODEL_INPUT_CHARS } from './llm.ts'
 import { embedText, embedTexts } from './embeddings.ts'
 import { searchSpaceFiles, searchUploads, spaceHasTaggedFiles, type ChunkResult } from './files/uploads-search.ts'
 import { rerank, rerankEnabled } from './reranker.ts'
+import { ragTopK } from './rag-settings.ts'
 
 export interface SpaceMemory {
   id: string
@@ -27,7 +28,7 @@ export async function buildChatFileBlock(
 
   let fileRows: ChunkResult[] = []
   try {
-    fileRows = await searchUploads(query, userId, 15)
+    fileRows = await searchUploads(query, userId, await ragTopK())
   } catch (e) {
     console.error('  [memory] chat file RAG failed:', e)
     return { block: '', fileSources: [] }
@@ -77,10 +78,11 @@ export interface HistoryHit {
 export async function searchSpaceHistory(
   spaceId: string,
   query: string,
-  k = 8,
+  k?: number,
   excludeSessionId?: string,
 ): Promise<HistoryHit[]> {
   if (!query.trim()) return []
+  const topK = k ?? await ragTopK()
   let embedding: number[]
   try {
     embedding = await embedText(query)
@@ -105,7 +107,7 @@ export async function searchSpaceHistory(
           WHERE s2.space_id = ? AND s2.id IS NOT ?
         )
       ORDER BY cc.distance
-    `).all(JSON.stringify(embedding), k, spaceId, excludeSessionId ?? null) as
+    `).all(JSON.stringify(embedding), topK, spaceId, excludeSessionId ?? null) as
       Array<{ content: string; title: string; updated_at: number }>
     console.log(`  [memory] search_space_history "${query.slice(0, 60)}" → ${rows.length} hits`)
     return rows.map(r => ({
@@ -310,24 +312,25 @@ export async function buildMemoryBlock(
 
     if (embedding) {
       // Fetch candidates from both sources
+      const topK = await ragTopK()
       let chatRows: Array<{ chunk_id: string; content: string }> = []
       try {
         // Space scoping via pushed-down IN rather than a JOIN predicate — with `AND cs.space_id`
-        // outside, `k = 15` means "15 nearest chunks anywhere", and a busy neighbouring space
+        // outside, `k` would mean "k nearest chunks anywhere", and a busy neighbouring space
         // leaves this one with nothing. See the note on searchSpaceFiles.
         chatRows = sqlite.prepare(`
           SELECT ccm.chunk_id, ccm.content
           FROM chat_chunks cc
           JOIN chat_chunk_meta ccm ON ccm.chunk_id = cc.chunk_id
           WHERE cc.embedding MATCH ?
-            AND k = 15
+            AND k = ?
             AND cc.chunk_id IN (
               SELECT m2.chunk_id FROM chat_chunk_meta m2
               JOIN chat_sessions s2 ON s2.id = m2.session_id
               WHERE s2.space_id = ?
             )
           ORDER BY cc.distance
-        `).all(JSON.stringify(embedding), spaceId) as Array<{ chunk_id: string; content: string }>
+        `).all(JSON.stringify(embedding), topK, spaceId) as Array<{ chunk_id: string; content: string }>
       } catch (e) {
         console.error('  [memory] chat RAG search failed:', e)
       }
@@ -335,7 +338,7 @@ export async function buildMemoryBlock(
       let fileRows: ChunkResult[] = []
       if (hasTaggedFiles) {
         try {
-          fileRows = await searchSpaceFiles(spaceId, query, embedding, 15, true, includeFileIds)
+          fileRows = await searchSpaceFiles(spaceId, query, embedding, topK, true, includeFileIds)
         } catch (e) {
           console.error('  [memory] space file RAG failed:', e)
         }
@@ -870,7 +873,12 @@ export async function extractMemoriesPostHoc(
   if (!userContent.trim()) return
   const t0 = performance.now()
 
-  const maxChars = parseInt(await getAppSetting('memory_extract_chars', '6000'))
+  // Clamped to what the configured small model can actually accept. The admin setting allows up to
+  // 100000 chars, which no 4k-context model can take — and the extraction then fails outright
+  // rather than extracting less. `|| 6000` also covers a non-numeric setting: `slice(-NaN)`
+  // silently returns the *whole* string, so a bad value disabled the limit rather than tripping it.
+  const configured = parseInt(await getAppSetting('memory_extract_chars', '6000'), 10) || 6000
+  const maxChars = Math.min(configured, SMALL_MODEL_INPUT_CHARS)
   const combined = `User: ${userContent}\n\nAssistant: ${assistantContent}`
   const result = await generateText({
     model: getSmallModel(),

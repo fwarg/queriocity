@@ -8,6 +8,9 @@ import { saveMemories, saveUserMemory, searchSpaceHistory } from './memory.ts'
 import { fetchUrl, processUrlsForContext, MIN_URL_CONTEXT_CHARS } from './fetch-url.ts'
 import { trimMessages, compressMessages, contextCharBudget, CONTEXT_RESERVE_FRACTION } from './trim-messages.ts'
 import { queryTerms, querySimilarity, QUERY_DUPLICATE_THRESHOLD } from './query-terms.ts'
+import {
+  applyEgressMode, createEgressContext, inspectQuery, inspectUrl, noteSeenUrl, noteTaint, noteUserText,
+} from './egress-guard.ts'
 import { RESEARCH_MAX_TOKENS } from './llm.ts'
 
 
@@ -87,6 +90,24 @@ const CONTEXT_BUDGET_DEAD_MSG = {
   error: 'The available context budget for this research turn has been used up by search/fetch results already gathered. Do NOT call web_search or fetch_url again — write your answer using the results already gathered.',
 }
 
+/** Appended in a locked space, where web_search and fetch_url are not offered at all.
+ *
+ *  It has to override the mode prompts rather than merely omit the tools: those prompts tell the
+ *  model to search first, and a tool-trained model told to search with no tool available writes the
+ *  call as prose, which streams to the user as the answer. Same reasoning as
+ *  FINAL_STEP_INSTRUCTION above. */
+const LOCKED_SPACE_INSTRUCTION = `
+
+This space is locked: there is no web search and no URL fetching, and no way to call one. Ignore any instruction above to search the web or read a URL first — those tools do not exist here.
+Answer from the documents in this conversation and your own knowledge. Never emit a tool call in any syntax; there is nothing to parse it, so it would be shown to the user as your answer.
+Do not offer to look something up, and do not ask the user to enable search. If something cannot be answered from what you have, say so plainly in one line and answer what you can.`
+
+// Returned when the egress guard refused an outbound request, or the user declined it. Phrased so
+// the model reports the refusal and moves on rather than retrying the same request in a loop.
+const EGRESS_REFUSED_MSG = {
+  error: 'This request was not sent: it was refused as a possible attempt to send private content out of this system. Do NOT retry it or rephrase it. Continue with what you already have, and tell the user plainly that the request was blocked.',
+}
+
 export interface ResearchOptions {
   messages: Array<{ role: 'user' | 'assistant'; content: string }>
   focusMode: 'balanced' | 'thorough'
@@ -116,9 +137,23 @@ export interface ResearchOptions {
   onEngineErrors?: (errors: EngineError[]) => void | Promise<void>
   /** Shared per-request allowance for paid keyed-API fallback searches. */
   apiBudget?: SearchApiBudget
+  /** Asks the user to approve an outbound request the egress guard found suspicious.
+   *
+   *  Absent means nobody is watching — the monitor runner has no client attached — so a request
+   *  that would have prompted is refused instead of hanging until the timeout. */
+  requestApproval?: (req: EgressApprovalRequest) => Promise<boolean>
+  /** The chat's space is locked: no web_search, no fetch_url. Resolved from the database by the
+   *  caller, never from the client. */
+  locked?: boolean
 }
 
-export async function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, userMemoryEnabled = false, fetchSummarize = false, compressHistory = false, searchCategory, maxStepsOverride, onEngineErrors, apiBudget }: ResearchOptions) {
+export interface EgressApprovalRequest {
+  kind: 'fetch' | 'search'
+  target: string
+  reasons: string[]
+}
+
+export async function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, userMemoryEnabled = false, fetchSummarize = false, compressHistory = false, searchCategory, maxStepsOverride, onEngineErrors, apiBudget, requestApproval, locked = false }: ResearchOptions) {
   const { maxSteps: defaultMaxSteps, count } = MODE_CONFIG[focusMode]
   const maxSteps = maxStepsOverride ?? defaultMaxSteps
   let nextIndex = 1
@@ -127,6 +162,31 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
   // Term sets of every query already run this turn, pre-search included — the model is told the
   // initial search happened but still re-runs variants of it. See QUERY_DUPLICATE_THRESHOLD.
   const executedQueries: Array<Set<string>> = (initialQueries ?? []).map(queryTerms)
+
+  // What this turn has legitimately seen, so the egress guard can tell a URL derived from a search
+  // result apart from one the model invented. Seeded with everything already in context.
+  const egress = createEgressContext()
+  for (const r of initialResults ?? []) noteSeenUrl(egress, r.url)
+  for (const p of prefetchedUrls ?? []) {
+    noteSeenUrl(egress, p.url)
+    noteTaint(egress, p.content)   // a fetched page is untrusted content, like an upload
+  }
+  for (const m of messages) if (m.role === 'user') noteUserText(egress, m.content)
+
+  /** Screen an outbound request, asking the user when the verdict is uncertain.
+   *  Returns false when the request must not be sent. */
+  const permitEgress = async (kind: 'fetch' | 'search', target: string): Promise<boolean> => {
+    const raw = kind === 'fetch' ? inspectUrl(target, egress) : inspectQuery(target, egress)
+    const v = applyEgressMode(raw, kind, target)
+    if (v.action === 'allow') return true
+    if (v.action === 'block') return false
+    // No client attached (monitor runs) means nobody can answer, so refuse rather than wait.
+    if (!requestApproval) {
+      console.warn(`  [egress] refused ${kind} with no user present: ${target.slice(0, 120)}`)
+      return false
+    }
+    return await requestApproval({ kind, target, reasons: v.reasons })
+  }
 
   // A tool result arriving on the final generation can never be used — the model has no step
   // left to write prose, so the turn ends on finishReason=tool-calls with an empty answer.
@@ -147,6 +207,10 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
   if (spaceId) system += `\n\nYou have a save_to_memory tool. Use it when the user expresses a preference, makes a decision, or shares context that would be useful in future conversations. Do not save trivial or ephemeral details.`
   if (userMemoryEnabled) system += `\n\nYou have a save_user_fact tool for facts about the user that hold in *every* conversation — how they want answers written, languages they work in, durable constraints. Use it rarely: anything topic-specific belongs in save_to_memory instead.`
   if (spaceId) system += `\n\nYou also have a search_space_history tool for looking up earlier conversations in this space. Relevant excerpts are already provided above when they exist, so call it only when the user refers to something earlier that is not covered there.`
+  // The mode prompts above instruct the model to search; without contradicting them explicitly it
+  // writes the tool call as prose instead, which nothing parses and the user sees as the answer —
+  // the same failure the final-step instruction exists to prevent.
+  if (locked) system += LOCKED_SPACE_INSTRUCTION
 
   // Inject pre-executed search results as a fake tool exchange so the model
   // sees them as already done and continues from there. Also note in the system
@@ -230,8 +294,12 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
       }
       if (skipped.length) console.log(`  [researcher] skipped ${skipped.length} duplicate quer${skipped.length === 1 ? 'y' : 'ies'}: ${skipped.map(q => JSON.stringify(q)).join(', ')}`)
       if (!fresh.length) return DUPLICATE_QUERY_MSG
+      // Screened per query rather than per call: one refused query must not suppress the others.
+      const permitted: string[] = []
+      for (const q of fresh) if (await permitEgress('search', q)) permitted.push(q)
+      if (!permitted.length) return EGRESS_REFUSED_MSG
       const errs: EngineError[] = []
-      const results = await webSearchMulti(fresh, count, searchCategory, e => errs.push(...e), apiBudget)
+      const results = await webSearchMulti(permitted, count, searchCategory, e => errs.push(...e), apiBudget)
       // Surface only when blocked engines left this search empty (matches pre-search semantics).
       if (results.length === 0 && errs.length) {
         await onEngineErrors?.(errs)
@@ -244,6 +312,11 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
         }
       }
       const indexed = results.map(r => ({ ...r, index: nextIndex++ }))
+      // Result URLs become legitimate fetch targets; their snippets are untrusted content.
+      for (const r of indexed) {
+        noteSeenUrl(egress, r.url)
+        noteTaint(egress, r.content)
+      }
       toolBudgetRemaining -= JSON.stringify(indexed).length
       return indexed
     },
@@ -252,16 +325,22 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
   // A ToolSet rather than Record<string, any>: typing it lets the stream parts downstream keep
   // the SDK's real union type, so a future SDK field rename is a compile error instead of a
   // silent `undefined` (see drainResearcherStream in routes/chat.ts).
-  const tools: ToolSet = {
+  // In a locked space the networked tools are *absent*, not refused. A tool that exists and says no
+  // still costs a step, still tells the model the capability is there, and still leaves the refusal
+  // up to logic that could be wrong — whereas a tool that was never offered cannot be called.
+  const tools: ToolSet = locked ? {} : {
     web_search: webSearchTool,
     fetch_url: tool({
       description: 'Fetch and read the full text content of a specific URL. Use when the user provides a URL to analyze, or when a search result needs to be read in full. For paginated content, call multiple times with page parameters (e.g. ?page=2).',
       inputSchema: z.object({ url: z.string().url() }),
       execute: async ({ url }) => {
-          if (toolBudgetRemaining <= MIN_URL_CONTEXT_CHARS) return CONTEXT_BUDGET_DEAD_MSG
+        if (toolBudgetRemaining <= MIN_URL_CONTEXT_CHARS) return CONTEXT_BUDGET_DEAD_MSG
+        if (!await permitEgress('fetch', url)) return EGRESS_REFUSED_MSG
         const raw = await fetchUrl(url)
         if (raw.startsWith('Error fetching')) return raw
         const [{ content }] = await processUrlsForContext([{ url, content: raw }], toolBudgetRemaining, fetchSummarize)
+        // The page just read is untrusted: anything in it could be an instruction to leak.
+        noteTaint(egress, content)
         toolBudgetRemaining -= content.length
         return content
       },
@@ -274,7 +353,13 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
       inputSchema: z.object({
         query: z.string().describe('Semantic search query'),
       }),
-      execute: async ({ query }) => searchUploads(query, userId),
+      // The primary thing worth protecting: everything returned here is local document content,
+      // so it is recorded as taint before it can reach a search query or a URL.
+      execute: async ({ query }) => {
+        const rows = await searchUploads(query, userId)
+        for (const r of rows) noteTaint(egress, r.content)
+        return rows
+      },
     })
   }
 

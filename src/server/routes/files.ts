@@ -5,6 +5,7 @@ import { ingestFile, extractFileText, isUsableText, ACCEPTED_MIME_TYPES } from '
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { fetchUrl, extractYoutubeVideoId } from '../lib/fetch-url.ts'
 import { rateLimitByUser, ingestLimiter } from '../lib/rate-limit.ts'
+import { deleteFileChunks } from '../lib/vector-cleanup.ts'
 
 export const filesRouter = new Hono<AppEnv>()
 
@@ -106,6 +107,9 @@ filesRouter.delete('/:id', async (c) => {
   if (!file) return c.json({ error: 'Not found' }, 404)
   if (file.userId !== userId) return c.json({ error: 'Forbidden' }, 403)
 
+  // Before the row goes: file_chunk_meta has no foreign key and file_chunks is a vec0 table that
+  // cannot have one, so nothing else would ever remove them.
+  deleteFileChunks(fileId)
   await db.delete(uploadedFiles).where(eq(uploadedFiles.id, fileId))
 
   return c.json({ ok: true })

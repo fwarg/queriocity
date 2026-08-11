@@ -1,7 +1,17 @@
 import { useState, useRef } from 'react'
-import { streamChat, stopChat, fetchRelatedQuestions } from '../lib/api.ts'
+import { streamChat, stopChat, fetchRelatedQuestions, decideEgress } from '../lib/api.ts'
 import type { Message, Source } from '../lib/api.ts'
 import type { LogStep } from '../components/ProgressLog.tsx'
+
+export interface EgressApproval {
+  id: string
+  kind: 'fetch' | 'search'
+  /** Shown to the user in full. Never truncate it — a payload hides in the tail. */
+  target: string
+  reasons: string[]
+  /** Wall-clock deadline, so the countdown survives a re-render. */
+  expiresAt: number
+}
 
 interface UseChatOptions {
   sessionId: string | undefined
@@ -27,6 +37,9 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
   const [steps, setSteps] = useState<LogStep[]>([])
   /** Start of the current run, for the timer on the transient status line (flash has no log). */
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null)
+  /** Outbound request awaiting the user's decision, or null. At most one is ever parked: the
+   *  generation blocks on it, so a second cannot be raised until this one resolves. */
+  const [approval, setApproval] = useState<EgressApproval | null>(null)
 
   const abortRef = useRef<AbortController | null>(null)
   const rafRef = useRef<number>(0)
@@ -38,6 +51,15 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
     abortRef.current?.abort()
     // The connection closing no longer stops the model — the run must be cancelled explicitly.
     if (liveSessionRef.current) stopChat(liveSessionRef.current)
+    setApproval(null)
+  }
+
+  /** Answers a parked egress prompt. Clearing it locally regardless of the server's reply is
+   *  deliberate: if nothing was parked the request had already been refused by the timeout, and
+   *  leaving the dialog up would invite a second click that means nothing. */
+  async function decideApproval(id: string, allow: boolean) {
+    setApproval(a => (a && a.id === id ? null : a))
+    if (liveSessionRef.current) await decideEgress(liveSessionRef.current, id, allow)
   }
 
   async function submit(text: string) {
@@ -120,6 +142,21 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
           sources.push(...(chunk.sources as Source[]))
         } else if (chunk.type === 'file_sources') {
           fileSources.push(...(chunk.sources as Array<{ title: string; url: string }>))
+        } else if (chunk.type === 'approval') {
+          setApproval({
+            id: chunk.id as string,
+            kind: chunk.kind as 'fetch' | 'search',
+            target: chunk.target as string,
+            reasons: chunk.reasons as string[],
+            expiresAt: Date.now() + (chunk.timeoutMs as number),
+          })
+        } else if (chunk.type === 'approval_time') {
+          // Resume correcting a replayed countdown against the server's real deadline.
+          setApproval(a => a && a.id === chunk.id
+            ? { ...a, expiresAt: Date.now() + (chunk.timeoutMs as number) }
+            : a)
+        } else if (chunk.type === 'approval_closed') {
+          setApproval(a => (a && a.id === chunk.id ? null : a))
         } else if (chunk.type === 'search_warning') {
           blockedEngines.push(...(chunk.engines as Array<{ engine: string; reason: string }>))
         } else if (chunk.type === 'done') {
@@ -183,8 +220,9 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
     setStatus('')
     setRelated([])
     setSteps([])
+    setApproval(null)
     liveSessionRef.current = undefined
   }
 
-  return { messages, setMessages, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, regenerate, cancel, reset, related, setRelated, steps, runStartedAt }
+  return { messages, setMessages, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, regenerate, cancel, reset, related, setRelated, steps, runStartedAt, approval, decideApproval }
 }

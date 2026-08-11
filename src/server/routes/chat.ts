@@ -3,7 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { streamSSE, type SSEStreamingApi } from 'hono/streaming'
 import { streamText, generateText, tool, stepCountIs } from 'ai'
-import { runResearcher, maxStepsFor } from '../lib/researcher.ts'
+import { runResearcher, maxStepsFor, type EgressApprovalRequest } from '../lib/researcher.ts'
 import { runWriter } from '../lib/writer.ts'
 import { drainResearcherStream, type SSEStream } from '../lib/researcher-stream.ts'
 import { stepEvent, type ProgressStep } from '../lib/progress.ts'
@@ -22,12 +22,14 @@ import { ThinkExtractor } from '../lib/think-extractor.ts'
 import { rerankSearchResults } from '../lib/reranker.ts'
 import { buildMemoryBlock, buildChatFileBlock, extractMemoriesPostHoc, userMemoryBlockIfEnabled, joinMemoryBlocks } from '../lib/memory.ts'
 import { trimMessages, contextCharBudget, CONTEXT_RESERVE_FRACTION } from '../lib/trim-messages.ts'
-import { indexContents } from '../lib/chat-indexer.ts'
+import { indexContents, deindexContent } from '../lib/chat-indexer.ts'
 import { ownsSpace, sessionOwnership } from '../lib/ownership.ts'
+import { isSpaceLocked } from '../lib/space-lock.ts'
 import { rateLimitByUser, chatLimiter, suggestLimiter } from '../lib/rate-limit.ts'
 import {
   startRun, getRun, appendEvent, finishRun, waitForEvents,
-  scheduleAbandon, cancelAbandon, stopRun, type LiveRun,
+  scheduleAbandon, cancelAbandon, stopRun, awaitApproval, settleApproval, approvalTimeLeft,
+  APPROVAL_TIMEOUT_MS, type LiveRun,
 } from '../lib/stream-buffer.ts'
 import { IMAGE_API, IMAGE_STORAGE_DIR, randomSeed, resolveSteps, saveGeneratedImage } from '../lib/image-store.ts'
 import { imageBackend, compensateSteps, DEFAULT_EDIT_STRENGTH } from '../lib/image-api.ts'
@@ -187,6 +189,16 @@ chatRouter.get('/resume/:sessionId', async (c) => {
       while (index < run.events.length) {
         await stream.writeSSE({ data: run.events[index], id: String(index + 1) })
         index++
+        // A replayed approval prompt carries the timeout it was created with, but the server's
+        // clock has been running the whole time. Correct the countdown for any still parked;
+        // ones already settled replay their approval_closed event and need nothing.
+        const pending = JSON.parse(run.events[index - 1]) as { type?: string; id?: string }
+        if (pending.type === 'approval' && pending.id) {
+          const left = approvalTimeLeft(run, pending.id)
+          if (left !== null) {
+            await stream.writeSSE({ data: JSON.stringify({ type: 'approval_time', id: pending.id, timeoutMs: left }) })
+          }
+        }
       }
       if (run.done) break
       // Returns early on a new event; the timeout doubles as the keepalive tick.
@@ -203,6 +215,19 @@ chatRouter.post('/:sessionId/stop', async (c) => {
   return c.json({ stopped })
 })
 
+/** The user's answer to an egress approval prompt. Ownership is checked the same way `stop` does
+ *  it: the run is looked up by session and must belong to the caller, so one user cannot release
+ *  another's parked request. */
+chatRouter.post('/:sessionId/approve', zValidator('json', z.object({
+  id: z.string(),
+  allow: z.boolean(),
+})), async (c) => {
+  const { id, allow } = c.req.valid('json')
+  const run = getRun(c.req.param('sessionId'))
+  if (!run || run.userId !== (c.get('userId') as string)) return c.json({ settled: false }, 404)
+  return c.json({ settled: settleApproval(run, id, allow) })
+})
+
 chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', chatSchema), async (c) => {
   const userId = c.get('userId') as string
   const { sessionId, spaceId, messages: msgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, ephemeral, regenerate } = c.req.valid('json')
@@ -213,6 +238,19 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   // another user's memories into this answer, and a known session id appends to their chat.
   if (spaceId && !await ownsSpace(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
   if (sessionId && await sessionOwnership(sessionId, userId) === 'other') return c.json({ error: 'Not found' }, 404)
+
+  // Read from the database, never from the request body — a lock the client could assert would be
+  // decorative. Resolved from the chat's own space when it has one, so an existing chat stays
+  // locked even if the client forgets to send spaceId.
+  const existingSpaceId = sessionId
+    ? (await db.select({ spaceId: chatSessions.spaceId }).from(chatSessions)
+        .where(eq(chatSessions.id, sessionId)).get())?.spaceId ?? null
+    : null
+  const locked = await isSpaceLocked(existingSpaceId ?? spaceId)
+  if (locked && focusMode === 'image') {
+    return c.json({ error: 'Image generation is unavailable in a locked space — it would send the prompt to the diffusion server.' }, 409)
+  }
+  if (locked) console.log(`  [space] locked — no web search, URL fetching or image generation`)
 
   const lastUser = [...msgs].reverse().find(m => m.role === 'user')
   const preview = (lastUser?.content ?? '').slice(0, 100).replace(/\n/g, ' ')
@@ -519,6 +557,23 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     const emitStep = (step: ProgressStep) => out.writeSSE({ data: stepEvent(step) })
     await emitStep({ kind: 'understand' })
 
+    /** Ask the user whether an outbound request the egress guard flagged may be sent.
+     *
+     *  The generation parks here until they answer. The keepalive pings already running around
+     *  each researcher stream hold the connection open meanwhile, and every way out of the wait
+     *  other than an explicit Allow resolves to false. */
+    const requestApproval = async (req: EgressApprovalRequest): Promise<boolean> => {
+      const id = randomUUID()
+      await out.writeSSE({ data: JSON.stringify({
+        type: 'approval', id, kind: req.kind, target: req.target,
+        reasons: req.reasons, timeoutMs: APPROVAL_TIMEOUT_MS,
+      }) })
+      const allowed = await awaitApproval(run, id)
+      console.log(`  [egress] ${req.kind} ${allowed ? 'allowed' : 'refused'} by user — ${req.target.slice(0, 120)}`)
+      await out.writeSSE({ data: JSON.stringify({ type: 'approval_closed', id, allowed }) })
+      return allowed
+    }
+
     const [fetchMaxPages, fetchSummarize, compressHistory] = await Promise.all([
       getAppSetting('fetch_max_pages', '8').then(Number),
       getAppSetting('fetch_summarize_overflow', 'false').then(v => v === 'true'),
@@ -528,13 +583,18 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     // Shared per-request allowance for paid keyed-API fallback searches (pre-search + researcher).
     const apiBudget: SearchApiBudget = { remaining: parseInt(process.env.SEARCH_API_MAX_PER_REQUEST ?? '3', 10) }
 
-    // Fetch user settings + file count + reformulate/pre-search + memory + URL prefetch in parallel
+    // Fetch user settings + file count + reformulate/pre-search + memory + URL prefetch in parallel.
+    // In a locked space the two network legs are skipped outright rather than filtered later: the
+    // pre-search runs before the model is involved, and URL prefetching would fetch a link pasted
+    // beside the document without any tool being called at all.
     const [fileCountRow, { initialQueries, initialResults, engineErrors }, memoryBudget, ragBudget, prefetchedUrls] = await Promise.all([
       db.select({ count: sql<number>`count(*)` }).from(uploadedFiles).where(eq(uploadedFiles.userId, userId)).get(),
-      runReformulateAndPreSearch(msgsForReformulate, focusMode as 'balanced' | 'thorough', hasAttachment, searchCategory, apiBudget, abortSignal),
+      locked
+        ? Promise.resolve({ initialQueries: [] as string[], initialResults: [] as SearchResult[], engineErrors: [] as EngineError[] })
+        : runReformulateAndPreSearch(msgsForReformulate, focusMode as 'balanced' | 'thorough', hasAttachment, searchCategory, apiBudget, abortSignal),
       spaceId ? getAppSetting('memory_token_budget', '1000').then(Number) : Promise.resolve(1000),
       getAppSetting('space_rag_budget', '500').then(Number),
-      prefetchUrlsFromMessage(lastUser?.content ?? '', hasAttachment, fetchMaxPages),
+      locked ? Promise.resolve([]) : prefetchUrlsFromMessage(lastUser?.content ?? '', hasAttachment, fetchMaxPages),
     ])
     const userQuery = lastUser?.content ?? ''
     const hasFiles = (fileCountRow?.count ?? 0) > 0
@@ -614,7 +674,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         await out.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: snippets + '\n\n' }) })
       }
       const researchModel = useThinking ? getThinkingModelOrFallback() : getChatModel()
-      const researcherResult = await runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, apiBudget })
+      const researcherResult = await runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, apiBudget, requestApproval, locked })
       const allSources: SearchResult[] = [...(initialResults ?? [])]
       let researcherNotes = ''
       // Unconditional: the extractor also drops leaked tool-call markup, which has to be stripped
@@ -695,7 +755,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       }
 
       const fullSources: SearchResult[] = []
-      const result = await runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, apiBudget })
+      const result = await runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, apiBudget, requestApproval, locked })
       const extractor = new ThinkExtractor()   // see thoroughExtractor above
 
       const keepalive = setInterval(() => {
@@ -800,9 +860,12 @@ async function finishTurn(out: SSEStream, {
     await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, elapsedMs }) })
     return
   }
-  const { title } = await persistMessage(sid, userId, msgs, fullContent, sources, spaceId, regenerate)
+  const { title, supersededAnswer } = await persistMessage(sid, userId, msgs, fullContent, sources, spaceId, regenerate)
   await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title, elapsedMs }) })
   if (spaceId) {
+    // Indexing is content-addressed and idempotent, so re-running it for the same question costs
+    // nothing — but the answer that was just thrown away has to be removed explicitly.
+    if (supersededAnswer) deindexContent(sid, supersededAnswer)
     const lastUserContent = userQueryOf(msgs)
     extractMemoriesPostHoc(spaceId, sid, lastUserContent, fullContent).catch(e => console.error('[memory]', e))
     indexContents(sid, [lastUserContent, fullContent].filter(Boolean)).catch(e => console.error('[chat-index]', e))
@@ -933,26 +996,32 @@ async function persistMessage(
   sources: unknown[],
   spaceId?: string,
   regenerate = false,
-): Promise<{ title: string }> {
+): Promise<{ title: string; supersededAnswer?: string }> {
   const now = new Date()
   const title = msgs.find(m => m.role === 'user')?.content.slice(0, SESSION_TITLE_MAX) ?? 'Chat'
   const lastUser = [...msgs].reverse().find(m => m.role === 'user')
+  let supersededAnswer: string | undefined
 
   await db.transaction(async (tx) => {
     await tx.insert(chatSessions).values({ id: sessionId, title, createdAt: now, updatedAt: now, userId, spaceId: spaceId ?? null })
       .onConflictDoUpdate({ target: chatSessions.id, set: { updatedAt: now, graduated: 1 } })
     if (regenerate) {
       // The question is already stored from the first attempt — replace only the answer, so a
-      // retry doesn't leave the conversation with duplicate turns.
-      const previous = await tx.select({ id: messages.id }).from(messages)
+      // retry doesn't leave the conversation with duplicate turns. Its text is returned so the
+      // caller can drop its chunks too: deleting the message alone left the rejected answer
+      // searchable through chat RAG.
+      const previous = await tx.select({ id: messages.id, content: messages.content }).from(messages)
         .where(and(eq(messages.sessionId, sessionId), eq(messages.role, 'assistant')))
         .orderBy(desc(messages.createdAt)).limit(1).get()
-      if (previous) await tx.delete(messages).where(eq(messages.id, previous.id))
+      if (previous) {
+        supersededAnswer = previous.content
+        await tx.delete(messages).where(eq(messages.id, previous.id))
+      }
     } else if (lastUser) {
       await tx.insert(messages).values({ id: randomUUID(), sessionId, role: 'user', content: lastUser.content, createdAt: now })
     }
     await tx.insert(messages).values({ id: randomUUID(), sessionId, role: 'assistant', content: assistantContent, sources: JSON.stringify(sources), createdAt: now })
   })
 
-  return { title }
+  return { title, supersededAnswer }
 }

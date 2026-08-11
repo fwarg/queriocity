@@ -22,6 +22,9 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   const [dreamDeepDraft, setDreamDeepDraft] = useState(false)
   const [extractCharsDraft, setExtractCharsDraft] = useState('6000')
   const [rerankTopNDraft, setRerankTopNDraft] = useState('15')
+  const [ragTopKDraft, setRagTopKDraft] = useState('15')
+  // Derived server-side from the model context env vars; two settings below are clamped by them.
+  const [limits, setLimits] = useState<{ smallModelInputChars: number; embedInputChars: number } | null>(null)
   const [attachmentCharsDraft, setAttachmentCharsDraft] = useState('20000')
   const [spaceRagBudgetDraft, setSpaceRagBudgetDraft] = useState('500')
   const [userMemoryBudgetDraft, setUserMemoryBudgetDraft] = useState('300')
@@ -58,6 +61,8 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
       setDreamDeepDraft(s.dreamDeep)
       setExtractCharsDraft(String(s.memoryExtractChars))
       setRerankTopNDraft(String(s.rerankTopN))
+      setRagTopKDraft(String(s.ragTopK))
+      setLimits(s.limits)
       setAttachmentCharsDraft(String(s.attachmentChars))
       setSpaceRagBudgetDraft(String(s.spaceRagBudget))
       setUserMemoryBudgetDraft(String(s.userMemoryTokenBudget))
@@ -83,6 +88,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     const dreamTarget = parseInt(dreamTargetDraft)
     const extractChars = parseInt(extractCharsDraft)
     const rerankTopN = parseInt(rerankTopNDraft)
+    const ragTopK = parseInt(ragTopKDraft)
     const attachmentChars = parseInt(attachmentCharsDraft)
     const spaceRagBudget = parseInt(spaceRagBudgetDraft)
     const userMemoryTokenBudget = parseInt(userMemoryBudgetDraft)
@@ -104,7 +110,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     setError('')
     setSavingBudget(true)
     try {
-      await updateAdminSettings({ memoryTokenBudget: budget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, attachmentChars, spaceRagBudget, queryReformulation: queryReformulationDraft, rssFeedCharsBudget, fetchMaxPages, fetchSummarizeOverflow: fetchSummarizeOverflowDraft, compressHistoryOverflow: compressHistoryOverflowDraft })
+      await updateAdminSettings({ memoryTokenBudget: budget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, ragTopK, attachmentChars, spaceRagBudget, queryReformulation: queryReformulationDraft, rssFeedCharsBudget, fetchMaxPages, fetchSummarizeOverflow: fetchSummarizeOverflowDraft, compressHistoryOverflow: compressHistoryOverflowDraft })
 
       onBudgetChange?.(budget)
       setBudgetSaved(true)
@@ -291,7 +297,12 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
               </div>
               <div className="flex flex-col gap-1.5 border-t border-gray-800/60 pt-3">
                 <p className="text-xs text-gray-400 font-medium">Extraction context</p>
-                <p className="text-xs text-gray-500">Max total characters fed to the small model when extracting memories from a chat. The most recent content is kept. Reduce if the model errors on long chats.</p>
+                <p className="text-xs text-gray-500">
+                  Max characters fed to the small model when extracting memories from a chat. The most recent content is kept.
+                  {limits && parseInt(extractCharsDraft) > limits.smallModelInputChars && (
+                    <> <span className="text-amber-400">Capped at {limits.smallModelInputChars} by the small model's context (SMALL_MODEL_CONTEXT_TOKENS) — values above that have no effect.</span></>
+                  )}
+                </p>
                 <input type="number" min={500} max={100000} step={500} value={extractCharsDraft}
                   onChange={e => setExtractCharsDraft(e.target.value)}
                   className="w-32 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
@@ -307,6 +318,18 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                   className="w-fit px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-xs text-gray-200 transition-colors">
                   {reindexing ? 'Queued…' : reindexResult !== null ? `Queued ${reindexResult} sessions` : 'Re-index chats'}
                 </button>
+              </div>
+            </div>
+
+            {/* Retrieval */}
+            <div className="flex flex-col gap-3 border-t border-gray-800 pt-5">
+              <p className="text-xs font-semibold text-gray-300 uppercase tracking-wider">Retrieval</p>
+              <div className="flex flex-col gap-1.5">
+                <p className="text-xs text-gray-400 font-medium">Chunks per search</p>
+                <p className="text-xs text-gray-500">How many nearest chunks each vector search retrieves — document RAG, chat history RAG, and the uploads/history search tools. Reranking (below) prunes this list, so it is also the ceiling on what reranking can consider.</p>
+                <input type="number" min={1} max={100} step={1} value={ragTopKDraft}
+                  onChange={e => setRagTopKDraft(e.target.value)}
+                  className="w-24 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
               </div>
             </div>
 
@@ -378,7 +401,12 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
               <p className="text-xs font-semibold text-gray-300 uppercase tracking-wider">Attachments</p>
               <div className="flex flex-col gap-1.5">
                 <p className="text-xs text-gray-400 font-medium">Max context characters</p>
-                <p className="text-xs text-gray-500">Max characters extracted from an attached file and sent to the model as context.</p>
+                <p className="text-xs text-gray-500">
+                  Max characters extracted from an attached file and sent to the chat model as context.
+                  {limits && parseInt(attachmentCharsDraft) > limits.embedInputChars && (
+                    <> <span className="text-amber-400">The chat model sees all of it, but retrieval only embeds the first {limits.embedInputChars} characters of a message (EMBED_CONTEXT_TOKENS), so a large attachment is not fully searchable from other chats — upload it to the library instead.</span></>
+                  )}
+                </p>
                 <input type="number" min={1000} max={500000} step={1000} value={attachmentCharsDraft}
                   onChange={e => setAttachmentCharsDraft(e.target.value)}
                   className="w-32 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />

@@ -11,7 +11,16 @@ export interface AuthUser {
   mustChangePassword?: boolean
 }
 
-export interface Space { id: string; name: string; chatCount: number; memoryCount: number; createdAt: number }
+export interface Space {
+  id: string
+  name: string
+  /** Locked: no web search, URL fetching or image generation for any chat in this space.
+   *  Effectively one-way once the space holds anything — see the server's canUnlock. */
+  offline: boolean
+  chatCount: number
+  memoryCount: number
+  createdAt: number
+}
 
 export interface SpaceMemory {
   id: string; content: string; source: 'tool' | 'extraction' | 'manual' | 'compact'
@@ -270,12 +279,34 @@ export async function stopChat(sessionId: string): Promise<void> {
   } catch { /* nothing useful to do */ }
 }
 
+/** Answers an egress approval prompt. Returns false when the server had nothing parked under that
+ *  id — it already timed out, or the run ended — so the caller can drop a prompt gone stale. */
+export async function decideEgress(sessionId: string, id: string, allow: boolean): Promise<boolean> {
+  try {
+    const res = await fetch(`${BASE}/chat/${sessionId}/approve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, allow }),
+    })
+    if (!res.ok) return false
+    return (await res.json() as { settled: boolean }).settled
+  } catch {
+    return false
+  }
+}
+
+/** The endpoint caps `question` at 2000 chars, and a message carrying an inlined attachment blows
+ *  straight past that — the request came back 400 and the chips silently never appeared. Truncated
+ *  here rather than raising the cap: only the question itself is useful for suggesting follow-ups,
+ *  and the attachment body would just cost the small model context it does not have. */
+const RELATED_QUESTION_MAX = 2000
+
 export async function fetchRelatedQuestions(question: string, answer: string): Promise<string[]> {
   try {
     const res = await fetch(`${BASE}/chat/related`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question, answer }),
+      body: JSON.stringify({ question: question.slice(0, RELATED_QUESTION_MAX), answer }),
     })
     if (!res.ok) return []
     const data = await res.json()
@@ -336,33 +367,48 @@ export async function fetchSpaces(): Promise<Space[]> {
   return res.json()
 }
 
-export async function createSpace(name: string): Promise<Space> {
+export async function createSpace(name: string, offline = false): Promise<Space> {
   const res = await fetch(`${BASE}/spaces`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ name, offline }),
   })
   return res.json()
 }
 
-export async function updateSpace(id: string, name: string): Promise<void> {
-  await fetch(`${BASE}/spaces/${id}`, {
+/** Rename and/or change the lock. Returns the server's refusal message when unlocking is not
+ *  allowed, so the caller can show why rather than a generic failure. */
+export async function updateSpace(
+  id: string,
+  patch: { name?: string; offline?: boolean },
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`${BASE}/spaces/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }),
+    body: JSON.stringify(patch),
   })
+  if (res.ok) return { ok: true }
+  const body = await res.json().catch(() => ({})) as { error?: string }
+  return { ok: false, error: body.error ?? 'Could not update the space.' }
 }
 
-export async function deleteSpace(id: string): Promise<void> {
-  await fetch(`${BASE}/spaces/${id}`, { method: 'DELETE' })
+/** Deleting a locked space deletes its chats too — the server does this so they are not orphaned
+ *  into unlocked ones. `deletedChats` is what actually went, for the confirmation message. */
+export async function deleteSpace(id: string): Promise<{ deletedChats: number }> {
+  const res = await fetch(`${BASE}/spaces/${id}`, { method: 'DELETE' })
+  const body = await res.json().catch(() => ({})) as { deletedChats?: number }
+  return { deletedChats: body.deletedChats ?? 0 }
 }
 
-export async function assignChatToSpace(chatId: string, spaceId: string | null): Promise<void> {
-  await fetch(`${BASE}/history/${chatId}`, {
+export async function assignChatToSpace(chatId: string, spaceId: string | null): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`${BASE}/history/${chatId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ spaceId }),
   })
+  if (res.ok) return { ok: true }
+  const body = await res.json().catch(() => ({})) as { error?: string }
+  return { ok: false, error: body.error ?? 'Could not move the chat.' }
 }
 
 export async function recreateChatMemories(chatId: string): Promise<void> {
@@ -413,11 +459,11 @@ export async function ingestUrl(url: string): Promise<{ fileId: string; filename
   return res.json()
 }
 
-export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; userMemoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; attachmentChars: number; spaceRagBudget: number; queryReformulation: boolean; rssFeedCharsBudget: number; fetchMaxPages: number; fetchSummarizeOverflow: boolean; compressHistoryOverflow: boolean }> {
+export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; userMemoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; ragTopK: number; attachmentChars: number; spaceRagBudget: number; queryReformulation: boolean; rssFeedCharsBudget: number; fetchMaxPages: number; fetchSummarizeOverflow: boolean; compressHistoryOverflow: boolean; limits: { smallModelInputChars: number; embedInputChars: number } }> {
   return fetch(`${BASE}/admin/settings`).then(r => r.json())
 }
 
-export async function updateAdminSettings(s: { memoryTokenBudget?: number; userMemoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; dreamDeep?: boolean; memoryExtractChars?: number; rerankTopN?: number; attachmentChars?: number; spaceRagBudget?: number; queryReformulation?: boolean; rssFeedCharsBudget?: number; fetchMaxPages?: number; fetchSummarizeOverflow?: boolean; compressHistoryOverflow?: boolean }): Promise<void> {
+export async function updateAdminSettings(s: { memoryTokenBudget?: number; userMemoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; dreamDeep?: boolean; memoryExtractChars?: number; rerankTopN?: number; ragTopK?: number; attachmentChars?: number; spaceRagBudget?: number; queryReformulation?: boolean; rssFeedCharsBudget?: number; fetchMaxPages?: number; fetchSummarizeOverflow?: boolean; compressHistoryOverflow?: boolean }): Promise<void> {
   await fetch(`${BASE}/admin/settings`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
