@@ -33,6 +33,7 @@ through a single Bun process.
     - [URL and YouTube ingestion](#url-and-youtube-ingestion)
   - [URL fetching](#url-fetching)
   - [Preventing data exfiltration](#preventing-data-exfiltration)
+    - [Locked spaces](#locked-spaces)
   - [Prompt templates](#prompt-templates)
     - [Prompt Studio](#prompt-studio)
   - [Settings](#settings)
@@ -240,7 +241,9 @@ There are three ways to bring file content into a conversation.
 Click the **paperclip** icon next to the message box and pick a file. The file is sent to
 the server, its text is extracted (PDF text layer, OCR for images, plain text for
 everything else), and up to the configured character limit (default 20 000, ~5 000 tokens) of that text are injected into the message
-you are about to send. The file is **not stored** — it lives only in that one message.
+you are about to send. The file itself is **not stored** and never enters the library — but the
+message is saved with the chat like any other, so the extracted text is part of that conversation.
+In a space it is also indexed for chat-history search, once, on the turn you attach it.
 
 The character limit is configurable in **Admin > System settings > Attachments**.
 
@@ -263,6 +266,14 @@ In balanced and thorough modes, if you have files in your library, relevant exce
 explicitly.
 
 The library is useful for building a personal knowledge base of PDFs, notes, or research papers that the assistant can draw on across many conversations.
+
+Note the difference from a **chat attachment**: a library file is only ever surfaced as retrieved
+excerpts, so it suits knowledge you want available across conversations. When you want to discuss a
+document *as a whole*, attach it to the message instead — the full text then goes into the model's
+context. An attachment is embedded once, on the turn you attach it, so this costs nothing extra on
+subsequent turns.
+
+Deleting a file removes its chunks and embeddings with it.
 
 Max upload size: 50 MB.
 
@@ -577,10 +588,16 @@ Set `IMAGE_BASE_URL` in your environment to enable the feature (see [Environment
 - A persistent **memory store** — facts extracted from conversations, injected into future system prompts
 - A **chat history index** — full message content embedded for semantic retrieval
 - **Tagged files** — library documents linked to the space for contextual retrieval
+- An optional **lock** — see [Locked spaces](#locked-spaces): chats in a locked space get no web
+  search, URL fetching or image generation, for analysing something that must not leave the machine
 
 ### Assigning chats to spaces
 
 Chats can be assigned or reassigned to spaces from the chat header or space detail view. When a chat is first assigned to a space, memories are retroactively extracted and the chat history is indexed for RAG. Auto-extracted memories follow the chat if it is moved or removed.
+
+A chat in a **locked** space can only be moved to another locked space, and deleting a locked space
+deletes its chats rather than releasing them — otherwise either action would quietly hand web access
+back to a conversation that was analysed without it.
 
 ### RAG (retrieval-augmented generation)
 
@@ -1303,6 +1320,7 @@ CHAT_MODEL=my-chat-model
 SMALL_MODEL=my-small-model
 EMBED_MODEL=my-embed-model
 EMBED_DIMENSIONS=1536               # match your embedding model's output size
+EMBED_CONTEXT_TOKENS=4096           # match the context your embedding server was started with
 
 # Optional: dedicated thinking model for thorough mode researcher phase
 THINKING_MODEL=my-think-model
@@ -1384,16 +1402,19 @@ The **Admin panel > System settings** tab exposes runtime-configurable parameter
 | Memory | Dream threshold | 1500 | Compaction triggers when space memory exceeds this many tokens |
 | Memory | Dream target | 700 | Token target after compaction |
 | Memory | Dream deep | Off | Re-extract memories from source conversations using the thinking model during the dream pass |
-| Memory | Extraction context | 6000 | Max characters of conversation fed to the small model when extracting memories |
+| Memory | Extraction context | 6000 | Max characters of conversation fed to the small model when extracting memories. Clamped to what `SMALL_MODEL_CONTEXT_TOKENS` allows — a larger value has no effect, and the panel says so |
+| Retrieval | Chunks per search | 15 | How many nearest chunks each vector search retrieves — document RAG, chat-history RAG, and the `uploads_search` / `search_space_history` tools. One value for all of them. Reranking prunes this list, so it is also the ceiling on what reranking can consider |
 | Reranking | Top N | 15 | Results kept after reranking (requires `RERANK_MODEL`). Applies to pre-search results in balanced and thorough, and to the accumulated sources handed to the thorough writer — lower it to shrink prompts, raise it to give the model more to work with |
 | Search | Query reformulation | On | Use a small LLM to rewrite queries before searching. Improves relevance at the cost of a small model call. Disable on slow hardware. |
 | Search | RSS feed character budget | 50000 | Total characters of news content fetched per monitor run when RSS sources are selected. Items per feed and content length per item scale automatically to fill this budget. Increase for large-context models; decrease for small ones (8K context ≈ 20 000 chars). |
 | Search | Max pages per URL | 8 | How many paginated pages to fetch when a user provides a URL (`?page=2`, `?page=3`…). 0 = unlimited. |
 | Search | Summarize oversized URL content | Off | Summarize fetched URL content that exceeds the context budget with the small model instead of hard-truncating. Adds latency. |
 | Context | Compress dropped history | Off | When a research turn's conversation history must be trimmed to fit the context budget, summarize the dropped messages with the small model instead of discarding them, folded into the system prompt. Adds latency; only applies to balanced/thorough turns. |
-| Attachments | Max context chars | 20000 | Max characters extracted from an attached file and sent as context |
+| Attachments | Max context chars | 20000 | Max characters extracted from an attached file and sent as context. The chat model receives all of it and the text is indexed for later search, but the *query* embedding for that turn uses only the first `EMBED_MAX_INPUT_CHARS` — a startup warning appears if you set this much higher |
 
-The **RAG context budget** field also has a **Re-index chats** button that queues a background re-index of all chat sessions across all users — useful after changing embedding models or dimensions.
+The **RAG context budget** field also has a **Re-index chats** button that queues a background
+re-index of all chat sessions across all users — useful after changing embedding models or
+dimensions, and the way to clear duplicate chunks left by regenerating answers on an older version.
 
 The **Users** tab lets admins manage accounts, roles, and invite links.
 
