@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { RotateCcw } from 'lucide-react'
+import { RotateCcw, Lock, Unlock, ShieldCheck } from 'lucide-react'
 import { MessageList, ImageCaptionContext } from './components/MessageList.tsx'
 import { ProgressLog, Elapsed } from './components/ProgressLog.tsx'
 import { ApprovalPrompt } from './components/ApprovalPrompt.tsx'
@@ -23,7 +23,7 @@ import { useChat } from './hooks/useChat.ts'
 
 type AuthView = 'loading' | 'login' | 'register'
 type MainView = 'chat' | 'chats' | 'files' | 'spaces' | 'monitors'
-type Session = { id: string; title: string; spaceId: string | null }
+type Session = { id: string; title: string; spaceId: string | null; locked?: boolean }
 
 type UploadedFile = { id: string; filename: string; mimeType: string; size: number; createdAt: number }
 
@@ -62,6 +62,9 @@ export default function App() {
   const [sessionSearch, setSessionSearch] = useState('')
   const [files, setFiles] = useState<UploadedFile[]>([])
   const [spaces, setSpaces] = useState<Space[]>([])
+  /** Message from a refused lock change or chat move — both are server decisions the user cannot
+   *  predict from the UI alone, so the reason has to be surfaced rather than silently reverted. */
+  const [spaceError, setSpaceError] = useState<string | null>(null)
   const [monitorCount, setMonitorCount] = useState(0)
   const [isMonitorSession, setIsMonitorSession] = useState(false)
   const [chatSearchOpen, setChatSearchOpen] = useState(false)
@@ -122,6 +125,11 @@ export default function App() {
   const activeSpaceId = sessionId
     ? sessions.find(s => s.id === sessionId)?.spaceId ?? null
     : currentSpaceId
+
+  // Advisory only — the server decides this from the database on every request. This drives the
+  // banner and the disabled controls, so a stale value degrades the UI, never the guarantee.
+  const activeSpaceLocked = !!activeSpaceId && spaces.some(s => s.id === activeSpaceId && s.offline)
+  const spaceIsLocked = (id: string | null | undefined) => !!id && spaces.some(sp => sp.id === id && sp.offline)
 
   const { messages, setMessages, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, regenerate, cancel, reset, related, setRelated, steps, runStartedAt, approval, decideApproval } = useChat({
     sessionId,
@@ -458,11 +466,46 @@ export default function App() {
     e.stopPropagation()
     const sp = spaces.find(s => s.id === id)
     const label = sp ? `"${sp.name}"` : 'this space'
-    if (!confirm(`Delete ${label}? This will permanently delete all its memories. Chats will be unassigned but not deleted.`)) return
-    deleteSpace(id).then(() => {
+    // A locked space takes its chats with it. Unassigning them instead would turn every one into an
+    // ordinary chat with web access — the quietest way out of a lock — so the warning has to say
+    // plainly that they are destroyed, not moved.
+    const warning = sp?.offline
+      ? `Delete ${label}? It is locked, so its ${sp.chatCount} chat${sp.chatCount === 1 ? '' : 's'} and all its memories will be permanently deleted along with it. They cannot be kept: releasing them would give them web access again.`
+      : `Delete ${label}? This will permanently delete all its memories. Chats will be unassigned but not deleted.`
+    if (!confirm(warning)) return
+    deleteSpace(id).then(({ deletedChats }) => {
       setSpaces(prev => prev.filter(s => s.id !== id))
-      setSessions(prev => prev.map(s => s.spaceId === id ? { ...s, spaceId: null } : s))
+      setSessions(prev => deletedChats > 0
+        ? prev.filter(s => s.spaceId !== id)
+        : prev.map(s => s.spaceId === id ? { ...s, spaceId: null } : s))
       if (currentSpaceId === id) setCurrentSpaceId(null)
+    }).catch(() => {})
+  }
+
+  /** Lock or unlock a space.
+   *
+   *  Locking a space that already holds something is confirmed first: it is not a leak risk, but it
+   *  cannot be undone afterwards without deleting the contents, and a toggle that silently becomes
+   *  permanent is a trap. Unlocking is decided by the server, which refuses while anything remains. */
+  function handleToggleSpaceLock(id: string) {
+    const sp = spaces.find(s => s.id === id)
+    if (!sp) return
+    const next = !sp.offline
+    if (next) {
+      const holds = [
+        sp.chatCount ? `${sp.chatCount} chat${sp.chatCount === 1 ? '' : 's'}` : '',
+        sp.memoryCount ? `${sp.memoryCount} memor${sp.memoryCount === 1 ? 'y' : 'ies'}` : '',
+      ].filter(Boolean).join(' and ')
+      const msg = holds
+        ? `Lock "${sp.name}"?\n\nChats here lose web search, URL fetching and image generation.\n\nThis space already holds ${holds}, which makes the change permanent: it cannot be unlocked again without deleting them first.`
+        : `Lock "${sp.name}"?\n\nChats here lose web search, URL fetching and image generation. While the space is empty you can still unlock it; once it holds a chat or a memory, you cannot.`
+      if (!confirm(msg)) return
+    }
+    setSpaces(prev => prev.map(s => s.id === id ? { ...s, offline: next } : s))
+    updateSpace(id, { offline: next }).then(res => {
+      if (res.ok) return
+      setSpaces(prev => prev.map(s => s.id === id ? { ...s, offline: !next } : s))
+      setSpaceError(res.error ?? 'Could not change the lock.')
     }).catch(() => {})
   }
 
@@ -471,7 +514,7 @@ export default function App() {
     setEditingSpaceId(null)
     if (!name) return
     setSpaces(prev => prev.map(s => s.id === id ? { ...s, name } : s))
-    updateSpace(id, name).catch(() => {})
+    updateSpace(id, { name }).catch(() => {})
   }
 
   function handleAssignToSpace(chatId: string, spaceId: string | null) {
@@ -495,7 +538,26 @@ export default function App() {
       return sp
     }))
     setSpacePickerOpen(null)
-    assignChatToSpace(chatId, spaceId).catch(() => {})
+    // The move can be refused: a chat in a locked space may only go to another locked space.
+    // The optimistic update above has to be undone rather than left showing a move that never
+    // happened, which would misreport where a sensitive chat lives.
+    assignChatToSpace(chatId, spaceId).then(res => {
+      if (res.ok) return
+      setSessions(prev => prev.map(s => s.id === chatId ? { ...s, spaceId: prevSpaceId } : s))
+      setSpaceChats(prev => {
+        if (prev === null) return prev
+        if (prevSpaceId === currentSpaceId && moved) {
+          return prev.some(s => s.id === chatId) ? prev : [{ ...moved, spaceId: prevSpaceId }, ...prev]
+        }
+        return prev.filter(s => s.id !== chatId)
+      })
+      setSpaces(prev => prev.map(sp => {
+        if (sp.id === spaceId) return { ...sp, chatCount: Math.max(0, sp.chatCount - 1) }
+        if (sp.id === prevSpaceId) return { ...sp, chatCount: sp.chatCount + 1 }
+        return sp
+      }))
+      setSpaceError(res.error ?? 'Could not move the chat.')
+    }).catch(() => {})
   }
 
   function handleCreateMemory() {
@@ -789,6 +851,7 @@ export default function App() {
                     onClick={() => loadSession(s.id, s.title)}
                     className="flex-1 text-left px-4 py-3 rounded-lg bg-gray-800 hover:bg-gray-700 text-sm text-gray-100"
                   >
+                    {spaceIsLocked(s.spaceId) && <Lock size={11} className="inline mr-1.5 -mt-0.5 text-amber-400" aria-label="In a locked space" />}
                     {s.title}
                   </button>
                   {spaces.length > 0 && (
@@ -802,16 +865,25 @@ export default function App() {
                       </button>
                       {spacePickerOpen === s.id && (
                         <div className="absolute right-0 top-full mt-1 z-10 bg-gray-800 border border-gray-700 rounded shadow-lg min-w-36 py-1" onClick={e => e.stopPropagation()}>
-                          {spaces.map(sp => (
-                            <button
-                              key={sp.id}
-                              onClick={() => handleAssignToSpace(s.id, sp.id)}
-                              className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-700 ${s.spaceId === sp.id ? 'text-indigo-400' : 'text-gray-300'}`}
-                            >
-                              {sp.name}
-                            </button>
-                          ))}
-                          {s.spaceId && (
+                          {/* A chat in a locked space may only move to another locked space, and
+                              "remove from space" is the most permissive destination of all. Shown
+                              disabled rather than hidden, so the restriction is legible. */}
+                          {spaces.map(sp => {
+                            const blocked = spaceIsLocked(s.spaceId) && !sp.offline
+                            return (
+                              <button
+                                key={sp.id}
+                                disabled={blocked}
+                                onClick={() => handleAssignToSpace(s.id, sp.id)}
+                                title={blocked ? 'This chat is in a locked space and can only move to another locked space' : undefined}
+                                className={`w-full text-left px-3 py-1.5 text-xs ${blocked ? 'text-gray-600 cursor-not-allowed' : 'hover:bg-gray-700'} ${s.spaceId === sp.id ? 'text-indigo-400' : blocked ? '' : 'text-gray-300'}`}
+                              >
+                                {sp.offline && <Lock size={10} className="inline mr-1 -mt-0.5" />}
+                                {sp.name}
+                              </button>
+                            )
+                          })}
+                          {s.spaceId && !spaceIsLocked(s.spaceId) && (
                             <button
                               onClick={() => handleAssignToSpace(s.id, null)}
                               className="w-full text-left px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-700 hover:text-red-400 border-t border-gray-700 mt-1 pt-1"
@@ -1174,6 +1246,7 @@ export default function App() {
                       onClick={() => loadSession(s.id, s.title)}
                       className="flex-1 text-left px-4 py-3 rounded-lg bg-gray-800 hover:bg-gray-700 text-sm text-gray-100"
                     >
+                      {spaceIsLocked(s.spaceId) && <Lock size={11} className="inline mr-1.5 -mt-0.5 text-amber-400" aria-label="In a locked space" />}
                       {s.title}
                     </button>
                     <div className="relative shrink-0">
@@ -1186,27 +1259,35 @@ export default function App() {
                       </button>
                       {spacePickerOpen === s.id && (
                         <div className="absolute right-0 top-full mt-1 z-10 bg-gray-800 border border-gray-700 rounded shadow-lg min-w-36 py-1" onClick={e => e.stopPropagation()}>
-                          {spaces.map(sp => (
-                            <button
-                              key={sp.id}
-                              onClick={() => handleAssignToSpace(s.id, sp.id)}
-                              className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-700 ${s.spaceId === sp.id ? 'text-indigo-400' : 'text-gray-300'}`}
-                            >
-                              {sp.name}
-                            </button>
-                          ))}
+                          {spaces.map(sp => {
+                            const blocked = spaceIsLocked(s.spaceId) && !sp.offline
+                            return (
+                              <button
+                                key={sp.id}
+                                disabled={blocked}
+                                onClick={() => handleAssignToSpace(s.id, sp.id)}
+                                title={blocked ? 'This chat is in a locked space and can only move to another locked space' : undefined}
+                                className={`w-full text-left px-3 py-1.5 text-xs ${blocked ? 'text-gray-600 cursor-not-allowed' : 'hover:bg-gray-700'} ${s.spaceId === sp.id ? 'text-indigo-400' : blocked ? '' : 'text-gray-300'}`}
+                              >
+                                {sp.offline && <Lock size={10} className="inline mr-1 -mt-0.5" />}
+                                {sp.name}
+                              </button>
+                            )
+                          })}
                           <button
                             onClick={() => { recreateChatMemories(s.id).catch(() => {}); setSpacePickerOpen(null) }}
                             className="w-full text-left px-3 py-1.5 text-xs text-gray-400 hover:bg-gray-700 hover:text-gray-200 border-t border-gray-700 mt-1 pt-1"
                           >
                             Recreate memories
                           </button>
-                          <button
-                            onClick={() => handleAssignToSpace(s.id, null)}
-                            className="w-full text-left px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-700 hover:text-red-400"
-                          >
-                            Remove from space
-                          </button>
+                          {!spaceIsLocked(s.spaceId) && (
+                            <button
+                              onClick={() => handleAssignToSpace(s.id, null)}
+                              className="w-full text-left px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-700 hover:text-red-400"
+                            >
+                              Remove from space
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>
@@ -1252,8 +1333,17 @@ export default function App() {
                     onClick={() => setCurrentSpaceId(sp.id)}
                     className="flex-1 text-left px-4 py-3 rounded-lg bg-gray-800 hover:bg-gray-700 text-sm text-gray-100"
                   >
+                    {sp.offline && <Lock size={12} className="inline mr-1.5 -mt-0.5 text-amber-400" aria-label="Locked" />}
                     {sp.name}
                     <span className="ml-2 text-xs text-gray-500">{sp.chatCount} chat{sp.chatCount !== 1 ? 's' : ''}{sp.memoryCount > 0 ? ` · ${sp.memoryCount} memor${sp.memoryCount !== 1 ? 'ies' : 'y'}` : ''}</span>
+                  </button>
+                  <button
+                    onClick={() => handleToggleSpaceLock(sp.id)}
+                    className={`px-2 py-2 shrink-0 transition-opacity ${sp.offline ? 'text-amber-400 hover:text-amber-300' : 'text-gray-600 hover:text-gray-300 md:opacity-0 md:group-hover:opacity-100'}`}
+                    title={sp.offline ? 'Locked — no web search, URL fetching or image generation' : 'Lock this space (no internet access)'}
+                    aria-label={sp.offline ? `Unlock space "${sp.name}"` : `Lock space "${sp.name}"`}
+                  >
+                    {sp.offline ? <Lock size={14} /> : <Unlock size={14} />}
                   </button>
                   <button
                     onClick={(e) => handleDeleteSpace(sp.id, e)}
@@ -1397,16 +1487,22 @@ export default function App() {
                             </button>
                             {spacePickerOpen === pickerId && (
                               <div className="absolute right-0 top-full mt-1 z-10 bg-gray-800 border border-gray-700 rounded shadow-lg min-w-36 py-1">
-                                {spaces.map(sp => (
-                                  <button
-                                    key={sp.id}
-                                    onClick={() => { handleAssignToSpace(sessionId, sp.id); setSpacePickerOpen(null) }}
-                                    className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-700 ${session?.spaceId === sp.id ? 'text-indigo-400' : 'text-gray-300'}`}
-                                  >
-                                    {sp.name}
-                                  </button>
-                                ))}
-                                {session?.spaceId && (
+                                {spaces.map(sp => {
+                                  const blocked = spaceIsLocked(session?.spaceId) && !sp.offline
+                                  return (
+                                    <button
+                                      key={sp.id}
+                                      disabled={blocked}
+                                      onClick={() => { handleAssignToSpace(sessionId, sp.id); setSpacePickerOpen(null) }}
+                                      title={blocked ? 'This chat is in a locked space and can only move to another locked space' : undefined}
+                                      className={`w-full text-left px-3 py-1.5 text-xs ${blocked ? 'text-gray-600 cursor-not-allowed' : 'hover:bg-gray-700'} ${session?.spaceId === sp.id ? 'text-indigo-400' : blocked ? '' : 'text-gray-300'}`}
+                                    >
+                                      {sp.offline && <Lock size={10} className="inline mr-1 -mt-0.5" />}
+                                      {sp.name}
+                                    </button>
+                                  )
+                                })}
+                                {session?.spaceId && !spaceIsLocked(session?.spaceId) && (
                                   <button
                                     onClick={() => { handleAssignToSpace(sessionId, null); setSpacePickerOpen(null) }}
                                     className="w-full text-left px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-700 hover:text-red-400 border-t border-gray-700 mt-1 pt-1"
@@ -1477,6 +1573,24 @@ export default function App() {
                   className="text-gray-600 hover:text-gray-400 text-xs px-1"
                   title="Close search"
                 >×</button>
+              </div>
+            )}
+            {/* Persistent while the chat is in a locked space. The whole value of the mode is
+                knowing it is on, so this stays visible for the entire conversation rather than
+                appearing only where the lock was set. */}
+            {activeSpaceLocked && (
+              <div className="mx-4 mt-3 flex items-start gap-2 rounded border border-amber-700/50 bg-amber-950/20 px-3 py-2 text-xs text-amber-200">
+                <ShieldCheck size={14} className="mt-0.5 shrink-0" aria-hidden />
+                <span>
+                  <strong>Locked space.</strong> No web search, URL fetching or image generation —
+                  nothing in this chat is sent anywhere except your model server.
+                </span>
+              </div>
+            )}
+            {spaceError && (
+              <div className="mx-4 mt-3 flex items-start gap-2 rounded border border-red-700/50 bg-red-950/20 px-3 py-2 text-xs text-red-200">
+                <span className="flex-1">{spaceError}</span>
+                <button onClick={() => setSpaceError(null)} className="text-red-300 hover:text-red-100" aria-label="Dismiss">×</button>
               </div>
             )}
             {messages.length === 0 && !streaming ? (
@@ -1564,6 +1678,7 @@ export default function App() {
               searchCategories={searchCategories}
               onSearchCategoriesChange={setSearchCategories}
               suggestionsEnabled={currentUser?.settings?.querySuggestions !== false}
+              lockedSpace={activeSpaceLocked}
               related={related}
               onRelatedSelect={q => { setRelated([]); submit(q) }}
             />

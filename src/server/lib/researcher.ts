@@ -90,6 +90,18 @@ const CONTEXT_BUDGET_DEAD_MSG = {
   error: 'The available context budget for this research turn has been used up by search/fetch results already gathered. Do NOT call web_search or fetch_url again — write your answer using the results already gathered.',
 }
 
+/** Appended in a locked space, where web_search and fetch_url are not offered at all.
+ *
+ *  It has to override the mode prompts rather than merely omit the tools: those prompts tell the
+ *  model to search first, and a tool-trained model told to search with no tool available writes the
+ *  call as prose, which streams to the user as the answer. Same reasoning as
+ *  FINAL_STEP_INSTRUCTION above. */
+const LOCKED_SPACE_INSTRUCTION = `
+
+This space is locked: there is no web search and no URL fetching, and no way to call one. Ignore any instruction above to search the web or read a URL first — those tools do not exist here.
+Answer from the documents in this conversation and your own knowledge. Never emit a tool call in any syntax; there is nothing to parse it, so it would be shown to the user as your answer.
+Do not offer to look something up, and do not ask the user to enable search. If something cannot be answered from what you have, say so plainly in one line and answer what you can.`
+
 // Returned when the egress guard refused an outbound request, or the user declined it. Phrased so
 // the model reports the refusal and moves on rather than retrying the same request in a loop.
 const EGRESS_REFUSED_MSG = {
@@ -130,6 +142,9 @@ export interface ResearchOptions {
    *  Absent means nobody is watching — the monitor runner has no client attached — so a request
    *  that would have prompted is refused instead of hanging until the timeout. */
   requestApproval?: (req: EgressApprovalRequest) => Promise<boolean>
+  /** The chat's space is locked: no web_search, no fetch_url. Resolved from the database by the
+   *  caller, never from the client. */
+  locked?: boolean
 }
 
 export interface EgressApprovalRequest {
@@ -138,7 +153,7 @@ export interface EgressApprovalRequest {
   reasons: string[]
 }
 
-export async function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, userMemoryEnabled = false, fetchSummarize = false, compressHistory = false, searchCategory, maxStepsOverride, onEngineErrors, apiBudget, requestApproval }: ResearchOptions) {
+export async function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, userMemoryEnabled = false, fetchSummarize = false, compressHistory = false, searchCategory, maxStepsOverride, onEngineErrors, apiBudget, requestApproval, locked = false }: ResearchOptions) {
   const { maxSteps: defaultMaxSteps, count } = MODE_CONFIG[focusMode]
   const maxSteps = maxStepsOverride ?? defaultMaxSteps
   let nextIndex = 1
@@ -192,6 +207,10 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
   if (spaceId) system += `\n\nYou have a save_to_memory tool. Use it when the user expresses a preference, makes a decision, or shares context that would be useful in future conversations. Do not save trivial or ephemeral details.`
   if (userMemoryEnabled) system += `\n\nYou have a save_user_fact tool for facts about the user that hold in *every* conversation — how they want answers written, languages they work in, durable constraints. Use it rarely: anything topic-specific belongs in save_to_memory instead.`
   if (spaceId) system += `\n\nYou also have a search_space_history tool for looking up earlier conversations in this space. Relevant excerpts are already provided above when they exist, so call it only when the user refers to something earlier that is not covered there.`
+  // The mode prompts above instruct the model to search; without contradicting them explicitly it
+  // writes the tool call as prose instead, which nothing parses and the user sees as the answer —
+  // the same failure the final-step instruction exists to prevent.
+  if (locked) system += LOCKED_SPACE_INSTRUCTION
 
   // Inject pre-executed search results as a fake tool exchange so the model
   // sees them as already done and continues from there. Also note in the system
@@ -306,7 +325,10 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
   // A ToolSet rather than Record<string, any>: typing it lets the stream parts downstream keep
   // the SDK's real union type, so a future SDK field rename is a compile error instead of a
   // silent `undefined` (see drainResearcherStream in routes/chat.ts).
-  const tools: ToolSet = {
+  // In a locked space the networked tools are *absent*, not refused. A tool that exists and says no
+  // still costs a step, still tells the model the capability is there, and still leaves the refusal
+  // up to logic that could be wrong — whereas a tool that was never offered cannot be called.
+  const tools: ToolSet = locked ? {} : {
     web_search: webSearchTool,
     fetch_url: tool({
       description: 'Fetch and read the full text content of a specific URL. Use when the user provides a URL to analyze, or when a search result needs to be read in full. For paginated content, call multiple times with page parameters (e.g. ?page=2).',

@@ -24,6 +24,7 @@ import { buildMemoryBlock, buildChatFileBlock, extractMemoriesPostHoc, userMemor
 import { trimMessages, contextCharBudget, CONTEXT_RESERVE_FRACTION } from '../lib/trim-messages.ts'
 import { indexContents } from '../lib/chat-indexer.ts'
 import { ownsSpace, sessionOwnership } from '../lib/ownership.ts'
+import { isSpaceLocked } from '../lib/space-lock.ts'
 import { rateLimitByUser, chatLimiter, suggestLimiter } from '../lib/rate-limit.ts'
 import {
   startRun, getRun, appendEvent, finishRun, waitForEvents,
@@ -237,6 +238,19 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   // another user's memories into this answer, and a known session id appends to their chat.
   if (spaceId && !await ownsSpace(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
   if (sessionId && await sessionOwnership(sessionId, userId) === 'other') return c.json({ error: 'Not found' }, 404)
+
+  // Read from the database, never from the request body — a lock the client could assert would be
+  // decorative. Resolved from the chat's own space when it has one, so an existing chat stays
+  // locked even if the client forgets to send spaceId.
+  const existingSpaceId = sessionId
+    ? (await db.select({ spaceId: chatSessions.spaceId }).from(chatSessions)
+        .where(eq(chatSessions.id, sessionId)).get())?.spaceId ?? null
+    : null
+  const locked = await isSpaceLocked(existingSpaceId ?? spaceId)
+  if (locked && focusMode === 'image') {
+    return c.json({ error: 'Image generation is unavailable in a locked space — it would send the prompt to the diffusion server.' }, 409)
+  }
+  if (locked) console.log(`  [space] locked — no web search, URL fetching or image generation`)
 
   const lastUser = [...msgs].reverse().find(m => m.role === 'user')
   const preview = (lastUser?.content ?? '').slice(0, 100).replace(/\n/g, ' ')
@@ -569,13 +583,18 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     // Shared per-request allowance for paid keyed-API fallback searches (pre-search + researcher).
     const apiBudget: SearchApiBudget = { remaining: parseInt(process.env.SEARCH_API_MAX_PER_REQUEST ?? '3', 10) }
 
-    // Fetch user settings + file count + reformulate/pre-search + memory + URL prefetch in parallel
+    // Fetch user settings + file count + reformulate/pre-search + memory + URL prefetch in parallel.
+    // In a locked space the two network legs are skipped outright rather than filtered later: the
+    // pre-search runs before the model is involved, and URL prefetching would fetch a link pasted
+    // beside the document without any tool being called at all.
     const [fileCountRow, { initialQueries, initialResults, engineErrors }, memoryBudget, ragBudget, prefetchedUrls] = await Promise.all([
       db.select({ count: sql<number>`count(*)` }).from(uploadedFiles).where(eq(uploadedFiles.userId, userId)).get(),
-      runReformulateAndPreSearch(msgsForReformulate, focusMode as 'balanced' | 'thorough', hasAttachment, searchCategory, apiBudget, abortSignal),
+      locked
+        ? Promise.resolve({ initialQueries: [] as string[], initialResults: [] as SearchResult[], engineErrors: [] as EngineError[] })
+        : runReformulateAndPreSearch(msgsForReformulate, focusMode as 'balanced' | 'thorough', hasAttachment, searchCategory, apiBudget, abortSignal),
       spaceId ? getAppSetting('memory_token_budget', '1000').then(Number) : Promise.resolve(1000),
       getAppSetting('space_rag_budget', '500').then(Number),
-      prefetchUrlsFromMessage(lastUser?.content ?? '', hasAttachment, fetchMaxPages),
+      locked ? Promise.resolve([]) : prefetchUrlsFromMessage(lastUser?.content ?? '', hasAttachment, fetchMaxPages),
     ])
     const userQuery = lastUser?.content ?? ''
     const hasFiles = (fileCountRow?.count ?? 0) > 0
@@ -655,7 +674,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         await out.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: snippets + '\n\n' }) })
       }
       const researchModel = useThinking ? getThinkingModelOrFallback() : getChatModel()
-      const researcherResult = await runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, apiBudget, requestApproval })
+      const researcherResult = await runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, apiBudget, requestApproval, locked })
       const allSources: SearchResult[] = [...(initialResults ?? [])]
       let researcherNotes = ''
       // Unconditional: the extractor also drops leaked tool-call markup, which has to be stripped
@@ -736,7 +755,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       }
 
       const fullSources: SearchResult[] = []
-      const result = await runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, apiBudget, requestApproval })
+      const result = await runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, apiBudget, requestApproval, locked })
       const extractor = new ThinkExtractor()   // see thoroughExtractor above
 
       const keepalive = setInterval(() => {

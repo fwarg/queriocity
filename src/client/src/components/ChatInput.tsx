@@ -18,6 +18,9 @@ interface Props {
   searchCategories: SearchCategory[]
   onSearchCategoriesChange: (cats: SearchCategory[]) => void
   suggestionsEnabled?: boolean
+  /** The chat's space is locked: no web search, URL fetching or image generation. Advisory only —
+   *  the server enforces it — but the controls should not offer what will be refused. */
+  lockedSpace?: boolean
   /** Follow-up questions for the last answer. Rendered here rather than above the input so they
    *  collapse with it — on a phone they otherwise eat the message list. */
   related?: string[]
@@ -38,7 +41,7 @@ const MODE_DESCRIPTIONS: Record<FocusMode, string> = {
   image: 'Generate or edit images — researches unfamiliar topics automatically for better results.',
 }
 
-export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, suggestionsEnabled, related = [], onRelatedSelect }: Props) {
+export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, suggestionsEnabled, lockedSpace = false, related = [], onRelatedSelect }: Props) {
   const [value, setValue] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [extractStatus, setExtractStatus] = useState<'idle' | 'loading' | 'error'>('idle')
@@ -144,23 +147,30 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
         {visibleDesc}
       </div>
       <div className="flex items-center gap-2 text-xs">
-        {(['flash', 'balanced', 'thorough', 'image'] as const).map(m => (
-          <button
-            key={m}
-            type="button"
-            onClick={() => handleModeChange(m)}
-            className={`px-2 py-1 rounded capitalize ${focusMode === m ? 'bg-blue-600' : 'bg-gray-800 hover:bg-gray-700'}`}
-          >
-            {m}
-          </button>
-        ))}
+        {(['flash', 'balanced', 'thorough', 'image'] as const).map(m => {
+          // Image generation sends the prompt to the diffusion server, which is egress like any
+          // other, so a locked space refuses it. Disabled rather than hidden to keep the row stable.
+          const blocked = lockedSpace && m === 'image'
+          return (
+            <button
+              key={m}
+              type="button"
+              disabled={blocked}
+              onClick={() => handleModeChange(m)}
+              title={blocked ? 'Not available in a locked space' : undefined}
+              className={`px-2 py-1 rounded capitalize ${focusMode === m ? 'bg-blue-600' : blocked ? 'bg-gray-800/50 text-gray-600 cursor-not-allowed' : 'bg-gray-800 hover:bg-gray-700'}`}
+            >
+              {m}
+            </button>
+          )
+        })}
         <span className="flex-1" />
         {isFlash && (
           <span className={isOverLimit ? 'text-red-400' : 'text-gray-500'}>
             {value.length}/{FLASH_MAX}
           </span>
         )}
-        {(focusMode === 'balanced' || focusMode === 'thorough') && (
+        {!lockedSpace && (focusMode === 'balanced' || focusMode === 'thorough') && (
           <button
             type="button"
             onClick={() => setCategoryOpen(o => !o)}
@@ -171,7 +181,7 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
           </button>
         )}
       </div>
-      {categoryOpen && (focusMode === 'balanced' || focusMode === 'thorough') && (
+      {categoryOpen && !lockedSpace && (focusMode === 'balanced' || focusMode === 'thorough') && (
         <div className="flex items-center gap-1.5 flex-wrap">
           {SEARCH_CATEGORIES.map(cat => (
             <button

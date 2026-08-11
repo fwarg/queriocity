@@ -2,7 +2,7 @@ import { generateText } from 'ai'
 import { randomUUID } from 'crypto'
 import { db, spaceMemories, userMemories, chatSessions, messages, spaces, monitorRuns, sqlite, getAppSetting, setAppSetting } from './db.ts'
 import { eq, desc, asc, ne, and, or, gt, isNull } from 'drizzle-orm'
-import { getSmallModel, getChatModel, getThinkingModelOrFallback } from './llm.ts'
+import { getSmallModel, getChatModel, getThinkingModelOrFallback, SMALL_MODEL_INPUT_CHARS } from './llm.ts'
 import { embedText, embedTexts } from './embeddings.ts'
 import { searchSpaceFiles, searchUploads, spaceHasTaggedFiles, type ChunkResult } from './files/uploads-search.ts'
 import { rerank, rerankEnabled } from './reranker.ts'
@@ -870,7 +870,12 @@ export async function extractMemoriesPostHoc(
   if (!userContent.trim()) return
   const t0 = performance.now()
 
-  const maxChars = parseInt(await getAppSetting('memory_extract_chars', '6000'))
+  // Clamped to what the configured small model can actually accept. The admin setting allows up to
+  // 100000 chars, which no 4k-context model can take — and the extraction then fails outright
+  // rather than extracting less. `|| 6000` also covers a non-numeric setting: `slice(-NaN)`
+  // silently returns the *whole* string, so a bad value disabled the limit rather than tripping it.
+  const configured = parseInt(await getAppSetting('memory_extract_chars', '6000'), 10) || 6000
+  const maxChars = Math.min(configured, SMALL_MODEL_INPUT_CHARS)
   const combined = `User: ${userContent}\n\nAssistant: ${assistantContent}`
   const result = await generateText({
     model: getSmallModel(),

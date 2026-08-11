@@ -1,6 +1,7 @@
 import { embed } from 'ai'
 import { getEmbeddingModel } from './llm.ts'
 import { IMAGE_API } from './image-store.ts'
+import { remoteModelEndpoints } from './space-lock.ts'
 
 // The value printed in the README's env example — a live deployment using it has an
 // effectively public signing key.
@@ -40,6 +41,14 @@ export function validateConfig(): void {
   const rawApi = process.env.IMAGE_API?.trim().toLowerCase()
   if (rawApi && rawApi !== 'openai' && rawApi !== 'sdapi') {
     warn(`IMAGE_API="${process.env.IMAGE_API}" is not recognised; falling back to openai. Valid values: openai, sdapi.`)
+  }
+
+  // Advisory: only matters once a space is locked, but reported at startup so it is known before
+  // someone trusts a lock. A locked space removes the model's tools; it cannot un-send the document
+  // to a hosted model endpoint.
+  const remote = remoteModelEndpoints()
+  if (remote.length) {
+    warn(`Model endpoints are not local (${remote.join(', ')}) — locked spaces still send documents there, so they isolate from web search but not from the model host.`)
   }
 
   const rawGuard = process.env.EGRESS_GUARD?.trim().toLowerCase()

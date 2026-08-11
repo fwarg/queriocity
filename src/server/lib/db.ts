@@ -59,6 +59,13 @@ export const spaces = sqliteTable('spaces', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  /** Locked: chats here get no web search, no URL fetching and no image generation.
+   *
+   *  A capability control, not a detection one — the tools are absent rather than screened, so
+   *  there is nothing for the egress guard to get wrong. Read from here on every chat request and
+   *  never from the client. Effectively one-way once the space holds anything; see routes/spaces.ts
+   *  for why, and for the three other ways a chat could otherwise escape a locked space. */
+  offline: integer('offline', { mode: 'boolean' }).notNull().default(false),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 })
@@ -323,6 +330,12 @@ function initSchema() {
   // Migration: add graduated column for monitor session graduation
   try {
     sqlite.run(`ALTER TABLE chat_sessions ADD COLUMN graduated INTEGER NOT NULL DEFAULT 0`)
+  } catch {}
+
+  // Migration: add offline (locked) flag for spaces. Defaults to 0, so every existing space keeps
+  // its web access — locking is always an explicit choice.
+  try {
+    sqlite.run(`ALTER TABLE spaces ADD COLUMN offline INTEGER NOT NULL DEFAULT 0`)
   } catch {}
 
   // Migration: add 'compact' to space_memories source CHECK constraint.

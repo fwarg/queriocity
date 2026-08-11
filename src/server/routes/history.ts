@@ -1,11 +1,12 @@
 import { Hono } from 'hono'
 import { db, sqlite, chatSessions, messages, spaces, spaceMemories, monitorRuns } from '../lib/db.ts'
-import { eq, and, desc, ne, count, isNull, or } from 'drizzle-orm'
+import { eq, and, desc, ne, count, isNull, or, sql } from 'drizzle-orm'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { extractMemoriesPostHoc } from '../lib/memory.ts'
 import { deleteSessionImages } from '../lib/image-store.ts'
+import { canMoveChat } from '../lib/space-lock.ts'
 import { deindexSession, indexSession } from '../lib/chat-indexer.ts'
 
 export const historyRouter = new Hono<AppEnv>()
@@ -22,9 +23,16 @@ historyRouter.get('/', async (c) => {
   // already holds, so a space whose chats fall outside the most recent `limit` looks empty while
   // its chat count — computed over every chat — says otherwise.
   const spaceId = c.req.query('spaceId')
-  const baseQuery = db.select({ id: chatSessions.id, title: chatSessions.title, spaceId: chatSessions.spaceId, createdAt: chatSessions.createdAt, updatedAt: chatSessions.updatedAt })
+  // `locked` is joined in rather than derived client-side: the chat list is where chats are picked
+  // and reassigned, so it has to show the lock without the client cross-referencing the space list.
+  const baseQuery = db.select({
+    id: chatSessions.id, title: chatSessions.title, spaceId: chatSessions.spaceId,
+    locked: sql<number>`coalesce(${spaces.offline}, 0)`,
+    createdAt: chatSessions.createdAt, updatedAt: chatSessions.updatedAt,
+  })
     .from(chatSessions)
     .leftJoin(monitorRuns, eq(chatSessions.id, monitorRuns.sessionId))
+    .leftJoin(spaces, eq(chatSessions.spaceId, spaces.id))
   const where = and(
     eq(chatSessions.userId, userId),
     or(isNull(monitorRuns.id), eq(chatSessions.graduated, 1)),
@@ -91,6 +99,15 @@ historyRouter.patch('/:id', zValidator('json', z.object({
     if (body.spaceId !== null) {
       const space = await db.select().from(spaces).where(and(eq(spaces.id, body.spaceId), eq(spaces.userId, userId))).get()
       if (!space) return c.json({ error: 'Space not found' }, 404)
+    }
+    // A chat in a locked space read its documents under a promise of no egress; moving it to a
+    // space that still has web access breaks that. `null` is the most permissive destination here,
+    // not the safest — a chat with no space is an ordinary chat. Its auto-memories travel with it
+    // below, so this covers those too. Moving *into* a locked space only tightens, and is allowed.
+    if (!await canMoveChat(session.spaceId, body.spaceId)) {
+      return c.json({
+        error: 'This chat is in a locked space and can only be moved to another locked space.',
+      }, 409)
     }
     update.spaceId = body.spaceId
   }

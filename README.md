@@ -344,10 +344,48 @@ attack. The same goes for a URL the model guessed rather than took from a search
 **What this does not do.** Every signal keys on how a payload *looks*, so a patient attacker can
 leak a little at a time in ordinary-looking words and score nothing. Treat a clean run as "nothing
 obvious was spotted", never as proof nothing left. If a document genuinely must not leave the
-machine, the reliable control is not to give it to a session that has web access at all.
+machine, use a **locked space** (below) rather than relying on this.
 
 Run `EGRESS_GUARD=log` first if you want to see what would have been flagged against your own usage
 before letting it act; `off` disables the checks.
+
+### Locked spaces
+
+Everything above is *detection* — it inspects each outbound request and judges it. A locked space is
+a *capability* control instead: `web_search` and `fetch_url` are never offered to the model, pasted
+URLs are not fetched, and image generation is refused. There is no request to judge, so there is
+nothing to tune and nothing to get wrong.
+
+Lock a space with the padlock beside its name in the sidebar. Every chat in it shows a lock, and the
+chat itself carries a banner for as long as it is open.
+
+**To analyse a sensitive document safely:**
+
+1. **Create a space and lock it first**, before putting anything in it.
+2. **Start a new chat inside that space.**
+3. **Attach the document to that chat**, using the paperclip.
+
+Step 3 matters as much as the others. A file added to your **library** is searchable from *every*
+chat you own, including online ones in other spaces — locking a space afterwards does not retract
+it. A chat attachment is ephemeral and never enters the library, so it exists only in the locked
+conversation.
+
+**Locking is close to one-way, by design.** While a space is empty you can unlock it freely. Once it
+holds a chat or a memory you cannot, because unlocking would hand web access to everything gathered
+under the promise that there was none. The same reasoning closes the other ways out, and all four
+are enforced on the server, not just hidden in the interface:
+
+- A chat in a locked space can only be moved to another locked space — not to an unlocked one, and
+  not out to no space at all.
+- Deleting a locked space **deletes its chats**, rather than releasing them as ordinary unlocked
+  chats. You are warned before this happens.
+- Monitors cannot be attached to a locked space, since a monitor is a scheduled web search.
+
+**The limit worth knowing.** A locked space removes the model's tools; it does not change where the
+model runs. If `CHAT_BASE_URL` (or `EMBED_BASE_URL` / `RERANK_BASE_URL`) points at a hosted API, your
+document is sent there in the very first request, before any tool could exist. Queriocity warns at
+startup when those endpoints are not local. For a document that must not leave your machine at all,
+the model server has to be on it.
 
 ---
 
@@ -727,6 +765,11 @@ SMALL_MODEL=qwen3.5-small
 # EMBED_API_KEY=                              # falls back to CHAT_API_KEY
 EMBED_MODEL=nomic-embed-text
 EMBED_DIMENSIONS=1536                       # must match the model's output size
+# EMBED_MAX_CHARS=4000                      # hard cap per embedding call. Embedding servers reject
+#                                            # oversized input outright, and a *query* embedding is
+#                                            # the user's message — which can carry an inlined
+#                                            # attachment of any size. Raise if your endpoint has a
+#                                            # bigger context; keep it above 2000 (largest chunk).
 
 # ── Reranker (optional) ───────────────────────────────────────────────────────
 # When RERANK_MODEL is set, a cross-encoder reranker reorders accumulated sources
