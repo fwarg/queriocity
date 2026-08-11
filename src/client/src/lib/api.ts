@@ -459,11 +459,11 @@ export async function ingestUrl(url: string): Promise<{ fileId: string; filename
   return res.json()
 }
 
-export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; userMemoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; attachmentChars: number; spaceRagBudget: number; queryReformulation: boolean; rssFeedCharsBudget: number; fetchMaxPages: number; fetchSummarizeOverflow: boolean; compressHistoryOverflow: boolean }> {
+export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; userMemoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; ragTopK: number; attachmentChars: number; spaceRagBudget: number; queryReformulation: boolean; rssFeedCharsBudget: number; fetchMaxPages: number; fetchSummarizeOverflow: boolean; compressHistoryOverflow: boolean; limits: { smallModelInputChars: number; embedInputChars: number } }> {
   return fetch(`${BASE}/admin/settings`).then(r => r.json())
 }
 
-export async function updateAdminSettings(s: { memoryTokenBudget?: number; userMemoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; dreamDeep?: boolean; memoryExtractChars?: number; rerankTopN?: number; attachmentChars?: number; spaceRagBudget?: number; queryReformulation?: boolean; rssFeedCharsBudget?: number; fetchMaxPages?: number; fetchSummarizeOverflow?: boolean; compressHistoryOverflow?: boolean }): Promise<void> {
+export async function updateAdminSettings(s: { memoryTokenBudget?: number; userMemoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; dreamDeep?: boolean; memoryExtractChars?: number; rerankTopN?: number; ragTopK?: number; attachmentChars?: number; spaceRagBudget?: number; queryReformulation?: boolean; rssFeedCharsBudget?: number; fetchMaxPages?: number; fetchSummarizeOverflow?: boolean; compressHistoryOverflow?: boolean }): Promise<void> {
   await fetch(`${BASE}/admin/settings`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },

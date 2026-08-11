@@ -22,7 +22,7 @@ import { ThinkExtractor } from '../lib/think-extractor.ts'
 import { rerankSearchResults } from '../lib/reranker.ts'
 import { buildMemoryBlock, buildChatFileBlock, extractMemoriesPostHoc, userMemoryBlockIfEnabled, joinMemoryBlocks } from '../lib/memory.ts'
 import { trimMessages, contextCharBudget, CONTEXT_RESERVE_FRACTION } from '../lib/trim-messages.ts'
-import { indexContents } from '../lib/chat-indexer.ts'
+import { indexContents, deindexContent } from '../lib/chat-indexer.ts'
 import { ownsSpace, sessionOwnership } from '../lib/ownership.ts'
 import { isSpaceLocked } from '../lib/space-lock.ts'
 import { rateLimitByUser, chatLimiter, suggestLimiter } from '../lib/rate-limit.ts'
@@ -860,9 +860,12 @@ async function finishTurn(out: SSEStream, {
     await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, elapsedMs }) })
     return
   }
-  const { title } = await persistMessage(sid, userId, msgs, fullContent, sources, spaceId, regenerate)
+  const { title, supersededAnswer } = await persistMessage(sid, userId, msgs, fullContent, sources, spaceId, regenerate)
   await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title, elapsedMs }) })
   if (spaceId) {
+    // Indexing is content-addressed and idempotent, so re-running it for the same question costs
+    // nothing — but the answer that was just thrown away has to be removed explicitly.
+    if (supersededAnswer) deindexContent(sid, supersededAnswer)
     const lastUserContent = userQueryOf(msgs)
     extractMemoriesPostHoc(spaceId, sid, lastUserContent, fullContent).catch(e => console.error('[memory]', e))
     indexContents(sid, [lastUserContent, fullContent].filter(Boolean)).catch(e => console.error('[chat-index]', e))
@@ -993,26 +996,32 @@ async function persistMessage(
   sources: unknown[],
   spaceId?: string,
   regenerate = false,
-): Promise<{ title: string }> {
+): Promise<{ title: string; supersededAnswer?: string }> {
   const now = new Date()
   const title = msgs.find(m => m.role === 'user')?.content.slice(0, SESSION_TITLE_MAX) ?? 'Chat'
   const lastUser = [...msgs].reverse().find(m => m.role === 'user')
+  let supersededAnswer: string | undefined
 
   await db.transaction(async (tx) => {
     await tx.insert(chatSessions).values({ id: sessionId, title, createdAt: now, updatedAt: now, userId, spaceId: spaceId ?? null })
       .onConflictDoUpdate({ target: chatSessions.id, set: { updatedAt: now, graduated: 1 } })
     if (regenerate) {
       // The question is already stored from the first attempt — replace only the answer, so a
-      // retry doesn't leave the conversation with duplicate turns.
-      const previous = await tx.select({ id: messages.id }).from(messages)
+      // retry doesn't leave the conversation with duplicate turns. Its text is returned so the
+      // caller can drop its chunks too: deleting the message alone left the rejected answer
+      // searchable through chat RAG.
+      const previous = await tx.select({ id: messages.id, content: messages.content }).from(messages)
         .where(and(eq(messages.sessionId, sessionId), eq(messages.role, 'assistant')))
         .orderBy(desc(messages.createdAt)).limit(1).get()
-      if (previous) await tx.delete(messages).where(eq(messages.id, previous.id))
+      if (previous) {
+        supersededAnswer = previous.content
+        await tx.delete(messages).where(eq(messages.id, previous.id))
+      }
     } else if (lastUser) {
       await tx.insert(messages).values({ id: randomUUID(), sessionId, role: 'user', content: lastUser.content, createdAt: now })
     }
     await tx.insert(messages).values({ id: randomUUID(), sessionId, role: 'assistant', content: assistantContent, sources: JSON.stringify(sources), createdAt: now })
   })
 
-  return { title }
+  return { title, supersededAnswer }
 }

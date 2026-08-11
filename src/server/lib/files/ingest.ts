@@ -24,6 +24,11 @@ const CHUNK_CONFIG: Record<string, { size: number; overlap: number }> = {
   doc:   { size: 2000, overlap: 300 },
 }
 
+/** The largest chunk any indexing path stores, so config-check can verify the embedding bound sits
+ *  above it. ~500 tokens, which is where retrieval quality peaks — long passages average into a
+ *  vector that matches everything weakly. Exported rather than repeated as a literal. */
+export const LARGEST_CHUNK_CHARS = Math.max(...Object.values(CHUNK_CONFIG).map(c => c.size))
+
 function chunkConfig(mimeType: string) {
   return mimeType.startsWith('image/') ? CHUNK_CONFIG.image : CHUNK_CONFIG.doc
 }

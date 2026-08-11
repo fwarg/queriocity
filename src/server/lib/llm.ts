@@ -39,6 +39,36 @@ const SMALL_MODEL_CONTEXT_TOKENS = parseInt(process.env.SMALL_MODEL_CONTEXT_TOKE
 // system prompt + output, 2.5 chars/token for dense/technical text.
 export const SMALL_MODEL_INPUT_CHARS = Math.floor(SMALL_MODEL_CONTEXT_TOKENS * 0.7 * 2.5)
 
+/** Two different embedding limits, which used to be one number and should not have been.
+ *
+ *  **EMBED_BATCH_CHARS is capacity.** How much text may go in one request, because the server counts
+ *  a request's tokens as a whole and rejects anything over its context. Derived from the declared
+ *  context the same way the two models above work — say what the server was started with, let the
+ *  app do the arithmetic. Bigger is purely a throughput win: more chunks per round trip.
+ *
+ *  **EMBED_MAX_INPUT_CHARS is quality.** How much of a *single* string becomes one vector. This is
+ *  not a capacity question at all: embedding a long passage averages it into a blurry vector that
+ *  discriminates poorly, so the retrieval literature lands on roughly 512 tokens per vector and
+ *  warns against pushing toward a model's ceiling. It matters for queries, which are never chunked —
+ *  a message carrying an inlined attachment would otherwise be embedded whole.
+ *
+ *  Tying them together was a design error: raising the context for indexing throughput silently
+ *  raised how much of a query became one vector, which makes retrieval worse. They now move
+ *  independently, with the one dependency that a single string cannot exceed a whole request.
+ *
+ *  ~2500 chars is about 600 tokens at 4 chars/token — inside the 512–1024 band the research
+ *  recommends, and above the 2000-char chunks in files/ingest.ts so stored vectors are never
+ *  clipped. */
+const EMBED_CONTEXT_TOKENS = parseInt(process.env.EMBED_CONTEXT_TOKENS ?? '', 10) || 1024
+export const EMBED_BATCH_CHARS = Math.floor(EMBED_CONTEXT_TOKENS * 0.9 * 2.5)
+
+// EMBED_MAX_CHARS is the superseded name; honoured so an existing setting keeps working, and it
+// only ever governed the per-string bound in practice.
+const EMBED_QUALITY_CHARS =
+  parseInt(process.env.EMBED_MAX_INPUT_CHARS ?? process.env.EMBED_MAX_CHARS ?? '', 10) || 2500
+
+export const EMBED_MAX_INPUT_CHARS = Math.min(EMBED_QUALITY_CHARS, EMBED_BATCH_CHARS)
+
 // Config is resolved per call, not at module load. A module-level const captures whatever the
 // environment held when the first importer pulled this in, which makes the value depend on
 // import order — the same trap searxng.ts documents, and the reason a test could not point the

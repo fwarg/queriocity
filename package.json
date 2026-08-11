@@ -1,6 +1,6 @@
 {
   "name": "queriocity",
-  "version": "0.20.0",
+  "version": "0.21.0",
   "type": "module",
   "packageManager": "bun@1.3.10",
   "//engines": "Bun runs everything here; Node is never required. Vite is invoked as `bun --bun vite` so it uses Bun's runtime rather than whichever `node` its shebang finds on PATH — Vite 8 needs Node >=20.19, and Ubuntu LTS still ships 18. The Docker image (oven/bun) has no real Node at all, only a shim, so without this local and container builds ran on different runtimes.",

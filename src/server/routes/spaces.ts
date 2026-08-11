@@ -7,6 +7,8 @@ import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { randomUUID } from 'crypto'
 import { canUnlock, describeContents, sessionIdsInSpace } from '../lib/space-lock.ts'
 import { deleteSessionImages } from '../lib/image-store.ts'
+import { deindexSession } from '../lib/chat-indexer.ts'
+import { deleteMemoryEmbeddings } from '../lib/memory.ts'
 
 export const spacesRouter = new Hono<AppEnv>()
 
@@ -110,12 +112,23 @@ spacesRouter.delete('/:id', async (c) => {
       const rows = await db.select({ content: messages.content }).from(messages)
         .where(eq(messages.sessionId, sessionId)).all()
       await deleteSessionImages(rows.map(r => r.content))
+      // Indexed chunks keep a verbatim copy of the conversation in chat_chunk_meta, and nothing in
+      // the schema removes it — chat_chunks is a vec0 table. Skipping this left the document text
+      // of a locked space on disk after the space was deleted, which is the one thing deleting it
+      // is supposed to prevent.
+      deindexSession(sessionId)
       // messages cascade from chat_sessions, so the session row is all that must go explicitly.
       await db.delete(chatSessions).where(eq(chatSessions.id, sessionId))
     }
     deletedChats = sessionIds.length
     if (deletedChats) console.log(`  [space] deleted ${deletedChats} chat(s) with locked space ${id}`)
   }
+
+  // space_memories cascades from spaces, but memory_embeddings is vec0 and cannot, so collect the
+  // ids while the rows still exist.
+  const memoryIds = await db.select({ id: spaceMemories.id }).from(spaceMemories)
+    .where(eq(spaceMemories.spaceId, id)).all()
+  deleteMemoryEmbeddings(memoryIds.map(m => m.id))
 
   await db.delete(spaces).where(eq(spaces.id, id))
   return c.json({ ok: true, deletedChats })

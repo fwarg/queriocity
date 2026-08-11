@@ -2,7 +2,7 @@ import './test-support/test-env.ts'
 import { describe, expect, it } from 'bun:test'
 import { _test } from './embeddings.ts'
 
-const { bound, batchByTotalChars, EMBED_MAX_CHARS } = _test
+const { bound, batchByTotalChars, EMBED_MAX_CHARS, EMBED_BATCH_CHARS } = _test
 
 /** The bound exists because embedding servers reject oversized input outright — there is no partial
  *  result: the call 400s and every feature depending on it fails at once. Found when a 170k-char
@@ -15,6 +15,20 @@ describe('embedding input bound', () => {
 
   it('caps a whole document pasted as a query', () => {
     expect(bound('x'.repeat(170_000)).length).toBe(EMBED_MAX_CHARS)
+  })
+
+  /** The two limits answer different questions and must not be the same knob. Per-string is a
+   *  retrieval-quality choice (~512 tokens is where vectors stay discriminative); per-request is
+   *  the server's capacity. Tying them together meant raising the context for indexing throughput
+   *  silently made every query vector blurrier. */
+  it('never lets a single string exceed one whole request', () => {
+    expect(EMBED_MAX_CHARS).toBeLessThanOrEqual(EMBED_BATCH_CHARS)
+  })
+
+  it('keeps the per-vector bound in the range retrieval quality wants', () => {
+    // ~512-1024 tokens at 4 chars/token. Above 2000 so document chunks are never clipped.
+    expect(EMBED_MAX_CHARS).toBeGreaterThanOrEqual(2000)
+    expect(EMBED_MAX_CHARS).toBeLessThanOrEqual(4096)
   })
 
   it('leaves the largest chunk this app produces intact', () => {
