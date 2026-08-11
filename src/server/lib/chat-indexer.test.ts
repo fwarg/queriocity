@@ -9,7 +9,11 @@ import { sqlite } from './db.ts'
  *  chunks and 5 embedding calls for a two-line exchange. It also left the rejected answer
  *  searchable, so chat RAG could surface text the user had thrown away. */
 
-const DIM = 1024
+// Must match the width the vec0 tables were created with, or every insert fails. Read from the env
+// rather than hardcoded: locally Bun auto-loads `.env` and this is whatever the developer's real
+// embedding model returns, while CI has no `.env` and falls back to db.ts's 1536. Hardcoding it
+// passed here and failed there — the same trap test-support/test-env.ts exists for.
+const DIM = parseInt(process.env.EMBED_DIMENSIONS ?? '1536', 10)
 let server: ReturnType<typeof Bun.serve>
 let embedCalls: number[] = []
 
