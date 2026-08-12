@@ -1,6 +1,6 @@
 import { isIP } from 'node:net'
 import { and, count, eq, ne } from 'drizzle-orm'
-import { db, spaces, chatSessions, spaceMemories, spaceFiles } from './db.ts'
+import { db, spaces, chatSessions, spaceMemories, spaceFiles, monitors } from './db.ts'
 import { isBlockedAddress } from './url-guard.ts'
 
 /** Locked ("offline") spaces: no web search, no URL fetching, no image generation.
@@ -53,6 +53,14 @@ export function describeContents(c: SpaceContents): string {
  *  was sealed, which is precisely what the user was promised would not happen. Emptying the space
  *  first is the deliberate way out — it makes the decision destructive and explicit rather than a
  *  toggle someone flips back without thinking. */
+/** Monitors assigned to a space. A monitor is a scheduled web-research run, so a space holding one
+ *  cannot be locked — the same rule `monitors.ts` enforces when a monitor is assigned to a space,
+ *  which was previously stated on one side only and left locking as the way around it. */
+export async function monitorsInSpace(spaceId: string): Promise<number> {
+  const row = await db.select({ n: count() }).from(monitors).where(eq(monitors.spaceId, spaceId)).get()
+  return row?.n ?? 0
+}
+
 export async function canUnlock(spaceId: string): Promise<{ ok: boolean; contents: SpaceContents }> {
   const contents = await spaceContents(spaceId)
   return { ok: isEmptySpace(contents), contents }

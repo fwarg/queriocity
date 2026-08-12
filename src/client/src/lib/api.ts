@@ -240,7 +240,10 @@ export async function* streamChat(
           // overshoot and the next resume would skip that many real events.
           if (payload.type === 'ping') continue
           seen++
-          if (payload.type === 'session') { sid = payload.sessionId as string; continue }
+          // Kept for resume, and yielded on: the caller needs the id to stop, resume or answer an
+          // egress prompt on a chat whose id it did not choose. Swallowing it here meant the only
+          // place the client learned the id was the `done` event, i.e. after the run had ended.
+          if (payload.type === 'session') sid = payload.sessionId as string
           if (payload.type === 'done') finished = true
           yield payload
         }

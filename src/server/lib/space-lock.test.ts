@@ -1,8 +1,8 @@
 import './test-support/test-env.ts'
 import { describe, expect, it, beforeEach, beforeAll } from 'bun:test'
 import { randomUUID } from 'node:crypto'
-import { db, users, spaces, chatSessions, spaceMemories } from './db.ts'
-import { canMoveChat, canUnlock, describeContents, isSpaceLocked, sessionIdsInSpace } from './space-lock.ts'
+import { db, users, spaces, chatSessions, spaceMemories, monitors } from './db.ts'
+import { canMoveChat, canUnlock, describeContents, isSpaceLocked, monitorsInSpace, sessionIdsInSpace } from './space-lock.ts'
 
 const USER = 'u-lock'
 
@@ -24,6 +24,16 @@ async function makeChat(spaceId: string | null): Promise<string> {
   const id = randomUUID()
   const now = new Date()
   await db.insert(chatSessions).values({ id, title: 't', userId: USER, spaceId, createdAt: now, updatedAt: now })
+  return id
+}
+
+async function makeMonitor(spaceId: string): Promise<string> {
+  const id = randomUUID()
+  const now = new Date()
+  await db.insert(monitors).values({
+    id, userId: USER, name: `m-${id.slice(0, 6)}`, promptText: 'what changed?',
+    intervalMinutes: 1440, spaceId, createdAt: now, updatedAt: now,
+  })
   return id
 }
 
@@ -100,5 +110,27 @@ describe('canUnlock', () => {
     })
     const { contents } = await canUnlock(locked)
     expect(describeContents(contents)).toBe('1 chat, 1 memory')
+  })
+})
+
+/** The rule was enforced on one side only: monitors.ts refuses assigning a monitor to a locked
+ *  space, but locking a space that already held one was allowed, and the scheduled web research
+ *  carried on inside it. */
+describe('monitorsInSpace', () => {
+  it('is zero for a space with none', async () => {
+    expect(await monitorsInSpace(await makeSpace(false))).toBe(0)
+  })
+
+  it('counts the monitors that block locking', async () => {
+    const space = await makeSpace(false)
+    await makeMonitor(space)
+    await makeMonitor(space)
+    expect(await monitorsInSpace(space)).toBe(2)
+  })
+
+  it('does not count a monitor belonging to another space', async () => {
+    const [space, other] = [await makeSpace(false), await makeSpace(false)]
+    await makeMonitor(other)
+    expect(await monitorsInSpace(space)).toBe(0)
   })
 })

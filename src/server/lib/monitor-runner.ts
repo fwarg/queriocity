@@ -3,6 +3,7 @@ import { eq, and, lte, desc, count } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { executeChatAndSave } from './chat-executor.ts'
 import { fetchSelectedFeeds } from './rss.ts'
+import { isSpaceLocked } from './space-lock.ts'
 import type { SearchResult } from './searxng.ts'
 
 /** Convert a preferred hour in a given IANA timezone on the same calendar day as `near` to UTC. */
@@ -94,6 +95,15 @@ async function runMonitorForUser(
   monitor: typeof monitors.$inferSelect,
   userId: string,
 ): Promise<void> {
+  // Both routes that assign a space refuse a locked one, and locking now refuses a space holding
+  // monitors — but a monitor assigned before either guard existed would still run here, and the
+  // executor passes no `locked` to the researcher. Checked at the point of use, where it is the
+  // last thing standing between a scheduled web search and a locked space.
+  if (await isSpaceLocked(monitor.spaceId)) {
+    console.warn(`  [monitor] skipped "${monitor.name}" — space ${monitor.spaceId} is locked`)
+    return
+  }
+
   console.log(`  [monitor] running "${monitor.name}" for user=${userId}`)
   const sessionId = randomUUID()
   const focusMode = monitor.focusMode as 'flash' | 'balanced' | 'thorough'

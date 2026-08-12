@@ -97,6 +97,19 @@ export async function saveGeneratedImage(userId: string, bytes: Uint8Array): Pro
   return `/images/${userId}/${filename}`
 }
 
+const IMAGE_PATH_RE = /^\/images\/([\w-]+)\/([\w-]+\.png)$/
+
+/** Absolute path for one of `userId`'s generated images, or null if the URL is not one.
+ *
+ *  Shape-checked, not prefix-checked: `startsWith('/images/<uid>/')` also accepts
+ *  `/images/<uid>/../../../etc/passwd`, and the caller reads that file and posts it to the
+ *  diffusion server. `[\w-]` admits no dots, so no traversal survives the match. */
+export function imageFilePath(userId: string, imageUrl: string): string | null {
+  const m = IMAGE_PATH_RE.exec(imageUrl)
+  if (!m || m[1] !== userId) return null
+  return `${IMAGE_STORAGE_DIR}/${m[1]}/${m[2]}`
+}
+
 const IMAGE_URL_RE = /!\[.*?\]\((\/images\/[\w-]+\/[\w-]+\.png)\)/g
 
 /** Delete any generated image files referenced in the given message contents. */

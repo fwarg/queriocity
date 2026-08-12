@@ -31,7 +31,7 @@ import {
   scheduleAbandon, cancelAbandon, stopRun, awaitApproval, settleApproval, approvalTimeLeft,
   APPROVAL_TIMEOUT_MS, type LiveRun,
 } from '../lib/stream-buffer.ts'
-import { IMAGE_API, IMAGE_STORAGE_DIR, randomSeed, resolveSteps, saveGeneratedImage } from '../lib/image-store.ts'
+import { IMAGE_API, imageFilePath, randomSeed, resolveSteps, saveGeneratedImage } from '../lib/image-store.ts'
 import { imageBackend, compensateSteps, DEFAULT_EDIT_STRENGTH } from '../lib/image-api.ts'
 
 /** Render settings used for each generated image, so an edit inherits them from its source.
@@ -428,7 +428,8 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
           seed: z.number().int().optional().describe('Random seed. Only set when the user explicitly asks for a specific seed or to reproduce an earlier image; omit otherwise so the result varies'),
         }),
         execute: async ({ image_url, prompt, strength, size, negative_prompt, quality, steps, seed }) => {
-          if (!image_url.startsWith(`/images/${userId}/`)) {
+          const imagePath = imageFilePath(userId, image_url)
+          if (!imagePath) {
             return { success: false, error: 'Invalid image reference', prompt }
           }
           // Explicit wording in this turn wins; otherwise inherit from the image being edited.
@@ -447,7 +448,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
           const sentSteps = IMAGE_API === 'sdapi' ? compensateSteps(usedSteps, strength ?? DEFAULT_EDIT_STRENGTH) : usedSteps
           console.log(`  [image] edit → ${imageBaseUrl} (${IMAGE_API})  prompt="${prompt}"  negative="${usedNegative ?? ''}"${negative_prompt === undefined && usedNegative ? ' (carried)' : ''}  strength=${strength ?? DEFAULT_EDIT_STRENGTH}${strength === undefined ? ' (default)' : ''}  steps=${usedSteps} (${stepOrigin}) → ${sentSteps} sent  seed=${usedSeed}${seedOrigin}`)
           try {
-            const image = await readFile(`${IMAGE_STORAGE_DIR}/${image_url.slice('/images/'.length)}`)
+            const image = await readFile(imagePath)
             const bytes = await imageBackend(imageBaseUrl).edit({ image, prompt, strength, size, negativePrompt: usedNegative, steps: usedSteps, seed: usedSeed })
             pendingImageUrl = await saveGeneratedImage(userId, bytes)
             lastGeneratedImageUrl = pendingImageUrl

@@ -50,18 +50,24 @@ historyRouter.get('/search', async (c) => {
   const q = (c.req.query('q') ?? '').trim()
   if (!q) return c.json([])
   const like = `%${q}%`
+  // Aliased to camelCase: this is the one endpoint built from raw SQL rather than drizzle, and
+  // returning `space_id` meant every searched chat reached the client with `spaceId` undefined —
+  // no padlock, unlocked spaces offered as move targets for a locked chat, and the next message
+  // posted without a space at all.
   const results = sqlite.prepare(`
-    SELECT DISTINCT cs.id, cs.title, cs.user_id, cs.space_id, cs.created_at, cs.updated_at
+    SELECT DISTINCT cs.id, cs.title, cs.user_id AS userId, cs.space_id AS spaceId,
+           cs.created_at AS createdAt, cs.updated_at AS updatedAt
     FROM chat_sessions cs
     LEFT JOIN monitor_runs mr ON mr.session_id = cs.id
     WHERE cs.user_id = ? AND (mr.id IS NULL OR cs.graduated = 1) AND cs.title LIKE ? COLLATE NOCASE
     UNION
-    SELECT DISTINCT cs.id, cs.title, cs.user_id, cs.space_id, cs.created_at, cs.updated_at
+    SELECT DISTINCT cs.id, cs.title, cs.user_id AS userId, cs.space_id AS spaceId,
+           cs.created_at AS createdAt, cs.updated_at AS updatedAt
     FROM chat_sessions cs
     JOIN messages m ON m.session_id = cs.id
     LEFT JOIN monitor_runs mr ON mr.session_id = cs.id
     WHERE cs.user_id = ? AND (mr.id IS NULL OR cs.graduated = 1) AND m.content LIKE ? COLLATE NOCASE
-    ORDER BY cs.updated_at DESC LIMIT 100
+    ORDER BY updatedAt DESC LIMIT 100
   `).all(userId, like, userId, like)
   return c.json(results)
 })

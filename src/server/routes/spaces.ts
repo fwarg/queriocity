@@ -5,7 +5,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { randomUUID } from 'crypto'
-import { canUnlock, describeContents, sessionIdsInSpace } from '../lib/space-lock.ts'
+import { canUnlock, describeContents, monitorsInSpace, sessionIdsInSpace } from '../lib/space-lock.ts'
 import { deleteSessionImages } from '../lib/image-store.ts'
 import { deindexSession } from '../lib/chat-indexer.ts'
 import { deleteMemoryEmbeddings } from '../lib/memory.ts'
@@ -79,6 +79,19 @@ spacesRouter.patch('/:id', zValidator('json', z.object({
       return c.json({
         error: `This space cannot be unlocked while it still holds ${describeContents(contents)}. Delete them first, or move them to another locked space.`,
         contents,
+      }, 409)
+    }
+  }
+
+  // The mirror of the rule monitors.ts enforces: a monitor may not be assigned to a locked space,
+  // so a space holding one may not be locked either. Without this, locking is simply the other
+  // way round the same door — the monitor keeps searching the web on schedule inside the space.
+  if (offline === true && !space.offline) {
+    const n = await monitorsInSpace(id)
+    if (n > 0) {
+      return c.json({
+        error: `This space cannot be locked while ${n} monitor${n === 1 ? '' : 's'} still ${n === 1 ? 'runs' : 'run'} in it — monitors search the web on a schedule. Delete or reassign them first.`,
+        monitors: n,
       }, 409)
     }
   }
