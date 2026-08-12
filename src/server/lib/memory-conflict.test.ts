@@ -14,6 +14,13 @@ import { startFakeOpenAI } from './test-support/fake-openai.ts'
 const { db, users, spaces, spaceMemories, EMBED_DIMS } = await import('./db.ts')
 const { eq } = await import('drizzle-orm')
 
+// Captured before mocking so afterAll can put them back. `mock.module` is process-wide and
+// outlives this file, so a mock left in place is inherited by every test file that runs later:
+// the writer tests were streaming against this file's stopped fake server, which surfaced as a
+// timeout with no hint of where the model had come from.
+const realEmbeddings = await import('./embeddings.ts')
+const realLlm = await import('./llm.ts')
+
 mock.module('./embeddings.ts', () => ({
   // Constant vector: every memory is equally "near", so candidate selection always returns the
   // full set and the test exercises the decision logic rather than the nearest-neighbour search.
@@ -45,7 +52,11 @@ beforeAll(async () => {
   await db.insert(spaces).values({ id: 'cs', name: 'cs', userId: 'cu', createdAt: now, updatedAt: now })
 })
 
-afterAll(() => server?.stop())
+afterAll(() => {
+  server?.stop()
+  mock.module('./embeddings.ts', () => realEmbeddings)
+  mock.module('./llm.ts', () => realLlm)
+})
 
 const { saveMemories, saveMemory } = await import('./memory.ts')
 

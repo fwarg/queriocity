@@ -10,7 +10,7 @@
 // Must precede every other import: sets DB_PATH before lib/db.ts opens it.
 import './test-support/test-env.ts'
 
-import { describe, test, expect, beforeAll, mock } from 'bun:test'
+import { describe, test, expect, beforeAll, afterAll, mock } from 'bun:test'
 
 // Imported before the mock so EMBED_DIMS is known: the vec0 column width comes from the
 // environment, and an embedding of the wrong length is rejected outright.
@@ -29,10 +29,15 @@ function fakeEmbed(text: string): number[] {
   return [...base, ...Array(Math.max(0, EMBED_DIMS - base.length)).fill(0)]
 }
 
+// `mock.module` replaces the module for the whole process and is not undone when this file ends,
+// so without the restore below every test file that runs after this one embeds through the stub.
+// That is invisible locally, where file order happens to put them first, and fails in CI.
+const realEmbeddings = await import('./embeddings.ts')
 mock.module('./embeddings.ts', () => ({
   embedText: async (text: string) => fakeEmbed(text),
   embedTexts: async (texts: string[]) => texts.map(fakeEmbed),
 }))
+afterAll(() => { mock.module('./embeddings.ts', () => realEmbeddings) })
 
 const { buildMemoryBlock, saveMemory } = await import('./memory.ts')
 

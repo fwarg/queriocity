@@ -25,9 +25,9 @@ jobs:
         run: bun run build:client
       # Dependabot covers bun for version updates but not security updates, so this is the
       # only automated security signal we get.
-      # Fails the build on high/critical only. The remaining moderate+low findings all come
-      # from the ai@4 subtree (jsondiffpatch is a direct dependency of ai@4.3.19, dropped in
-      # v5+); lower the threshold to `moderate` once the AI SDK upgrade lands, otherwise the
-      # step is red on day one and everyone learns to ignore it.
+      # Threshold was `high` while the ai@4 subtree still pulled jsondiffpatch, which kept a
+      # standing set of moderate findings. The AI SDK upgrade dropped it and the tree is clean
+      # at moderate, so the bar is raised — a step that is red on day one teaches everyone to
+      # ignore it, but one that is green only because the bar is low says nothing at all.
       - name: Dependency audit
-        run: bun audit --prod --audit-level=high
+        run: bun audit --prod --audit-level=moderate

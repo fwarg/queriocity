@@ -14,14 +14,16 @@ const API_MIN_RESULTS = parseInt(process.env.SEARCH_API_MIN_RESULTS ?? '3', 10)
 // into the code would mis-classify anyone whose set differs. Unset simply means the
 // "no major engine responded" top-up below never fires.
 // Read on first use rather than at module load: reading at load makes the value depend on
-// import order, which silently broke the tests as soon as another module imported this one
-// first. Memoised, so it is still read once.
-let majorEngines: Set<string> | null = null
+// import order. Memoised against the raw string rather than "first call wins", because that
+// still depended on order — whichever caller searched first froze the value, so a test that set
+// the variable and then imported this module saw the empty set another test had already cached.
+let majorEngines: { raw: string; set: Set<string> } | null = null
 function getMajorEngines(): Set<string> {
-  majorEngines ??= new Set(
-    (process.env.SEARCH_MAJOR_ENGINES ?? '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean),
-  )
-  return majorEngines
+  const raw = process.env.SEARCH_MAJOR_ENGINES ?? ''
+  if (majorEngines?.raw !== raw) {
+    majorEngines = { raw, set: new Set(raw.split(',').map(e => e.trim().toLowerCase()).filter(Boolean)) }
+  }
+  return majorEngines.set
 }
 
 /** True when a major-engine list is configured at all; without one that rule is inactive. */
