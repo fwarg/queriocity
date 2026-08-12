@@ -1,0 +1,10 @@
+# Loaded before any test file, so `src/server/lib/test-support/test-env.ts` runs before the first
+# import of anything that reads its environment at load — `lib/auth.ts` throws on a missing
+# JWT_SECRET, and `lib/db.ts` opens DB_PATH and migrates it.
+#
+# Importing it per file worked only by accident: whichever test file ran first had to be one that
+# remembered the import, and `bun test` file order is filesystem order, which differs between a
+# developer's machine and CI. Three files had forgotten it and passed anyway, because something
+# else always happened to load first — they failed the moment they were run on their own.
+[test]
+preload = ["./src/server/lib/test-support/test-env.ts"]
