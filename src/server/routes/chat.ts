@@ -31,7 +31,7 @@ import {
   scheduleAbandon, cancelAbandon, stopRun, awaitApproval, settleApproval, approvalTimeLeft,
   APPROVAL_TIMEOUT_MS, type LiveRun,
 } from '../lib/stream-buffer.ts'
-import { IMAGE_API, imageFilePath, randomSeed, resolveSteps, saveGeneratedImage } from '../lib/image-store.ts'
+import { IMAGE_API, imageFilePath, randomSeed, resolveSteps, saveGeneratedImage, deleteSupersededImages } from '../lib/image-store.ts'
 import { imageBackend, compensateSteps, DEFAULT_EDIT_STRENGTH } from '../lib/image-api.ts'
 
 /** Render settings used for each generated image, so an edit inherits them from its source.
@@ -869,6 +869,12 @@ async function finishTurn(out: SSEStream, {
   }
   const { title, supersededAnswer } = await persistMessage(sid, userId, msgs, fullContent, sources, spaceId, regenerate)
   await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title, elapsedMs }) })
+  // Outside the spaceId block below: a regenerate strands its predecessor's image whether or not
+  // the chat belongs to a space. Fire-and-forget, as the chat-delete path does — a failed unlink
+  // costs a stray file the startup sweep will collect, and must not fail the turn.
+  if (supersededAnswer) {
+    deleteSupersededImages(supersededAnswer, fullContent).catch(e => console.error('[image] superseded cleanup failed:', e))
+  }
   if (spaceId) {
     // Indexing is content-addressed and idempotent, so re-running it for the same question costs
     // nothing — but the answer that was just thrown away has to be removed explicitly.

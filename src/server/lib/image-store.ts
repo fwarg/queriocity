@@ -1,4 +1,5 @@
-import { mkdir, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises'
+import type { Dirent } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import pkg from '../../../package.json' with { type: 'json' }
 import { markPng } from '../../shared/ai-provenance.ts'
@@ -10,7 +11,12 @@ export const IMAGE_CREATOR_TOOL = `Queriocity ${pkg.version}`
 // only catches a genuinely stuck server rather than bounding normal work.
 export const IMAGE_TIMEOUT_MS = parseInt(process.env.IMAGE_TIMEOUT_MS ?? '300000', 10)
 
-export const IMAGE_STORAGE_DIR = process.env.IMAGE_STORAGE_DIR ?? '/tmp/queriocity/images'
+/** Read per call, not captured at module load.
+ *
+ *  A module-level const takes whatever the environment held when the first importer pulled this in,
+ *  which makes the value depend on import order — the trap searxng.ts and llm.ts both document, and
+ *  which broke a test here the moment another file imported this module first. */
+export const imageStorageDir = (): string => process.env.IMAGE_STORAGE_DIR ?? '/tmp/queriocity/images'
 
 /** Validated here rather than with a bare parseInt: these reach the diffusion server, and a NaN
  *  or zero produces a confusing remote error rather than an obvious local one. */
@@ -85,7 +91,7 @@ const MAX_MEMOIZED_IMAGE_DIRS = 1000
  *  Provenance marking happens here so that no caller can add a route that stores an unmarked
  *  image — EU AI Act Art 50(2). */
 export async function saveGeneratedImage(userId: string, bytes: Uint8Array): Promise<string> {
-  const dir = `${IMAGE_STORAGE_DIR}/${userId}`
+  const dir = `${imageStorageDir()}/${userId}`
   if (!createdImageDirs.has(dir)) {
     await mkdir(dir, { recursive: true })
     if (createdImageDirs.size >= MAX_MEMOIZED_IMAGE_DIRS) createdImageDirs.clear()
@@ -107,22 +113,99 @@ const IMAGE_PATH_RE = /^\/images\/([\w-]+)\/([\w-]+\.png)$/
 export function imageFilePath(userId: string, imageUrl: string): string | null {
   const m = IMAGE_PATH_RE.exec(imageUrl)
   if (!m || m[1] !== userId) return null
-  return `${IMAGE_STORAGE_DIR}/${m[1]}/${m[2]}`
+  return `${imageStorageDir()}/${m[1]}/${m[2]}`
 }
 
 const IMAGE_URL_RE = /!\[.*?\]\((\/images\/[\w-]+\/[\w-]+\.png)\)/g
 
+/** Every `/images/...` URL referenced by these message contents. */
+export function imageUrlsIn(contents: string[]): Set<string> {
+  const urls = new Set<string>()
+  for (const content of contents) {
+    for (const [, url] of content.matchAll(IMAGE_URL_RE)) urls.add(url)
+  }
+  return urls
+}
+
+const pathOf = (url: string) => `${imageStorageDir()}/${url.slice('/images/'.length)}`
+
 /** Delete any generated image files referenced in the given message contents. */
 export async function deleteSessionImages(contents: string[]): Promise<void> {
-  const paths = new Set<string>()
-  for (const content of contents) {
-    for (const [, url] of content.matchAll(IMAGE_URL_RE)) {
-      paths.add(`${IMAGE_STORAGE_DIR}/${url.slice('/images/'.length)}`)
-    }
-  }
+  const paths = new Set([...imageUrlsIn(contents)].map(pathOf))
   if (paths.size === 0) return
   await Promise.all([...paths].map(p =>
     unlink(p).catch(() => {}) // ignore missing files
   ))
   console.log(`  [image] deleted ${paths.size} file(s) for session`)
+}
+
+/** Delete images a regenerate has just orphaned — those in the old answer but not the new one.
+ *
+ *  A regenerate deletes the previous assistant message outright, so its markdown is the last thing
+ *  that referred to those files. Without this the file survives with nothing pointing at it, and
+ *  deleting the chat later cannot help: the reference it would have scanned is already gone. */
+export async function deleteSupersededImages(oldContent: string, newContent: string): Promise<void> {
+  const kept = imageUrlsIn([newContent])
+  const gone = [...imageUrlsIn([oldContent])].filter(url => !kept.has(url))
+  if (!gone.length) return
+  await Promise.all(gone.map(url => unlink(pathOf(url)).catch(() => {})))
+  console.log(`  [image] deleted ${gone.length} superseded file(s)`)
+}
+
+/** Delete a user's entire image directory.
+ *
+ *  By directory rather than by scanning their messages for references: images are stored one
+ *  folder per user, so removing the folder is complete by construction — where reference-scanning
+ *  misses anything already orphaned by a regenerate, an aborted turn or an ephemeral run. */
+export async function deleteUserImages(userId: string): Promise<void> {
+  if (!/^[\w-]+$/.test(userId)) return
+  await rm(`${imageStorageDir()}/${userId}`, { recursive: true, force: true })
+}
+
+/** A file is only swept once it is older than this.
+ *
+ *  The file is written before the message that references it is persisted, so a turn in flight
+ *  looks exactly like an orphan. At startup there are none, but the guard makes the sweep safe to
+ *  call at any time and costs only a delay in reclaiming genuinely dead files. */
+const ORPHAN_IMAGE_MIN_AGE_MS = 60 * 60 * 1000
+
+/** Delete generated images no message refers to any more.
+ *
+ *  The deletion paths keep the referenced files in step, but a file can lose its last reference
+ *  without any of them running: a regenerate drops the previous answer, an aborted turn never
+ *  persists one, and an ephemeral run persists nothing at all. Those leak a PNG each, and nothing
+ *  else would ever remove it — this is the filesystem counterpart of purgeOrphanVectors.
+ *
+ *  Conservative by construction: only paths matching the layout this module writes are considered,
+ *  and only files old enough that no in-flight turn could own them. */
+export async function purgeOrphanImages(referenced: Set<string>): Promise<number> {
+  let dirs: Dirent[]
+  try {
+    dirs = await readdir(imageStorageDir(), { withFileTypes: true })
+  } catch {
+    return 0   // nothing generated yet, or storage not configured
+  }
+
+  const cutoff = Date.now() - ORPHAN_IMAGE_MIN_AGE_MS
+  let deleted = 0
+  for (const dir of dirs) {
+    if (!dir.isDirectory() || !/^[\w-]+$/.test(dir.name)) continue
+    let files: string[]
+    try {
+      files = await readdir(`${imageStorageDir()}/${dir.name}`)
+    } catch { continue }
+
+    for (const file of files) {
+      if (!/^[\w-]+\.png$/.test(file)) continue
+      if (referenced.has(`/images/${dir.name}/${file}`)) continue
+      const path = `${imageStorageDir()}/${dir.name}/${file}`
+      try {
+        if ((await stat(path)).mtimeMs > cutoff) continue
+        await unlink(path)
+        deleted++
+      } catch { /* vanished under us, or unreadable — leave it */ }
+    }
+  }
+  if (deleted) console.log(`  [image] purged ${deleted} orphaned file(s)`)
+  return deleted
 }

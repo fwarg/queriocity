@@ -2,8 +2,8 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { generateText, embed } from 'ai'
-import { db, users, invites, chatSessions, messages, spaces, spaceMemories, userMemories, uploadedFiles, authCredentials, getAppSetting, setAppSetting, bumpTokenVersion } from '../lib/db.ts'
-import { eq, desc, inArray } from 'drizzle-orm'
+import { db, users, invites, chatSessions, spaces, spaceMemories, userMemories, uploadedFiles, authCredentials, getAppSetting, setAppSetting, bumpTokenVersion } from '../lib/db.ts'
+import { eq, desc } from 'drizzle-orm'
 import { indexSession, deindexSession } from '../lib/chat-indexer.ts'
 import { EMBED_MAX_INPUT_CHARS, SMALL_MODEL_INPUT_CHARS } from '../lib/llm.ts'
 import { randomUUID, randomInt } from 'crypto'
@@ -13,7 +13,7 @@ import { getChatModel, getSmallModel, getThinkingModel, getEmbeddingModel } from
 import { rerank, rerankEnabled } from '../lib/reranker.ts'
 import { runDream, deleteMemoryEmbeddings } from '../lib/memory.ts'
 import { deleteFileChunks } from '../lib/vector-cleanup.ts'
-import { deleteSessionImages } from '../lib/image-store.ts'
+import { deleteUserImages } from '../lib/image-store.ts'
 
 /** Random temporary password that satisfies validatePassword's complexity rules. */
 function generateTempPassword(): string {
@@ -162,15 +162,12 @@ adminRouter.delete('/users/:id', async (c) => {
     ...(await db.select({ id: userMemories.id }).from(userMemories)
       .where(eq(userMemories.userId, id)).all()).map(r => r.id),
   ]
-  const contents = sessionIds.length
-    ? (await db.select({ content: messages.content }).from(messages)
-        .where(inArray(messages.sessionId, sessionIds)).all()).map(r => r.content)
-    : []
-
   for (const sessionId of sessionIds) deindexSession(sessionId)
   for (const fileId of fileIds) deleteFileChunks(fileId)
   deleteMemoryEmbeddings(memoryIds)
-  await deleteSessionImages(contents)
+  // The whole folder, not the images their messages happen to reference: anything already
+  // orphaned by a regenerate or an aborted turn would otherwise survive the account itself.
+  await deleteUserImages(id)
 
   await db.delete(users).where(eq(users.id, id))
   console.log(`  [admin] deleted user ${id} by ${c.get('userId')} — ${sessionIds.length} chat(s), ${fileIds.length} file(s), ${memoryIds.length} memor${memoryIds.length === 1 ? 'y' : 'ies'}`)
