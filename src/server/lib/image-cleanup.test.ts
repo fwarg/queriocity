@@ -104,9 +104,9 @@ describe('purgeOrphanImages', () => {
     const orphan = await seed('u1')
     const otherUsersOrphan = await seed('u2')
 
-    const n = await purgeOrphanImages(imageUrlsIn([md(referenced)]))
+    const swept = await purgeOrphanImages(imageUrlsIn([md(referenced)]))
 
-    expect(n).toBe(2)
+    expect(swept).toMatchObject({ scanned: 3, deleted: 2, heldBack: 0 })
     expect(await exists(referenced)).toBe(true)
     expect(await exists(orphan)).toBe(false)
     expect(await exists(otherUsersOrphan)).toBe(false)
@@ -115,7 +115,7 @@ describe('purgeOrphanImages', () => {
   test('spares a file too young to judge — a turn in flight looks exactly like an orphan', async () => {
     const inFlight = await seed('u1', 5 * 60 * 1000)   // written 5 minutes ago, no message yet
 
-    expect(await purgeOrphanImages(new Set())).toBe(0)
+    expect(await purgeOrphanImages(new Set())).toMatchObject({ scanned: 1, deleted: 0, heldBack: 1 })
     expect(await exists(inFlight)).toBe(true)
   })
 
@@ -125,11 +125,11 @@ describe('purgeOrphanImages', () => {
     await mkdir(`${DIR}/.hidden dir`, { recursive: true })
     await writeFile(`${DIR}/.hidden dir/x.png`, 'x')
 
-    expect(await purgeOrphanImages(new Set())).toBe(0)
+    expect(await purgeOrphanImages(new Set())).toMatchObject({ scanned: 0, deleted: 0 })
     expect(await listed('u1')).toEqual(['notes.txt'])
   })
 
   test('is a no-op when nothing has ever been generated', async () => {
-    expect(await purgeOrphanImages(new Set())).toBe(0)
+    expect(await purgeOrphanImages(new Set())).toMatchObject({ scanned: 0, deleted: 0 })
   })
 })

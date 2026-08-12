@@ -178,16 +178,27 @@ const ORPHAN_IMAGE_MIN_AGE_MS = 60 * 60 * 1000
  *
  *  Conservative by construction: only paths matching the layout this module writes are considered,
  *  and only files old enough that no in-flight turn could own them. */
-export async function purgeOrphanImages(referenced: Set<string>): Promise<number> {
+export interface OrphanImageSweep {
+  /** Generated images on disk, whether kept or removed. */
+  scanned: number
+  deleted: number
+  /** Unreferenced but too recent to judge — see ORPHAN_IMAGE_MIN_AGE_MS. */
+  heldBack: number
+}
+
+export async function purgeOrphanImages(referenced: Set<string>): Promise<OrphanImageSweep> {
+  const result: OrphanImageSweep = { scanned: 0, deleted: 0, heldBack: 0 }
   let dirs: Dirent[]
   try {
     dirs = await readdir(imageStorageDir(), { withFileTypes: true })
   } catch {
-    return 0   // nothing generated yet, or storage not configured
+    // Nothing generated yet, or storage not configured. Said out loud rather than passed over in
+    // silence, so "did the sweep run?" is never a question the log leaves open.
+    console.log(`  [image] orphan sweep — no image directory at ${imageStorageDir()}, nothing to check`)
+    return result
   }
 
   const cutoff = Date.now() - ORPHAN_IMAGE_MIN_AGE_MS
-  let deleted = 0
   for (const dir of dirs) {
     if (!dir.isDirectory() || !/^[\w-]+$/.test(dir.name)) continue
     let files: string[]
@@ -197,15 +208,20 @@ export async function purgeOrphanImages(referenced: Set<string>): Promise<number
 
     for (const file of files) {
       if (!/^[\w-]+\.png$/.test(file)) continue
+      result.scanned++
       if (referenced.has(`/images/${dir.name}/${file}`)) continue
       const path = `${imageStorageDir()}/${dir.name}/${file}`
       try {
-        if ((await stat(path)).mtimeMs > cutoff) continue
+        if ((await stat(path)).mtimeMs > cutoff) { result.heldBack++; continue }
         await unlink(path)
-        deleted++
+        result.deleted++
       } catch { /* vanished under us, or unreadable — leave it */ }
     }
   }
-  if (deleted) console.log(`  [image] purged ${deleted} orphaned file(s)`)
-  return deleted
+
+  const held = result.heldBack ? `, ${result.heldBack} too recent to judge` : ''
+  console.log(result.deleted
+    ? `  [image] orphan sweep — ${result.scanned} file(s) on disk, ${result.deleted} unreferenced and removed${held}`
+    : `  [image] orphan sweep — ${result.scanned} file(s) on disk, all referenced, nothing to remove${held}`)
+  return result
 }

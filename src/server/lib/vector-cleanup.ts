@@ -56,7 +56,12 @@ export function countOrphanVectors(): OrphanCounts {
  *  user memories alike, so testing only one would delete the other's vectors. */
 export function purgeOrphanVectors(): OrphanCounts {
   const before = countOrphanVectors()
-  if (before.fileChunks === 0 && before.chatChunks === 0 && before.memoryVectors === 0) return before
+  if (before.fileChunks === 0 && before.chatChunks === 0 && before.memoryVectors === 0) {
+    // Reported even when clean, matching the image sweep: a cleanup that is silent on a good run
+    // is indistinguishable from one that never ran.
+    console.log('  [vectors] orphan sweep — nothing to purge')
+    return before
+  }
 
   sqlite.transaction(() => {
     sqlite.run(`DELETE FROM file_chunks WHERE chunk_id IN (
