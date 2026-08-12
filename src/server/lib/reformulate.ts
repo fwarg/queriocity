@@ -36,11 +36,14 @@ export function reformulateSpeed(messages: Array<{ role: string; content: string
 // no pre-search on failure, which is far better than an unbounded wait.
 const REFORMULATE_TIMEOUT_MS = parseInt(process.env.REFORMULATE_TIMEOUT_MS ?? '8000', 10)
 
-const NOW = new Date()
-const TODAY = NOW.toISOString().split('T')[0]
-const YEAR = NOW.getFullYear()
-
-const REFORMULATE_SYSTEM = `You are a search query optimizer. Rewrite the user question as an optimized search query. Today's date is ${TODAY}.
+// Built per call, not at module load. A server that has been up since December otherwise keeps
+// telling the model today's date is in December and to append last year to every "latest" query —
+// which is exactly the class of question reformulation exists to sharpen. researcher.ts already
+// takes `new Date()` per call for the same reason.
+export function reformulateSystem(now = new Date()): string {
+  const TODAY = now.toISOString().split('T')[0]
+  const YEAR = now.getFullYear()
+  return `You are a search query optimizer. Rewrite the user question as an optimized search query. Today's date is ${TODAY}.
 
 Rules:
 1. Strip conversational filler. Output short keywords, not sentences — a search engine, not a human, reads this.
@@ -58,6 +61,7 @@ Examples:
 - "What happened to DOGE, the department run by Elon Musk?"
   → DOGE Department of Government Efficiency status ${YEAR}           (keep the qualifier — "DOGE" alone finds the cryptocurrency)
 - "Hur gick det för Vasaloppet i år?" → Vasaloppet results ${YEAR}    (English for an international topic, name kept verbatim)`
+}
 
 /** Returns true if the string looks like a natural language sentence rather than a search query. */
 function looksLikeSentence(s: string): boolean {
@@ -106,7 +110,7 @@ export async function reformulateLLM(
   const timeout = AbortSignal.timeout(REFORMULATE_TIMEOUT_MS)
   const { text } = await generateText({
     model: getSmallModel(),
-    system: REFORMULATE_SYSTEM,
+    system: reformulateSystem(),
     prompt: userPrompt,
     maxOutputTokens: 120,
     abortSignal: abortSignal ? AbortSignal.any([abortSignal, timeout]) : timeout,

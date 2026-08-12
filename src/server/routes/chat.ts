@@ -7,7 +7,7 @@ import { runResearcher, maxStepsFor, type EgressApprovalRequest } from '../lib/r
 import { runWriter } from '../lib/writer.ts'
 import { drainResearcherStream, type SSEStream } from '../lib/researcher-stream.ts'
 import { stepEvent, type ProgressStep } from '../lib/progress.ts'
-import { FLASH_SYSTEM, RESEARCHER_NOTES_CAP, EMPTY_ANSWER_MESSAGE, runSynthesisFallback } from '../lib/answer.ts'
+import { FLASH_SYSTEM, FLASH_MAX_TOKENS, RESEARCHER_NOTES_CAP, EMPTY_ANSWER_MESSAGE, runSynthesisFallback } from '../lib/answer.ts'
 import { reformulateLLM } from '../lib/reformulate.ts'
 import { cacheKey, getCached, setCached } from '../lib/cache.ts'
 import { db, chatSessions, messages, users, uploadedFiles, parseSettings, getAppSetting } from '../lib/db.ts'
@@ -66,10 +66,6 @@ function rememberRender(url: string | undefined, settings: RenderSettings) {
   renderByImage.set(url, settings)
 }
 
-// 200 was too tight against FLASH_SYSTEM's "at most 5 sentences" — a dense answer hit the cap
-// mid-sentence with nothing to show for it. Raised to leave headroom for the requested length,
-// including the reasoning tokens a thinking-capable flash model spends before it writes.
-const FLASH_MAX_TOKENS = parseInt(process.env.FLASH_MAX_TOKENS ?? '400')
 const KEEPALIVE_INTERVAL_MS = 15000
 const SESSION_TITLE_MAX = 60
 
@@ -261,11 +257,16 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   const userRow = await db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get()
   const parsedSettings = parseSettings(userRow?.settings ?? '{}')
   const customPrompt = parsedSettings.customPrompt as string | undefined
+  // Everything that changes the answer for the same question belongs here. `searchCategories`
+  // picks which corpus is searched and `locked` removes web search entirely, so leaving either
+  // out served the previous filter's answer to a question asked under a different one.
   const cacheScope = [
     userId, spaceId ?? '',
     [...(includeFileIds ?? [])].sort().join(','),
     [...(includeMemoryIds ?? [])].sort().join(','),
     customPrompt ?? '',
+    [...(searchCategories ?? [])].sort().join(','),
+    locked ? 'locked' : '',
   ].join('|')
 
   // History is part of the key: without it, two unrelated conversations ending in the same
@@ -345,10 +346,15 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   if (focusMode === 'image') {
     const imageBaseUrl = process.env.IMAGE_BASE_URL?.trim() || undefined
     if (!imageBaseUrl) {
+      const t0 = Date.now()
+      const notConfigured = 'Image generation is not configured. Set the IMAGE_BASE_URL environment variable to enable it.'
       return streamRun(c, run, async (out) => {
-        await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: 'Image generation is not configured. Set the IMAGE_BASE_URL environment variable to enable it.' }) })
-        const { title: sessionTitle } = await persistMessage(sid, userId, msgs, '', [], spaceId, regenerate)
-        await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title: sessionTitle, elapsedMs: 0 }) })
+        await out.writeSSE({ data: JSON.stringify({ type: 'session', sessionId: sid }) })
+        await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: notConfigured }) })
+        // Through the shared tail like every other mode: calling persistMessage directly ignored
+        // `ephemeral`, so a request that asked never to be stored wrote a session, a user message
+        // and an empty assistant message anyway — and skipped the rest of the contract besides.
+        await finishTurn(out, { sid, userId, msgs, fullContent: notConfigured, sources: [], spaceId, regenerate, ephemeral, t0 })
       })
     }
     let pendingImageUrl: string | undefined

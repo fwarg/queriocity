@@ -12,7 +12,7 @@ import { ThinkExtractor } from './think-extractor.ts'
 import { indexContents } from './chat-indexer.ts'
 import { drainResearcherStream, nullStream, type ResearcherStreamPart } from './researcher-stream.ts'
 import { rerankSearchResults } from './reranker.ts'
-import { FLASH_SYSTEM, RESEARCHER_NOTES_CAP, EMPTY_ANSWER_MESSAGE, runSynthesisFallback } from './answer.ts'
+import { FLASH_SYSTEM, FLASH_MAX_TOKENS, RESEARCHER_NOTES_CAP, EMPTY_ANSWER_MESSAGE, runSynthesisFallback } from './answer.ts'
 
 /** Run a single-message chat non-interactively and save the session to DB. */
 export async function executeChatAndSave({
@@ -58,7 +58,7 @@ export async function executeChatAndSave({
     const system = FLASH_SYSTEM
       + (customPrompt ? `\n\nAdditional instructions:\n${customPrompt}` : '')
       + (memBlock ? '\n\n' + memBlock : '')
-    const result = streamText({ model: getFlashModel(), system, messages: msgs, maxOutputTokens: 200 })
+    const result = streamText({ model: getFlashModel(), system, messages: msgs, maxOutputTokens: FLASH_MAX_TOKENS })
     // getFlashModel() is the full chat model unless FLASH_MODEL=small, so the same <think> markup
     // the other paths strip can appear here too.
     const flashExtractor = new ThinkExtractor()

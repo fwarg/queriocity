@@ -18,7 +18,13 @@ function localHourToUTC(hour: number, tz: string, near: Date): Date {
   const actualHour = +new Intl.DateTimeFormat('en-US', {
     timeZone: tz, hour: 'numeric', hour12: false, hourCycle: 'h23',
   }).format(asUTC)
-  return new Date(asUTC.getTime() - (actualHour - hour) * 3600_000)
+  // Wrapped into (-12, 12]: `actualHour - hour` is a difference between two clock readings, so an
+  // offset that crosses midnight reads as ±24 hours of correction rather than the couple of hours
+  // it is. Unwrapped, hour=23 in UTC+2 landed on the following day.
+  let diff = actualHour - hour
+  if (diff > 12) diff -= 24
+  else if (diff < -12) diff += 24
+  return new Date(asUTC.getTime() - diff * 3600_000)
 }
 
 /** Compute the next scheduled run time, optionally snapping to a preferred hour in a timezone. */

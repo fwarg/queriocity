@@ -52,12 +52,18 @@ authRouter.post('/register', zValidator('json', registerSchema), async (c) => {
     if (invite.expiresAt < new Date()) return c.json({ error: 'Invite expired' }, 403)
     if (invite.email && invite.email.toLowerCase() !== email.toLowerCase())
       return c.json({ error: 'Invite is for a different email address' }, 403)
-    await db.update(invites).set({ usedAt: new Date() }).where(eq(invites.id, inviteToken))
   }
 
   const existing = await db.select().from(authCredentials)
     .where(eq(authCredentials.email, email.toLowerCase())).get()
   if (existing) return c.json({ error: 'Email already registered' }, 409)
+
+  // Consumed only once registration is certain to proceed. Marking it above, before the
+  // duplicate-email check, meant someone who already had an account burned their own invite by
+  // opening the link a second time — and only an admin could issue another.
+  if (userCount > 0 && inviteToken) {
+    await db.update(invites).set({ usedAt: new Date() }).where(eq(invites.id, inviteToken))
+  }
 
   const role: 'user' | 'admin' = userCount === 0 ? 'admin' : 'user'
   const userId = randomUUID()

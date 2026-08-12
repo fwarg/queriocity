@@ -2,16 +2,18 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { generateText, embed } from 'ai'
-import { db, users, invites, chatSessions, authCredentials, getAppSetting, setAppSetting, bumpTokenVersion } from '../lib/db.ts'
-import { eq, desc } from 'drizzle-orm'
-import { indexSession } from '../lib/chat-indexer.ts'
+import { db, users, invites, chatSessions, messages, spaces, spaceMemories, userMemories, uploadedFiles, authCredentials, getAppSetting, setAppSetting, bumpTokenVersion } from '../lib/db.ts'
+import { eq, desc, inArray } from 'drizzle-orm'
+import { indexSession, deindexSession } from '../lib/chat-indexer.ts'
 import { EMBED_MAX_INPUT_CHARS, SMALL_MODEL_INPUT_CHARS } from '../lib/llm.ts'
 import { randomUUID, randomInt } from 'crypto'
 import { hashPassword } from '../lib/auth.ts'
 import { authMiddleware, adminMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { getChatModel, getSmallModel, getThinkingModel, getEmbeddingModel } from '../lib/llm.ts'
 import { rerank, rerankEnabled } from '../lib/reranker.ts'
-import { runDream } from '../lib/memory.ts'
+import { runDream, deleteMemoryEmbeddings } from '../lib/memory.ts'
+import { deleteFileChunks } from '../lib/vector-cleanup.ts'
+import { deleteSessionImages } from '../lib/image-store.ts'
 
 /** Random temporary password that satisfies validatePassword's complexity rules. */
 function generateTempPassword(): string {
@@ -136,10 +138,42 @@ adminRouter.post('/users/:id/reset-password', async (c) => {
   return c.json({ tempPassword })
 })
 
+/** Deleting a user takes everything of theirs that the schema cannot.
+ *
+ *  `db.delete(users)` cascades the tables with foreign keys — sessions, messages, uploads, spaces,
+ *  memories. It reaches none of the vec0 tables, which cannot carry one, nor `chat_chunk_meta` and
+ *  `file_chunk_meta`, which hold a verbatim copy of every conversation and document. Nor the PNGs
+ *  on disk. Deleting the account has to mean deleting the data, so this mirrors what the chat,
+ *  file and space delete routes each already do for their own scope. */
 adminRouter.delete('/users/:id', async (c) => {
   const { id } = c.req.param()
   if (id === c.get('userId')) return c.json({ error: 'Cannot delete yourself' }, 400)
+
+  // Collected before the cascade, while the rows that name them still exist.
+  const sessionIds = (await db.select({ id: chatSessions.id }).from(chatSessions)
+    .where(eq(chatSessions.userId, id)).all()).map(r => r.id)
+  const fileIds = (await db.select({ id: uploadedFiles.id }).from(uploadedFiles)
+    .where(eq(uploadedFiles.userId, id)).all()).map(r => r.id)
+  // Space and user memories share memory_embeddings, keyed by memory id, so one list covers both.
+  const memoryIds = [
+    ...(await db.select({ id: spaceMemories.id }).from(spaceMemories)
+      .innerJoin(spaces, eq(spaceMemories.spaceId, spaces.id))
+      .where(eq(spaces.userId, id)).all()).map(r => r.id),
+    ...(await db.select({ id: userMemories.id }).from(userMemories)
+      .where(eq(userMemories.userId, id)).all()).map(r => r.id),
+  ]
+  const contents = sessionIds.length
+    ? (await db.select({ content: messages.content }).from(messages)
+        .where(inArray(messages.sessionId, sessionIds)).all()).map(r => r.content)
+    : []
+
+  for (const sessionId of sessionIds) deindexSession(sessionId)
+  for (const fileId of fileIds) deleteFileChunks(fileId)
+  deleteMemoryEmbeddings(memoryIds)
+  await deleteSessionImages(contents)
+
   await db.delete(users).where(eq(users.id, id))
+  console.log(`  [admin] deleted user ${id} by ${c.get('userId')} — ${sessionIds.length} chat(s), ${fileIds.length} file(s), ${memoryIds.length} memor${memoryIds.length === 1 ? 'y' : 'ies'}`)
   return c.json({ ok: true })
 })
 

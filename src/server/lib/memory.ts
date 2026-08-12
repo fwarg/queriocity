@@ -766,14 +766,23 @@ Respond with ONLY a JSON array, one object per new fact, in order:
       Array<{ i: number; op: string; target?: number }>
 
     const writes = [...fallback]
+    // One existing memory can be replaced at most once. Two facts both claiming UPDATE on the same
+    // target ran two sequential updates against the same row, so the first was overwritten by the
+    // second and never inserted anywhere — a lost fact, which this module treats as the one
+    // outcome worse than a duplicate. The later claim falls back to ADD.
+    const claimed = new Set<string>()
     for (const d of parsed) {
       if (typeof d.i !== 'number' || !writes[d.i]) continue
       const target = typeof d.target === 'number' ? candidates[d.target] : undefined
       // The user's own words are never overwritten or discarded by the model; downgrade to ADD
       // so the new fact is still kept and the two can be reconciled by a human or the dream.
       const locked = target && (target.source === 'manual' || target.alwaysKeep)
-      if (d.op === 'UPDATE' && target && !locked) writes[d.i] = { op: 'UPDATE', fact: writes[d.i].fact, targetId: target.id }
-      else if (d.op === 'NOOP' && !locked) writes[d.i] = { op: 'NOOP', fact: writes[d.i].fact }
+      if (d.op === 'UPDATE' && target && !locked && !claimed.has(target.id)) {
+        claimed.add(target.id)
+        writes[d.i] = { op: 'UPDATE', fact: writes[d.i].fact, targetId: target.id }
+      } else if (d.op === 'NOOP' && !locked) {
+        writes[d.i] = { op: 'NOOP', fact: writes[d.i].fact }
+      }
     }
     return writes
   } catch (e) {
@@ -1078,19 +1087,26 @@ export async function runDream() {
   const allSpaces = await db.select({ id: spaces.id }).from(spaces)
   console.log(`  [dream] checking ${allSpaces.length} spaces (threshold=${threshold}, target=${target}, deep=${deep})`)
   for (const sp of allSpaces) {
-    if (deep) {
-      const key = `deep_dream_at_${sp.id}`
-      const lastRunAt = new Date(parseInt(await getAppSetting(key, '0')))
-      const hasNew = await db.select({ id: chatSessions.id })
-        .from(chatSessions)
-        .where(and(eq(chatSessions.spaceId, sp.id), gt(chatSessions.createdAt, lastRunAt)))
-        .limit(1)
-      if (hasNew.length > 0) {
-        const ran = await deepDreamSpace(sp.id, target)
-        if (ran) await setAppSetting(key, String(Date.now()))
+    // Per space, as suggestUserMemories already does for each session. Compaction feeds whole
+    // conversations to the model, so one space large enough to overflow the context used to throw
+    // past this loop and silently skip every space after it — for that whole night.
+    try {
+      if (deep) {
+        const key = `deep_dream_at_${sp.id}`
+        const lastRunAt = new Date(parseInt(await getAppSetting(key, '0')))
+        const hasNew = await db.select({ id: chatSessions.id })
+          .from(chatSessions)
+          .where(and(eq(chatSessions.spaceId, sp.id), gt(chatSessions.createdAt, lastRunAt)))
+          .limit(1)
+        if (hasNew.length > 0) {
+          const ran = await deepDreamSpace(sp.id, target)
+          if (ran) await setAppSetting(key, String(Date.now()))
+        }
+      } else {
+        await compactSpaceMemories(sp.id, target, threshold)
       }
-    } else {
-      await compactSpaceMemories(sp.id, target, threshold)
+    } catch (e) {
+      console.error(`  [dream] space ${sp.id} failed, continuing:`, e)
     }
   }
   console.log(`  [dream] done`)
