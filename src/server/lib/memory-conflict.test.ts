@@ -8,20 +8,18 @@
 import './test-support/test-env.ts'
 
 import { describe, test, expect, beforeAll, afterAll, mock } from 'bun:test'
-import { createOpenAI } from '@ai-sdk/openai'
 import { startFakeOpenAI } from './test-support/fake-openai.ts'
+import { envOverride } from './test-support/env-override.ts'
 
 const { db, users, spaces, spaceMemories, EMBED_DIMS } = await import('./db.ts')
 const { eq } = await import('drizzle-orm')
 
-// Copied, not aliased, so afterAll can put them back. `mock.module` is process-wide and outlives
-// this file, so a mock left in place is inherited by every test file that runs later: the writer
-// tests were streaming against this file's stopped fake server, which surfaced as a timeout with
-// no hint of where the model had come from. The spread is what makes the restore work — mocking
-// mutates the live namespace object in place, so holding the namespace itself would hand back
-// the mock and restore nothing.
+// Copied, not aliased, so afterAll can put it back. `mock.module` is process-wide and outlives
+// this file, so a mock left in place is inherited by every test file that runs later. The spread
+// is what makes the restore work — mocking mutates the live namespace object in place, so holding
+// the namespace itself would hand back the mock and restore nothing. Only embeddings.ts needs
+// this; the model comes from the environment below, which has no such trap.
 const realEmbeddings = { ...(await import('./embeddings.ts')) }
-const realLlm = { ...(await import('./llm.ts')) }
 
 mock.module('./embeddings.ts', () => ({
   // Constant vector: every memory is equally "near", so candidate selection always returns the
@@ -34,17 +32,13 @@ mock.module('./embeddings.ts', () => ({
  *  The script step reads it through a getter so one server serves every case. */
 let plannerReply = '[]'
 let server: ReturnType<typeof startFakeOpenAI>
+let restoreEnv: () => void
 
 beforeAll(async () => {
   server = startFakeOpenAI([{ get text() { return [plannerReply] } } as never])
-  const model = createOpenAI({ baseURL: server.baseURL, apiKey: 'test' }).chat('fake-small')
-  mock.module('./llm.ts', () => ({
-    getSmallModel: () => model,
-    getChatModel: () => model,
-    getThinkingModelOrFallback: () => model,
-    getEmbeddingModel: () => model,
-    SMALL_MODEL_INPUT_CHARS: 7000,
-  }))
+  // CHAT_* rather than SMALL_*/THINKING_*: those fall back to it, so one override covers every
+  // model the extractor might reach for. The fake server ignores the model name.
+  restoreEnv = envOverride({ CHAT_BASE_URL: server.baseURL, CHAT_API_KEY: 'test', CHAT_MODEL: 'fake-small' })
 
   const now = new Date()
   await db.insert(users).values({
@@ -56,8 +50,8 @@ beforeAll(async () => {
 
 afterAll(() => {
   server?.stop()
+  restoreEnv?.()
   mock.module('./embeddings.ts', () => realEmbeddings)
-  mock.module('./llm.ts', () => realLlm)
 })
 
 const { saveMemories, saveMemory } = await import('./memory.ts')
