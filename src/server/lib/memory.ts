@@ -2,7 +2,7 @@ import { generateText } from 'ai'
 import { randomUUID } from 'crypto'
 import { db, spaceMemories, userMemories, chatSessions, messages, spaces, monitorRuns, sqlite, getAppSetting, setAppSetting } from './db.ts'
 import { eq, desc, asc, ne, and, or, gt, isNull } from 'drizzle-orm'
-import { getSmallModel, getChatModel, getThinkingModelOrFallback, SMALL_MODEL_INPUT_CHARS } from './llm.ts'
+import { getSmallModel, getChatModel, getThinkingModelOrFallback, SMALL_MODEL_INPUT_CHARS, estimateTokens, tokensToChars } from './llm.ts'
 import { embedText, embedTexts } from './embeddings.ts'
 import { searchSpaceFiles, searchUploads, spaceHasTaggedFiles, type ChunkResult } from './files/uploads-search.ts'
 import { rerank, rerankEnabled } from './reranker.ts'
@@ -42,7 +42,7 @@ export async function buildChatFileBlock(
   const fileLines: string[] = []
 
   for (const chunk of fileRows) {
-    const cost = Math.ceil(chunk.content.length / 4)
+    const cost = estimateTokens(chunk.content)
     if (cost > ragRemaining) continue
     ragRemaining -= cost
     if (!citedFiles.has(chunk.fileId)) {
@@ -62,7 +62,7 @@ export async function buildChatFileBlock(
   let block = '## Relevant document excerpts\n' + fileLines.map(l => `> ${l}`).join('\n\n')
   block += '\n\nWhen your answer draws on document excerpts above, cite them inline using their label (e.g. [F1]). Do not add other citation formats.'
 
-  console.log(`  [memory] chat file RAG: ${fileLines.length} chunks, ${fileSources.length} files (~${Math.ceil(block.length / 4)} tokens)`)
+  console.log(`  [memory] chat file RAG: ${fileLines.length} chunks, ${fileSources.length} files (~${estimateTokens(block)} tokens)`)
   return { block, fileSources }
 }
 
@@ -232,7 +232,7 @@ export function selectMemories<T extends MemoryCandidate>(
   ranked: T[],
   tokenBudget: number,
 ): { chosen: T[]; droppedGuaranteed: number } {
-  const cost = (m: T) => Math.ceil(`- ${m.content}`.length / 4)
+  const cost = (m: T) => estimateTokens(`- ${m.content}`)
   let remaining = tokenBudget
   const chosen: T[] = []
   let droppedGuaranteed = 0
@@ -270,7 +270,7 @@ export async function buildMemoryBlock(
   if (!allMemories.length) return { block: '', fileSources: [] }
 
   const header = '## Space Memory\nThe following facts were accumulated from previous conversations in this space. Use them to inform your responses.'
-  const headerTokens = Math.ceil(header.length / 4)
+  const headerTokens = estimateTokens(header)
 
   // Embed the query once and share it: memory ranking, chat RAG and file RAG all need it.
   let embedding: number[] | null = null
@@ -364,7 +364,7 @@ export async function buildMemoryBlock(
         const fileLines: string[] = []
         for (const idx of indices) {
           const item = combined[idx]
-          const cost = Math.ceil(item.content.length / 4)
+          const cost = estimateTokens(item.content)
           if (cost > ragRemaining) continue
           ragRemaining -= cost
           if (item.source === 'chat') {
@@ -386,7 +386,7 @@ export async function buildMemoryBlock(
 
         const chatLines: string[] = []
         for (const row of chatRows) {
-          const cost = Math.ceil(row.content.length / 4)
+          const cost = estimateTokens(row.content)
           if (cost > chatRemaining) break
           chatRemaining -= cost
           chatLines.push(row.content)
@@ -398,7 +398,7 @@ export async function buildMemoryBlock(
         if (fileRows.length && fileRemaining > 0) {
           const fileLines: string[] = []
           for (const chunk of fileRows) {
-            const cost = Math.ceil(chunk.content.length / 4)
+            const cost = estimateTokens(chunk.content)
             if (cost > fileRemaining) break
             fileRemaining -= cost
             fileLines.push(labelFileChunk(chunk.fileId, chunk.filename, chunk.content))
@@ -416,7 +416,7 @@ export async function buildMemoryBlock(
   if (fileSources.length > 0) {
     block += '\n\nWhen your answer draws on document excerpts above, cite them inline using their label (e.g. [F1]). Do not add other citation formats.'
   }
-  console.log(`  [memory] injecting ${lines.length}/${allMemories.length} memories (${ranked === rest ? 'by recency' : 'by relevance'}) + ${ragInjected} RAG + ${fileSources.length} file sources (~${Math.ceil(block.length / 4)} tokens) for space ${spaceId.slice(0, 8)}`)
+  console.log(`  [memory] injecting ${lines.length}/${allMemories.length} memories (${ranked === rest ? 'by recency' : 'by relevance'}) + ${ragInjected} RAG + ${fileSources.length} file sources (~${estimateTokens(block)} tokens) for space ${spaceId.slice(0, 8)}`)
   return { block, fileSources }
 }
 
@@ -502,7 +502,7 @@ export async function buildUserMemoryBlock(
     }
   }
 
-  const { chosen } = selectMemories(guaranteed, ranked, tokenBudget - Math.ceil(header.length / 4))
+  const { chosen } = selectMemories(guaranteed, ranked, tokenBudget - estimateTokens(header))
   if (!chosen.length) return ''
   console.log(`  [memory] injecting ${chosen.length}/${all.length} user memories`)
   return header + '\n' + chosen.map(m => `- ${m.content}`).join('\n')
@@ -766,14 +766,23 @@ Respond with ONLY a JSON array, one object per new fact, in order:
       Array<{ i: number; op: string; target?: number }>
 
     const writes = [...fallback]
+    // One existing memory can be replaced at most once. Two facts both claiming UPDATE on the same
+    // target ran two sequential updates against the same row, so the first was overwritten by the
+    // second and never inserted anywhere — a lost fact, which this module treats as the one
+    // outcome worse than a duplicate. The later claim falls back to ADD.
+    const claimed = new Set<string>()
     for (const d of parsed) {
       if (typeof d.i !== 'number' || !writes[d.i]) continue
       const target = typeof d.target === 'number' ? candidates[d.target] : undefined
       // The user's own words are never overwritten or discarded by the model; downgrade to ADD
       // so the new fact is still kept and the two can be reconciled by a human or the dream.
       const locked = target && (target.source === 'manual' || target.alwaysKeep)
-      if (d.op === 'UPDATE' && target && !locked) writes[d.i] = { op: 'UPDATE', fact: writes[d.i].fact, targetId: target.id }
-      else if (d.op === 'NOOP' && !locked) writes[d.i] = { op: 'NOOP', fact: writes[d.i].fact }
+      if (d.op === 'UPDATE' && target && !locked && !claimed.has(target.id)) {
+        claimed.add(target.id)
+        writes[d.i] = { op: 'UPDATE', fact: writes[d.i].fact, targetId: target.id }
+      } else if (d.op === 'NOOP' && !locked) {
+        writes[d.i] = { op: 'NOOP', fact: writes[d.i].fact }
+      }
     }
     return writes
   } catch (e) {
@@ -914,7 +923,7 @@ export async function compactSpaceMemories(
   const memories = allMemories.filter(m => !m.alwaysKeep)
   if (memories.length < 2) return false
 
-  const totalTokens = allMemories.reduce((n, m) => n + Math.ceil(m.content.length / 4), 0)
+  const totalTokens = allMemories.reduce((n, m) => n + estimateTokens(m.content), 0)
   if (totalTokens <= triggerTokens) return false
 
   const t0 = performance.now()
@@ -927,7 +936,7 @@ export async function compactSpaceMemories(
 2. Remove facts that are subsets of others
 3. Preserve all unique information
 Output ONLY the final list, one fact per line, prefixed with "- ". No other text. No preamble.
-Target: approximately ${targetTokens * 4} characters total.`,
+Target: approximately ${tokensToChars(targetTokens)} characters total.`,
     prompt: input,
     maxOutputTokens: targetTokens,
   })
@@ -1011,7 +1020,7 @@ Output one fact per line prefixed with "- ". Be specific — capture the actual 
 
   // Stage 2: synthesis — resolve contradictions, merge, infer patterns
   const inputLines = [...extractedLines, ...manualLines].join('\n')
-  const targetChars = targetTokens * 4
+  const targetChars = tokensToChars(targetTokens)
 
   const synthesis = await generateText({
     model: getThinkingModelOrFallback(),
@@ -1061,7 +1070,7 @@ Be ruthless: if in doubt, cut. Total output MUST NOT exceed ${targetChars} chara
   console.log(`  [deep-dream] ${existing.length} → ${newFacts.length + manualMemories.length} memories in ${Math.round(performance.now() - t0)}ms for space ${spaceId.slice(0, 8)}`)
 
   // Stage 3: compression guard — if still over budget run a final compact
-  const newTotal = newFacts.reduce((n, f) => n + Math.ceil(f.length / 4), 0)
+  const newTotal = newFacts.reduce((n, f) => n + estimateTokens(f), 0)
   if (newTotal > targetTokens) {
     await compactSpaceMemories(spaceId, targetTokens)
   }
@@ -1078,19 +1087,26 @@ export async function runDream() {
   const allSpaces = await db.select({ id: spaces.id }).from(spaces)
   console.log(`  [dream] checking ${allSpaces.length} spaces (threshold=${threshold}, target=${target}, deep=${deep})`)
   for (const sp of allSpaces) {
-    if (deep) {
-      const key = `deep_dream_at_${sp.id}`
-      const lastRunAt = new Date(parseInt(await getAppSetting(key, '0')))
-      const hasNew = await db.select({ id: chatSessions.id })
-        .from(chatSessions)
-        .where(and(eq(chatSessions.spaceId, sp.id), gt(chatSessions.createdAt, lastRunAt)))
-        .limit(1)
-      if (hasNew.length > 0) {
-        const ran = await deepDreamSpace(sp.id, target)
-        if (ran) await setAppSetting(key, String(Date.now()))
+    // Per space, as suggestUserMemories already does for each session. Compaction feeds whole
+    // conversations to the model, so one space large enough to overflow the context used to throw
+    // past this loop and silently skip every space after it — for that whole night.
+    try {
+      if (deep) {
+        const key = `deep_dream_at_${sp.id}`
+        const lastRunAt = new Date(parseInt(await getAppSetting(key, '0')))
+        const hasNew = await db.select({ id: chatSessions.id })
+          .from(chatSessions)
+          .where(and(eq(chatSessions.spaceId, sp.id), gt(chatSessions.createdAt, lastRunAt)))
+          .limit(1)
+        if (hasNew.length > 0) {
+          const ran = await deepDreamSpace(sp.id, target)
+          if (ran) await setAppSetting(key, String(Date.now()))
+        }
+      } else {
+        await compactSpaceMemories(sp.id, target, threshold)
       }
-    } else {
-      await compactSpaceMemories(sp.id, target, threshold)
+    } catch (e) {
+      console.error(`  [dream] space ${sp.id} failed, continuing:`, e)
     }
   }
   console.log(`  [dream] done`)

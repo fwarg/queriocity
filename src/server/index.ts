@@ -27,14 +27,14 @@ import { imagesRouter } from './routes/images.ts'
 import { templatesRouter } from './routes/templates.ts'
 import { monitorsRouter } from './routes/monitors.ts'
 import { feedsRouter } from './routes/feeds.ts'
-import { sqlite, getAppSetting, setAppSetting } from './lib/db.ts'
+import { db, messages, sqlite, getAppSetting, setAppSetting } from './lib/db.ts'
 import { runDream } from './lib/memory.ts'
 import { runDueMonitors } from './lib/monitor-runner.ts'
 import { validateConfig, checkEmbeddingDimensions, checkAttachmentBudget } from './lib/config-check.ts'
 import { purgeOrphanVectors } from './lib/vector-cleanup.ts'
 import { EMBED_BATCH_CHARS, EMBED_MAX_INPUT_CHARS } from './lib/llm.ts'
 
-import { IMAGE_API, IMAGE_STEPS, IMAGE_STORAGE_DIR } from './lib/image-store.ts'
+import { IMAGE_API, IMAGE_STEPS, imageStorageDir, imageUrlsIn, purgeOrphanImages } from './lib/image-store.ts'
 
 const app = new Hono<AppEnv>()
 
@@ -113,7 +113,7 @@ app.get('/images/:userId/:filename', authMiddleware, async (c) => {
   if (!/^[\w-]+\.png$/.test(filename)) return c.notFound()
   // Non-admins can only access their own images; return 404 to avoid leaking existence
   if (c.get('userRole') !== 'admin' && requestingUserId !== ownerUserId) return c.notFound()
-  const dir = IMAGE_STORAGE_DIR
+  const dir = imageStorageDir()
   const file = Bun.file(`${dir}/${ownerUserId}/${filename}`)
   if (!await file.exists()) return c.notFound()
   const disposition = c.req.query('dl') ? `attachment; filename="${filename}"` : 'inline'
@@ -139,7 +139,7 @@ console.log(`  thinking: ${process.env.THINKING_PROVIDER ?? process.env.CHAT_PRO
 console.log(`  embed:  ${process.env.EMBED_PROVIDER ?? process.env.CHAT_PROVIDER ?? _defaultProvider}  ${process.env.EMBED_BASE_URL ?? process.env.CHAT_BASE_URL ?? _defaultBase}  model=${process.env.EMBED_MODEL ?? 'nomic-embed-text'}  dims=${process.env.EMBED_DIMENSIONS ?? '1536'}  ctx=${process.env.EMBED_CONTEXT_TOKENS ?? '1024'}tok → ${EMBED_BATCH_CHARS}c/request, ${EMBED_MAX_INPUT_CHARS}c/vector`)
 console.log(`  searxng: ${process.env.SEARXNG_URL ?? 'http://localhost:4000'}`)
 if (process.env.IMAGE_BASE_URL) {
-  const imageDir = IMAGE_STORAGE_DIR
+  const imageDir = imageStorageDir()
   console.log(`  image:  ${process.env.IMAGE_BASE_URL}  api=${IMAGE_API}  model=${process.env.IMAGE_MODEL ?? 'default'}  steps=${IMAGE_STEPS.draft}/${IMAGE_STEPS.balanced}/${IMAGE_STEPS.high}  storage=${imageDir}`)
 }
 
@@ -180,6 +180,18 @@ validateConfig()
 // here because the deletion paths that used to leak them are fixed, so existing databases carry
 // debris that nothing else would ever remove.
 purgeOrphanVectors()
+
+// The filesystem counterpart. A generated PNG is written before the message that references it is
+// saved, so a regenerate (which deletes the previous answer), an aborted turn or an ephemeral run
+// each strand one with nothing left pointing at it — and unlike the vectors, nothing scans them,
+// so they simply accumulate. Referenced URLs come from the messages themselves rather than a
+// separate index, which is the only source that cannot drift.
+sweepOrphanImages().catch(e => console.error('[image] orphan sweep failed:', e))
+
+async function sweepOrphanImages(): Promise<void> {
+  const rows = await db.select({ content: messages.content }).from(messages)
+  await purgeOrphanImages(imageUrlsIn(rows.map(r => r.content)))
+}
 
 preflight().catch(() => {})
 

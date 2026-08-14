@@ -72,6 +72,15 @@ export async function drainResearcherStream<TOOLS extends ToolSet>(
         const queries: string[] = args.queries ?? (args.query ? [args.query] : [])
         await emitThinking(`🔍 Searching: ${queries.map((q: string) => `"${q}"`).join(', ')}\n`)
       }
+    } else if (part.type === 'tool-call' && part.toolName === 'fetch_url') {
+      // Emitted on the call, not the result: a page fetch is one of the longest silences in a run
+      // (network, then Playwright, then up to six summarizer round trips), and without this the log
+      // sits on the preceding "Thinking (step N)" throughout. What the content had to be reduced to
+      // follows separately, from onUrlRead, and only when there was something to say.
+      const url = (part.input as { url?: string } | undefined)?.url
+      const host = url ? (URL.canParse(url) ? new URL(url).hostname : url) : ''
+      await stream.writeSSE({ data: stepEvent({ kind: 'read', hosts: [host] }) })
+      if (showThinking) await emitThinking(`\u{1F310} Reading: ${host}\n`)
     } else if (part.type === 'tool-call' && part.toolName === 'uploads_search') {
       console.log(`  [uploads_search] query: ${JSON.stringify(toolArgs(part).query ?? '')}`)
     } else if (part.type === 'tool-result' && part.toolName === 'uploads_search') {

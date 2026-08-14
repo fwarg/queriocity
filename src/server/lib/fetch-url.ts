@@ -2,7 +2,7 @@ import { chromium, type Browser, type BrowserContext } from 'playwright'
 import { fetch as undiciFetch, ProxyAgent } from 'undici'
 import { YoutubeTranscript } from 'youtube-transcript'
 import { generateText } from 'ai'
-import { getSmallModel, SMALL_MODEL_INPUT_CHARS } from './llm.ts'
+import { getSmallModel, SMALL_MODEL_INPUT_CHARS, CHARS_PER_TOKEN } from './llm.ts'
 import { assertFetchableUrl, BlockedUrlError } from './url-guard.ts'
 
 const MAX_CHARS = parseInt(process.env.FETCH_MAX_CHARS ?? '100000')
@@ -279,37 +279,108 @@ export async function fetchUrlAllPages(url: string, maxPages = DEFAULT_MAX_PAGES
 
 // Max chunks to process serially (covers up to MAX_SUMMARIZE_CHUNKS × SMALL_MODEL_INPUT_CHARS chars)
 const MAX_SUMMARIZE_CHUNKS = parseInt(process.env.FETCH_SUMMARIZE_MAX_CHUNKS ?? '6')
-// Hard cap per URL regardless of budget — prevents one URL from consuming the whole context
-const MAX_URL_CONTEXT_CHARS = parseInt(process.env.FETCH_MAX_URL_CONTEXT_CHARS ?? '40000')
+/** Hard cap per URL regardless of budget — prevents one URL consuming the whole context.
+ *
+ *  The env var is the default only: Admin → Settings overrides it, and callers pass the resolved
+ *  value in. Kept exported so the admin route can show what an unset setting resolves to. */
+export const DEFAULT_MAX_URL_CONTEXT_CHARS = parseInt(process.env.FETCH_MAX_URL_CONTEXT_CHARS ?? '40000')
 // Floor per URL when a budget is split across many URLs — below this, summarizing/truncating isn't worth it
 export const MIN_URL_CONTEXT_CHARS = 8000
+/** The raw scrape ceiling, exported so the admin route can refuse a per-URL cap above it. */
+export const SCRAPE_MAX_CHARS = MAX_CHARS
 
-if (MAX_CHARS < MAX_URL_CONTEXT_CHARS) {
-  console.warn(`[fetch-url] misconfiguration: FETCH_MAX_CHARS (${MAX_CHARS}) is less than FETCH_MAX_URL_CONTEXT_CHARS (${MAX_URL_CONTEXT_CHARS}). The raw scrape ceiling will clip content before the context cap or summarizer ever run, effectively disabling both for single-page fetches. Set FETCH_MAX_CHARS >= FETCH_MAX_URL_CONTEXT_CHARS.`)
+if (MAX_CHARS < DEFAULT_MAX_URL_CONTEXT_CHARS) {
+  console.warn(`[fetch-url] misconfiguration: FETCH_MAX_CHARS (${MAX_CHARS}) is less than FETCH_MAX_URL_CONTEXT_CHARS (${DEFAULT_MAX_URL_CONTEXT_CHARS}). The raw scrape ceiling will clip content before the context cap or summarizer ever run, effectively disabling both for single-page fetches. Set FETCH_MAX_CHARS >= FETCH_MAX_URL_CONTEXT_CHARS.`)
 }
 
-export async function summarizeContent(url: string, content: string, targetChars: number): Promise<string> {
+/** Least a summary must shrink its input to be worth generating.
+ *
+ *  Below roughly this, the model is paraphrasing rather than summarizing: it costs a round trip per
+ *  chunk, it loses facts the way any rewrite does, and it saves little. Truncation is cheaper and
+ *  keeps the head verbatim, so that is what the caller falls back to. */
+const MIN_SUMMARY_RATIO = 3
+
+/** Whether summarizing can beat truncation by enough to justify the small-model calls. */
+export const worthSummarizing = (contentChars: number, targetChars: number): boolean =>
+  contentChars >= targetChars * MIN_SUMMARY_RATIO
+
+/** Output allowance for one chunk: small enough to fit the caller's cap once every chunk is
+ *  summarized, and small enough to be a real summary of the chunk it came from.
+ *
+ *  Both halves are needed. The cap alone says nothing about how much input this chunk holds — for
+ *  content just over the cap it permits a "summary" the size of its own source. The ratio alone
+ *  says nothing about the context budget. */
+const chunkSummaryChars = (chunkChars: number, targetChars: number, numChunks: number): number =>
+  Math.min(Math.floor(targetChars / numChunks), Math.floor(chunkChars / MIN_SUMMARY_RATIO))
+
+/** What had to be done to a page to fit it in the model's context, for the activity log.
+ *
+ *  Reported rather than only logged server-side: `unread` in particular changes how an answer
+ *  should be read. "The page does not mention it" means something different when a third of the
+ *  page was never looked at, and the user is the only one who can judge that. */
+export interface UrlOutcome {
+  action: 'summarized' | 'truncated'
+  from: number
+  to: number
+  /** Chars never read at all, because the summarizer's chunk cap could not cover them. Zero for
+   *  truncation, where the cut is already implied by `from` → `to`. */
+  unread: number
+}
+
+export interface ProcessedUrl {
+  url: string
+  content: string
+  /** Absent when the page fitted as-is. */
+  outcome?: UrlOutcome
+}
+
+const kchars = (n: number): string => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n))
+
+/** One-line prose for the activity log, e.g. `summarized 90k → 12k, 21k unread`. */
+export function describeOutcome(o: UrlOutcome): string {
+  const unread = o.unread > 0 ? `, ${kchars(o.unread)} unread` : ''
+  return `${o.action} ${kchars(o.from)} → ${kchars(o.to)}${unread}`
+}
+
+export async function summarizeContent(url: string, content: string, targetChars: number): Promise<{ content: string; unread: number }> {
   const hostname = new URL(url).hostname
   const start = performance.now()
   const numChunks = Math.min(MAX_SUMMARIZE_CHUNKS, Math.ceil(content.length / SMALL_MODEL_INPUT_CHARS))
-  const perChunkWords = Math.floor(targetChars / numChunks / 5)
+  // MAX_SUMMARIZE_CHUNKS bounds cost, so a long enough page cannot be covered. Saying so in the
+  // returned text is the point: a summary that stops two thirds of the way through is indistinguish-
+  // able from a page that simply ended there, and the model will answer "the page does not mention
+  // it" about a section nobody read.
+  const covered = Math.min(content.length, numChunks * SMALL_MODEL_INPUT_CHARS)
+  const unreadNote = covered < content.length
+    ? `\n[Only the first ${covered} of ${content.length} characters of this page were read; the rest was not summarized and may contain relevant information.]`
+    : ''
   const summaries: string[] = []
   try {
     for (let i = 0; i < numChunks; i++) {
       const chunk = content.slice(i * SMALL_MODEL_INPUT_CHARS, (i + 1) * SMALL_MODEL_INPUT_CHARS)
+      const perChunkChars = chunkSummaryChars(chunk.length, targetChars, numChunks)
       const { text } = await generateText({
         model: getSmallModel(),
-        system: `Summarize this section of a web page concisely, preserving all technically important facts. Reply in under ${perChunkWords} words. Output only the summary, no preamble.`,
+        system: `Summarize this section of a web page concisely, preserving all technically important facts. Output only the summary, no preamble. Target approximately ${perChunkChars} characters.`,
         prompt: chunk,
+        // The target above is an instruction a model may ignore; this is the bound that holds.
+        maxOutputTokens: Math.ceil(perChunkChars / CHARS_PER_TOKEN),
       })
       summaries.push(text)
     }
     const combined = summaries.join('\n\n')
-    console.log(`  [fetch-url] summarised ${hostname}: ${content.length} → ${combined.length} chars (${numChunks} chunks) in ${(performance.now() - start).toFixed(0)}ms`)
-    return combined
+    // Backstop: maxOutputTokens bounds each chunk, but the token→char ratio is an estimate, so the
+    // total can still land over the cap this whole path exists to enforce. The note is subtracted
+    // from the room rather than appended after it, so the warning survives its own clamp.
+    const room = targetChars - unreadNote.length
+    const capped = combined.length > room
+      ? combined.slice(0, room) + '\n[summary truncated to fit context]'
+      : combined
+    console.log(`  [fetch-url] summarised ${hostname}: ${covered}/${content.length} chars read → ${capped.length + unreadNote.length} chars (${numChunks} chunks) in ${(performance.now() - start).toFixed(0)}ms`)
+    return { content: capped + unreadNote, unread: content.length - covered }
   } catch (err) {
     console.warn(`  [fetch-url] summarise failed for ${hostname}: ${err}`)
-    return content.slice(0, targetChars) + '\n[content truncated to fit context]'
+    return { content: content.slice(0, targetChars) + '\n[content truncated to fit context]', unread: 0 }
   }
 }
 
@@ -317,17 +388,22 @@ export async function processUrlsForContext(
   urls: Array<{ url: string; content: string }>,
   budgetChars: number,
   summarize: boolean,
-): Promise<Array<{ url: string; content: string }>> {
+  maxUrlChars = DEFAULT_MAX_URL_CONTEXT_CHARS,
+): Promise<ProcessedUrl[]> {
   if (!urls.length) return urls
-  const perUrlChars = Math.min(MAX_URL_CONTEXT_CHARS, Math.max(MIN_URL_CONTEXT_CHARS, Math.floor(budgetChars / urls.length)))
+  const perUrlChars = Math.min(maxUrlChars, Math.max(MIN_URL_CONTEXT_CHARS, Math.floor(budgetChars / urls.length)))
   return Promise.all(urls.map(async ({ url, content }) => {
     if (content.length <= perUrlChars) return { url, content }
     const hostname = new URL(url).hostname
-    if (summarize) {
-      return { url, content: await summarizeContent(url, content, perUrlChars) }
+    if (summarize && worthSummarizing(content.length, perUrlChars)) {
+      const { content: summary, unread } = await summarizeContent(url, content, perUrlChars)
+      return { url, content: summary, outcome: { action: 'summarized' as const, from: content.length, to: summary.length, unread } }
     }
     const truncated = content.slice(0, perUrlChars) + '\n[content truncated to fit context]'
-    console.log(`  [fetch-url] content for ${hostname}: ${content.length} → ${truncated.length} chars (truncated)`)
-    return { url, content: truncated }
+    // The reason is logged, not just the outcome: with summarizing enabled, a run that truncates
+    // anyway otherwise looks like the toggle is broken.
+    const why = summarize ? 'truncated — too close to the cap for summarizing to be worth it' : 'truncated'
+    console.log(`  [fetch-url] content for ${hostname}: ${content.length} → ${truncated.length} chars (${why})`)
+    return { url, content: truncated, outcome: { action: 'truncated' as const, from: content.length, to: truncated.length, unread: 0 } }
   }))
 }

@@ -85,3 +85,34 @@ describe('GET /history?spaceId', () => {
     expect((await res.json()).items).toHaveLength(0)
   })
 })
+
+/** /history/search is the one history endpoint built from raw SQL rather than drizzle, so it is
+ *  the one that can return the database's column names instead of the API's. It did: `space_id`
+ *  reached a client reading `spaceId`, and every searched chat looked like it belonged to no
+ *  space — no padlock on a locked chat, unlocked spaces offered as move targets for it, and the
+ *  next message posted without a spaceId, silently dropping space memory and RAG. */
+describe('GET /history/search', () => {
+  test('returns the space association under the name the client reads', async () => {
+    const res = await app.request(`/history/search?q=old chat 1`, { headers: { cookie } })
+    expect(res.status).toBe(200)
+    const items = await res.json() as Array<Record<string, unknown>>
+    expect(items.length).toBeGreaterThan(0)
+
+    const hit = items.find(i => i.id === 'old-1')
+    expect(hit).toBeDefined()
+    expect(hit!.spaceId).toBe(OLD_SPACE)
+    // The shape the type promises, not the table's.
+    expect(hit).not.toHaveProperty('space_id')
+  })
+
+  test('still orders by recency after the columns were aliased', async () => {
+    // The ORDER BY had to be renamed along with the columns. SQLite turned out to accept the old
+    // `cs.updated_at` against the aliased output too, so this pins the ordering rather than the
+    // parse — recency is what makes the result list usable.
+    const res = await app.request(`/history/search?q=old chat`, { headers: { cookie } })
+    expect(res.status).toBe(200)
+    const items = await res.json() as Array<{ updatedAt: number }>
+    const times = items.map(i => i.updatedAt)
+    expect(times).toEqual([...times].sort((a, b) => b - a))
+  })
+})

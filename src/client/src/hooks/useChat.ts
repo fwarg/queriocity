@@ -127,6 +127,10 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
             closeLastStep()
             setSteps([...log])
           }
+        } else if (chunk.type === 'session') {
+          // The server's first event. Stop, resume and egress approvals all address the run by
+          // session id, so a new chat has none to give them until this arrives.
+          liveSessionRef.current = chunk.sessionId as string
         } else if (chunk.type === 'image') {
           images.push({ url: chunk.url as string, alt: chunk.alt as string })
           setStatus('')
@@ -202,7 +206,11 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
       setSteps([...log])
       if (!accumulated && !wasAborted) setStatus('No response received — search may be temporarily unavailable. Try again.')
       else if (wasAborted && !accumulated && images.length === 0) {
-        setMessages(prev => prev.slice(0, -1))
+        // Withdraw the turn only if this run added it. `submit` appends the user's message and
+        // then streams, so a stop before any text leaves a question with no answer — worth
+        // removing. `regenerate` re-sends a question that was already in the transcript, and
+        // popping there deleted the user's own question along with the answer they cancelled.
+        if (!regenerating) setMessages(prev => prev.slice(0, -1))
         setStatus('')
       }
       setBusy(false)

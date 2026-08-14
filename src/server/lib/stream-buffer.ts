@@ -79,7 +79,9 @@ export function appendEvent(run: LiveRun, data: string): number {
   return run.events.length
 }
 
-export function finishRun(run: LiveRun): void {
+/** `ttlMs` is a parameter rather than read straight from the constant so the eviction path can be
+ *  tested without a two-minute wait, exactly as `awaitApproval` takes its timeout. */
+export function finishRun(run: LiveRun, ttlMs = FINISHED_TTL_MS): void {
   run.done = true
   run.updatedAt = Date.now()
   if (run.graceTimer) clearTimeout(run.graceTimer)
@@ -87,7 +89,12 @@ export function finishRun(run: LiveRun): void {
   // resolve it — an unresolved one leaves the generation awaiting a promise forever.
   for (const id of [...run.approvals.keys()]) settleApproval(run, id, false)
   wake(run)
-  run.cleanupTimer = setTimeout(() => runs.delete(run.sessionId), FINISHED_TTL_MS)
+  // Delete this run, not whatever holds the id by then: a next turn on the same session replaces
+  // the map entry well inside the TTL, and an unconditional delete would evict a live generation —
+  // after which resume 404s, stop reports nothing to stop, and approvals cannot be answered.
+  run.cleanupTimer = setTimeout(() => {
+    if (runs.get(run.sessionId) === run) runs.delete(run.sessionId)
+  }, ttlMs)
   run.cleanupTimer.unref?.()
 }
 

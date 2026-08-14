@@ -5,13 +5,13 @@ import { webSearchMulti, type SearchResult, type EngineError, type SearchApiBudg
 import { isSearchApiEnabled } from './search-api.ts'
 import { searchUploads } from './files/uploads-search.ts'
 import { saveMemories, saveUserMemory, searchSpaceHistory } from './memory.ts'
-import { fetchUrl, processUrlsForContext, MIN_URL_CONTEXT_CHARS } from './fetch-url.ts'
+import { fetchUrl, processUrlsForContext, MIN_URL_CONTEXT_CHARS, type UrlOutcome } from './fetch-url.ts'
 import { trimMessages, compressMessages, contextCharBudget, CONTEXT_RESERVE_FRACTION } from './trim-messages.ts'
 import { queryTerms, querySimilarity, QUERY_DUPLICATE_THRESHOLD } from './query-terms.ts'
 import {
   applyEgressMode, createEgressContext, inspectQuery, inspectUrl, noteSeenUrl, noteTaint, noteUserText,
 } from './egress-guard.ts'
-import { RESEARCH_MAX_TOKENS } from './llm.ts'
+import { RESEARCH_MAX_TOKENS, CHARS_PER_TOKEN, tokensToChars } from './llm.ts'
 
 
 export const SYSTEM_PROMPTS = {
@@ -126,6 +126,8 @@ export interface ResearchOptions {
   userMemoryEnabled?: boolean
   /** Summarize (vs. truncate) URL content that overflows the context budget. Default false. */
   fetchSummarize?: boolean
+  /** Per-URL context cap; defaults to the env value inside processUrlsForContext. */
+  urlContextChars?: number
   /** Summarize (vs. hard-drop) conversation history that overflows the context budget. Default false. */
   compressHistory?: boolean
   /** SearXNG category filter selected by the user; applies to the researcher's own searches
@@ -135,6 +137,10 @@ export interface ResearchOptions {
   maxStepsOverride?: number
   /** Called when a web_search returns no results because engines were suspended/blocked. */
   onEngineErrors?: (errors: EngineError[]) => void | Promise<void>
+  /** Called after fetch_url has fitted a page to the context budget, only when it had to be
+   *  reduced. The tool runs inside `execute`, which has no stream — the callback is how the
+   *  activity log learns what the model actually got to read. */
+  onUrlRead?: (host: string, outcome: UrlOutcome) => void | Promise<void>
   /** Shared per-request allowance for paid keyed-API fallback searches. */
   apiBudget?: SearchApiBudget
   /** Asks the user to approve an outbound request the egress guard found suspicious.
@@ -153,7 +159,7 @@ export interface EgressApprovalRequest {
   reasons: string[]
 }
 
-export async function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, userMemoryEnabled = false, fetchSummarize = false, compressHistory = false, searchCategory, maxStepsOverride, onEngineErrors, apiBudget, requestApproval, locked = false }: ResearchOptions) {
+export async function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, userMemoryEnabled = false, fetchSummarize = false, urlContextChars, compressHistory = false, searchCategory, maxStepsOverride, onEngineErrors, onUrlRead, apiBudget, requestApproval, locked = false }: ResearchOptions) {
   const { maxSteps: defaultMaxSteps, count } = MODE_CONFIG[focusMode]
   const maxSteps = maxStepsOverride ?? defaultMaxSteps
   let nextIndex = 1
@@ -253,10 +259,10 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
   const historyBudgetTokens = Math.floor(totalInputTokens * (1 - TOOL_BUDGET_RESERVE_FRACTION))
 
   if (compressHistory) {
-    const summaryBudgetChars = Math.floor(historyBudgetTokens * 4 * COMPRESS_SUMMARY_FRACTION)
+    const summaryBudgetChars = Math.floor(tokensToChars(historyBudgetTokens) * COMPRESS_SUMMARY_FRACTION)
     // Reserve the summary's own cost out of the history sub-budget up front, so kept-messages +
     // summary together still respect historyBudgetTokens.
-    const dropBudgetTokens = historyBudgetTokens - Math.ceil(summaryBudgetChars / 4)
+    const dropBudgetTokens = historyBudgetTokens - Math.ceil(summaryBudgetChars / CHARS_PER_TOKEN)
     const { messages: compressedMessages, summary } = await compressMessages(augmentedMessages, dropBudgetTokens, system, summaryBudgetChars)
     augmentedMessages = compressedMessages
     if (summary) system += `\n\nSummary of earlier parts of this conversation (older messages were compacted to fit context):\n${summary}`
@@ -338,7 +344,8 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
         if (!await permitEgress('fetch', url)) return EGRESS_REFUSED_MSG
         const raw = await fetchUrl(url)
         if (raw.startsWith('Error fetching')) return raw
-        const [{ content }] = await processUrlsForContext([{ url, content: raw }], toolBudgetRemaining, fetchSummarize)
+        const [{ content, outcome }] = await processUrlsForContext([{ url, content: raw }], toolBudgetRemaining, fetchSummarize, urlContextChars)
+        if (outcome) await onUrlRead?.(new URL(url).hostname, outcome)
         // The page just read is untrusted: anything in it could be an instruction to leak.
         noteTaint(egress, content)
         toolBudgetRemaining -= content.length

@@ -11,6 +11,13 @@ export const FLASH_SYSTEM = `Answer in at most 5 sentences using only your train
 Do not search the web. If you cannot answer confidently, say so briefly.
 Always respond in the same language the user used.`
 
+// 200 was too tight against FLASH_SYSTEM's "at most 5 sentences" — a dense answer hit the cap
+// mid-sentence with nothing to show for it. Raised to leave headroom for the requested length,
+// including the reasoning tokens a thinking-capable flash model spends before it writes.
+// Lives beside FLASH_SYSTEM because it is part of the same contract: the monitor executor kept a
+// separate literal 200 and truncated digests the interactive path had already stopped truncating.
+export const FLASH_MAX_TOKENS = parseInt(process.env.FLASH_MAX_TOKENS ?? '400')
+
 /** Cap on researcher notes handed to the writer — beyond this they crowd out the sources. */
 export const RESEARCHER_NOTES_CAP = 12000
 

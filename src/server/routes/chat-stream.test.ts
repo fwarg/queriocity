@@ -43,6 +43,11 @@ function makeRun(script: Parameters<typeof startFakeOpenAI>[0], maxSteps = 3) {
         inputSchema: z.object({ queries: z.array(z.string()) }),
         execute: async () => SOURCES,
       }),
+      fetch_url: tool({
+        description: 'fetch',
+        inputSchema: z.object({ url: z.string() }),
+        execute: async () => 'page text',
+      }),
     },
   })
 }
@@ -86,6 +91,21 @@ describe('drainResearcherStream', () => {
     expect(sources).toHaveLength(2)
     expect(sources[0].url).toBe('https://example.com/a')
     expect(text).toBe('Answer with citation [1].')
+  })
+
+  /** A model-initiated fetch is one of the longest silences in a run — network, then Playwright,
+   *  then up to six summarizer calls — and it used to emit nothing at all, leaving the log parked
+   *  on the preceding "Thinking (step N)" for the duration. */
+  test('reports a fetch_url call as a read step, with the host', async () => {
+    const cap = captureSSE()
+    await drain(makeRun([
+      { toolCall: { id: 'call_1', name: 'fetch_url', args: { url: 'https://example.com/deep/page?x=1' } } },
+      { text: ['done'] },
+    ]), cap)
+
+    const reads = cap.ofType('status').filter(e => (e.step as { kind?: string } | undefined)?.kind === 'read')
+    expect(reads).toHaveLength(1)
+    expect((reads[0].step as { hosts?: string[] }).hosts).toEqual(['example.com'])
   })
 
   test('reports tool-calls when the model never writes prose', async () => {

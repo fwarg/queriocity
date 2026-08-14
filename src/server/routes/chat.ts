@@ -7,7 +7,7 @@ import { runResearcher, maxStepsFor, type EgressApprovalRequest } from '../lib/r
 import { runWriter } from '../lib/writer.ts'
 import { drainResearcherStream, type SSEStream } from '../lib/researcher-stream.ts'
 import { stepEvent, type ProgressStep } from '../lib/progress.ts'
-import { FLASH_SYSTEM, RESEARCHER_NOTES_CAP, EMPTY_ANSWER_MESSAGE, runSynthesisFallback } from '../lib/answer.ts'
+import { FLASH_SYSTEM, FLASH_MAX_TOKENS, RESEARCHER_NOTES_CAP, EMPTY_ANSWER_MESSAGE, runSynthesisFallback } from '../lib/answer.ts'
 import { reformulateLLM } from '../lib/reformulate.ts'
 import { cacheKey, getCached, setCached } from '../lib/cache.ts'
 import { db, chatSessions, messages, users, uploadedFiles, parseSettings, getAppSetting } from '../lib/db.ts'
@@ -16,7 +16,7 @@ import { randomUUID } from 'crypto'
 import { readFile } from 'node:fs/promises'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { webSearch, webSearchMulti, type SearchResult, type EngineError, type SearchApiBudget } from '../lib/searxng.ts'
-import { fetchUrlAllPages, processUrlsForContext } from '../lib/fetch-url.ts'
+import { fetchUrlAllPages, processUrlsForContext, describeOutcome, DEFAULT_MAX_URL_CONTEXT_CHARS, type UrlOutcome, type ProcessedUrl } from '../lib/fetch-url.ts'
 import { getFlashModel, getChatModel, getThinkingModelOrFallback, RESEARCH_MAX_TOKENS } from '../lib/llm.ts'
 import { ThinkExtractor } from '../lib/think-extractor.ts'
 import { rerankSearchResults } from '../lib/reranker.ts'
@@ -31,7 +31,7 @@ import {
   scheduleAbandon, cancelAbandon, stopRun, awaitApproval, settleApproval, approvalTimeLeft,
   APPROVAL_TIMEOUT_MS, type LiveRun,
 } from '../lib/stream-buffer.ts'
-import { IMAGE_API, IMAGE_STORAGE_DIR, randomSeed, resolveSteps, saveGeneratedImage } from '../lib/image-store.ts'
+import { IMAGE_API, imageFilePath, randomSeed, resolveSteps, saveGeneratedImage, deleteSupersededImages } from '../lib/image-store.ts'
 import { imageBackend, compensateSteps, DEFAULT_EDIT_STRENGTH } from '../lib/image-api.ts'
 
 /** Render settings used for each generated image, so an edit inherits them from its source.
@@ -66,10 +66,6 @@ function rememberRender(url: string | undefined, settings: RenderSettings) {
   renderByImage.set(url, settings)
 }
 
-// 200 was too tight against FLASH_SYSTEM's "at most 5 sentences" — a dense answer hit the cap
-// mid-sentence with nothing to show for it. Raised to leave headroom for the requested length,
-// including the reasoning tokens a thinking-capable flash model spends before it writes.
-const FLASH_MAX_TOKENS = parseInt(process.env.FLASH_MAX_TOKENS ?? '400')
 const KEEPALIVE_INTERVAL_MS = 15000
 const SESSION_TITLE_MAX = 60
 
@@ -261,11 +257,16 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   const userRow = await db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get()
   const parsedSettings = parseSettings(userRow?.settings ?? '{}')
   const customPrompt = parsedSettings.customPrompt as string | undefined
+  // Everything that changes the answer for the same question belongs here. `searchCategories`
+  // picks which corpus is searched and `locked` removes web search entirely, so leaving either
+  // out served the previous filter's answer to a question asked under a different one.
   const cacheScope = [
     userId, spaceId ?? '',
     [...(includeFileIds ?? [])].sort().join(','),
     [...(includeMemoryIds ?? [])].sort().join(','),
     customPrompt ?? '',
+    [...(searchCategories ?? [])].sort().join(','),
+    locked ? 'locked' : '',
   ].join('|')
 
   // History is part of the key: without it, two unrelated conversations ending in the same
@@ -345,10 +346,15 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   if (focusMode === 'image') {
     const imageBaseUrl = process.env.IMAGE_BASE_URL?.trim() || undefined
     if (!imageBaseUrl) {
+      const t0 = Date.now()
+      const notConfigured = 'Image generation is not configured. Set the IMAGE_BASE_URL environment variable to enable it.'
       return streamRun(c, run, async (out) => {
-        await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: 'Image generation is not configured. Set the IMAGE_BASE_URL environment variable to enable it.' }) })
-        const { title: sessionTitle } = await persistMessage(sid, userId, msgs, '', [], spaceId, regenerate)
-        await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title: sessionTitle, elapsedMs: 0 }) })
+        await out.writeSSE({ data: JSON.stringify({ type: 'session', sessionId: sid }) })
+        await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: notConfigured }) })
+        // Through the shared tail like every other mode: calling persistMessage directly ignored
+        // `ephemeral`, so a request that asked never to be stored wrote a session, a user message
+        // and an empty assistant message anyway — and skipped the rest of the contract besides.
+        await finishTurn(out, { sid, userId, msgs, fullContent: notConfigured, sources: [], spaceId, regenerate, ephemeral, t0 })
       })
     }
     let pendingImageUrl: string | undefined
@@ -428,7 +434,8 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
           seed: z.number().int().optional().describe('Random seed. Only set when the user explicitly asks for a specific seed or to reproduce an earlier image; omit otherwise so the result varies'),
         }),
         execute: async ({ image_url, prompt, strength, size, negative_prompt, quality, steps, seed }) => {
-          if (!image_url.startsWith(`/images/${userId}/`)) {
+          const imagePath = imageFilePath(userId, image_url)
+          if (!imagePath) {
             return { success: false, error: 'Invalid image reference', prompt }
           }
           // Explicit wording in this turn wins; otherwise inherit from the image being edited.
@@ -447,7 +454,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
           const sentSteps = IMAGE_API === 'sdapi' ? compensateSteps(usedSteps, strength ?? DEFAULT_EDIT_STRENGTH) : usedSteps
           console.log(`  [image] edit → ${imageBaseUrl} (${IMAGE_API})  prompt="${prompt}"  negative="${usedNegative ?? ''}"${negative_prompt === undefined && usedNegative ? ' (carried)' : ''}  strength=${strength ?? DEFAULT_EDIT_STRENGTH}${strength === undefined ? ' (default)' : ''}  steps=${usedSteps} (${stepOrigin}) → ${sentSteps} sent  seed=${usedSeed}${seedOrigin}`)
           try {
-            const image = await readFile(`${IMAGE_STORAGE_DIR}/${image_url.slice('/images/'.length)}`)
+            const image = await readFile(imagePath)
             const bytes = await imageBackend(imageBaseUrl).edit({ image, prompt, strength, size, negativePrompt: usedNegative, steps: usedSteps, seed: usedSeed })
             pendingImageUrl = await saveGeneratedImage(userId, bytes)
             lastGeneratedImageUrl = pendingImageUrl
@@ -574,8 +581,9 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       return allowed
     }
 
-    const [fetchMaxPages, fetchSummarize, compressHistory] = await Promise.all([
+    const [fetchMaxPages, urlContextChars, fetchSummarize, compressHistory] = await Promise.all([
       getAppSetting('fetch_max_pages', '8').then(Number),
+      getAppSetting('fetch_max_url_context_chars', String(DEFAULT_MAX_URL_CONTEXT_CHARS)).then(Number),
       getAppSetting('fetch_summarize_overflow', 'false').then(v => v === 'true'),
       getAppSetting('compress_history_overflow', 'false').then(v => v === 'true'),
     ])
@@ -620,7 +628,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     const estMsgsChars = msgs.reduce((s, m) => s + (typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content).length), 0)
     const urlBudgetChars = Math.max(0, contextCharBudget(ctxTokenLimit) - estSystemChars - estMsgsChars)
     const processedUrls = prefetchedUrls.length > 0
-      ? await processUrlsForContext(prefetchedUrls, urlBudgetChars, fetchSummarize)
+      ? await processUrlsForContext(prefetchedUrls, urlBudgetChars, fetchSummarize, urlContextChars)
       : prefetchedUrls
 
     let fullContent = ''
@@ -643,6 +651,11 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     }
     if (!initialResults?.length && engineErrors?.length) await warnEngineErrors(engineErrors)
 
+    /** Second line for one fetch_url, and only when the page did not fit as-is: the first was
+     *  emitted at tool-call time so the log moves while the fetch runs. */
+    const emitUrlOutcome = (host: string, outcome: UrlOutcome) =>
+      emitStep({ kind: 'read', hosts: [host], detail: describeOutcome(outcome) })
+
     const emitSearchStatus = (args: { queries?: string[]; query?: string }) => {
       const queries: string[] = args.queries ?? (args.query ? [args.query] : [])
       if (queries.length) emitStep({ kind: 'search', queries })
@@ -653,7 +666,12 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
      *  second-round query with no sign of where the initial results came from. */
     const emitPreSearchSteps = async () => {
       if (processedUrls.length) {
-        await emitStep({ kind: 'read', hosts: processedUrls.map(f => new URL(f.url).hostname) })
+        const reduced = processedUrls.filter(f => f.outcome).map(f => describeOutcome(f.outcome!))
+        await emitStep({
+          kind: 'read',
+          hosts: processedUrls.map(f => new URL(f.url).hostname),
+          detail: reduced.length ? reduced.join('; ') : undefined,
+        })
       }
       if (!initialQueries?.length) return
       await emitStep({ kind: 'search', queries: initialQueries })
@@ -674,7 +692,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         await out.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: snippets + '\n\n' }) })
       }
       const researchModel = useThinking ? getThinkingModelOrFallback() : getChatModel()
-      const researcherResult = await runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, apiBudget, requestApproval, locked })
+      const researcherResult = await runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, onUrlRead: emitUrlOutcome, apiBudget, requestApproval, locked })
       const allSources: SearchResult[] = [...(initialResults ?? [])]
       let researcherNotes = ''
       // Unconditional: the extractor also drops leaked tool-call markup, which has to be stripped
@@ -755,7 +773,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       }
 
       const fullSources: SearchResult[] = []
-      const result = await runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, apiBudget, requestApproval, locked })
+      const result = await runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, onUrlRead: emitUrlOutcome, apiBudget, requestApproval, locked })
       const extractor = new ThinkExtractor()   // see thoroughExtractor above
 
       const keepalive = setInterval(() => {
@@ -862,6 +880,12 @@ async function finishTurn(out: SSEStream, {
   }
   const { title, supersededAnswer } = await persistMessage(sid, userId, msgs, fullContent, sources, spaceId, regenerate)
   await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title, elapsedMs }) })
+  // Outside the spaceId block below: a regenerate strands its predecessor's image whether or not
+  // the chat belongs to a space. Fire-and-forget, as the chat-delete path does — a failed unlink
+  // costs a stray file the startup sweep will collect, and must not fail the turn.
+  if (supersededAnswer) {
+    deleteSupersededImages(supersededAnswer, fullContent).catch(e => console.error('[image] superseded cleanup failed:', e))
+  }
   if (spaceId) {
     // Indexing is content-addressed and idempotent, so re-running it for the same question costs
     // nothing — but the answer that was just thrown away has to be removed explicitly.
@@ -933,7 +957,7 @@ function extractUrls(text: string): string[] {
     .slice(0, 2)
 }
 
-async function prefetchUrlsFromMessage(text: string, hasAttachment: boolean, maxPages = 8): Promise<Array<{ url: string; content: string }>> {
+async function prefetchUrlsFromMessage(text: string, hasAttachment: boolean, maxPages = 8): Promise<ProcessedUrl[]> {
   if (hasAttachment) return []
   const urls = extractUrls(text)
   if (!urls.length) return []

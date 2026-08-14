@@ -3,6 +3,7 @@ import { eq, and, lte, desc, count } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { executeChatAndSave } from './chat-executor.ts'
 import { fetchSelectedFeeds } from './rss.ts'
+import { isSpaceLocked } from './space-lock.ts'
 import type { SearchResult } from './searxng.ts'
 
 /** Convert a preferred hour in a given IANA timezone on the same calendar day as `near` to UTC. */
@@ -17,7 +18,13 @@ function localHourToUTC(hour: number, tz: string, near: Date): Date {
   const actualHour = +new Intl.DateTimeFormat('en-US', {
     timeZone: tz, hour: 'numeric', hour12: false, hourCycle: 'h23',
   }).format(asUTC)
-  return new Date(asUTC.getTime() - (actualHour - hour) * 3600_000)
+  // Wrapped into (-12, 12]: `actualHour - hour` is a difference between two clock readings, so an
+  // offset that crosses midnight reads as ±24 hours of correction rather than the couple of hours
+  // it is. Unwrapped, hour=23 in UTC+2 landed on the following day.
+  let diff = actualHour - hour
+  if (diff > 12) diff -= 24
+  else if (diff < -12) diff += 24
+  return new Date(asUTC.getTime() - diff * 3600_000)
 }
 
 /** Compute the next scheduled run time, optionally snapping to a preferred hour in a timezone. */
@@ -94,6 +101,15 @@ async function runMonitorForUser(
   monitor: typeof monitors.$inferSelect,
   userId: string,
 ): Promise<void> {
+  // Both routes that assign a space refuse a locked one, and locking now refuses a space holding
+  // monitors — but a monitor assigned before either guard existed would still run here, and the
+  // executor passes no `locked` to the researcher. Checked at the point of use, where it is the
+  // last thing standing between a scheduled web search and a locked space.
+  if (await isSpaceLocked(monitor.spaceId)) {
+    console.warn(`  [monitor] skipped "${monitor.name}" — space ${monitor.spaceId} is locked`)
+    return
+  }
+
   console.log(`  [monitor] running "${monitor.name}" for user=${userId}`)
   const sessionId = randomUUID()
   const focusMode = monitor.focusMode as 'flash' | 'balanced' | 'thorough'

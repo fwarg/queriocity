@@ -38,7 +38,7 @@ function label(step: LogStep): string {
   const n = step.queries?.length ?? 0
   switch (step.kind) {
     case 'understand': return 'Understanding your question'
-    case 'read':       return `Read ${step.hosts?.join(', ') ?? ''}`
+    case 'read':       return `Read ${step.hosts?.join(', ') ?? ''}${step.detail ? ` — ${step.detail}` : ''}`
     case 'search':     return n === 0 ? 'Searched the web'
                             : n > 1 ? `Searched "${step.queries![0]}" +${n - 1} more`
                             : `Searched "${step.queries![0]}"`

@@ -2,16 +2,19 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { generateText, embed } from 'ai'
-import { db, users, invites, chatSessions, authCredentials, getAppSetting, setAppSetting, bumpTokenVersion } from '../lib/db.ts'
+import { db, users, invites, chatSessions, spaces, spaceMemories, userMemories, uploadedFiles, authCredentials, getAppSetting, setAppSetting, bumpTokenVersion } from '../lib/db.ts'
 import { eq, desc } from 'drizzle-orm'
-import { indexSession } from '../lib/chat-indexer.ts'
+import { indexSession, deindexSession } from '../lib/chat-indexer.ts'
 import { EMBED_MAX_INPUT_CHARS, SMALL_MODEL_INPUT_CHARS } from '../lib/llm.ts'
+import { DEFAULT_MAX_URL_CONTEXT_CHARS, MIN_URL_CONTEXT_CHARS, SCRAPE_MAX_CHARS } from '../lib/fetch-url.ts'
 import { randomUUID, randomInt } from 'crypto'
 import { hashPassword } from '../lib/auth.ts'
 import { authMiddleware, adminMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { getChatModel, getSmallModel, getThinkingModel, getEmbeddingModel } from '../lib/llm.ts'
 import { rerank, rerankEnabled } from '../lib/reranker.ts'
-import { runDream } from '../lib/memory.ts'
+import { runDream, deleteMemoryEmbeddings } from '../lib/memory.ts'
+import { deleteFileChunks } from '../lib/vector-cleanup.ts'
+import { deleteUserImages } from '../lib/image-store.ts'
 
 /** Random temporary password that satisfies validatePassword's complexity rules. */
 function generateTempPassword(): string {
@@ -29,7 +32,7 @@ adminRouter.use('*', authMiddleware)
 adminRouter.use('*', adminMiddleware)
 
 adminRouter.get('/settings', async (c) => {
-  const [memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchSummarizeOverflow, compressHistoryOverflow] = await Promise.all([
+  const [memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow, compressHistoryOverflow] = await Promise.all([
     getAppSetting('memory_token_budget', '1000').then(Number),
     getAppSetting('user_memory_token_budget', '300').then(Number),
     getAppSetting('dream_hour', '-1').then(Number),
@@ -44,13 +47,14 @@ adminRouter.get('/settings', async (c) => {
     getAppSetting('query_reformulation', 'true').then(v => v === 'true'),
     getAppSetting('rss_feed_chars_budget', '50000').then(Number),
     getAppSetting('fetch_max_pages', '8').then(Number),
+    getAppSetting('fetch_max_url_context_chars', String(DEFAULT_MAX_URL_CONTEXT_CHARS)).then(Number),
     getAppSetting('fetch_summarize_overflow', 'false').then(v => v === 'true'),
     getAppSetting('compress_history_overflow', 'false').then(v => v === 'true'),
   ])
   // Read-only, derived from the model context env vars. Two of the settings above are silently
   // clamped by these at use time, so the panel needs them to show what a value actually does
   // rather than what was typed.
-  return c.json({ memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchSummarizeOverflow, compressHistoryOverflow, limits: { smallModelInputChars: SMALL_MODEL_INPUT_CHARS, embedInputChars: EMBED_MAX_INPUT_CHARS } })
+  return c.json({ memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow, compressHistoryOverflow, limits: { smallModelInputChars: SMALL_MODEL_INPUT_CHARS, embedInputChars: EMBED_MAX_INPUT_CHARS, scrapeMaxChars: SCRAPE_MAX_CHARS, minUrlContextChars: MIN_URL_CONTEXT_CHARS } })
 })
 
 adminRouter.patch('/settings', zValidator('json', z.object({
@@ -68,6 +72,7 @@ adminRouter.patch('/settings', zValidator('json', z.object({
   queryReformulation: z.boolean().optional(),
   rssFeedCharsBudget: z.number().int().min(5000).max(500000).optional(),
   fetchMaxPages: z.number().int().min(0).max(50).optional(),
+  fetchMaxUrlContextChars: z.number().int().min(MIN_URL_CONTEXT_CHARS).max(SCRAPE_MAX_CHARS).optional(),
   fetchSummarizeOverflow: z.boolean().optional(),
   compressHistoryOverflow: z.boolean().optional(),
 })), async (c) => {
@@ -91,6 +96,7 @@ adminRouter.patch('/settings', zValidator('json', z.object({
   if (body.queryReformulation != null) ops.push(setAppSetting('query_reformulation', String(body.queryReformulation)))
   if (body.rssFeedCharsBudget != null) ops.push(setAppSetting('rss_feed_chars_budget', String(body.rssFeedCharsBudget)))
   if (body.fetchMaxPages != null) ops.push(setAppSetting('fetch_max_pages', String(body.fetchMaxPages)))
+  if (body.fetchMaxUrlContextChars != null) ops.push(setAppSetting('fetch_max_url_context_chars', String(body.fetchMaxUrlContextChars)))
   if (body.fetchSummarizeOverflow != null) ops.push(setAppSetting('fetch_summarize_overflow', String(body.fetchSummarizeOverflow)))
   if (body.compressHistoryOverflow != null) ops.push(setAppSetting('compress_history_overflow', String(body.compressHistoryOverflow)))
   await Promise.all(ops)
@@ -136,10 +142,39 @@ adminRouter.post('/users/:id/reset-password', async (c) => {
   return c.json({ tempPassword })
 })
 
+/** Deleting a user takes everything of theirs that the schema cannot.
+ *
+ *  `db.delete(users)` cascades the tables with foreign keys — sessions, messages, uploads, spaces,
+ *  memories. It reaches none of the vec0 tables, which cannot carry one, nor `chat_chunk_meta` and
+ *  `file_chunk_meta`, which hold a verbatim copy of every conversation and document. Nor the PNGs
+ *  on disk. Deleting the account has to mean deleting the data, so this mirrors what the chat,
+ *  file and space delete routes each already do for their own scope. */
 adminRouter.delete('/users/:id', async (c) => {
   const { id } = c.req.param()
   if (id === c.get('userId')) return c.json({ error: 'Cannot delete yourself' }, 400)
+
+  // Collected before the cascade, while the rows that name them still exist.
+  const sessionIds = (await db.select({ id: chatSessions.id }).from(chatSessions)
+    .where(eq(chatSessions.userId, id)).all()).map(r => r.id)
+  const fileIds = (await db.select({ id: uploadedFiles.id }).from(uploadedFiles)
+    .where(eq(uploadedFiles.userId, id)).all()).map(r => r.id)
+  // Space and user memories share memory_embeddings, keyed by memory id, so one list covers both.
+  const memoryIds = [
+    ...(await db.select({ id: spaceMemories.id }).from(spaceMemories)
+      .innerJoin(spaces, eq(spaceMemories.spaceId, spaces.id))
+      .where(eq(spaces.userId, id)).all()).map(r => r.id),
+    ...(await db.select({ id: userMemories.id }).from(userMemories)
+      .where(eq(userMemories.userId, id)).all()).map(r => r.id),
+  ]
+  for (const sessionId of sessionIds) deindexSession(sessionId)
+  for (const fileId of fileIds) deleteFileChunks(fileId)
+  deleteMemoryEmbeddings(memoryIds)
+  // The whole folder, not the images their messages happen to reference: anything already
+  // orphaned by a regenerate or an aborted turn would otherwise survive the account itself.
+  await deleteUserImages(id)
+
   await db.delete(users).where(eq(users.id, id))
+  console.log(`  [admin] deleted user ${id} by ${c.get('userId')} — ${sessionIds.length} chat(s), ${fileIds.length} file(s), ${memoryIds.length} memor${memoryIds.length === 1 ? 'y' : 'ies'}`)
   return c.json({ ok: true })
 })
 

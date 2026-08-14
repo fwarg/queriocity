@@ -31,8 +31,10 @@ function fakeEmbed(text: string): number[] {
 
 // `mock.module` replaces the module for the whole process and is not undone when this file ends,
 // so without the restore below every test file that runs after this one embeds through the stub.
-// That is invisible locally, where file order happens to put them first, and fails in CI.
-const realEmbeddings = await import('./embeddings.ts')
+// That is invisible locally, where file order happens to put them first, and fails in CI. The
+// spread is load-bearing: mocking mutates the live namespace in place, so aliasing it would
+// capture the mock and restore nothing.
+const realEmbeddings = { ...(await import('./embeddings.ts')) }
 mock.module('./embeddings.ts', () => ({
   embedText: async (text: string) => fakeEmbed(text),
   embedTexts: async (texts: string[]) => texts.map(fakeEmbed),

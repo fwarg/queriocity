@@ -1,16 +1,14 @@
 import { generateText } from 'ai'
 import type { ModelMessage } from 'ai'
-import { getSmallModel, SMALL_MODEL_INPUT_CHARS } from './llm.ts'
-
-const estimate = (s: string) => Math.ceil(s.length / 4)
+import { getSmallModel, SMALL_MODEL_INPUT_CHARS, CHARS_PER_TOKEN, estimateTokens as estimate } from './llm.ts'
 
 // Fraction of the model's context window budgeted for input (system + history + tool content);
 // the remainder is reserved for the model's own output.
 export const CONTEXT_RESERVE_FRACTION = 0.8
 
-// Converts a token-based context limit into a char budget using the same 4 chars/token heuristic as estimate().
+// Converts a token-based context limit into a char budget, using the same ratio as estimate().
 export function contextCharBudget(ctxLimitTokens: number, fraction = CONTEXT_RESERVE_FRACTION): number {
-  return ctxLimitTokens * fraction * 4
+  return ctxLimitTokens * fraction * CHARS_PER_TOKEN
 }
 
 // Below this many chars, compressing dropped history into a summary isn't worth an LLM call —
@@ -124,7 +122,7 @@ export async function compressMessages(
 3. Write as a compact third-person briefing note, not a transcript.
 Output ONLY the summary, no preamble. Target approximately ${perChunkChars} characters.`,
         prompt: chunk,
-        maxOutputTokens: Math.ceil(perChunkChars / 4),
+        maxOutputTokens: Math.ceil(perChunkChars / CHARS_PER_TOKEN),
       })
       summaries.push(text.trim())
     }
