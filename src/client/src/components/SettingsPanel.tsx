@@ -5,10 +5,15 @@ import {
   type UserMemory,
 } from '../lib/api.ts'
 import { Modal } from './Modal.tsx'
+import { LanguageSelect } from './LanguageSelect.tsx'
+import { useLang, useT } from '../lib/i18n.tsx'
+import { errorMessage } from '../lib/errors.ts'
+import type { Lang } from '@shared/i18n/index.ts'
 
 /** Inline CRUD for the user-level memory list. Kept in this panel because these facts are
  *  account-wide — there is no space to hang them off. */
 function UserMemoryList() {
+  const t = useT()
   const [memories, setMemories] = useState<UserMemory[]>([])
   const [draft, setDraft] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -23,17 +28,17 @@ function UserMemoryList() {
   async function runSuggest() {
     setScanning(true)
     setSuggestions([])
-    setScanStatus('Reading recent chats…')
+    setScanStatus(t('userMemory.scanning'))
     try {
       for await (const ev of suggestUserMemories(scanDepth)) {
-        if (ev.processing && ev.total) setScanStatus(`Reading chat ${ev.processing} of ${ev.total}…`)
+        if (ev.processing && ev.total) setScanStatus(t('userMemory.scanProgress', { index: ev.processing, total: ev.total }))
         if (ev.done) {
           setSuggestions(ev.suggestions ?? [])
-          setScanStatus(ev.error ?? (ev.suggestions?.length ? '' : 'Nothing worth saving found.'))
+          setScanStatus(ev.error ?? (ev.suggestions?.length ? '' : t('userMemory.nothingFound')))
         }
       }
     } catch {
-      setScanStatus('Suggestion scan failed.')
+      setScanStatus(t('userMemory.scanFailed'))
     } finally {
       setScanning(false)
     }
@@ -77,7 +82,7 @@ function UserMemoryList() {
         onChange={e => setDraft(e.target.value)}
         onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); add() } }}
         onBlur={add}
-        placeholder="Add a fact about you…"
+        placeholder={t('userMemory.addPlaceholder')}
         className="w-full px-2 py-1.5 rounded bg-gray-800 border border-gray-700 text-xs text-gray-200 focus:outline-none focus:border-blue-500"
       />
       <div className="flex items-center gap-2 flex-wrap">
@@ -87,13 +92,13 @@ function UserMemoryList() {
           disabled={scanning}
           className="text-xs text-blue-400 hover:text-blue-300 disabled:text-gray-600"
         >
-          {scanning ? 'Scanning…' : 'Suggest from my chats'}
+          {scanning ? t('userMemory.scanningShort') : t('userMemory.suggest')}
         </button>
         <select
           value={scanDepth}
           onChange={e => setScanDepth(Number(e.target.value))}
           disabled={scanning}
-          title="How many of your most recent chats to read. One model call each, so a deeper scan takes proportionally longer."
+          title={t('userMemory.scanDepthTitle')}
           className="px-1.5 py-0.5 rounded bg-gray-800 border border-gray-700 text-[11px] text-gray-300 focus:outline-none focus:border-blue-500 disabled:text-gray-600"
         >
           {[20, 50, 100, 200].map(n => (
@@ -114,7 +119,7 @@ function UserMemoryList() {
                 type="button"
                 onClick={() => accept(fact)}
                 className="text-xs text-green-400 hover:text-green-300 shrink-0"
-                aria-label="Add"
+                aria-label={t('common.add')}
               >
                 + Add
               </button>
@@ -122,7 +127,7 @@ function UserMemoryList() {
                 type="button"
                 onClick={() => setSuggestions(prev => prev.filter(f => f !== fact))}
                 className="text-xs text-gray-600 hover:text-gray-400 shrink-0"
-                aria-label="Dismiss"
+                aria-label={t('common.dismiss')}
               >
                 ✕
               </button>
@@ -131,7 +136,7 @@ function UserMemoryList() {
         </div>
       )}
       {memories.length === 0 && (
-        <p className="text-xs text-gray-600">Nothing saved yet.</p>
+        <p className="text-xs text-gray-600">{t('userMemory.none')}</p>
       )}
       {memories.map(m => (
         <div key={m.id} className="flex items-start gap-1.5 group py-0.5">
@@ -139,7 +144,7 @@ function UserMemoryList() {
             type="button"
             onClick={() => toggleKeep(m)}
             className={`shrink-0 text-xs leading-none mt-0.5 ${m.alwaysKeep ? 'text-amber-400' : 'text-gray-700 hover:text-gray-500 opacity-0 group-hover:opacity-100'}`}
-            title={m.alwaysKeep ? 'Always included. Click to unset.' : 'Always include this one'}
+            title={t(m.alwaysKeep ? 'userMemory.alwaysIncludedTitle' : 'userMemory.alwaysIncludeTitle')}
             aria-pressed={m.alwaysKeep}
           >
             {m.alwaysKeep ? '★' : '☆'}
@@ -162,12 +167,12 @@ function UserMemoryList() {
               {m.content}
             </span>
           )}
-          <span className="text-[10px] text-gray-600 shrink-0 mt-0.5">{m.source === 'tool' ? 'auto' : 'manual'}</span>
+          <span className="text-[10px] text-gray-600 shrink-0 mt-0.5">{t(m.source === 'tool' ? 'memory.sourceAuto' : 'memory.sourceManual')}</span>
           <button
             type="button"
             onClick={() => remove(m.id)}
             className="text-gray-700 hover:text-red-400 text-xs shrink-0 opacity-0 group-hover:opacity-100"
-            aria-label="Delete"
+            aria-label={t('common.delete')}
           >
             ✕
           </button>
@@ -210,9 +215,13 @@ export interface UserSettingsForm {
   imageWatermark: boolean
   fontSize: number
   timezone: string
+  language: Lang
 }
 
-interface Props extends UserSettingsForm {
+/** `language` is omitted: the selector writes straight to the language provider so the switch is
+ *  visible immediately, and Save persists whatever it currently holds. Passing it in as well would
+ *  give the same value two owners. */
+interface Props extends Omit<UserSettingsForm, 'language'> {
   onClose: () => void
   /** Clears the temporary-password banner once the user has set their own. */
   onPasswordChanged?: () => void
@@ -220,6 +229,8 @@ interface Props extends UserSettingsForm {
 }
 
 export function SettingsPanel({ customPrompt: initial, showThinking: initialShowThinking, useThinking: initialUseThinking, useSpaceRag: initialUseSpaceRag, useChatRag: initialUseChatRag, querySuggestions: initialQuerySuggestions, followUpSuggestions: initialFollowUpSuggestions, userMemory: initialUserMemory, imageWatermark: initialImageWatermark, fontSize: initialFontSize, timezone: initialTimezone, onClose, onPasswordChanged, onSave }: Props) {
+  const t = useT()
+  const { lang, setLang } = useLang()
   const [customPrompt, setCustomPrompt] = useState(initial)
   const [showThinking, setShowThinking] = useState(initialShowThinking)
   const [useThinking, setUseThinking] = useState(initialUseThinking)
@@ -245,13 +256,13 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
     try {
       await changePassword(currentPassword, newPassword)
       setPasswordOk(true)
-      setPasswordMsg('Password changed.')
+      setPasswordMsg(t('settings.passwordChanged'))
       onPasswordChanged?.()
       setCurrentPassword('')
       setNewPassword('')
     } catch (e) {
       setPasswordOk(false)
-      setPasswordMsg(e instanceof Error ? e.message : 'Could not change password')
+      setPasswordMsg(errorMessage(t, e, t('settings.passwordChangeFailed')))
     } finally {
       setPwBusy(false)
     }
@@ -261,7 +272,7 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
     e.preventDefault()
     setBusy(true)
     try {
-      const form = { customPrompt, showThinking, useThinking, useSpaceRag, useChatRag, querySuggestions, followUpSuggestions, userMemory, imageWatermark, fontSize, timezone }
+      const form = { customPrompt, showThinking, useThinking, useSpaceRag, useChatRag, querySuggestions, followUpSuggestions, userMemory, imageWatermark, fontSize, timezone, language: lang }
       await updateSettings({ ...form, timezone: timezone || undefined })
       onSave(form)
       setSaved(true)
@@ -272,24 +283,22 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
   }
 
   return (
-    <Modal title="Settings" onClose={onClose}>
+    <Modal title={t('nav.settings')} onClose={onClose}>
       <form onSubmit={handleSubmit} className="flex flex-col gap-3">
           <div className="flex flex-col gap-1">
-            <label className="text-xs text-gray-400 font-medium">Custom system prompt</label>
-            <p className="text-xs text-gray-500">
-              Appended to the assistant's instructions for every query.
-            </p>
+            <label className="text-xs text-gray-400 font-medium">{t('settings.customPrompt')}</label>
+            <p className="text-xs text-gray-500">{t('settings.customPromptDesc')}</p>
             <textarea
               rows={5}
               value={customPrompt}
               onChange={e => setCustomPrompt(e.target.value)}
-              placeholder="e.g. Always respond in Swedish. Prefer academic sources."
+              placeholder={t('settings.customPromptPlaceholder')}
               className="mt-1 px-3 py-2 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 resize-none focus:outline-none focus:border-blue-500"
             />
           </div>
           <div className="flex flex-col gap-2">
-            <label className="text-xs text-gray-400 font-medium">Show search process</label>
-            <p className="text-xs text-gray-500">Display search queries and result snippets in a collapsed block before the answer.</p>
+            <label className="text-xs text-gray-400 font-medium">{t('settings.showProcess')}</label>
+            <p className="text-xs text-gray-500">{t('settings.showProcessDesc')}</p>
             <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
               <input
                 type="checkbox"
@@ -297,7 +306,7 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
                 onChange={e => setShowThinking(t => ({ ...t, balanced: e.target.checked }))}
                 className="accent-blue-500"
               />
-              Balanced mode
+              {t('settings.balancedMode')}
             </label>
             <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
               <input
@@ -306,15 +315,13 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
                 onChange={e => setShowThinking(t => ({ ...t, thorough: e.target.checked }))}
                 className="accent-blue-500"
               />
-              Thorough mode
+              {t('settings.thoroughMode')}
             </label>
           </div>
           <div className="border-t border-gray-800" />
           <div className="flex flex-col gap-2">
-            <label className="text-xs text-gray-400 font-medium">Model thinking (thorough mode)</label>
-            <p className="text-xs text-gray-500">
-              Uses the <code className="text-gray-400">THINKING_MODEL</code> for the research phase (falls back to the chat model if not configured). Requires a reasoning-capable model (e.g. Qwen3).
-            </p>
+            <label className="text-xs text-gray-400 font-medium">{t('settings.thinking')}</label>
+            <p className="text-xs text-gray-500">{t('settings.thinkingDesc')}</p>
             <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
               <input
                 type="checkbox"
@@ -322,15 +329,13 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
                 onChange={e => setUseThinking(e.target.checked)}
                 className="accent-blue-500"
               />
-              Enable model thinking
+              {t('settings.thinkingEnable')}
             </label>
           </div>
           <div className="border-t border-gray-800" />
           <div className="flex flex-col gap-2">
-            <label className="text-xs text-gray-400 font-medium">Space RAG</label>
-            <p className="text-xs text-gray-500">
-              When chatting in a space, retrieve relevant memories and document excerpts based on your query (in addition to the fixed memory block).
-            </p>
+            <label className="text-xs text-gray-400 font-medium">{t('settings.spaceRag')}</label>
+            <p className="text-xs text-gray-500">{t('settings.spaceRagDesc')}</p>
             <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
               <input
                 type="checkbox"
@@ -343,10 +348,8 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
           </div>
           <div className="border-t border-gray-800" />
           <div className="flex flex-col gap-2">
-            <label className="text-xs text-gray-400 font-medium">Chat RAG</label>
-            <p className="text-xs text-gray-500">
-              When chatting outside a space, automatically retrieve relevant excerpts from your uploaded files and inject them into the context.
-            </p>
+            <label className="text-xs text-gray-400 font-medium">{t('settings.chatRag')}</label>
+            <p className="text-xs text-gray-500">{t('settings.chatRagDesc')}</p>
             <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
               <input
                 type="checkbox"
@@ -354,15 +357,13 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
                 onChange={e => setUseChatRag(e.target.checked)}
                 className="accent-blue-500"
               />
-              Enable chat RAG
+              {t('settings.chatRagEnable')}
             </label>
           </div>
           <div className="border-t border-gray-800" />
           <div className="flex flex-col gap-2">
-            <label className="text-xs text-gray-400 font-medium">Query suggestions</label>
-            <p className="text-xs text-gray-500">
-              Show AI-generated query completions as you type in the chat input. Adds a small flash-model call on each keystroke pause — disable on slow setups.
-            </p>
+            <label className="text-xs text-gray-400 font-medium">{t('settings.querySuggestions')}</label>
+            <p className="text-xs text-gray-500">{t('settings.querySuggestionsDesc')}</p>
             <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
               <input
                 type="checkbox"
@@ -375,10 +376,8 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
           </div>
           <div className="border-t border-gray-800" />
           <div className="flex flex-col gap-2">
-            <label className="text-xs text-gray-400 font-medium">Follow-up suggestions</label>
-            <p className="text-xs text-gray-500">
-              Show up to three suggested follow-up questions as chips under a finished answer. Adds one flash-model call per answer — disable on slow setups.
-            </p>
+            <label className="text-xs text-gray-400 font-medium">{t('settings.followUpSuggestions')}</label>
+            <p className="text-xs text-gray-500">{t('settings.followUpSuggestionsDesc')}</p>
             <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
               <input
                 type="checkbox"
@@ -391,10 +390,8 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
           </div>
           <div className="border-t border-gray-800" />
           <div className="flex flex-col gap-2">
-            <label className="text-xs text-gray-400 font-medium">About you</label>
-            <p className="text-xs text-gray-500">
-              Facts that apply to every chat, not just one space — how you want answers written, languages you work in, lasting constraints. Nothing is added automatically: you write these, or the assistant asks to. Space memory wins where the two disagree.
-            </p>
+            <label className="text-xs text-gray-400 font-medium">{t('settings.aboutYou')}</label>
+            <p className="text-xs text-gray-500">{t('settings.aboutYouDesc')}</p>
             <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
               <input
                 type="checkbox"
@@ -402,18 +399,14 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
                 onChange={e => setUserMemory(e.target.checked)}
                 className="accent-blue-500"
               />
-              Enable memory about me
+              {t('settings.aboutYouEnable')}
             </label>
             {userMemory && <UserMemoryList />}
           </div>
           <div className="border-t border-gray-800" />
           <div className="flex flex-col gap-2">
-            <label className="text-xs text-gray-400 font-medium">Image labelling</label>
-            <p className="text-xs text-gray-500">
-              Add a visible &ldquo;AI-generated&rdquo; caption below downloaded images. Generated images always carry
-              machine-readable provenance metadata; the caption also survives sites that strip metadata on upload.
-              Turn it off only for images you keep to yourself.
-            </p>
+            <label className="text-xs text-gray-400 font-medium">{t('settings.imageLabelling')}</label>
+            <p className="text-xs text-gray-500">{t('settings.imageLabellingDesc')}</p>
             <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
               <input
                 type="checkbox"
@@ -426,7 +419,12 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
           </div>
           <div className="border-t border-gray-800" />
           <div className="flex flex-col gap-2">
-            <label className="text-xs text-gray-400 font-medium">Font size</label>
+            <label className="text-xs text-gray-400 font-medium">{t('settings.language')}</label>
+            <LanguageSelect value={lang} onChange={setLang} className="self-start" />
+          </div>
+          <div className="border-t border-gray-800" />
+          <div className="flex flex-col gap-2">
+            <label className="text-xs text-gray-400 font-medium">{t('settings.fontSize')}</label>
             <div className="flex gap-2">
               {FONT_SIZES.map(({ label, value }) => (
                 <button
@@ -442,28 +440,25 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
           </div>
           <div className="border-t border-gray-800" />
           <div className="flex flex-col gap-2">
-            <label className="text-xs text-gray-400 font-medium">Timezone</label>
-            <p className="text-xs text-gray-500">Used for scheduling monitors at a specific hour of the day.</p>
+            <label className="text-xs text-gray-400 font-medium">{t('settings.timezone')}</label>
+            <p className="text-xs text-gray-500">{t('settings.timezoneDesc')}</p>
             <select
               value={timezone}
               onChange={e => setTimezone(e.target.value)}
               className="rounded bg-gray-800 border border-gray-700 px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500"
             >
-              <option value="">Not set (server default)</option>
+              <option value="">{t('settings.timezoneUnset')}</option>
               {TIMEZONE_OPTIONS.map(tz => <option key={tz} value={tz}>{tz}</option>)}
             </select>
           </div>
           <div className="border-t border-gray-800" />
           <div className="flex flex-col gap-2">
-            <label className="text-xs text-gray-400 font-medium">Password</label>
-            <p className="text-xs text-gray-500">
-              At least 8 characters with upper and lower case, a digit and a symbol. Changing it
-              signs out your other devices.
-            </p>
+            <label className="text-xs text-gray-400 font-medium">{t('settings.password')}</label>
+            <p className="text-xs text-gray-500">{t('settings.passwordDesc')}</p>
             <input
               type="password"
               autoComplete="current-password"
-              placeholder="Current password"
+              placeholder={t('settings.currentPassword')}
               value={currentPassword}
               onChange={e => setCurrentPassword(e.target.value)}
               className="rounded bg-gray-800 border border-gray-700 px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500"
@@ -471,7 +466,7 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
             <input
               type="password"
               autoComplete="new-password"
-              placeholder="New password"
+              placeholder={t('settings.newPassword')}
               value={newPassword}
               onChange={e => setNewPassword(e.target.value)}
               className="rounded bg-gray-800 border border-gray-700 px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500"
@@ -485,19 +480,19 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
               disabled={pwBusy || !currentPassword || !newPassword}
               className="self-start px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 disabled:opacity-50 text-sm"
             >
-              {pwBusy ? 'Changing…' : 'Change password'}
+              {pwBusy ? t('settings.changingPassword') : t('settings.changePassword')}
             </button>
           </div>
           <div className="flex gap-2 justify-end">
             <button type="button" onClick={onClose} className="px-4 py-1.5 rounded text-sm text-gray-400 hover:text-gray-200">
-              Cancel
+              {t('common.cancel')}
             </button>
             <button
               type="submit"
               disabled={busy}
               className="px-4 py-1.5 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-sm font-medium"
             >
-              {saved ? 'Saved!' : busy ? 'Saving…' : 'Save'}
+              {saved ? t('common.saved') : busy ? t('common.saving') : t('common.save')}
             </button>
           </div>
       </form>

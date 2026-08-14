@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react'
+import { useT } from '../lib/i18n.tsx'
+import type { TranslationKey } from '@shared/i18n/index.ts'
 import { Modal } from './Modal.tsx'
 import { fetchFeeds, type Monitor, type Space, type FeedRegion } from '../lib/api.ts'
 import { ChevronDown, ChevronRight } from 'lucide-react'
@@ -12,11 +14,11 @@ interface Props {
   isGlobal?: boolean
 }
 
-const INTERVAL_PRESETS = [
-  { label: '1 hour', minutes: 60 },
-  { label: '6 hours', minutes: 360 },
-  { label: 'Daily', minutes: 1440 },
-  { label: 'Weekly', minutes: 10080 },
+const INTERVAL_PRESETS: Array<{ labelKey: TranslationKey; minutes: number }> = [
+  { labelKey: 'monitorEdit.preset1h', minutes: 60 },
+  { labelKey: 'monitorEdit.preset6h', minutes: 360 },
+  { labelKey: 'monitorEdit.presetDaily', minutes: 1440 },
+  { labelKey: 'monitorEdit.presetWeekly', minutes: 10080 },
 ]
 
 function minutesToUnit(minutes: number): { value: number; unit: 'hours' | 'days' } {
@@ -37,6 +39,7 @@ function typeColor(type: string): string {
 }
 
 export function MonitorEditor({ initial, spaces, timezone, onSave, onClose, isGlobal }: Props) {
+  const t = useT()
   const [tab, setTab] = useState<'general' | 'sources'>('general')
   const [name, setName] = useState(initial?.name ?? '')
   const [promptText, setPromptText] = useState(initial?.promptText ?? '')
@@ -117,15 +120,15 @@ export function MonitorEditor({ initial, spaces, timezone, onSave, onClose, isGl
         feedSources: feedSources.length > 0 ? feedSources : null,
       })
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Save failed.')
+      setError(e instanceof Error ? e.message : t('studio.saveFailed'))
     } finally {
       setSaving(false)
     }
   }
 
   const title = isGlobal
-    ? (initial ? 'Edit global monitor' : 'New global monitor')
-    : (initial ? 'Edit monitor' : 'New monitor')
+    ? t(initial ? 'monitorEdit.editGlobal' : 'monitorEdit.newGlobal')
+    : t(initial ? 'monitor.edit' : 'monitor.new')
 
   return (
     <Modal title={title} onClose={onClose}>
@@ -140,7 +143,7 @@ export function MonitorEditor({ initial, spaces, timezone, onSave, onClose, isGl
               : 'border-transparent text-gray-500 hover:text-gray-300'
           }`}
         >
-          General
+          {t('monitorEdit.tabGeneral')}
         </button>
         <button
           type="button"
@@ -151,7 +154,7 @@ export function MonitorEditor({ initial, spaces, timezone, onSave, onClose, isGl
               : 'border-transparent text-gray-500 hover:text-gray-300'
           }`}
         >
-          News sources{feedSources.length > 0 ? ` (${feedSources.length})` : ''}
+          {t('monitorEdit.tabSources')}{feedSources.length > 0 ? ` (${feedSources.length})` : ''}
         </button>
       </div>
 
@@ -160,22 +163,22 @@ export function MonitorEditor({ initial, spaces, timezone, onSave, onClose, isGl
         {tab === 'general' && (
           <>
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Name <span className="text-blue-400">*</span></label>
+              <label className="block text-xs text-gray-400 mb-1">{t('monitorEdit.name')} <span className="text-blue-400">*</span></label>
               <input
                 type="text"
                 value={name}
                 onChange={e => setName(e.target.value)}
                 maxLength={100}
                 className="w-full rounded bg-gray-800 border border-gray-700 px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500"
-                placeholder="e.g. Daily tech news"
+                placeholder={t('monitorEdit.namePlaceholder')}
               />
             </div>
 
             <div>
               <label className="block text-xs text-gray-400 mb-1">
-                Prompt <span className="text-blue-400">*</span>
+                {t('monitorEdit.prompt')} <span className="text-blue-400">*</span>
                 {feedSources.length > 0 && (
-                  <span className="ml-2 text-gray-500">(feeds injected automatically — focus on synthesis instructions)</span>
+                  <span className="ml-2 text-gray-500">{t('monitorEdit.promptFeedsNote')}</span>
                 )}
               </label>
               <textarea
@@ -183,37 +186,35 @@ export function MonitorEditor({ initial, spaces, timezone, onSave, onClose, isGl
                 onChange={e => setPromptText(e.target.value)}
                 rows={4}
                 className="w-full rounded bg-gray-800 border border-gray-700 px-2.5 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500 resize-y font-mono"
-                placeholder={feedSources.length > 0
-                  ? 'Summarise the most important stories from my selected news sources. Group by topic. Note the source type and region for each story.'
-                  : 'Summarise the latest news in AI and machine learning.'}
+                placeholder={t(feedSources.length > 0 ? 'monitorEdit.promptFeedsPlaceholder' : 'monitorEdit.promptPlaceholder')}
               />
               {feedSources.length > 0 && promptText === '' && (
                 <button
                   type="button"
-                  onClick={() => setPromptText('Summarise the most important stories from my selected news sources. Group by topic. Note the source type and region for each story.')}
+                  onClick={() => setPromptText(t('monitorEdit.promptFeedsPlaceholder'))}
                   className="text-xs text-blue-400 hover:text-blue-300 text-left"
                 >
-                  ↑ Use suggested prompt
+                  ↑ {t('monitorEdit.useSuggested')}
                 </button>
               )}
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs text-gray-400 mb-1">Mode</label>
+                <label className="block text-xs text-gray-400 mb-1">{t('monitorEdit.mode')}</label>
                 <select
                   value={focusMode}
                   onChange={e => setFocusMode(e.target.value as 'flash' | 'balanced' | 'thorough')}
                   className="w-full rounded bg-gray-800 border border-gray-700 px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500"
                 >
-                  <option value="flash">Flash</option>
-                  <option value="balanced">Balanced</option>
-                  <option value="thorough">Thorough</option>
+                  <option value="flash">{t('mode.flash')}</option>
+                  <option value="balanced">{t('mode.balanced')}</option>
+                  <option value="thorough">{t('mode.thorough')}</option>
                 </select>
               </div>
 
               <div>
-                <label className="block text-xs text-gray-400 mb-1">Keep last</label>
+                <label className="block text-xs text-gray-400 mb-1">{t('monitorEdit.keepLast')}</label>
                 <input
                   type="number"
                   value={keepCount}
@@ -226,7 +227,7 @@ export function MonitorEditor({ initial, spaces, timezone, onSave, onClose, isGl
             </div>
 
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Interval</label>
+              <label className="block text-xs text-gray-400 mb-1">{t('monitorEdit.interval')}</label>
               <div className="flex flex-wrap gap-1.5 mb-2">
                 {INTERVAL_PRESETS.map(p => (
                   <button
@@ -239,7 +240,7 @@ export function MonitorEditor({ initial, spaces, timezone, onSave, onClose, isGl
                         : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200'
                     }`}
                   >
-                    {p.label}
+                    {t(p.labelKey)}
                   </button>
                 ))}
               </div>
@@ -256,22 +257,22 @@ export function MonitorEditor({ initial, spaces, timezone, onSave, onClose, isGl
                   onChange={e => setIntervalUnit(e.target.value as 'hours' | 'days')}
                   className="rounded bg-gray-800 border border-gray-700 px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500"
                 >
-                  <option value="hours">hours</option>
-                  <option value="days">days</option>
+                  <option value="hours">{t('monitorEdit.unitHours')}</option>
+                  <option value="days">{t('monitorEdit.unitDays')}</option>
                 </select>
               </div>
             </div>
 
             {showHourPicker && (
               <div>
-                <label className="block text-xs text-gray-400 mb-1">Run at</label>
+                <label className="block text-xs text-gray-400 mb-1">{t('monitorEdit.runAt')}</label>
                 <div className="flex items-center gap-2">
                   <select
                     value={preferredHour ?? ''}
                     onChange={e => setPreferredHour(e.target.value === '' ? null : parseInt(e.target.value))}
                     className="rounded bg-gray-800 border border-gray-700 px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500"
                   >
-                    <option value="">Any time</option>
+                    <option value="">{t('monitorEdit.anyTime')}</option>
                     {Array.from({ length: 24 }, (_, h) => (
                       <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>
                     ))}
@@ -281,11 +282,11 @@ export function MonitorEditor({ initial, spaces, timezone, onSave, onClose, isGl
                       type="text"
                       value={monitorTimezone}
                       onChange={e => setMonitorTimezone(e.target.value)}
-                      placeholder="e.g. Europe/Stockholm"
+                      placeholder={t('monitorEdit.timezonePlaceholder')}
                       className="rounded bg-gray-800 border border-gray-700 px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500 w-44"
                     />
                   ) : (
-                    <span className="text-xs text-gray-500">{timezone || 'server time'}</span>
+                    <span className="text-xs text-gray-500">{timezone || t('monitorEdit.serverTime')}</span>
                   )}
                 </div>
               </div>
@@ -293,13 +294,13 @@ export function MonitorEditor({ initial, spaces, timezone, onSave, onClose, isGl
 
             {!isGlobal && spaces.length > 0 && (
               <div>
-                <label className="block text-xs text-gray-400 mb-1">Space context (optional)</label>
+                <label className="block text-xs text-gray-400 mb-1">{t('monitorEdit.spaceContext')}</label>
                 <select
                   value={spaceId}
                   onChange={e => setSpaceId(e.target.value)}
                   className="w-full rounded bg-gray-800 border border-gray-700 px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500"
                 >
-                  <option value="">None</option>
+                  <option value="">{t('monitorEdit.spaceNone')}</option>
                   {spaces.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
               </div>
@@ -312,7 +313,7 @@ export function MonitorEditor({ initial, spaces, timezone, onSave, onClose, isGl
                 onChange={e => setEnabled(e.target.checked)}
                 className="rounded accent-blue-500"
               />
-              <span className="text-sm text-gray-300">Enabled</span>
+              <span className="text-sm text-gray-300">{t('monitorEdit.enabled')}</span>
             </label>
           </>
         )}
@@ -320,12 +321,11 @@ export function MonitorEditor({ initial, spaces, timezone, onSave, onClose, isGl
         {tab === 'sources' && (
           <div>
             <p className="text-xs text-gray-500 mb-3">
-              Selected feeds are fetched at run time and injected as context. The AI synthesises
-              from those articles rather than doing a general web search.
-              {feedSources.length > 0 && <span className="ml-1 text-blue-400">{feedSources.length} selected.</span>}
+              {t('monitorEdit.sourcesIntro')}
+              {feedSources.length > 0 && <span className="ml-1 text-blue-400">{t('monitorEdit.sourcesSelected', { count: feedSources.length })}</span>}
             </p>
 
-            {catalogLoading && <p className="text-sm text-gray-500">Loading sources…</p>}
+            {catalogLoading && <p className="text-sm text-gray-500">{t('monitorEdit.loadingSources')}</p>}
 
             {catalog && catalog.map(region => {
               const expanded = expandedRegions.has(region.region)
@@ -346,7 +346,7 @@ export function MonitorEditor({ initial, spaces, timezone, onSave, onClose, isGl
                       onClick={e => { e.stopPropagation(); selectAllInRegion(region, !allSelected) }}
                       className="text-xs text-gray-500 hover:text-gray-300 px-1"
                     >
-                      {allSelected ? 'none' : 'all'}
+                      {t(allSelected ? 'monitorEdit.selectNone' : 'monitorEdit.selectAll')}
                     </button>
                   </div>
 
@@ -387,7 +387,7 @@ export function MonitorEditor({ initial, spaces, timezone, onSave, onClose, isGl
           disabled={!canSave}
           className="self-start px-4 py-1.5 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-sm font-medium transition-colors"
         >
-          {saving ? 'Saving…' : initial ? 'Update monitor' : 'Save monitor'}
+          {saving ? t('common.saving') : t(initial ? 'monitorEdit.update' : 'monitorEdit.save')}
         </button>
       </div>
     </Modal>

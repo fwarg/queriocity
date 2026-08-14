@@ -6,6 +6,16 @@ import {
   subscribeMonitor, unsubscribeMonitor, type Monitor, type MonitorRun, type Space,
 } from '../lib/api.ts'
 import { MonitorEditor } from './MonitorEditor.tsx'
+import { useT, type TFunction } from '../lib/i18n.tsx'
+import type { TranslationKey } from '@shared/i18n/index.ts'
+import type { FocusMode } from '../lib/templates.ts'
+
+const MODE_LABEL_KEYS: Record<FocusMode, TranslationKey> = {
+  flash: 'mode.flash',
+  balanced: 'mode.balanced',
+  thorough: 'mode.thorough',
+  image: 'mode.image',
+}
 
 interface Props {
   spaces: Space[]
@@ -15,35 +25,34 @@ interface Props {
   onCountChange?: (n: number) => void
 }
 
-function formatInterval(minutes: number, preferredHour?: number | null): string {
-  const hourSuffix = preferredHour != null ? ` at ${String(preferredHour).padStart(2, '0')}:00` : ''
+/** The three time labels take `t` rather than calling useT: they are plain functions, and passing
+ *  the translator keeps them that way. */
+function formatInterval(t: TFunction, minutes: number, preferredHour?: number | null): string {
+  const hourSuffix = preferredHour != null ? t('monitor.atHour', { hour: String(preferredHour).padStart(2, '0') }) : ''
   if (minutes % 1440 === 0) {
     const d = minutes / 1440
-    return (d === 1 ? 'daily' : `every ${d} days`) + hourSuffix
+    return (d === 1 ? t('monitor.daily') : t('monitor.everyDays', { count: d })) + hourSuffix
   }
-  if (minutes % 60 === 0) {
-    const h = minutes / 60
-    return h === 1 ? 'every hour' : `every ${h} hours`
-  }
-  return `every ${minutes} min`
+  if (minutes % 60 === 0) return t('monitor.everyHours', { count: minutes / 60 })
+  return t('monitor.everyMinutes', { count: minutes })
 }
 
-function relativeTime(ts: number): string {
+function relativeTime(t: TFunction, ts: number): string {
   const diff = Date.now() / 1000 - ts
-  if (diff < 60) return 'just now'
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
-  return `${Math.floor(diff / 86400)}d ago`
+  if (diff < 60) return t('monitor.justNow')
+  if (diff < 3600) return t('monitor.minutesAgo', { count: Math.floor(diff / 60) })
+  if (diff < 86400) return t('monitor.hoursAgo', { count: Math.floor(diff / 3600) })
+  return t('monitor.daysAgo', { count: Math.floor(diff / 86400) })
 }
 
-function nextRunLabel(ts: number | undefined): string {
-  if (!ts) return 'not scheduled'
+function nextRunLabel(t: TFunction, ts: number | undefined): string {
+  if (!ts) return t('monitor.notScheduled')
   const diff = ts - Date.now() / 1000
-  if (diff <= 0) return 'overdue'
-  if (diff < 60) return 'in <1 min'
-  if (diff < 3600) return `in ${Math.floor(diff / 60)}m`
-  if (diff < 86400) return `in ${Math.floor(diff / 3600)}h`
-  return `in ${Math.floor(diff / 86400)}d`
+  if (diff <= 0) return t('monitor.overdue')
+  if (diff < 60) return t('monitor.inUnderMinute')
+  if (diff < 3600) return t('monitor.inMinutes', { count: Math.floor(diff / 60) })
+  if (diff < 86400) return t('monitor.inHours', { count: Math.floor(diff / 3600) })
+  return t('monitor.inDays', { count: Math.floor(diff / 86400) })
 }
 
 interface MonitorCardProps {
@@ -57,6 +66,7 @@ interface MonitorCardProps {
 }
 
 function MonitorCard({ monitor, onEdit, onDelete, onRun, onOpenSession, isGlobalCard, onUnsubscribe }: MonitorCardProps) {
+  const t = useT()
   const [expanded, setExpanded] = useState(false)
   const [runs, setRuns] = useState<MonitorRun[]>([])
   const [loadingRuns, setLoadingRuns] = useState(false)
@@ -96,7 +106,7 @@ function MonitorCard({ monitor, onEdit, onDelete, onRun, onOpenSession, isGlobal
           type="button"
           onClick={toggleExpand}
           className="mt-0.5 text-gray-500 hover:text-gray-300 shrink-0"
-          aria-label={expanded ? 'Collapse' : 'Expand'}
+          aria-label={t(expanded ? 'monitor.collapse' : 'monitor.expand')}
         >
           {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </button>
@@ -105,16 +115,16 @@ function MonitorCard({ monitor, onEdit, onDelete, onRun, onOpenSession, isGlobal
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm font-medium text-white truncate">{monitor.name}</span>
             <span className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium ${modeColors[monitor.focusMode] ?? 'bg-gray-700 text-gray-300'}`}>
-              {monitor.focusMode}
+              {t(MODE_LABEL_KEYS[monitor.focusMode])}
             </span>
             {!monitor.enabled && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-700 text-gray-400">paused</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-700 text-gray-400">{t('monitor.paused')}</span>
             )}
           </div>
           <div className="text-xs text-gray-500 mt-0.5">
-            {formatInterval(monitor.intervalMinutes, monitor.preferredHour)}
-            {monitor.lastRunAt ? ` · last run ${relativeTime(monitor.lastRunAt)}` : ' · never run'}
-            {' · '}next {nextRunLabel(monitor.nextRunAt)}
+            {formatInterval(t, monitor.intervalMinutes, monitor.preferredHour)}
+            {monitor.lastRunAt ? ` · ${t('monitor.lastRun', { when: relativeTime(t, monitor.lastRunAt) })}` : ` · ${t('monitor.neverRun')}`}
+            {' · '}{t('monitor.next', { when: nextRunLabel(t, monitor.nextRunAt) })}
           </div>
         </div>
 
@@ -124,8 +134,8 @@ function MonitorCard({ monitor, onEdit, onDelete, onRun, onOpenSession, isGlobal
             onClick={handleRun}
             disabled={running}
             className="p-1.5 rounded text-gray-500 hover:text-green-400 hover:bg-gray-700 disabled:opacity-40 transition-colors"
-            aria-label="Run now"
-            title="Run now"
+            aria-label={t('monitor.runNow')}
+            title={t('monitor.runNow')}
           >
             {running ? <span className="text-xs">…</span> : <Play size={12} />}
           </button>
@@ -135,7 +145,7 @@ function MonitorCard({ monitor, onEdit, onDelete, onRun, onOpenSession, isGlobal
                 type="button"
                 onClick={() => onEdit(monitor)}
                 className="p-1.5 rounded text-gray-500 hover:text-gray-200 hover:bg-gray-700 transition-colors"
-                aria-label="Edit monitor"
+                aria-label={t('monitor.edit')}
               >
                 <Pencil size={12} />
               </button>
@@ -143,7 +153,7 @@ function MonitorCard({ monitor, onEdit, onDelete, onRun, onOpenSession, isGlobal
                 type="button"
                 onClick={() => onDelete(monitor.id)}
                 className="p-1.5 rounded text-gray-500 hover:text-red-400 hover:bg-gray-700 transition-colors"
-                aria-label="Delete monitor"
+                aria-label={t('monitor.delete')}
               >
                 <Trash2 size={12} />
               </button>
@@ -154,7 +164,7 @@ function MonitorCard({ monitor, onEdit, onDelete, onRun, onOpenSession, isGlobal
               type="button"
               onClick={() => onUnsubscribe(monitor.id)}
               className="px-2 py-1 rounded text-xs text-gray-500 hover:text-red-400 hover:bg-gray-700 transition-colors"
-              title="Unsubscribe"
+              title={t('monitor.unsubscribe')}
             >
               ×
             </button>
@@ -165,9 +175,9 @@ function MonitorCard({ monitor, onEdit, onDelete, onRun, onOpenSession, isGlobal
       {expanded && (
         <div className="border-t border-gray-700 px-3 py-2">
           {loadingRuns ? (
-            <p className="text-xs text-gray-600 italic">Loading runs…</p>
+            <p className="text-xs text-gray-600 italic">{t('monitor.loadingRuns')}</p>
           ) : runs.length === 0 ? (
-            <p className="text-xs text-gray-600 italic">No runs yet. Click ▶ to run now.</p>
+            <p className="text-xs text-gray-600 italic">{t('monitor.noRuns')}</p>
           ) : (
             <ul className="flex flex-col gap-1">
               {runs.map(r => (
@@ -177,7 +187,7 @@ function MonitorCard({ monitor, onEdit, onDelete, onRun, onOpenSession, isGlobal
                     onClick={() => onOpenSession(r.sessionId, monitor.name)}
                     className="text-xs text-blue-400 hover:text-blue-300 hover:underline"
                   >
-                    {relativeTime(r.runAt)}
+                    {relativeTime(t, r.runAt)}
                   </button>
                 </li>
               ))}
@@ -190,6 +200,7 @@ function MonitorCard({ monitor, onEdit, onDelete, onRun, onOpenSession, isGlobal
 }
 
 export function MonitorsView({ spaces, isAdmin, timezone, onOpenSession, onCountChange }: Props) {
+  const t = useT()
   const [monitors, setMonitors] = useState<Monitor[]>([])
   const [globalMonitors, setGlobalMonitors] = useState<Monitor[]>([])
   const [editor, setEditor] = useState<'new' | Monitor | null>(null)
@@ -233,13 +244,13 @@ export function MonitorsView({ spaces, isAdmin, timezone, onOpenSession, onCount
   }
 
   async function handleDelete(id: string) {
-    if (!window.confirm('Delete this monitor?')) return
+    if (!window.confirm(t('monitor.deleteConfirm'))) return
     await deleteMonitor(id)
     setMonitors(prev => prev.filter(m => m.id !== id))
   }
 
   async function handleGlobalDelete(id: string) {
-    if (!window.confirm('Delete this global monitor?')) return
+    if (!window.confirm(t('monitor.deleteGlobalConfirm'))) return
     const { deleteGlobalMonitor } = await import('../lib/api.ts')
     await deleteGlobalMonitor(id)
     setGlobalMonitors(prev => prev.filter(m => m.id !== id))
@@ -268,21 +279,19 @@ export function MonitorsView({ spaces, isAdmin, timezone, onOpenSession, onCount
   return (
     <div className="flex-1 overflow-y-auto p-4 max-w-2xl mx-auto w-full">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-base font-semibold text-gray-100">Monitors</h2>
+        <h2 className="text-base font-semibold text-gray-100">{t('nav.monitors')}</h2>
         <button
           type="button"
           onClick={() => setEditor('new')}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-sm font-medium transition-colors"
         >
           <Plus size={14} />
-          New monitor
+          {t('monitor.new')}
         </button>
       </div>
 
       {ownMonitors.length === 0 && subscribedMonitors.length === 0 ? (
-        <p className="text-sm text-gray-500 italic">
-          No monitors yet. Create one to run a query automatically on a schedule.
-        </p>
+        <p className="text-sm text-gray-500 italic">{t('monitor.none')}</p>
       ) : (
         <div className="flex flex-col gap-3">
           {ownMonitors.map(m => (
@@ -298,7 +307,7 @@ export function MonitorsView({ spaces, isAdmin, timezone, onOpenSession, onCount
 
           {subscribedMonitors.length > 0 && (
             <>
-              <p className="text-xs text-gray-500 mt-2 px-1">Subscribed</p>
+              <p className="text-xs text-gray-500 mt-2 px-1">{t('monitor.subscribed')}</p>
               {subscribedMonitors.map(m => (
                 <MonitorCard
                   key={m.id}
@@ -324,13 +333,13 @@ export function MonitorsView({ spaces, isAdmin, timezone, onOpenSession, onCount
           className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-300 transition-colors"
         >
           {globalExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-          Browse global monitors
+          {t('monitor.browseGlobal')}
         </button>
 
         {globalExpanded && (
           <div className="mt-2 flex flex-col gap-2">
             {globalMonitors.length === 0 ? (
-              <p className="text-xs text-gray-600 italic">No global monitors available.</p>
+              <p className="text-xs text-gray-600 italic">{t('monitor.noGlobal')}</p>
             ) : (
               globalMonitors.map(m => {
                 const alreadySubscribed = subscribedIds.has(m.id)
@@ -338,17 +347,17 @@ export function MonitorsView({ spaces, isAdmin, timezone, onOpenSession, onCount
                   <div key={m.id} className="flex items-center gap-2 p-2.5 rounded bg-gray-800 border border-gray-700">
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-medium text-white truncate">{m.name}</div>
-                      <div className="text-xs text-gray-500">{formatInterval(m.intervalMinutes, m.preferredHour)}</div>
+                      <div className="text-xs text-gray-500">{formatInterval(t, m.intervalMinutes, m.preferredHour)}</div>
                     </div>
                     {alreadySubscribed ? (
-                      <span className="text-xs text-gray-500">Subscribed</span>
+                      <span className="text-xs text-gray-500">{t('monitor.subscribed')}</span>
                     ) : (
                       <button
                         type="button"
                         onClick={() => handleSubscribe(m.id)}
                         className="px-2 py-1 rounded bg-blue-700 hover:bg-blue-600 text-xs text-white transition-colors"
                       >
-                        Subscribe
+                        {t('monitor.subscribe')}
                       </button>
                     )}
                   </div>
@@ -385,7 +394,7 @@ export function MonitorsView({ spaces, isAdmin, timezone, onOpenSession, onCount
                 <div key={m.id} className="flex items-center gap-2 p-2.5 rounded bg-gray-800 border border-gray-700">
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium text-white truncate">{m.name}</div>
-                    <div className="text-xs text-gray-500">{formatInterval(m.intervalMinutes)}</div>
+                    <div className="text-xs text-gray-500">{formatInterval(t, m.intervalMinutes)}</div>
                   </div>
                   <button
                     type="button"

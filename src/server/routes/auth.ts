@@ -11,6 +11,7 @@ import {
   validatePassword, AUTH_COOKIE, COOKIE_OPTIONS,
 } from '../lib/auth.ts'
 import { RateLimiter, clientIp, warnIfProxyUntrusted } from '../lib/rate-limit.ts'
+import { LANG_CODES } from '../../shared/i18n/index.ts'
 
 export const authRouter = new Hono()
 
@@ -31,13 +32,16 @@ const registerSchema = z.object({
   password: z.string(),
   name: z.string().optional(),
   inviteToken: z.string().optional(),
+  /** Chosen in the sign-up form. Stored with the row rather than PATCHed afterwards, so the
+   *  choice survives a follow-up request that never lands. */
+  language: z.enum(LANG_CODES).optional(),
 })
 
 authRouter.post('/register', zValidator('json', registerSchema), async (c) => {
   warnIfProxyUntrusted(c)
-  if (!authAttempts.check(clientIp(c))) return c.json({ error: 'Too many attempts. Try again later.' }, 429)
+  if (!authAttempts.check(clientIp(c))) return c.json({ error: 'Too many attempts. Try again later.', code: 'too_many_attempts' }, 429)
 
-  const { email, password, name, inviteToken } = c.req.valid('json')
+  const { email, password, name, inviteToken, language } = c.req.valid('json')
 
   const pwError = validatePassword(password)
   if (pwError) return c.json({ error: pwError }, 400)
@@ -45,18 +49,18 @@ authRouter.post('/register', zValidator('json', registerSchema), async (c) => {
   const [{ value: userCount }] = await db.select({ value: count() }).from(users)
 
   if (userCount > 0) {
-    if (!inviteToken) return c.json({ error: 'Invite required' }, 403)
+    if (!inviteToken) return c.json({ error: 'Invite required', code: 'invite_required' }, 403)
     const invite = await db.select().from(invites).where(eq(invites.id, inviteToken)).get()
-    if (!invite) return c.json({ error: 'Invalid invite' }, 403)
-    if (invite.usedAt) return c.json({ error: 'Invite already used' }, 403)
-    if (invite.expiresAt < new Date()) return c.json({ error: 'Invite expired' }, 403)
+    if (!invite) return c.json({ error: 'Invalid invite', code: 'invite_invalid' }, 403)
+    if (invite.usedAt) return c.json({ error: 'Invite already used', code: 'invite_used' }, 403)
+    if (invite.expiresAt < new Date()) return c.json({ error: 'Invite expired', code: 'invite_expired' }, 403)
     if (invite.email && invite.email.toLowerCase() !== email.toLowerCase())
-      return c.json({ error: 'Invite is for a different email address' }, 403)
+      return c.json({ error: 'Invite is for a different email address', code: 'invite_email_mismatch' }, 403)
   }
 
   const existing = await db.select().from(authCredentials)
     .where(eq(authCredentials.email, email.toLowerCase())).get()
-  if (existing) return c.json({ error: 'Email already registered' }, 409)
+  if (existing) return c.json({ error: 'Email already registered', code: 'email_registered' }, 409)
 
   // Consumed only once registration is certain to proceed. Marking it above, before the
   // duplicate-email check, meant someone who already had an account burned their own invite by
@@ -72,7 +76,7 @@ authRouter.post('/register', zValidator('json', registerSchema), async (c) => {
 
   await db.insert(users).values({
     id: userId, email: email.toLowerCase(), name: name ?? null,
-    role, settings: '{}', createdAt: now, updatedAt: now,
+    role, settings: JSON.stringify(language ? { language } : {}), createdAt: now, updatedAt: now,
   })
   await db.insert(authCredentials).values({
     userId, email: email.toLowerCase(), passwordHash, active: true,
@@ -80,7 +84,10 @@ authRouter.post('/register', zValidator('json', registerSchema), async (c) => {
 
   const token = await signToken({ userId, email: email.toLowerCase(), role, tokenVersion: 0 })
   setCookie(c, AUTH_COOKIE, token, COOKIE_OPTIONS)
-  return c.json({ id: userId, email: email.toLowerCase(), name: name ?? null, role }, 201)
+  return c.json({
+    id: userId, email: email.toLowerCase(), name: name ?? null, role,
+    settings: language ? { language } : {},
+  }, 201)
 })
 
 const loginSchema = z.object({
@@ -90,13 +97,13 @@ const loginSchema = z.object({
 
 authRouter.post('/login', zValidator('json', loginSchema), async (c) => {
   warnIfProxyUntrusted(c)
-  if (!authAttempts.check(clientIp(c))) return c.json({ error: 'Too many login attempts. Try again later.' }, 429)
+  if (!authAttempts.check(clientIp(c))) return c.json({ error: 'Too many login attempts. Try again later.', code: 'too_many_attempts' }, 429)
 
   const { email, password } = c.req.valid('json')
   const cred = await db.select().from(authCredentials)
     .where(eq(authCredentials.email, email.toLowerCase())).get()
   const ok = await verifyPassword(password, cred?.passwordHash ?? DUMMY_HASH)
-  if (!cred || !cred.active || !ok) return c.json({ error: 'Invalid credentials' }, 401)
+  if (!cred || !cred.active || !ok) return c.json({ error: 'Invalid credentials', code: 'invalid_credentials' }, 401)
   const user = await db.select().from(users).where(eq(users.id, cred.userId)).get()
   if (!user) return c.json({ error: 'User not found' }, 500)
   const token = await signToken({ userId: user.id, email: user.email, role: user.role as 'user' | 'admin', tokenVersion: user.tokenVersion })

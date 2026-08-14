@@ -2,6 +2,7 @@ import { useState, useRef } from 'react'
 import { streamChat, stopChat, fetchRelatedQuestions, decideEgress } from '../lib/api.ts'
 import type { Message, Source } from '../lib/api.ts'
 import type { LogStep } from '../components/ProgressLog.tsx'
+import { useT } from '../lib/i18n.tsx'
 
 export interface EgressApproval {
   id: string
@@ -26,6 +27,7 @@ interface UseChatOptions {
 }
 
 export function useChat({ sessionId, focusMode, searchCategories, includeFileIds, includeMemoryIds, spaceId, followUpSuggestions = true, onSessionCreated }: UseChatOptions) {
+  const t = useT()
   const [messages, setMessages] = useState<Message[]>([])
   const [streaming, setStreaming] = useState('')
   const [streamingThinking, setStreamingThinking] = useState('')
@@ -165,17 +167,17 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
           blockedEngines.push(...(chunk.engines as Array<{ engine: string; reason: string }>))
         } else if (chunk.type === 'done') {
           if (chunk.elapsedMs) {
-            const label = images.length > 0 ? 'Generated in' : 'Answered in'
+            const label = t(images.length > 0 ? 'answer.generatedIn' : 'answer.answeredIn')
             const srcCount = sources.length
             // Zero sources only means "the search came up empty" in the modes that always
             // search. Flash never searches, and image searches at its own discretion without
             // reporting sources, so for those a count of zero says nothing and is left out.
             const alwaysSearches = focusMode === 'balanced' || focusMode === 'thorough'
             let srcLabel: string
-            if (srcCount > 0) srcLabel = ` · ${srcCount} search result${srcCount === 1 ? '' : 's'}`
-            else if (blockedEngines.length) srcLabel = ` · search engines unavailable (${blockedEngines.map(e => e.engine).join(', ')}) — answered without web results`
-            else srcLabel = alwaysSearches ? ' · no search results' : ''
-            setAnswerTime(`${label} ${(chunk.elapsedMs as number / 1000).toFixed(1)} seconds${srcLabel}.`)
+            if (srcCount > 0) srcLabel = ` · ${t('answer.searchResults', { count: srcCount })}`
+            else if (blockedEngines.length) srcLabel = ` · ${t('answer.enginesUnavailable', { engines: blockedEngines.map(e => e.engine).join(', ') })}`
+            else srcLabel = alwaysSearches ? ` · ${t('answer.noSearchResults')}` : ''
+            setAnswerTime(t('answer.time', { label, seconds: (chunk.elapsedMs as number / 1000).toFixed(1) }) + srcLabel + '.')
           }
           liveSessionRef.current = chunk.sessionId as string
           onSessionCreated(chunk.sessionId as string, (chunk.title as string | undefined) ?? text.slice(0, 60))
@@ -185,7 +187,7 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
       if (err instanceof Error && err.name === 'AbortError') {
         wasAborted = true
       } else {
-        setStatus(err instanceof Error ? err.message : 'Request failed. Check your connection.')
+        setStatus(err instanceof Error ? err.message : t('answer.requestFailed'))
       }
     } finally {
       cancelAnimationFrame(rafRef.current)
@@ -204,7 +206,7 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
       setStreamingThinking('')
       closeLastStep()
       setSteps([...log])
-      if (!accumulated && !wasAborted) setStatus('No response received — search may be temporarily unavailable. Try again.')
+      if (!accumulated && !wasAborted) setStatus(t('answer.noResponse'))
       else if (wasAborted && !accumulated && images.length === 0) {
         // Withdraw the turn only if this run added it. `submit` appends the user's message and
         // then streams, so a stop before any text leaves a question with no answer — worth

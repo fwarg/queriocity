@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useT } from '../lib/i18n.tsx'
 import { ShieldAlert } from 'lucide-react'
 import type { EgressApproval } from '../hooks/useChat.ts'
 
@@ -14,6 +15,7 @@ interface Props {
  *  truncated: an exfiltration payload lives at the end of the string, which is exactly what an
  *  ellipsis would hide. */
 export function ApprovalPrompt({ approval, onDecide }: Props) {
+  const t = useT()
   const [secondsLeft, setSecondsLeft] = useState(() =>
     Math.max(0, Math.ceil((approval.expiresAt - Date.now()) / 1000)))
 
@@ -24,7 +26,7 @@ export function ApprovalPrompt({ approval, onDecide }: Props) {
     return () => clearInterval(timer)
   }, [approval.expiresAt])
 
-  const what = approval.kind === 'fetch' ? 'fetch a URL' : 'run a web search'
+  const what = t(approval.kind === 'fetch' ? 'approval.fetchUrl' : 'approval.webSearch')
 
   return (
     <div
@@ -35,13 +37,12 @@ export function ApprovalPrompt({ approval, onDecide }: Props) {
       <div className="flex items-center gap-2 text-amber-300">
         <ShieldAlert size={18} aria-hidden />
         <span id="approval-title" className="font-medium">
-          The assistant wants to {what}
+          {t('approval.title', { what })}
         </span>
       </div>
 
       <p className="mt-2 text-gray-300">
-        This request was flagged as a possible attempt to send private content out of this system.
-        It has <strong>not</strong> been sent.
+        {t('approval.body')} <strong>{t('approval.notSent')}</strong>
       </p>
 
       <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-black/40 p-2 font-mono text-xs text-gray-200">
@@ -59,16 +60,16 @@ export function ApprovalPrompt({ approval, onDecide }: Props) {
           onClick={() => onDecide(approval.id, false)}
           className="rounded bg-gray-700 px-3 py-1.5 text-white hover:bg-gray-600"
         >
-          Decline
+          {t('approval.decline')}
         </button>
         <button
           onClick={() => onDecide(approval.id, true)}
           className="rounded border border-amber-600 px-3 py-1.5 text-amber-200 hover:bg-amber-900/40"
         >
-          Send it
+          {t('approval.send')}
         </button>
         <span className="ml-auto text-xs text-gray-400" aria-live="off">
-          Declines automatically in {secondsLeft}s
+          {t('approval.autoDecline', { seconds: secondsLeft })}
         </span>
       </div>
     </div>

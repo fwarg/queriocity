@@ -37,6 +37,7 @@ through a single Bun process.
   - [Prompt templates](#prompt-templates)
     - [Prompt Studio](#prompt-studio)
   - [Settings](#settings)
+    - [Languages](#languages)
   - [Image generation](#image-generation)
   - [Spaces](#spaces)
     - [How memory works](#how-memory-works)
@@ -449,9 +450,47 @@ Open **Settings** from the bottom of the sidebar. Settings are saved per user.
 | **Follow-up suggestions** | Show up to three suggested follow-up questions as chips under a finished answer. Powered by the flash model, one call per answer. Disabling it skips the call entirely. |
 | **Image labelling** | On by default. Adds a visible "AI-generated" caption bar beneath images saved with the **Download PNG** link. Machine-readable provenance metadata is embedded either way; the caption is what survives a site that strips metadata on upload. Note that the download link always re-encodes, which drops the diffusion server's prompt metadata — right-click if you want the file exactly as stored. See [AI transparency](#ai-transparency-eu-ai-act-article-50). |
 | **About you** | Off by default. Keeps a short list of facts about you that apply in *every* chat, space or not, and lets you build it by hand or from a reviewed scan of your recent chats. See [Memory about you](#memory-about-you). |
+| **Language** | Interface language, with a flag selector. Also offered on the sign-up form, so a new account starts in the right language. Signed out, the login page follows your browser's language (or your last choice on this device). This changes the interface only — the assistant still answers in whatever language you write in. See [Languages](#languages). |
 | **Font size** | UI font size: Small (15 px), Normal (17 px), Large (19 px), XL (21 px). Sizes scale up automatically on narrow viewports. |
 | **Timezone** | IANA timezone (e.g. `Europe/Stockholm`) used when scheduling monitors at a specific hour of the day. Defaults to server time (UTC in Docker) if not set. |
 | **Password** | Change your password. Requires the current one; the new one needs 8+ characters with upper and lower case, a digit and a symbol. Changing it signs out your other devices but keeps the current session. |
+
+### Languages
+
+English and Swedish ship in the box. The interface language is a per-user setting; the assistant's
+answer language is not affected by it — the prompts tell the model to reply in whatever language the
+question was asked in, so a Swedish question gets a Swedish answer regardless of this setting.
+
+Where the language comes from, in order: the signed-in user's setting, then `localStorage`, then the
+browser's `Accept-Language` list, then English.
+
+**Adding a language** is two edits and no new dependency:
+
+1. Copy `src/shared/i18n/en.ts` to `src/shared/i18n/<code>.ts`, rename the export, type it as
+   `Catalog`, and translate the values. English is the source of truth: `bun run typecheck` lists
+   every key the new file is missing and every key it has that English no longer does.
+2. Add a row to `LANGUAGES` in `src/shared/i18n/index.ts`:
+
+   ```ts
+   { code: 'de', label: 'Deutsch', flag: '🇩🇪' },
+   ```
+
+   The selector, the settings schema and the browser-language matching all read that list, so
+   nothing else needs changing.
+
+Then `bun run check`. Beyond the type check, `src/shared/i18n/i18n.test.ts` asserts that every
+catalog has exactly English's keys, that placeholders like `{count}` survive translation, and that
+no string is left empty; `src/client/src/lib/templates-i18n.test.ts` does the same for the built-in
+prompt templates, whose copy is keyed by template id.
+
+Counted strings use `{ one, other }` and are selected with `Intl.PluralRules`, so a language with
+different plural rules does not need code — just both forms.
+
+Left in English deliberately: the admin panel, the news-feed catalogue (source names, regions and
+ownership labels are data from the feed list), and prompt-template option values such as
+`structured report`, which are substituted into the prompt sent to the model rather than read by
+anyone. API errors are translated where the route sends a stable code (see
+`src/shared/error-codes.ts`); the rest fall back to the server's English text.
 
 ---
 

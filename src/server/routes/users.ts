@@ -9,6 +9,7 @@ import {
   hashPassword, verifyPassword, validatePassword, signToken, AUTH_COOKIE, COOKIE_OPTIONS,
 } from '../lib/auth.ts'
 import { getUserMemories, saveUserMemory, deleteUserMemory, embedMemory, suggestUserMemories } from '../lib/memory.ts'
+import { LANG_CODES } from '../../shared/i18n/index.ts'
 
 export const usersRouter = new Hono<AppEnv>()
 
@@ -33,6 +34,9 @@ const settingsSchema = z.object({
    *  disclosure duty (Art 50(4)) falls on whoever deploys the app, and only a visible mark
    *  survives a platform stripping the file's metadata. Metadata marking is unconditional. */
   imageWatermark: z.boolean().optional(),
+  /** UI language. Absent for everyone who signed up before the selector existed — the client
+   *  falls back to the browser's language rather than assuming English. */
+  language: z.enum(LANG_CODES).optional(),
 })
 
 usersRouter.post('/password', zValidator('json', z.object({
@@ -46,9 +50,9 @@ usersRouter.post('/password', zValidator('json', z.object({
   if (pwError) return c.json({ error: pwError }, 400)
 
   const cred = await db.select().from(authCredentials).where(eq(authCredentials.userId, userId)).get()
-  if (!cred) return c.json({ error: 'No credentials for this account' }, 400)
+  if (!cred) return c.json({ error: 'No credentials for this account', code: 'no_credentials' }, 400)
   if (!await verifyPassword(currentPassword, cred.passwordHash)) {
-    return c.json({ error: 'Current password is incorrect' }, 401)
+    return c.json({ error: 'Current password is incorrect', code: 'wrong_password' }, 401)
   }
 
   await db.update(authCredentials)

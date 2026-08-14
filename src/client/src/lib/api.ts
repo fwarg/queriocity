@@ -1,3 +1,23 @@
+import type { Lang } from '@shared/i18n/index.ts'
+import type { ApiErrorBody, ErrorCode } from '@shared/error-codes.ts'
+
+/** An API failure, carrying the server's stable code where the route sends one.
+ *
+ *  `message` stays the server's English string so anything that just prints it keeps working;
+ *  `errorMessage` in lib/errors.ts is what turns the code into the reader's language. */
+export class ApiError extends Error {
+  constructor(message: string, readonly code?: ErrorCode) {
+    super(message)
+    this.name = 'ApiError'
+  }
+}
+
+/** Builds an ApiError from a failed response, falling back when the body is not the usual shape. */
+export async function apiError(res: Response, fallback: string): Promise<ApiError> {
+  const body = await res.json().catch(() => ({})) as Partial<ApiErrorBody>
+  return new ApiError(body.error ?? fallback, body.code)
+}
+
 const BASE = '/api'
 
 export interface AuthUser {
@@ -5,7 +25,7 @@ export interface AuthUser {
   email: string
   name: string | null
   role: 'user' | 'admin'
-  settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; useSpaceRag?: boolean; useChatRag?: boolean; querySuggestions?: boolean; followUpSuggestions?: boolean; userMemory?: boolean; imageWatermark?: boolean; fontSize?: number; timezone?: string }
+  settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; useSpaceRag?: boolean; useChatRag?: boolean; querySuggestions?: boolean; followUpSuggestions?: boolean; userMemory?: boolean; imageWatermark?: boolean; fontSize?: number; timezone?: string; language?: Lang }
   memoryTokenBudget: number
   /** True after an admin issued a temporary password — the user must set their own. */
   mustChangePassword?: boolean
@@ -58,23 +78,17 @@ export async function login(email: string, password: string): Promise<AuthUser> 
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password }),
   })
-  if (!res.ok) {
-    const { error } = await res.json()
-    throw new Error(error ?? 'Login failed')
-  }
+  if (!res.ok) throw await apiError(res, 'Login failed')
   return res.json()
 }
 
-export async function register(email: string, password: string, name?: string, inviteToken?: string): Promise<AuthUser> {
+export async function register(email: string, password: string, name?: string, inviteToken?: string, language?: Lang): Promise<AuthUser> {
   const res = await fetch(`${BASE}/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password, name, inviteToken }),
+    body: JSON.stringify({ email, password, name, inviteToken, language }),
   })
-  if (!res.ok) {
-    const { error } = await res.json()
-    throw new Error(error ?? 'Registration failed')
-  }
+  if (!res.ok) throw await apiError(res, 'Registration failed')
   return res.json()
 }
 
@@ -136,10 +150,7 @@ export async function changePassword(currentPassword: string, newPassword: strin
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ currentPassword, newPassword }),
   })
-  if (!res.ok) {
-    const e = await res.json().catch(() => ({}))
-    throw new Error(e.error ?? 'Could not change password')
-  }
+  if (!res.ok) throw await apiError(res, 'Could not change password')
 }
 
 export async function resetUserPassword(id: string): Promise<{ tempPassword: string }> {
