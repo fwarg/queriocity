@@ -27,7 +27,8 @@ export interface ProgressStep {
   count?: number
   index?: number
   total?: number
-  /** Distinguishes generate from edit, so the log can say which. */
+  /** Free-text rider on the line: which image operation, or what a fetched page had to be
+   *  reduced to (see describeOutcome in fetch-url.ts). */
   detail?: string
 }
 
@@ -35,7 +36,7 @@ export interface ProgressStep {
 export function stepText(step: ProgressStep): string {
   switch (step.kind) {
     case 'understand': return 'Understanding your question…'
-    case 'read':       return `Reading: ${step.hosts?.join(', ') ?? ''}`
+    case 'read':       return `Reading: ${step.hosts?.join(', ') ?? ''}${step.detail ? ` — ${step.detail}` : ''}`
     case 'search':     return `Searching: ${(step.queries ?? []).map(q => `"${q}"`).join(', ')}`
     case 'results':    return `Found ${step.count ?? 0} result${step.count === 1 ? '' : 's'}`
     case 'reason':     return step.total ? `Thinking (step ${step.index} of ${step.total})…` : 'Thinking…'

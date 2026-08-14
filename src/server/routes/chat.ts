@@ -16,7 +16,7 @@ import { randomUUID } from 'crypto'
 import { readFile } from 'node:fs/promises'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { webSearch, webSearchMulti, type SearchResult, type EngineError, type SearchApiBudget } from '../lib/searxng.ts'
-import { fetchUrlAllPages, processUrlsForContext } from '../lib/fetch-url.ts'
+import { fetchUrlAllPages, processUrlsForContext, describeOutcome, DEFAULT_MAX_URL_CONTEXT_CHARS, type UrlOutcome, type ProcessedUrl } from '../lib/fetch-url.ts'
 import { getFlashModel, getChatModel, getThinkingModelOrFallback, RESEARCH_MAX_TOKENS } from '../lib/llm.ts'
 import { ThinkExtractor } from '../lib/think-extractor.ts'
 import { rerankSearchResults } from '../lib/reranker.ts'
@@ -581,8 +581,9 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       return allowed
     }
 
-    const [fetchMaxPages, fetchSummarize, compressHistory] = await Promise.all([
+    const [fetchMaxPages, urlContextChars, fetchSummarize, compressHistory] = await Promise.all([
       getAppSetting('fetch_max_pages', '8').then(Number),
+      getAppSetting('fetch_max_url_context_chars', String(DEFAULT_MAX_URL_CONTEXT_CHARS)).then(Number),
       getAppSetting('fetch_summarize_overflow', 'false').then(v => v === 'true'),
       getAppSetting('compress_history_overflow', 'false').then(v => v === 'true'),
     ])
@@ -627,7 +628,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     const estMsgsChars = msgs.reduce((s, m) => s + (typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content).length), 0)
     const urlBudgetChars = Math.max(0, contextCharBudget(ctxTokenLimit) - estSystemChars - estMsgsChars)
     const processedUrls = prefetchedUrls.length > 0
-      ? await processUrlsForContext(prefetchedUrls, urlBudgetChars, fetchSummarize)
+      ? await processUrlsForContext(prefetchedUrls, urlBudgetChars, fetchSummarize, urlContextChars)
       : prefetchedUrls
 
     let fullContent = ''
@@ -650,6 +651,11 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     }
     if (!initialResults?.length && engineErrors?.length) await warnEngineErrors(engineErrors)
 
+    /** Second line for one fetch_url, and only when the page did not fit as-is: the first was
+     *  emitted at tool-call time so the log moves while the fetch runs. */
+    const emitUrlOutcome = (host: string, outcome: UrlOutcome) =>
+      emitStep({ kind: 'read', hosts: [host], detail: describeOutcome(outcome) })
+
     const emitSearchStatus = (args: { queries?: string[]; query?: string }) => {
       const queries: string[] = args.queries ?? (args.query ? [args.query] : [])
       if (queries.length) emitStep({ kind: 'search', queries })
@@ -660,7 +666,12 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
      *  second-round query with no sign of where the initial results came from. */
     const emitPreSearchSteps = async () => {
       if (processedUrls.length) {
-        await emitStep({ kind: 'read', hosts: processedUrls.map(f => new URL(f.url).hostname) })
+        const reduced = processedUrls.filter(f => f.outcome).map(f => describeOutcome(f.outcome!))
+        await emitStep({
+          kind: 'read',
+          hosts: processedUrls.map(f => new URL(f.url).hostname),
+          detail: reduced.length ? reduced.join('; ') : undefined,
+        })
       }
       if (!initialQueries?.length) return
       await emitStep({ kind: 'search', queries: initialQueries })
@@ -681,7 +692,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         await out.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: snippets + '\n\n' }) })
       }
       const researchModel = useThinking ? getThinkingModelOrFallback() : getChatModel()
-      const researcherResult = await runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, apiBudget, requestApproval, locked })
+      const researcherResult = await runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, onUrlRead: emitUrlOutcome, apiBudget, requestApproval, locked })
       const allSources: SearchResult[] = [...(initialResults ?? [])]
       let researcherNotes = ''
       // Unconditional: the extractor also drops leaked tool-call markup, which has to be stripped
@@ -762,7 +773,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       }
 
       const fullSources: SearchResult[] = []
-      const result = await runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, apiBudget, requestApproval, locked })
+      const result = await runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, onUrlRead: emitUrlOutcome, apiBudget, requestApproval, locked })
       const extractor = new ThinkExtractor()   // see thoroughExtractor above
 
       const keepalive = setInterval(() => {
@@ -946,7 +957,7 @@ function extractUrls(text: string): string[] {
     .slice(0, 2)
 }
 
-async function prefetchUrlsFromMessage(text: string, hasAttachment: boolean, maxPages = 8): Promise<Array<{ url: string; content: string }>> {
+async function prefetchUrlsFromMessage(text: string, hasAttachment: boolean, maxPages = 8): Promise<ProcessedUrl[]> {
   if (hasAttachment) return []
   const urls = extractUrls(text)
   if (!urls.length) return []

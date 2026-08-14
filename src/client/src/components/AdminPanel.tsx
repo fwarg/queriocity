@@ -24,13 +24,14 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   const [rerankTopNDraft, setRerankTopNDraft] = useState('15')
   const [ragTopKDraft, setRagTopKDraft] = useState('15')
   // Derived server-side from the model context env vars; two settings below are clamped by them.
-  const [limits, setLimits] = useState<{ smallModelInputChars: number; embedInputChars: number } | null>(null)
+  const [limits, setLimits] = useState<{ smallModelInputChars: number; embedInputChars: number; scrapeMaxChars: number; minUrlContextChars: number } | null>(null)
   const [attachmentCharsDraft, setAttachmentCharsDraft] = useState('20000')
   const [spaceRagBudgetDraft, setSpaceRagBudgetDraft] = useState('500')
   const [userMemoryBudgetDraft, setUserMemoryBudgetDraft] = useState('300')
   const [queryReformulationDraft, setQueryReformulationDraft] = useState(true)
   const [rssFeedCharsBudgetDraft, setRssFeedCharsBudgetDraft] = useState('50000')
   const [fetchMaxPagesDraft, setFetchMaxPagesDraft] = useState('8')
+  const [fetchMaxUrlContextCharsDraft, setFetchMaxUrlContextCharsDraft] = useState('40000')
   const [fetchSummarizeOverflowDraft, setFetchSummarizeOverflowDraft] = useState(false)
   const [compressHistoryOverflowDraft, setCompressHistoryOverflowDraft] = useState(false)
   const [savingBudget, setSavingBudget] = useState(false)
@@ -69,6 +70,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
       setQueryReformulationDraft(s.queryReformulation)
       setRssFeedCharsBudgetDraft(String(s.rssFeedCharsBudget))
       setFetchMaxPagesDraft(String(s.fetchMaxPages))
+      setFetchMaxUrlContextCharsDraft(String(s.fetchMaxUrlContextChars))
       setFetchSummarizeOverflowDraft(s.fetchSummarizeOverflow)
       setCompressHistoryOverflowDraft(s.compressHistoryOverflow)
     }).catch(() => setError('Failed to load settings.'))
@@ -94,6 +96,9 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     const userMemoryTokenBudget = parseInt(userMemoryBudgetDraft)
     const rssFeedCharsBudget = parseInt(rssFeedCharsBudgetDraft)
     const fetchMaxPages = parseInt(fetchMaxPagesDraft)
+    const fetchMaxUrlContextChars = parseInt(fetchMaxUrlContextCharsDraft)
+    const scrapeMax = limits?.scrapeMaxChars ?? Infinity
+    const minUrlChars = limits?.minUrlContextChars ?? 8000
     if (isNaN(budget) || budget < 100 || budget > 10000) return
     if (isNaN(dreamHour) || dreamHour < -1 || dreamHour > 23) return
     if (isNaN(dreamThreshold) || dreamThreshold < 100) return
@@ -105,12 +110,14 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     if (isNaN(userMemoryTokenBudget) || userMemoryTokenBudget < 0) return
     if (isNaN(rssFeedCharsBudget) || rssFeedCharsBudget < 5000) return
     if (isNaN(fetchMaxPages) || fetchMaxPages < 0) return
+    if (isNaN(fetchMaxUrlContextChars) || fetchMaxUrlContextChars < minUrlChars) return
+    if (fetchMaxUrlContextChars > scrapeMax) { setError(`Per-URL context cap must be \u2264 the scrape ceiling (${scrapeMax} chars, set by FETCH_MAX_CHARS).`); return }
     if (dreamTarget > dreamThreshold) { setError('Dream target must be ≤ dream threshold.'); return }
     if (dreamThreshold > budget) { setError('Dream threshold must be ≤ memory token budget.'); return }
     setError('')
     setSavingBudget(true)
     try {
-      await updateAdminSettings({ memoryTokenBudget: budget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, ragTopK, attachmentChars, spaceRagBudget, queryReformulation: queryReformulationDraft, rssFeedCharsBudget, fetchMaxPages, fetchSummarizeOverflow: fetchSummarizeOverflowDraft, compressHistoryOverflow: compressHistoryOverflowDraft })
+      await updateAdminSettings({ memoryTokenBudget: budget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, ragTopK, attachmentChars, spaceRagBudget, queryReformulation: queryReformulationDraft, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow: fetchSummarizeOverflowDraft, compressHistoryOverflow: compressHistoryOverflowDraft })
 
       onBudgetChange?.(budget)
       setBudgetSaved(true)
@@ -372,8 +379,17 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                   className="w-24 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
               </div>
               <div className="flex flex-col gap-1.5 border-t border-gray-800/60 pt-3">
+                <p className="text-xs text-gray-400 font-medium">Per-URL context cap</p>
+                <p className="text-xs text-gray-500">
+                  Most characters of a single fetched page that may reach the model, whether the URL was pasted or fetched by the model's own tool. Content above this is summarized or truncated per the setting below. A page is scraped up to {limits?.scrapeMaxChars ?? 100000} chars (FETCH_MAX_CHARS), so raising this beyond that has no effect.
+                </p>
+                <input type="number" min={limits?.minUrlContextChars ?? 8000} max={limits?.scrapeMaxChars ?? 100000} step={5000} value={fetchMaxUrlContextCharsDraft}
+                  onChange={e => setFetchMaxUrlContextCharsDraft(e.target.value)}
+                  className="w-32 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
+              </div>
+              <div className="flex flex-col gap-1.5 border-t border-gray-800/60 pt-3">
                 <p className="text-xs text-gray-400 font-medium">Summarize oversized URL content</p>
-                <p className="text-xs text-gray-500">When fetched URL content exceeds the context budget, use the small model to summarize it instead of hard-truncating. Produces better results but adds latency. Requires a fast small model.</p>
+                <p className="text-xs text-gray-500">When fetched URL content exceeds the per-URL cap above, use the small model to summarize it instead of hard-truncating. Produces better results but adds latency. Requires a fast small model. Pages less than 3× the cap are truncated regardless — there is too little to compress for the round trips to pay off.</p>
                 <label className="flex items-center gap-2 cursor-pointer w-fit">
                   <input type="checkbox" checked={fetchSummarizeOverflowDraft} onChange={e => setFetchSummarizeOverflowDraft(e.target.checked)}
                     className="accent-blue-500 w-3.5 h-3.5" />

@@ -12,6 +12,7 @@ import { ThinkExtractor } from './think-extractor.ts'
 import { indexContents } from './chat-indexer.ts'
 import { drainResearcherStream, nullStream, type ResearcherStreamPart } from './researcher-stream.ts'
 import { rerankSearchResults } from './reranker.ts'
+import { DEFAULT_MAX_URL_CONTEXT_CHARS } from './fetch-url.ts'
 import { FLASH_SYSTEM, FLASH_MAX_TOKENS, RESEARCHER_NOTES_CAP, EMPTY_ANSWER_MESSAGE, runSynthesisFallback } from './answer.ts'
 
 /** Run a single-message chat non-interactively and save the session to DB. */
@@ -74,10 +75,11 @@ export async function executeChatAndSave({
     const { initialQueries, initialResults } = feedItems?.length
       ? { initialQueries: ['latest news from selected RSS feeds'], initialResults: feedItems }
       : await reformulateAndSearch(promptText, focusMode, undefined, apiBudget)
-    const [userRow, memoryBudget, ragBudget, fetchSummarize, compressHistory] = await Promise.all([
+    const [userRow, memoryBudget, ragBudget, urlContextChars, fetchSummarize, compressHistory] = await Promise.all([
       db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get(),
       spaceId ? getAppSetting('memory_token_budget', '1000').then(Number) : Promise.resolve(0),
       getAppSetting('space_rag_budget', '500').then(Number),
+      getAppSetting('fetch_max_url_context_chars', String(DEFAULT_MAX_URL_CONTEXT_CHARS)).then(Number),
       getAppSetting('fetch_summarize_overflow', 'false').then(v => v === 'true'),
       getAppSetting('compress_history_overflow', 'false').then(v => v === 'true'),
     ])
@@ -95,7 +97,7 @@ export async function executeChatAndSave({
     if (focusMode === 'thorough') {
       const researcherResult = await runResearcher({
         messages: msgs, focusMode, userId, model: getChatModel(), abortSignal: AbortSignal.timeout(300_000),
-        initialQueries, initialResults, customPrompt, hasFiles: false, spaceId, sessionId, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, compressHistory, apiBudget,
+        initialQueries, initialResults, customPrompt, hasFiles: false, spaceId, sessionId, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory, apiBudget,
       })
       let researcherNotes = ''
       const { sources: rs } = await collectStream(researcherResult, s => { researcherNotes += s })
@@ -115,7 +117,7 @@ export async function executeChatAndSave({
       sources.push(...(initialResults ?? []))
       const researcherResult = await runResearcher({
         messages: msgs, focusMode, userId, model: getChatModel(), abortSignal: AbortSignal.timeout(300_000),
-        initialQueries, initialResults, customPrompt, hasFiles: false, spaceId, sessionId, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, compressHistory,
+        initialQueries, initialResults, customPrompt, hasFiles: false, spaceId, sessionId, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory,
         maxStepsOverride: 6, apiBudget,
       })
       const { text, sources: rs, finishReason } = await collectStream(researcherResult, () => {})

@@ -34,10 +34,28 @@ function makeProvider({ provider, baseURL, apiKey }: ProviderConfig) {
 // (esp. thinking-model) loops; covers reasoning + answer tokens together.
 export const RESEARCH_MAX_TOKENS = parseInt(process.env.RESEARCH_MAX_TOKENS ?? '6000')
 
+/** The one token↔char conversion in the app. Every context budget derives from it.
+ *
+ *  There were two: 2.5 for the small-model and embedding capacity ceilings, 4 for the chat model's
+ *  trimming budget. Both are guesses about the same thing, and where 2.5 was used it stacked on top
+ *  of a reserve fraction that already carries the safety margin — the small model was handed 44% of
+ *  its declared window while the comment beside it claimed 70%.
+ *
+ *  4 is the ordinary figure for English prose under a BPE tokenizer, and it is what the reserve
+ *  fractions below were written to sit on top of. Dense technical text, code and non-English tokenize
+ *  worse (nearer 3); lower this if a server starts rejecting requests as over-context, rather than
+ *  re-introducing a second ratio somewhere. */
+export const CHARS_PER_TOKEN = parseFloat(process.env.CHARS_PER_TOKEN ?? '') || 4
+
+/** Token count of a string, and its inverse. Rounded in the direction that costs budget, so a
+ *  sequence of estimates can only over-report. */
+export const estimateTokens = (s: string): number => Math.ceil(s.length / CHARS_PER_TOKEN)
+export const tokensToChars = (tokens: number): number => Math.floor(tokens * CHARS_PER_TOKEN)
+
 const SMALL_MODEL_CONTEXT_TOKENS = parseInt(process.env.SMALL_MODEL_CONTEXT_TOKENS ?? '4096')
 // Usable input budget for one small-model call, in chars: reserves 30% of its context for the
-// system prompt + output, 2.5 chars/token for dense/technical text.
-export const SMALL_MODEL_INPUT_CHARS = Math.floor(SMALL_MODEL_CONTEXT_TOKENS * 0.7 * 2.5)
+// system prompt + output.
+export const SMALL_MODEL_INPUT_CHARS = Math.floor(SMALL_MODEL_CONTEXT_TOKENS * 0.7 * CHARS_PER_TOKEN)
 
 /** Two different embedding limits, which used to be one number and should not have been.
  *
@@ -56,11 +74,11 @@ export const SMALL_MODEL_INPUT_CHARS = Math.floor(SMALL_MODEL_CONTEXT_TOKENS * 0
  *  raised how much of a query became one vector, which makes retrieval worse. They now move
  *  independently, with the one dependency that a single string cannot exceed a whole request.
  *
- *  ~2500 chars is about 600 tokens at 4 chars/token — inside the 512–1024 band the research
+ *  ~2500 chars is about 600 tokens at CHARS_PER_TOKEN — inside the 512–1024 band the research
  *  recommends, and above the 2000-char chunks in files/ingest.ts so stored vectors are never
  *  clipped. */
 const EMBED_CONTEXT_TOKENS = parseInt(process.env.EMBED_CONTEXT_TOKENS ?? '', 10) || 1024
-export const EMBED_BATCH_CHARS = Math.floor(EMBED_CONTEXT_TOKENS * 0.9 * 2.5)
+export const EMBED_BATCH_CHARS = Math.floor(EMBED_CONTEXT_TOKENS * 0.9 * CHARS_PER_TOKEN)
 
 // EMBED_MAX_CHARS is the superseded name; honoured so an existing setting keeps working, and it
 // only ever governed the per-string bound in practice.
