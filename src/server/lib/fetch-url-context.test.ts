@@ -3,17 +3,14 @@
  *  It is now an admin setting, so the value the caller passes has to win over the env default —
  *  a silent fallback to the default would look identical in the UI and be invisible in the log. */
 
+// Must precede the ./fetch-url.ts import: it reaches lib/llm.ts.
 import './test-support/test-env.ts'
-import { describe, expect, test, beforeAll, afterAll, mock } from 'bun:test'
-import { createOpenAI } from '@ai-sdk/openai'
+import { describe, expect, test, beforeAll, afterAll } from 'bun:test'
 import { startFakeOpenAI } from './test-support/fake-openai.ts'
-
-// Copied, not aliased, so afterAll can put it back: `mock.module` is process-wide and outlives this
-// file, so a mock left behind is inherited by every test file that runs after it — and it mutates
-// the live namespace object in place, so holding the namespace itself would hand back the mock.
-const realLlm = { ...(await import('./llm.ts')) }
-const { processUrlsForContext, MIN_URL_CONTEXT_CHARS, DEFAULT_MAX_URL_CONTEXT_CHARS, worthSummarizing, describeOutcome } =
-  await import('./fetch-url.ts')
+import { CHARS_PER_TOKEN } from './llm.ts'
+import {
+  processUrlsForContext, MIN_URL_CONTEXT_CHARS, DEFAULT_MAX_URL_CONTEXT_CHARS, worthSummarizing, describeOutcome,
+} from './fetch-url.ts'
 
 const page = (chars: number) => 'x'.repeat(chars)
 const urls = (n: number, chars: number) =>
@@ -83,14 +80,25 @@ describe('summarizeContent bounds', () => {
   const HUGE = 'summary. '.repeat(20_000)   // 180k chars, far over any cap
   let server: ReturnType<typeof startFakeOpenAI>
 
+  // Pointed at the stub through the environment rather than `mock.module`: a module mock is
+  // process-wide, outlives this file, and cannot be undone by re-mocking — it mutates the live
+  // namespace in place, so the captured "real" module has already become the mock. Every file
+  // running after would then call a small model aimed at the server stopped below.
+  const saved: Record<string, string | undefined> = {}
+  const setEnv = (k: string, v: string) => { saved[k] = process.env[k]; process.env[k] = v }
+
   beforeAll(() => {
     server = startFakeOpenAI([{ text: [HUGE] }])
-    const model = createOpenAI({ baseURL: server.baseURL, apiKey: 'test' }).chat('fake-small')
-    mock.module('./llm.ts', () => ({ ...realLlm, getSmallModel: () => model }))
+    setEnv('SMALL_BASE_URL', server.baseURL)
+    setEnv('SMALL_API_KEY', 'test')
+    setEnv('SMALL_MODEL', 'fake-small')
   })
   afterAll(() => {
     server?.stop()
-    mock.module('./llm.ts', () => realLlm)
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k]
+      else process.env[k] = v
+    }
   })
 
   test('caps a model that ignores its length instruction', async () => {
@@ -120,7 +128,7 @@ describe('summarizeContent bounds', () => {
     const cap = sent.max_tokens ?? sent.max_completion_tokens
     expect(cap).toBeGreaterThan(0)
     // Per chunk: min(target/chunks, chunkChars/3) converted to tokens — well under the whole cap.
-    expect(cap! * realLlm.CHARS_PER_TOKEN).toBeLessThanOrEqual(12_000)
+    expect(cap! * CHARS_PER_TOKEN).toBeLessThanOrEqual(12_000)
   })
 
   test('reports how much of the page was never read', async () => {
