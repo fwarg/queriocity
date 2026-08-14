@@ -8,9 +8,10 @@ import { describe, expect, test, beforeAll, afterAll, mock } from 'bun:test'
 import { createOpenAI } from '@ai-sdk/openai'
 import { startFakeOpenAI } from './test-support/fake-openai.ts'
 
-// Captured before mocking so afterAll can put it back: `mock.module` is process-wide and outlives
-// this file, so a mock left behind is inherited by every test file that runs after it.
-const realLlm = await import('./llm.ts')
+// Copied, not aliased, so afterAll can put it back: `mock.module` is process-wide and outlives this
+// file, so a mock left behind is inherited by every test file that runs after it — and it mutates
+// the live namespace object in place, so holding the namespace itself would hand back the mock.
+const realLlm = { ...(await import('./llm.ts')) }
 const { processUrlsForContext, MIN_URL_CONTEXT_CHARS, DEFAULT_MAX_URL_CONTEXT_CHARS, worthSummarizing, describeOutcome } =
   await import('./fetch-url.ts')
 
