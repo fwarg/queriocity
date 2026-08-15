@@ -478,19 +478,26 @@ browser's `Accept-Language` list, then English.
    The selector, the settings schema and the browser-language matching all read that list, so
    nothing else needs changing.
 
-Then `bun run check`. Beyond the type check, `src/shared/i18n/i18n.test.ts` asserts that every
-catalog has exactly English's keys, that placeholders like `{count}` survive translation, and that
-no string is left empty; `src/client/src/lib/templates-i18n.test.ts` does the same for the built-in
-prompt templates, whose copy is keyed by template id.
+Then `bun run check`. Three tests cover what the compiler cannot:
+
+| Test | What it catches |
+|---|---|
+| `src/shared/i18n/i18n.test.ts` | A catalog whose key set has drifted from English's, a renamed placeholder (`{count}` → `{antal}` typechecks fine and then prints raw braces), an empty string, and an error code with no `error.<code>` entry. |
+| `src/client/src/lib/templates-i18n.test.ts` | A built-in prompt template whose name, description, field label, placeholder or select option has no catalog key — that copy is looked up by template id at runtime, so the compiler cannot check it. |
+| `src/client/src/untranslated-strings.test.ts` | Text never turned into a key at all: bare JSX text, `<option>` children, copy parked in a data array, and the three attributes a person reads (`title`, `placeholder`, `aria-label`). |
 
 Counted strings use `{ one, other }` and are selected with `Intl.PluralRules`, so a language with
 different plural rules does not need code — just both forms.
 
-Left in English deliberately: the admin panel, the news-feed catalogue (source names, regions and
-ownership labels are data from the feed list), and prompt-template option values such as
-`structured report`, which are substituted into the prompt sent to the model rather than read by
-anyone. API errors are translated where the route sends a stable code (see
-`src/shared/error-codes.ts`); the rest fall back to the server's English text.
+Select options are shown translated but **submitted in English**: a template's `assemble()` builds
+the model's prompt from the option value, so `structured report` must reach the model unchanged
+even when the dropdown reads *strukturerad rapport*. Only the label is translated; the value is not.
+
+Left in English deliberately: the admin panel, and the news-feed catalogue (source names, regions
+and ownership labels are data from the feed list). API errors are translated where the route sends
+a stable code (see `src/shared/error-codes.ts`); the rest fall back to the server's English text.
+The PWA manifest description and the `<meta name="description">` in `index.html` are baked in at
+build time and cannot follow the reader's language — they match the English `app.tagline`.
 
 ---
 
