@@ -10,6 +10,10 @@ import { en } from '@shared/i18n/en.ts'
 
 const has = (key: string) => key in en
 
+/** Must match `optionSlug` in TemplateSelector.tsx — the two derive the same key from the same
+ *  option, and this test is what notices when they stop agreeing. */
+const slug = (option: string) => option.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+
 describe('built-in templates', () => {
   for (const template of TEMPLATES) {
     test(`${template.id} has its name and description`, () => {
@@ -25,6 +29,18 @@ describe('built-in templates', () => {
         // empty catalog string, which i18n.test.ts rejects on purpose.
         expect({ field: field.id, placeholder: has(`template.${template.id}.${field.id}.ph`) })
           .toEqual({ field: field.id, placeholder: !!field.placeholder })
+      }
+    })
+
+    test(`${template.id} has a label for every select option`, () => {
+      // Options are shown translated but submitted as the English token `assemble()` builds the
+      // prompt from, so each one needs a label key of its own — and a missing one renders the raw
+      // key inside the dropdown, where it is easy to miss.
+      for (const field of template.fields) {
+        for (const option of field.options ?? []) {
+          const key = `template.${template.id}.${field.id}.opt.${slug(option)}`
+          expect({ option, key: has(key) }).toEqual({ option, key: true })
+        }
       }
     })
   }

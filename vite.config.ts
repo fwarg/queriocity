@@ -22,9 +22,15 @@ export default defineConfig(({ mode }) => {
         manifest: {
           name: 'Queriocity',
           short_name: 'Queriocity',
-          description: 'Queriocity',
-          theme_color: '#ffffff',
-          background_color: '#ffffff',
+          // Baked into the build, so unlike the in-app tagline it cannot follow the user's
+          // language. Kept identical to the English `app.tagline` in src/shared/i18n/en.ts.
+          description: 'Your private research assistant',
+          // Tailwind's gray-950, the same value `body` gets in index.css — these paint the
+          // splash screen and the Android status bar, so white here flashed on every launch of
+          // an app that is dark everywhere else. Hex rather than the oklch the stylesheet
+          // compiles to: a manifest is read by installers, not only by browsers.
+          theme_color: '#030712',
+          background_color: '#030712',
           display: 'standalone',
           icons: [
             { src: 'pwa-192x192.png', sizes: '192x192', type: 'image/png' },

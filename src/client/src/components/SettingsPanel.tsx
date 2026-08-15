@@ -8,7 +8,7 @@ import { Modal } from './Modal.tsx'
 import { LanguageSelect } from './LanguageSelect.tsx'
 import { useLang, useT } from '../lib/i18n.tsx'
 import { errorMessage } from '../lib/errors.ts'
-import type { Lang } from '@shared/i18n/index.ts'
+import type { Lang, TranslationKey } from '@shared/i18n/index.ts'
 
 /** Inline CRUD for the user-level memory list. Kept in this panel because these facts are
  *  account-wide — there is no space to hang them off. */
@@ -102,7 +102,7 @@ function UserMemoryList() {
           className="px-1.5 py-0.5 rounded bg-gray-800 border border-gray-700 text-[11px] text-gray-300 focus:outline-none focus:border-blue-500 disabled:text-gray-600"
         >
           {[20, 50, 100, 200].map(n => (
-            <option key={n} value={n}>last {n} chats</option>
+            <option key={n} value={n}>{t('userMemory.scanDepth', { count: n })}</option>
           ))}
         </select>
         {scanStatus && <span className="text-[11px] text-gray-500">{scanStatus}</span>}
@@ -182,11 +182,11 @@ function UserMemoryList() {
   )
 }
 
-const FONT_SIZES = [
-  { label: 'Small', value: 15 },
-  { label: 'Normal', value: 17 },
-  { label: 'Large', value: 19 },
-  { label: 'XL', value: 21 },
+const FONT_SIZES: Array<{ labelKey: TranslationKey; value: number }> = [
+  { labelKey: 'settings.fontSmall', value: 15 },
+  { labelKey: 'settings.fontNormal', value: 17 },
+  { labelKey: 'settings.fontLarge', value: 19 },
+  { labelKey: 'settings.fontXl', value: 21 },
 ]
 
 const TIMEZONE_OPTIONS = [
@@ -426,14 +426,14 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
           <div className="flex flex-col gap-2">
             <label className="text-xs text-gray-400 font-medium">{t('settings.fontSize')}</label>
             <div className="flex gap-2">
-              {FONT_SIZES.map(({ label, value }) => (
+              {FONT_SIZES.map(({ labelKey, value }) => (
                 <button
                   key={value}
                   type="button"
                   onClick={() => setFontSize(value)}
                   className={`px-3 py-1 rounded text-sm ${fontSize === value ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}
                 >
-                  {label}
+                  {t(labelKey)}
                 </button>
               ))}
             </div>

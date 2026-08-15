@@ -14,6 +14,11 @@ import type { TranslationKey } from '@shared/i18n/index.ts'
  *  user's own words and are shown as written. */
 const templateKey = (...parts: string[]): TranslationKey => `template.${parts.join('.')}` as TranslationKey
 
+/** Select options are shown translated but stored — and sent to the model — as the English token
+ *  the template's `assemble()` builds its prompt from. Translating the value would change what the
+ *  model is asked; translating only the label is the whole point of the split. */
+const optionSlug = (option: string) => option.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+
 /** Modes are labelled the same way as in the composer. */
 const MODE_LABEL_KEYS: Record<FocusMode, TranslationKey> = {
   flash: 'mode.flash',
@@ -280,7 +285,9 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
                       className="w-full rounded bg-gray-800 border border-gray-700 px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500"
                     >
                       {field.options?.map(opt => (
-                        <option key={opt} value={opt}>{opt}</option>
+                        <option key={opt} value={opt}>
+                          {isBuiltIn ? t(templateKey(active.id, field.id, 'opt', optionSlug(opt))) : opt}
+                        </option>
                       ))}
                     </select>
                   ) : field.type === 'toggle' ? (
