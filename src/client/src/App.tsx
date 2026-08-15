@@ -1284,7 +1284,7 @@ export default function App() {
                             onClick={() => { recreateChatMemories(s.id).catch(() => {}); setSpacePickerOpen(null) }}
                             className="w-full text-left px-3 py-1.5 text-xs text-gray-400 hover:bg-gray-700 hover:text-gray-200 border-t border-gray-700 mt-1 pt-1"
                           >
-                            Recreate memories
+                            {t('memory.recreateForChat')}
                           </button>
                           {!spaceIsLocked(s.spaceId) && (
                             <button
@@ -1368,10 +1368,7 @@ export default function App() {
               <div className="flex flex-col gap-1">
                 <h2 className="text-lg font-semibold text-gray-200">{t('nav.resources')}</h2>
                 <p className="text-xs text-gray-500 max-w-lg">
-                  Resources are chunked, embedded, and searched automatically whenever your query
-                  might be answered by their content — no need to reference them explicitly.
-                  To ask about a specific file without storing it, use the paperclip in the chat input instead.
-                  Supported: PDF, plain text, Markdown, CSV, HTML, images (PNG/JPEG/GIF/WebP), and web pages (via URL).
+                  {t('files.intro')}
                 </p>
               </div>
               <div className="flex flex-col items-end gap-1 shrink-0">

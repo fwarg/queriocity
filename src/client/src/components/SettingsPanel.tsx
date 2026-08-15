@@ -110,7 +110,7 @@ function UserMemoryList() {
       {suggestions.length > 0 && (
         <div className="rounded border border-gray-700 bg-gray-800/40 p-2 flex flex-col gap-1">
           <p className="text-[11px] text-gray-500">
-            Proposed from your recent chats — nothing is saved until you add it.
+            {t('userMemory.proposed')}
           </p>
           {suggestions.map(fact => (
             <div key={fact} className="flex items-start gap-1.5">
@@ -343,7 +343,7 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
                 onChange={e => setUseSpaceRag(e.target.checked)}
                 className="accent-blue-500"
               />
-              Enable space RAG
+              {t('settings.spaceRagEnable')}
             </label>
           </div>
           <div className="border-t border-gray-800" />
@@ -371,7 +371,7 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
                 onChange={e => setQuerySuggestions(e.target.checked)}
                 className="accent-blue-500"
               />
-              Enable query suggestions
+              {t('settings.querySuggestionsEnable')}
             </label>
           </div>
           <div className="border-t border-gray-800" />
@@ -385,7 +385,7 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
                 onChange={e => setFollowUpSuggestions(e.target.checked)}
                 className="accent-blue-500"
               />
-              Enable follow-up suggestions
+              {t('settings.followUpSuggestionsEnable')}
             </label>
           </div>
           <div className="border-t border-gray-800" />
@@ -414,7 +414,7 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
                 onChange={e => setImageWatermark(e.target.checked)}
                 className="accent-blue-500"
               />
-              Caption downloaded images
+              {t('settings.imageLabellingEnable')}
             </label>
           </div>
           <div className="border-t border-gray-800" />

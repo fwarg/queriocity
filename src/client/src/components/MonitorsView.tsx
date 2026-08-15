@@ -377,7 +377,7 @@ export function MonitorsView({ spaces, isAdmin, timezone, onOpenSession, onCount
             className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-300 transition-colors"
           >
             {adminExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-            Manage global monitors (admin)
+            {t('monitor.manageGlobal')}
           </button>
 
           {adminExpanded && (
@@ -388,7 +388,7 @@ export function MonitorsView({ spaces, isAdmin, timezone, onOpenSession, onCount
                 className="self-start flex items-center gap-1.5 px-2.5 py-1 rounded border border-dashed border-gray-600 text-xs text-gray-500 hover:text-gray-300 hover:border-gray-400 transition-colors"
               >
                 <Plus size={12} />
-                New global monitor
+                {t('monitorEdit.newGlobal')}
               </button>
               {globalMonitors.map(m => (
                 <div key={m.id} className="flex items-center gap-2 p-2.5 rounded bg-gray-800 border border-gray-700">
