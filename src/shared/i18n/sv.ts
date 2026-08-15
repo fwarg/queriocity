@@ -52,7 +52,7 @@ export const sv: Catalog = {
   'nav.openMenu': 'Öppna menyn',
 
   // --- Appen ---
-  'app.tagline': 'Din privata researchassistent',
+  'app.tagline': 'Din privata assistent för research',
 
   // --- Chattar ---
   'chat.new': 'Ny chatt',
