@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { RotateCcw, Lock, Unlock, ShieldCheck } from 'lucide-react'
 import { MessageList, ImageCaptionContext } from './components/MessageList.tsx'
 import { ProgressLog, Elapsed } from './components/ProgressLog.tsx'
@@ -9,30 +9,23 @@ import { RegisterPage } from './components/RegisterPage.tsx'
 import { SettingsPanel } from './components/SettingsPanel.tsx'
 import { AdminPanel } from './components/AdminPanel.tsx'
 import { MonitorsView } from './components/MonitorsView.tsx'
+import { ResourcesView } from './components/ResourcesView.tsx'
 import {
   fetchHistory, fetchSession, deleteSession, updateSessionTitle,
-  fetchFiles, deleteFile, uploadFile, getMe, hasUsers, logout,
+  fetchFiles, getMe, hasUsers, logout,
   fetchSpaces, createSpace, updateSpace, deleteSpace, assignChatToSpace, recreateChatMemories,
   fetchSpaceMemories, createSpaceMemory, updateSpaceMemory, deleteSpaceMemory, compactSpaceMemories, recreateAllSpaceMemories, clearSpaceMemories,
   fetchChatIndexStatus, rebuildChatIndex, searchHistory,
-  fetchSpaceFiles, tagFileToSpace, untagFileFromSpace, ingestUrl, transformSpace,
+  fetchSpaceFiles, tagFileToSpace, untagFileFromSpace, transformSpace,
   fetchMonitors,
 } from './lib/api.ts'
-import type { AuthUser, Message, Space, SpaceMemory, SpaceFile } from './lib/api.ts'
+import type { AuthUser, Message, Resource, Space, SpaceMemory, SpaceFile } from './lib/api.ts'
 import { useChat } from './hooks/useChat.ts'
 import { useLang, useT } from './lib/i18n.tsx'
 
 type AuthView = 'loading' | 'login' | 'register'
 type MainView = 'chat' | 'chats' | 'files' | 'spaces' | 'monitors'
 type Session = { id: string; title: string; spaceId: string | null; locked?: boolean }
-
-type UploadedFile = { id: string; filename: string; mimeType: string; size: number; createdAt: number }
-
-function formatSize(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
 
 const MEMORY_HEADER_TOKENS = 30
 
@@ -63,7 +56,7 @@ export default function App() {
   const [sessionId, setSessionId] = useState<string | undefined>()
   const [sessions, setSessions] = useState<Session[]>([])
   const [sessionSearch, setSessionSearch] = useState('')
-  const [files, setFiles] = useState<UploadedFile[]>([])
+  const [files, setFiles] = useState<Resource[]>([])
   const [spaces, setSpaces] = useState<Space[]>([])
   /** Message from a refused lock change or chat move — both are server decisions the user cannot
    *  predict from the UI alone, so the reason has to be surfaced rather than silently reverted. */
@@ -94,10 +87,6 @@ export default function App() {
   const [allUserFiles, setAllUserFiles] = useState<Array<{ id: string; filename: string; size: number }>>([])
   const [filePickerOpen, setFilePickerOpen] = useState(false)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
-  const [urlIngestOpen, setUrlIngestOpen] = useState(false)
-  const [urlIngestValue, setUrlIngestValue] = useState('')
-  const [urlIngestStatus, setUrlIngestStatus] = useState<'idle' | 'loading' | 'error'>('idle')
-  const [urlIngestError, setUrlIngestError] = useState('')
   const [pinnedFileIds, setPinnedFileIds] = useState<string[]>([])
   const [pinnedMemoryIds, setPinnedMemoryIds] = useState<string[]>([])
   /** Chats belonging to the open space, fetched server-side. `null` while loading. */
@@ -455,11 +444,6 @@ export default function App() {
     }).catch(() => setStatus(t('chat.deleteFailed')))
   }
 
-  function handleDeleteFile(id: string, e: React.MouseEvent) {
-    e.stopPropagation()
-    deleteFile(id).then(() => setFiles(prev => prev.filter(f => f.id !== id))).catch(() => {})
-  }
-
   function handleCreateSpace() {
     const name = newSpaceDraft.trim()
     if (!name) { setNewSpaceOpen(false); return }
@@ -599,10 +583,6 @@ export default function App() {
     updateSpaceMemory(currentSpaceId, id, { alwaysKeep }).catch(() => {})
   }
 
-  const kbFileRef = useRef<HTMLInputElement>(null)
-  const [kbUploadStatus, setKbUploadStatus] = useState<'idle' | 'uploading' | 'ok' | 'error'>('idle')
-  const [kbUploadMsg, setKbUploadMsg] = useState('')
-
   async function handleTransform() {
     if (!currentSpaceId) return
     setTransformStatus('loading')
@@ -619,41 +599,8 @@ export default function App() {
     }
   }
 
-  async function handleUrlIngest() {
-    if (!urlIngestValue.trim()) return
-    setUrlIngestStatus('loading')
-    setUrlIngestError('')
-    try {
-      await ingestUrl(urlIngestValue.trim())
-      fetchFiles().then(setFiles).catch(() => {})
-      setUrlIngestOpen(false)
-      setUrlIngestValue('')
-      setUrlIngestStatus('idle')
-    } catch (err: unknown) {
-      setUrlIngestStatus('error')
-      setUrlIngestError(err instanceof Error ? err.message : t('files.ingestFailed'))
-    }
-  }
-
-  async function handleKbUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setKbUploadStatus('uploading')
-    setKbUploadMsg(t('files.uploading', { name: file.name }))
-    try {
-      await uploadFile(file)
-      setKbUploadStatus('ok')
-      setKbUploadMsg(t('files.uploaded', { name: file.name }))
-      fetchFiles().then(setFiles).catch(() => {})
-      setTimeout(() => setKbUploadStatus('idle'), 3000)
-    } catch (err: unknown) {
-      setKbUploadStatus('error')
-      setKbUploadMsg(err instanceof Error ? err.message : t('files.uploadFailed'))
-      setTimeout(() => setKbUploadStatus('idle'), 4000)
-    } finally {
-      e.target.value = ''
-    }
-  }
+  /** ResourcesView mutates the library; the list stays here because the space panel tags from it. */
+  const reloadFiles = useCallback(() => { fetchFiles().then(setFiles).catch(() => {}) }, [])
 
   // Auth screens
   if (authView === 'loading' && !currentUser) {
@@ -1363,83 +1310,7 @@ export default function App() {
             </div>
           )
         ) : view === 'files' ? (
-          <div className="flex flex-col flex-1 overflow-y-auto p-6 gap-4">
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex flex-col gap-1">
-                <h2 className="text-lg font-semibold text-gray-200">{t('nav.resources')}</h2>
-                <p className="text-xs text-gray-500 max-w-lg">
-                  {t('files.intro')}
-                </p>
-              </div>
-              <div className="flex flex-col items-end gap-1 shrink-0">
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => { setUrlIngestOpen(o => !o); setUrlIngestValue(''); setUrlIngestStatus('idle') }}
-                    className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-sm font-medium whitespace-nowrap"
-                  >
-                    + {t('files.addUrl')}
-                  </button>
-                  <button
-                    onClick={() => kbFileRef.current?.click()}
-                    disabled={kbUploadStatus === 'uploading'}
-                    className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-sm font-medium whitespace-nowrap"
-                  >
-                    {kbUploadStatus === 'uploading' ? t('files.uploadingShort') : `+ ${t('files.upload')}`}
-                  </button>
-                </div>
-                {kbUploadStatus !== 'idle' && (
-                  <span className={`text-xs ${kbUploadStatus === 'error' ? 'text-red-400' : 'text-green-400'}`}>
-                    {kbUploadMsg}
-                  </span>
-                )}
-                <input ref={kbFileRef} type="file" className="hidden" onChange={handleKbUpload} />
-              </div>
-            </div>
-            {urlIngestOpen && (
-              <div className="flex flex-col gap-1.5 p-3 rounded-lg bg-gray-800 border border-gray-700">
-                <div className="flex gap-2">
-                  <input
-                    type="url"
-                    value={urlIngestValue}
-                    onChange={e => setUrlIngestValue(e.target.value)}
-                    placeholder="https://…"
-                    className="flex-1 text-sm bg-gray-900 border border-gray-700 rounded px-3 py-1.5 focus:outline-none focus:border-blue-500"
-                    onKeyDown={async e => { if (e.key === 'Enter') { e.preventDefault(); await handleUrlIngest() } }}
-                    disabled={urlIngestStatus === 'loading'}
-                    autoFocus
-                  />
-                  <button
-                    onClick={handleUrlIngest}
-                    disabled={!urlIngestValue.trim() || urlIngestStatus === 'loading'}
-                    className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-sm font-medium"
-                  >
-                    {urlIngestStatus === 'loading' ? t('files.fetching') : t('files.fetchAndAdd')}
-                  </button>
-                </div>
-                {urlIngestStatus === 'error' && <p className="text-xs text-red-400">{urlIngestError}</p>}
-              </div>
-            )}
-            {files.length === 0 && !urlIngestOpen ? (
-              <p className="text-gray-500 text-sm">{t('files.none')}</p>
-            ) : (
-              <div className="flex flex-col gap-2">
-                {files.map(f => (
-                  <div key={f.id} className="flex items-center gap-3 group px-4 py-3 rounded-lg bg-gray-800">
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm text-gray-100 truncate">{f.filename}</div>
-                      <div className="text-xs text-gray-500">{formatSize(f.size)} · {f.mimeType} · {new Date(f.createdAt * 1000).toLocaleDateString(lang)}</div>
-                    </div>
-                    <button
-                      onClick={(e) => handleDeleteFile(f.id, e)}
-                      className="text-xs text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
-                    >
-                      {t('common.delete')}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <ResourcesView resources={files} onChanged={reloadFiles} />
         ) : view === 'monitors' ? (
           <MonitorsView
             spaces={spaces}

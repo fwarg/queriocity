@@ -34,6 +34,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   const [fetchMaxUrlContextCharsDraft, setFetchMaxUrlContextCharsDraft] = useState('40000')
   const [fetchSummarizeOverflowDraft, setFetchSummarizeOverflowDraft] = useState(false)
   const [compressHistoryOverflowDraft, setCompressHistoryOverflowDraft] = useState(false)
+  const [resourceSummaryDraft, setResourceSummaryDraft] = useState(true)
   const [savingBudget, setSavingBudget] = useState(false)
   const [budgetSaved, setBudgetSaved] = useState(false)
   const [dreamRunning, setDreamRunning] = useState(false)
@@ -73,6 +74,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
       setFetchMaxUrlContextCharsDraft(String(s.fetchMaxUrlContextChars))
       setFetchSummarizeOverflowDraft(s.fetchSummarizeOverflow)
       setCompressHistoryOverflowDraft(s.compressHistoryOverflow)
+      setResourceSummaryDraft(s.resourceSummary)
     }).catch(() => setError('Failed to load settings.'))
   }, [])
 
@@ -117,7 +119,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     setError('')
     setSavingBudget(true)
     try {
-      await updateAdminSettings({ memoryTokenBudget: budget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, ragTopK, attachmentChars, spaceRagBudget, queryReformulation: queryReformulationDraft, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow: fetchSummarizeOverflowDraft, compressHistoryOverflow: compressHistoryOverflowDraft })
+      await updateAdminSettings({ memoryTokenBudget: budget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, ragTopK, attachmentChars, spaceRagBudget, queryReformulation: queryReformulationDraft, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow: fetchSummarizeOverflowDraft, compressHistoryOverflow: compressHistoryOverflowDraft, resourceSummary: resourceSummaryDraft })
 
       onBudgetChange?.(budget)
       setBudgetSaved(true)
@@ -406,6 +408,20 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                 <p className="text-xs text-gray-500">When a research turn's conversation history must be trimmed to fit the context budget, summarize the dropped messages with the small model and fold the summary into the system prompt instead of discarding them outright. Adds latency; only applies to balanced/thorough research turns.</p>
                 <label className="flex items-center gap-2 cursor-pointer w-fit">
                   <input type="checkbox" checked={compressHistoryOverflowDraft} onChange={e => setCompressHistoryOverflowDraft(e.target.checked)}
+                    className="accent-blue-500 w-3.5 h-3.5" />
+                  <span className="text-xs text-gray-400">Enabled</span>
+                </label>
+              </div>
+            </div>
+
+            {/* Resources */}
+            <div className="flex flex-col gap-3 border-t border-gray-800 pt-5">
+              <p className="text-xs font-semibold text-gray-300 uppercase tracking-wider">Resources</p>
+              <div className="flex flex-col gap-1.5">
+                <p className="text-xs text-gray-400 font-medium">Summarize on ingest</p>
+                <p className="text-xs text-gray-500">Generate a one-line summary and a few topics for every uploaded file, ingested URL and note, shown in the Resources list and detail view. One small-model call per resource, made after the resource is stored — a failure leaves it without a summary rather than losing it. Turn off on slow hardware.</p>
+                <label className="flex items-center gap-2 cursor-pointer w-fit">
+                  <input type="checkbox" checked={resourceSummaryDraft} onChange={e => setResourceSummaryDraft(e.target.checked)}
                     className="accent-blue-500 w-3.5 h-3.5" />
                   <span className="text-xs text-gray-400">Enabled</span>
                 </label>

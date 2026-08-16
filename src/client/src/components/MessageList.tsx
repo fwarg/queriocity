@@ -6,11 +6,12 @@ import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
-import { ExternalLink, FileText, Download, Sparkles, Volume2, VolumeX } from 'lucide-react'
+import { ExternalLink, FileText, Download, Sparkles, Volume2, VolumeX, NotebookPen } from 'lucide-react'
 import type { Message, Source } from '../lib/api.ts'
 import { downloadGeneratedImage } from '../lib/image-download.ts'
 import { markSvg } from '@shared/ai-provenance.ts'
 import { useT } from '../lib/i18n.tsx'
+import { NoteEditor } from './NoteEditor.tsx'
 
 /** Whether downloaded images get a visible caption bar burned in. A context rather than a prop
  *  because the markdown component map is module-level, so there is nothing to drill through. */
@@ -307,11 +308,13 @@ function HighlightedText({ text, query }: { text: string; query: string }) {
   )}</>
 }
 
-function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, searchQuery }: { msg: Message; isFirst?: boolean; defaultCollapsed?: boolean; isMatch?: boolean; isActive?: boolean; searchQuery?: string }) {
+function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, searchQuery, noteTitle }: { msg: Message; isFirst?: boolean; defaultCollapsed?: boolean; isMatch?: boolean; isActive?: boolean; searchQuery?: string; noteTitle?: string }) {
   const t = useT()
   const [highlightedSource, setHighlightedSource] = useState<number | null>(null)
   const [collapsed, setCollapsed] = useState(!!defaultCollapsed)
   const [speaking, setSpeaking] = useState(false)
+  const [savingNote, setSavingNote] = useState(false)
+  const [noteSaved, setNoteSaved] = useState(false)
   const toggleSource = useCallback((n: number) => setHighlightedSource(v => v === n ? null : n), [])
   const mdComponents = makeMdComponents(highlightedSource, toggleSource, msg.sources)
 
@@ -380,16 +383,38 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
               return cleaned.trim() ? <ReactMarkdown components={mdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{wrapSvgBlocks(escapeCurrencyDollars(cleaned))}</ReactMarkdown> : null
             })()}
             {msg.images?.map((img, i) => <ImageBlock key={i} url={img.url} alt={img.alt} />)}
-            {'speechSynthesis' in window && msg.content && (
-              <div className="flex justify-end mt-1">
+            {msg.content && (
+              <div className="flex justify-end items-center gap-2 mt-1">
+                {noteSaved && <span className="text-[11px] text-green-400">{t('note.savedFromAnswer')}</span>}
                 <button
-                  onClick={handleSpeak}
-                  className={`p-0.5 rounded transition-colors ${speaking ? 'text-blue-400 hover:text-blue-300' : 'text-gray-600 hover:text-gray-400'}`}
-                  title={t(speaking ? 'message.stopReading' : 'message.readAloud')}
+                  onClick={() => setSavingNote(true)}
+                  className="p-0.5 rounded text-gray-600 hover:text-amber-400 transition-colors"
+                  title={t('note.saveFromAnswer')}
                 >
-                  {speaking ? <VolumeX size={13} /> : <Volume2 size={13} />}
+                  <NotebookPen size={13} />
                 </button>
+                {'speechSynthesis' in window && (
+                  <button
+                    onClick={handleSpeak}
+                    className={`p-0.5 rounded transition-colors ${speaking ? 'text-blue-400 hover:text-blue-300' : 'text-gray-600 hover:text-gray-400'}`}
+                    title={t(speaking ? 'message.stopReading' : 'message.readAloud')}
+                  >
+                    {speaking ? <VolumeX size={13} /> : <Volume2 size={13} />}
+                  </button>
+                )}
               </div>
+            )}
+            {savingNote && (
+              <NoteEditor
+                initialTitle={noteTitle ?? ''}
+                initialBody={msg.content}
+                onClose={() => setSavingNote(false)}
+                onSaved={() => {
+                  setSavingNote(false)
+                  setNoteSaved(true)
+                  setTimeout(() => setNoteSaved(false), 3000)
+                }}
+              />
             )}
           </>
         ) : <HighlightedText text={msg.content} query={searchQuery ?? ''} />}
@@ -399,6 +424,20 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
       )}
     </div>
   )
+}
+
+/** A starting title for a note saved from an answer: the question that produced it, trimmed.
+ *
+ *  The question rather than the chat title — a chat covers many questions, and the one immediately
+ *  above is what the answer is about. The user retitles in the editor either way. */
+function noteTitleFor(messages: Message[], index: number): string | undefined {
+  if (messages[index].role !== 'assistant') return undefined
+  for (let i = index - 1; i >= 0; i--) {
+    if (messages[i].role !== 'user') continue
+    const question = messages[i].content.replace(/\s+/g, ' ').trim()
+    return question.length > 100 ? `${question.slice(0, 100)}…` : question
+  }
+  return undefined
 }
 
 export const MessageList = memo(function MessageList({ messages, streaming, streamingThinking, collapseFirstQuestion, searchQuery, searchMatchIndices, searchActiveIndex }: Props) {
@@ -421,6 +460,7 @@ export const MessageList = memo(function MessageList({ messages, streaming, stre
             isMatch={matchSet.has(i)}
             isActive={i === searchActiveIndex}
             searchQuery={searchQuery}
+            noteTitle={noteTitleFor(messages, i)}
           />
         </div>
       ))}

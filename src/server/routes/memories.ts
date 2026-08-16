@@ -9,6 +9,8 @@ import { getAppSetting } from '../lib/db.ts'
 import { indexSession } from '../lib/chat-indexer.ts'
 import { generateText } from 'ai'
 import { getChatModel } from '../lib/llm.ts'
+import { collectResourceText } from '../lib/files/resource-context.ts'
+import { operationPrompt, TRANSFORM_MAX_CHARS } from '../lib/files/transforms.ts'
 
 export const memoriesRouter = new Hono<AppEnv>()
 
@@ -227,43 +229,20 @@ memoriesRouter.post('/:spaceId/transform', zValidator('json', z.object({
   const { operation, fileIds } = c.req.valid('json')
   if (!await verifySpaceOwner(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
 
-  const fileFilter = fileIds?.length
-    ? `AND sf.file_id IN (${fileIds.map(() => '?').join(',')})`
-    : ''
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const params: any[] = [spaceId, ...(fileIds ?? [])]
-  const chunks = sqlite.prepare(`
-    SELECT m.content, f.filename
-    FROM file_chunk_meta m
-    JOIN space_files sf ON sf.file_id = m.file_id
-    JOIN uploaded_files f ON f.id = m.file_id
-    WHERE sf.space_id = ? ${fileFilter}
-    ORDER BY m.file_id, m.chunk_id
-  `).all(...params) as Array<{ content: string; filename: string }>
+  // The space's tagged files, narrowed to the selection when the panel has checkboxes ticked.
+  const tagged = await db.select({ fileId: spaceFiles.fileId }).from(spaceFiles)
+    .where(eq(spaceFiles.spaceId, spaceId))
+  const taggedIds = tagged.map(t => t.fileId)
+  const targetIds = fileIds?.length ? taggedIds.filter(id => fileIds.includes(id)) : taggedIds
 
-  if (!chunks.length) return c.json({ error: 'No resource content found in this space' }, 400)
+  const { text: context, chunkCount } = collectResourceText(targetIds, TRANSFORM_MAX_CHARS)
+  if (!context) return c.json({ error: 'No resource content found in this space' }, 400)
 
-  const MAX_CHARS = 24000
-  let totalChars = 0
-  const sections: string[] = []
-  let lastFile = ''
-  for (const chunk of chunks) {
-    if (totalChars >= MAX_CHARS) break
-    if (chunk.filename !== lastFile) { sections.push(`\n[${chunk.filename}]`); lastFile = chunk.filename }
-    sections.push(chunk.content)
-    totalChars += chunk.content.length
-  }
-  const context = sections.join('\n').slice(0, MAX_CHARS)
-
-  console.log(`\n━━━ [transform:${operation}] space=${spaceId}  ${chunks.length} chunks  ${totalChars} chars`)
-
-  const prompts: Record<string, string> = {
-    summarize: `Summarize the key information from the following resource excerpts into a concise set of bullet points. Focus on the most important facts, findings, and conclusions. Be comprehensive but avoid redundancy.\n\n${context}`,
-  }
+  console.log(`\n━━━ [transform:${operation}] space=${spaceId}  ${chunkCount} chunks  ${context.length} chars`)
 
   const { text } = await generateText({
     model: getChatModel(),
-    prompt: prompts[operation],
+    prompt: operationPrompt(operation, context),
     abortSignal: AbortSignal.timeout(120_000),
   })
 

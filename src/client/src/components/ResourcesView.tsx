@@ -1,0 +1,196 @@
+import { useRef, useState } from 'react'
+import { FileText, NotebookPen } from 'lucide-react'
+import { NoteEditor } from './NoteEditor.tsx'
+import { ResourceDetail } from './ResourceDetail.tsx'
+import { deleteFile, ingestUrl, uploadFile, type Resource } from '../lib/api.ts'
+import { useLang, useT } from '../lib/i18n.tsx'
+
+function formatSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+interface Props {
+  resources: Resource[]
+  /** Reload the list — the parent owns it, because the space panel tags from the same set. */
+  onChanged: () => void
+}
+
+/** The resource library: uploaded files, ingested URLs and notes, in one list.
+ *
+ *  Lives here rather than inline in App.tsx because it now owns a detail panel and two editors;
+ *  the list state stays with the parent, which needs the same resources for space tagging. */
+export function ResourcesView({ resources, onChanged }: Props) {
+  const t = useT()
+  const { lang } = useLang()
+  const [openId, setOpenId] = useState<string | null>(null)
+  const [writingNote, setWritingNote] = useState(false)
+
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'ok' | 'error'>('idle')
+  const [uploadMsg, setUploadMsg] = useState('')
+
+  const [urlOpen, setUrlOpen] = useState(false)
+  const [urlValue, setUrlValue] = useState('')
+  const [urlStatus, setUrlStatus] = useState<'idle' | 'loading' | 'error'>('idle')
+  const [urlError, setUrlError] = useState('')
+
+  if (openId) {
+    return <ResourceDetail id={openId} onBack={() => setOpenId(null)} onChanged={onChanged} />
+  }
+
+  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploadStatus('uploading')
+    setUploadMsg(t('files.uploading', { name: file.name }))
+    try {
+      await uploadFile(file)
+      setUploadStatus('ok')
+      setUploadMsg(t('files.uploaded', { name: file.name }))
+      onChanged()
+      setTimeout(() => setUploadStatus('idle'), 3000)
+    } catch (err: unknown) {
+      setUploadStatus('error')
+      setUploadMsg(err instanceof Error ? err.message : t('files.uploadFailed'))
+      setTimeout(() => setUploadStatus('idle'), 4000)
+    } finally {
+      e.target.value = ''
+    }
+  }
+
+  async function handleUrlIngest() {
+    if (!urlValue.trim()) return
+    setUrlStatus('loading')
+    setUrlError('')
+    try {
+      await ingestUrl(urlValue.trim())
+      onChanged()
+      setUrlOpen(false)
+      setUrlValue('')
+      setUrlStatus('idle')
+    } catch (err: unknown) {
+      setUrlStatus('error')
+      setUrlError(err instanceof Error ? err.message : t('files.ingestFailed'))
+    }
+  }
+
+  function handleDelete(resource: Resource, e: React.MouseEvent) {
+    e.stopPropagation()
+    if (!confirm(t('files.deleteConfirm', { name: resource.filename }))) return
+    deleteFile(resource.id).then(onChanged).catch(() => {})
+  }
+
+  return (
+    <div className="flex flex-col flex-1 overflow-y-auto p-6 gap-4">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex flex-col gap-1">
+          <h2 className="text-lg font-semibold text-gray-200">{t('nav.resources')}</h2>
+          <p className="text-xs text-gray-500 max-w-lg">{t('files.intro')}</p>
+        </div>
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          <div className="flex gap-2">
+            <button
+              onClick={() => setWritingNote(true)}
+              className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-sm font-medium whitespace-nowrap"
+            >
+              + {t('note.new')}
+            </button>
+            <button
+              onClick={() => { setUrlOpen(o => !o); setUrlValue(''); setUrlStatus('idle') }}
+              className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-sm font-medium whitespace-nowrap"
+            >
+              + {t('files.addUrl')}
+            </button>
+            <button
+              onClick={() => fileRef.current?.click()}
+              disabled={uploadStatus === 'uploading'}
+              className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-sm font-medium whitespace-nowrap"
+            >
+              {uploadStatus === 'uploading' ? t('files.uploadingShort') : `+ ${t('files.upload')}`}
+            </button>
+          </div>
+          {uploadStatus !== 'idle' && (
+            <span className={`text-xs ${uploadStatus === 'error' ? 'text-red-400' : 'text-green-400'}`}>
+              {uploadMsg}
+            </span>
+          )}
+          <input ref={fileRef} type="file" className="hidden" onChange={handleUpload} />
+        </div>
+      </div>
+
+      {urlOpen && (
+        <div className="flex flex-col gap-1.5 p-3 rounded-lg bg-gray-800 border border-gray-700">
+          <div className="flex gap-2">
+            <input
+              type="url"
+              value={urlValue}
+              onChange={e => setUrlValue(e.target.value)}
+              placeholder="https://…"
+              className="flex-1 text-sm bg-gray-900 border border-gray-700 rounded px-3 py-1.5 focus:outline-none focus:border-blue-500"
+              onKeyDown={async e => { if (e.key === 'Enter') { e.preventDefault(); await handleUrlIngest() } }}
+              disabled={urlStatus === 'loading'}
+              autoFocus
+            />
+            <button
+              onClick={handleUrlIngest}
+              disabled={!urlValue.trim() || urlStatus === 'loading'}
+              className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-sm font-medium"
+            >
+              {urlStatus === 'loading' ? t('files.fetching') : t('files.fetchAndAdd')}
+            </button>
+          </div>
+          {urlStatus === 'error' && <p className="text-xs text-red-400">{urlError}</p>}
+        </div>
+      )}
+
+      {resources.length === 0 && !urlOpen ? (
+        <p className="text-gray-500 text-sm">{t('files.none')}</p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {resources.map(r => (
+            <div
+              key={r.id}
+              onClick={() => setOpenId(r.id)}
+              className="flex items-start gap-3 group px-4 py-3 rounded-lg bg-gray-800 hover:bg-gray-700 cursor-pointer"
+            >
+              {r.kind === 'note'
+                ? <NotebookPen size={16} className="text-amber-400 shrink-0 mt-0.5" />
+                : <FileText size={16} className="text-gray-500 shrink-0 mt-0.5" />}
+              <div className="flex-1 min-w-0">
+                <div className="text-sm text-gray-100 truncate">{r.filename}</div>
+                {r.summary && <div className="text-xs text-gray-400 mt-0.5 line-clamp-2">{r.summary}</div>}
+                <div className="text-xs text-gray-500 mt-0.5">
+                  {r.kind === 'note' ? t('note.kind') : r.mimeType} · {formatSize(r.size)} · {new Date((r.updatedAt ?? r.createdAt) * 1000).toLocaleDateString(lang)}
+                </div>
+                {r.topics.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-1.5">
+                    {r.topics.map(topic => (
+                      <span key={topic} className="px-1.5 py-0.5 rounded-full text-[11px] bg-gray-900 text-gray-400 border border-gray-700">
+                        {topic}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={e => handleDelete(r, e)}
+                className="text-xs text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+              >
+                {t('common.delete')}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {writingNote && (
+        <NoteEditor
+          onClose={() => setWritingNote(false)}
+          onSaved={() => { setWritingNote(false); onChanged() }}
+        />
+      )}
+    </div>
+  )
+}

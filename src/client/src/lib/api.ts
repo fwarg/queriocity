@@ -473,11 +473,11 @@ export async function ingestUrl(url: string): Promise<{ fileId: string; filename
   return res.json()
 }
 
-export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; userMemoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; ragTopK: number; attachmentChars: number; spaceRagBudget: number; queryReformulation: boolean; rssFeedCharsBudget: number; fetchMaxPages: number; fetchMaxUrlContextChars: number; fetchSummarizeOverflow: boolean; compressHistoryOverflow: boolean; limits: { smallModelInputChars: number; embedInputChars: number; scrapeMaxChars: number; minUrlContextChars: number } }> {
+export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; userMemoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; ragTopK: number; attachmentChars: number; spaceRagBudget: number; queryReformulation: boolean; rssFeedCharsBudget: number; fetchMaxPages: number; fetchMaxUrlContextChars: number; fetchSummarizeOverflow: boolean; compressHistoryOverflow: boolean; resourceSummary: boolean; limits: { smallModelInputChars: number; embedInputChars: number; scrapeMaxChars: number; minUrlContextChars: number } }> {
   return fetch(`${BASE}/admin/settings`).then(r => r.json())
 }
 
-export async function updateAdminSettings(s: { memoryTokenBudget?: number; userMemoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; dreamDeep?: boolean; memoryExtractChars?: number; rerankTopN?: number; ragTopK?: number; attachmentChars?: number; spaceRagBudget?: number; queryReformulation?: boolean; rssFeedCharsBudget?: number; fetchMaxPages?: number; fetchMaxUrlContextChars?: number; fetchSummarizeOverflow?: boolean; compressHistoryOverflow?: boolean }): Promise<void> {
+export async function updateAdminSettings(s: { memoryTokenBudget?: number; userMemoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; dreamDeep?: boolean; memoryExtractChars?: number; rerankTopN?: number; ragTopK?: number; attachmentChars?: number; spaceRagBudget?: number; queryReformulation?: boolean; rssFeedCharsBudget?: number; fetchMaxPages?: number; fetchMaxUrlContextChars?: number; fetchSummarizeOverflow?: boolean; compressHistoryOverflow?: boolean; resourceSummary?: boolean }): Promise<void> {
   await fetch(`${BASE}/admin/settings`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -676,8 +676,74 @@ export async function uploadFile(file: File): Promise<{ fileId: string; filename
   return res.json()
 }
 
-export async function fetchFiles(): Promise<Array<{ id: string; filename: string; mimeType: string; size: number; createdAt: number }>> {
+/** A library resource: an uploaded file, an ingested URL, or a note. `kind` tells them apart; a
+ *  note additionally carries its markdown in `body`, which only the detail endpoint returns. */
+export interface Resource {
+  id: string
+  filename: string
+  mimeType: string
+  size: number
+  kind: 'file' | 'note'
+  summary: string | null
+  topics: string[]
+  createdAt: number
+  updatedAt: number | null
+}
+
+export interface ResourceDetail extends Resource {
+  body: string | null
+  spaces: Array<{ id: string; name: string }>
+  chunks: string[]
+}
+
+export async function fetchFiles(): Promise<Resource[]> {
   const res = await fetch(`${BASE}/files`)
+  return res.json()
+}
+
+export async function fetchResource(id: string): Promise<ResourceDetail> {
+  const res = await fetch(`${BASE}/files/${id}`)
+  if (!res.ok) throw await apiError(res, 'Could not load resource')
+  return res.json()
+}
+
+export async function fetchNoteText(id: string): Promise<{ filename: string; content: string }> {
+  const res = await fetch(`${BASE}/files/${id}/text`)
+  if (!res.ok) throw await apiError(res, 'Could not load note')
+  return res.json()
+}
+
+export async function createNote(title: string, body: string): Promise<{ id: string }> {
+  const res = await fetch(`${BASE}/files/notes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, body }),
+  })
+  if (!res.ok) throw await apiError(res, 'Could not save note')
+  return res.json()
+}
+
+export async function updateNote(id: string, patch: { title?: string; body?: string }): Promise<void> {
+  const res = await fetch(`${BASE}/files/notes/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  })
+  if (!res.ok) throw await apiError(res, 'Could not save note')
+}
+
+export type TransformOperation = 'summarize' | 'keypoints' | 'questions' | 'outline'
+
+export async function transformResource(
+  id: string,
+  target: { operation: TransformOperation } | { templateId: string },
+): Promise<{ content: string }> {
+  const res = await fetch(`${BASE}/files/${id}/transform`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(target),
+  })
+  if (!res.ok) throw await apiError(res, 'Transform failed')
   return res.json()
 }
 

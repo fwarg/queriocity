@@ -1,7 +1,8 @@
-import { useState, useRef, type FormEvent, type KeyboardEvent } from 'react'
-import { Send, Paperclip, X, Square, LayoutGrid, ChevronDown, ChevronUp } from 'lucide-react'
+import { useEffect, useState, useRef, type FormEvent, type KeyboardEvent } from 'react'
+import { Send, Paperclip, X, Square, LayoutGrid, ChevronDown, ChevronUp, NotebookPen } from 'lucide-react'
 import { AI_SYSTEM_NOTICE_SHORT } from '../lib/ai-notice.ts'
-import { extractFileForContext, fetchSuggestions } from '../lib/api.ts'
+import { extractFileForContext, fetchFiles, fetchNoteText, fetchSuggestions, type Resource } from '../lib/api.ts'
+import { Modal } from './Modal.tsx'
 import { TemplateSelector } from './TemplateSelector.tsx'
 import { useT } from '../lib/i18n.tsx'
 import type { TranslationKey } from '@shared/i18n/index.ts'
@@ -62,6 +63,7 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [extractStatus, setExtractStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [extractError, setExtractError] = useState('')
+  const [pickingNote, setPickingNote] = useState(false)
   const [showTemplates, setShowTemplates] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
   const [visibleDesc, setVisibleDesc] = useState<TranslationKey | null>(null)
@@ -115,6 +117,21 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSubmit(e as unknown as FormEvent)
+    }
+  }
+
+  async function attachNote(id: string) {
+    setPickingNote(false)
+    setExtractStatus('loading')
+    setExtractError('')
+    try {
+      const note = await fetchNoteText(id)
+      setAttachments(prev => [...prev, note])
+      setExtractStatus('idle')
+    } catch (err: unknown) {
+      setExtractStatus('error')
+      setExtractError(err instanceof Error ? err.message : t('input.readFileFailed'))
+      setTimeout(() => setExtractStatus('idle'), 4000)
     }
   }
 
@@ -297,6 +314,16 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
           >
             <Paperclip size={16} className={extractStatus === 'loading' ? 'animate-pulse' : ''} />
           </button>
+          <button
+            type="button"
+            onClick={() => setPickingNote(true)}
+            disabled={isFlash || extractStatus === 'loading'}
+            className="p-2 rounded bg-gray-800 hover:bg-gray-700 disabled:opacity-50"
+            title={t(isFlash ? 'input.attachBlockedFlash' : 'note.attach')}
+            aria-label={t(isFlash ? 'input.attachBlockedFlashLabel' : 'note.attach')}
+          >
+            <NotebookPen size={16} />
+          </button>
           {disabled && onCancel ? (
             <button
               type="button"
@@ -325,6 +352,42 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
           max-height budget. A session restored from a cookie or the PWA never passes the login
           screen, so this is the only AI notice such a user sees. */}
       <p className="pb-1 text-center text-[11px] text-gray-600">{t(AI_SYSTEM_NOTICE_SHORT)}</p>
+      {pickingNote && <NotePicker onPick={attachNote} onClose={() => setPickingNote(false)} />}
     </form>
+  )
+}
+
+/** Picks a note to inject in full into the next message.
+ *
+ *  Notes only: a file's text is stored as overlapping chunks, so attaching one would repeat passages
+ *  — the paperclip already covers sending a document whole. */
+function NotePicker({ onPick, onClose }: { onPick: (id: string) => void; onClose: () => void }) {
+  const t = useT()
+  const [notes, setNotes] = useState<Resource[] | null>(null)
+
+  useEffect(() => {
+    fetchFiles()
+      .then(rs => setNotes(rs.filter(r => r.kind === 'note')))
+      .catch(() => setNotes([]))
+  }, [])
+
+  return (
+    <Modal title={t('note.attach')} onClose={onClose}>
+      {notes === null && <p className="text-sm text-gray-500">{t('common.loading')}</p>}
+      {notes?.length === 0 && <p className="text-sm text-gray-500">{t('note.attachEmpty')}</p>}
+      <div className="flex flex-col gap-1.5">
+        {notes?.map(note => (
+          <button
+            key={note.id}
+            type="button"
+            onClick={() => onPick(note.id)}
+            className="text-left px-3 py-2 rounded bg-gray-800 hover:bg-gray-700"
+          >
+            <div className="text-sm text-gray-100 truncate">{note.filename}</div>
+            {note.summary && <div className="text-xs text-gray-500 line-clamp-1">{note.summary}</div>}
+          </button>
+        ))}
+      </div>
+    </Modal>
   )
 }

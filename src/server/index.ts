@@ -32,6 +32,7 @@ import { runDream } from './lib/memory.ts'
 import { runDueMonitors } from './lib/monitor-runner.ts'
 import { validateConfig, checkEmbeddingDimensions, checkAttachmentBudget } from './lib/config-check.ts'
 import { purgeOrphanVectors } from './lib/vector-cleanup.ts'
+import { reindexNotes } from './lib/files/notes.ts'
 import { EMBED_BATCH_CHARS, EMBED_MAX_INPUT_CHARS } from './lib/llm.ts'
 
 import { IMAGE_API, IMAGE_STEPS, imageStorageDir, imageUrlsIn, purgeOrphanImages } from './lib/image-store.ts'
@@ -192,6 +193,13 @@ async function sweepOrphanImages(): Promise<void> {
   const rows = await db.select({ content: messages.content }).from(messages)
   await purgeOrphanImages(imageUrlsIn(rows.map(r => r.content)))
 }
+
+// A note keeps its text in `body`, so an ALLOW_EMBED_RESET run deletes its chunks but spares the
+// note itself — unlike a file, it cannot be uploaded again. Re-embedding it is the other half of
+// that decision, and this also recovers a note whose embedding call failed after the row was saved.
+// Off the startup path: it makes model calls, and a note missing from retrieval must not delay
+// serving everything else.
+reindexNotes().catch(e => console.error('[notes] re-embedding failed:', e))
 
 preflight().catch(() => {})
 

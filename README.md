@@ -31,6 +31,8 @@ through a single Bun process.
     - [Chat attachment (ephemeral)](#chat-attachment-ephemeral)
     - [Library upload (persistent)](#library-upload-persistent-vector-searchable)
     - [URL and YouTube ingestion](#url-and-youtube-ingestion)
+    - [Notes](#notes)
+    - [Resource detail and transforms](#resource-detail-and-transforms)
   - [URL fetching](#url-fetching)
   - [Preventing data exfiltration](#preventing-data-exfiltration)
     - [Locked spaces](#locked-spaces)
@@ -235,7 +237,8 @@ Categories are multi-select — e.g. "news+science" searches both simultaneously
 
 ## Resources
 
-There are three ways to bring file content into a conversation.
+There are three ways to bring file content into a conversation, plus [notes](#notes) — the resource
+you write yourself rather than upload.
 
 ### Chat attachment (ephemeral)
 
@@ -286,6 +289,53 @@ Click **+ Add URL** in the Resources view to permanently ingest a web page or Yo
 - **YouTube videos** — paste any YouTube URL (`youtube.com/watch?v=…`, `youtu.be/…`, shorts, embeds) and the video's transcript is fetched automatically via the YouTube transcript API. No local download or `yt-dlp` required. The transcript is stored as a searchable document.
 
 Ingested URLs work the same as uploaded files: they appear in the Resources list, can be tagged to spaces, and are available to the `uploads_search` tool.
+
+### Notes
+
+A **note** is a resource you write rather than upload. Click **+ New note** in the Resources view,
+give it a title and some markdown, and it is chunked and embedded exactly like an uploaded file — so
+it can be tagged to spaces, is searched by `uploads_search`, and appears in the same list. Unlike a
+file, a note stays editable.
+
+This fills the gap between the two things Queriocity already stores. A [space memory](#how-memory-works)
+is a sentence, selected by relevance against a token budget and liable to be rewritten by compaction.
+A library file is fixed once uploaded. A note is text you own, kept exactly as written, for as long
+as you want it.
+
+Three ways to make one:
+
+- **Write it.** *+ New note* in the Resources view, with a preview toggle.
+- **Save an answer.** Every assistant message has a notebook icon next to its speaker icon. Clicking
+  it opens the editor pre-filled with the answer and the question that produced it as a title, so a
+  result worth keeping does not have to be exported or pasted into a memory.
+- **Transform a resource.** See below.
+
+A note reaches a conversation two ways: as retrieved excerpts, like any other resource, and in full
+by picking it from the notebook icon beside the paperclip in the chat input. Only notes can be
+attached that way — a file's text is stored solely as overlapping excerpts, so injecting it would
+repeat passages; the paperclip already covers sending a document whole.
+
+### Resource detail and transforms
+
+Click any resource to open it. The detail view shows:
+
+- The **summary and topics** generated at ingest by the small model, which also appear in the list —
+  what makes a library of two hundred documents readable at a glance. Administrators can turn the
+  generation off (Admin > System settings); it is best-effort either way, and a resource whose
+  summary failed works normally without one.
+- Which **spaces** the resource is tagged to.
+- The **indexed excerpts**, in order. This is what retrieval actually sees, which is the thing worth
+  checking when a PDF or a YouTube transcript has extracted badly. They overlap by design, so text
+  repeats where two excerpts meet.
+
+**Transform** runs a prompt over the resource and offers the result for saving as a new note. Four
+built-in operations — *Summarize*, *Key points*, *Open questions*, *Outline* — plus any of your own
+[prompt templates](#prompt-templates). The output is shown first and saved only if you keep it, so a
+transform that came back wrong costs nothing. The space-level *Summarize resources* button is the
+same machinery pointed at every tagged resource at once, saving to a memory instead of a note.
+
+Notes survive an embedding-dimension change (`ALLOW_EMBED_RESET`), which clears uploaded files: a
+file can be uploaded again, a note cannot, so its markdown is kept and re-embedded at the next start.
 
 ---
 
@@ -674,6 +724,8 @@ This lets you focus a query on a specific document or make sure a particular not
 #### Summarize resources
 
 The tagged resources section has a **Summarize resources** button. Clicking it sends all tagged resource content through the chat model and saves the result as a new space memory (type: *extraction*). This is useful for distilling a set of documents into a standing summary that the model can draw on in every conversation.
+
+To do the same to one resource, and keep the result as an editable note rather than a memory, use [Transform](#resource-detail-and-transforms) in that resource's detail view.
 
 ### How memory works
 
@@ -1465,6 +1517,7 @@ The **Admin panel > System settings** tab exposes runtime-configurable parameter
 | Search | Max pages per URL | 8 | How many paginated pages to fetch when a user provides a URL (`?page=2`, `?page=3`…). 0 = unlimited. |
 | Search | Summarize oversized URL content | Off | Summarize fetched URL content that exceeds the context budget with the small model instead of hard-truncating. Adds latency. |
 | Context | Compress dropped history | Off | When a research turn's conversation history must be trimmed to fit the context budget, summarize the dropped messages with the small model instead of discarding them, folded into the system prompt. Adds latency; only applies to balanced/thorough turns. |
+| Resources | Summarize on ingest | On | Generate a one-line summary and a few topics for every uploaded file, ingested URL and note, shown in the Resources list and detail view. One small-model call per resource, made after it is stored — a failure leaves it without a summary rather than losing it |
 | Attachments | Max context chars | 20000 | Max characters extracted from an attached file and sent as context. The chat model receives all of it and the text is indexed for later search, but the *query* embedding for that turn uses only the first `EMBED_MAX_INPUT_CHARS` — a startup warning appears if you set this much higher |
 
 The **RAG context budget** field also has a **Re-index chats** button that queues a background

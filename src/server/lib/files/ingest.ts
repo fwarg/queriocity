@@ -4,8 +4,10 @@ import { and, eq } from 'drizzle-orm'
 import { sqlite, db, uploadedFiles } from '../db.ts'
 import { embedTexts } from '../embeddings.ts'
 import { semanticChunk } from '../chunker.ts'
+import { deleteFileChunks } from '../vector-cleanup.ts'
 import { extractPdfChunks } from './pdf.ts'
 import { extractImageText } from './image.ts'
+import { describeResource } from './summarise.ts'
 
 export const ACCEPTED_MIME_TYPES = new Set([
   'application/pdf',
@@ -51,6 +53,46 @@ export async function extractFileText(buffer: ArrayBuffer, mimeType: string): Pr
   return new TextDecoder().decode(buffer)
 }
 
+/** The shortest chunk worth storing, for text an extractor produced. Drops the page numbers and
+ *  stray captions a PDF leaves behind, which embed to noise. Text a person typed is exempt — see
+ *  `minChunkChars` below. */
+const MIN_EXTRACTED_CHUNK_CHARS = 50
+
+/** Chunks, embeds and stores text for a resource, replacing any chunks it already has.
+ *
+ *  Replacing rather than appending is what lets a note be edited: `deleteFileChunks` clears both the
+ *  meta rows and the vec0 vectors, which have no foreign key to cascade through. Returns the number
+ *  of chunks written.
+ *
+ *  `minChunkChars` is 0 for notes: a one-line note is deliberate, and dropping it would leave a
+ *  resource the user can see in the library but retrieval can never find. */
+export async function indexResourceText(
+  fileId: string,
+  text: string,
+  mimeType: string,
+  minChunkChars = MIN_EXTRACTED_CHUNK_CHARS,
+): Promise<number> {
+  const { size, overlap } = chunkConfig(mimeType)
+  const rawChunks = semanticChunk(text, size, overlap, minChunkChars)
+  const embeddings = await embedTexts(rawChunks)
+
+  deleteFileChunks(fileId)
+  const insertChunk = sqlite.prepare(
+    'INSERT INTO file_chunk_meta (chunk_id, file_id, content) VALUES (?,?,?)',
+  )
+  const insertVec = sqlite.prepare(
+    'INSERT INTO file_chunks (chunk_id, embedding) VALUES (?,?)',
+  )
+  sqlite.transaction(() => {
+    for (let i = 0; i < rawChunks.length; i++) {
+      const chunkId = `${fileId}:${i}`
+      insertChunk.run(chunkId, fileId, rawChunks[i])
+      insertVec.run(chunkId, JSON.stringify(embeddings[i]))
+    }
+  })()
+  return rawChunks.length
+}
+
 export async function ingestFile(
   buffer: ArrayBuffer,
   filename: string,
@@ -71,18 +113,13 @@ export async function ingestFile(
 
   const fileId = randomUUID()
 
-  // 1. Extract and chunk text
+  // 1. Extract text
   const fullText = await extractFileText(buffer, mimeType)
   if (!isUsableText(fullText)) {
     throw new Error('Could not extract readable text from this file. It may be corrupted or in an unsupported encoding.')
   }
-  const { size, overlap } = chunkConfig(mimeType)
-  const rawChunks = semanticChunk(fullText, size, overlap, 50)
 
-  // 2. Embed all chunks
-  const embeddings = await embedTexts(rawChunks)
-
-  // 3. Persist file record
+  // 2. Persist file record
   await db.insert(uploadedFiles).values({
     id: fileId,
     userId,
@@ -90,24 +127,16 @@ export async function ingestFile(
     mimeType,
     size: buffer.byteLength,
     contentHash,
+    kind: 'file',
     createdAt: new Date(),
   })
 
-  // 4. Insert chunks + embeddings
-  const insertChunk = sqlite.prepare(
-    'INSERT INTO file_chunk_meta (chunk_id, file_id, content) VALUES (?,?,?)',
-  )
-  const insertVec = sqlite.prepare(
-    'INSERT INTO file_chunks (chunk_id, embedding) VALUES (?,?)',
-  )
+  // 3. Chunk, embed and store
+  await indexResourceText(fileId, fullText, mimeType)
 
-  sqlite.transaction(() => {
-    for (let i = 0; i < rawChunks.length; i++) {
-      const chunkId = `${fileId}:${i}`
-      insertChunk.run(chunkId, fileId, rawChunks[i])
-      insertVec.run(chunkId, JSON.stringify(embeddings[i]))
-    }
-  })()
+  // 4. Summarise — best-effort, after the row is durable. A small-model outage must not lose an
+  //    upload the user has already waited through extraction and embedding for.
+  await describeResource(fileId, fullText)
 
   return fileId
 }
