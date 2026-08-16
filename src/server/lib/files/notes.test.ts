@@ -1,7 +1,7 @@
 /** A note is the one resource whose text the user typed and the app holds nowhere else. These cover
- *  the three ways that text can be lost without anything reporting it: an edit that leaves the old
- *  chunks in place so retrieval answers from a superseded version, a delete that strands the chunks
- *  behind the row, and an embedding reset that takes the note along with the files. */
+ *  the ways that text can go wrong without anything reporting it: an edit that leaves the old chunks
+ *  in place so retrieval answers from a superseded version, a save whose embedding call failed after
+ *  the row was already durable, and a provenance link pointing somewhere it should not. */
 
 // Must precede every other import: sets DB_PATH before lib/db.ts opens it.
 import '../test-support/test-env.ts'
@@ -10,7 +10,7 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { startFakeEmbeddings } from '../test-support/fake-embeddings.ts'
 import { envOverride } from '../test-support/env-override.ts'
 
-const { db, sqlite, users, uploadedFiles, setAppSetting, resetFileEmbeddings, EMBED_DIMS } = await import('../db.ts')
+const { db, sqlite, users, uploadedFiles, setAppSetting, EMBED_DIMS } = await import('../db.ts')
 const { eq } = await import('drizzle-orm')
 const { saveNote, reindexNotes } = await import('./notes.ts')
 const { searchUploads } = await import('./uploads-search.ts')
@@ -99,38 +99,42 @@ describe('saveNote', () => {
     await expect(saveNote('someone-else', { id, title: 'Theirs', body: 'Taken.' })).rejects.toThrow()
   })
 
+  test('records the resource a transform produced it from', async () => {
+    const source = await saveNote('nu', { title: 'Source', body: 'The material a transform reads.' })
+    const derived = await saveNote('nu', { title: 'Open questions', body: 'What about X?', derivedFrom: source })
+
+    const row = await db.select().from(uploadedFiles).where(eq(uploadedFiles.id, derived)).get()
+    expect(row?.derivedFrom).toBe(source)
+  })
+
+  test('ignores a source the user does not own, rather than linking to it', async () => {
+    // Otherwise a guessed id would confirm that someone else's resource exists, and the panel would
+    // render a chip the owner can click but never load.
+    sqlite.run('INSERT OR IGNORE INTO users(id, email, created_at, updated_at) VALUES (?,?,?,?)',
+      ['other-user', 'other@example.com', 0, 0])
+    sqlite.run(
+      'INSERT INTO uploaded_files(id, user_id, filename, mime_type, size, kind, created_at) VALUES (?,?,?,?,?,?,?)',
+      ['theirs', 'other-user', 'private.pdf', 'application/pdf', 10, 'file', 0],
+    )
+    const id = await saveNote('nu', { title: 'Mine', body: 'Some content here.', derivedFrom: 'theirs' })
+
+    const row = await db.select().from(uploadedFiles).where(eq(uploadedFiles.id, id)).get()
+    expect(row?.derivedFrom).toBeNull()
+  })
+
   test('refuses an empty title or body', async () => {
     await expect(saveNote('nu', { title: '  ', body: 'text' })).rejects.toThrow()
     await expect(saveNote('nu', { title: 'title', body: '  ' })).rejects.toThrow()
   })
 })
 
-describe('an embedding-dimension reset', () => {
-  test('clears uploaded files but keeps notes', async () => {
-    const noteId = await saveNote('nu', { title: 'Survivor', body: 'This text exists only in the note.' })
-    sqlite.run(
-      'INSERT INTO uploaded_files(id, user_id, filename, mime_type, size, kind, created_at) VALUES (?,?,?,?,?,?,?)',
-      ['f1', 'nu', 'report.pdf', 'application/pdf', 10, 'file', 0],
-    )
-
-    resetFileEmbeddings()
-
-    // The file can be uploaded again; the note exists nowhere else, which is the whole distinction.
-    expect(await db.select().from(uploadedFiles).where(eq(uploadedFiles.id, 'f1')).get()).toBeUndefined()
-    const note = await db.select().from(uploadedFiles).where(eq(uploadedFiles.id, noteId)).get()
-    expect(note?.body).toBe('This text exists only in the note.')
-    expect(chunkCount(noteId)).toBe(0)
-
-    // initSchema recreates the dropped vector table right after; do the same so later tests have one.
-    sqlite.run(`CREATE VIRTUAL TABLE IF NOT EXISTS file_chunks USING vec0(
-      chunk_id TEXT PRIMARY KEY,
-      embedding FLOAT[${EMBED_DIMS}]
-    )`)
-  })
-})
-
 describe('reindexNotes', () => {
-  test('re-embeds a note left without chunks by an embedding reset', async () => {
+  /** Narrower than reembedMissingVectors, which rebuilds a vector from chunk text still on disk.
+   *  This is for a note with no chunk text at all — `indexResourceText` embeds before it stores, so
+   *  a failed embedding call leaves the row durable and the chunks never written. Only a note can be
+   *  recovered from that: its markdown is in `body`, while a file's text lives nowhere but the
+   *  chunks. See reembed.test.ts for the dimension-change case, which loses no text at all. */
+  test('re-chunks a note whose text was never stored', async () => {
     const id = await saveNote('nu', { title: 'Survivor', body: 'This text exists only in the note.' })
     sqlite.run('DELETE FROM file_chunks')
     sqlite.run('DELETE FROM file_chunk_meta')

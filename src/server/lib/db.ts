@@ -2,7 +2,7 @@ import { Database } from 'bun:sqlite'
 import * as sqliteVec from 'sqlite-vec'
 import { drizzle } from 'drizzle-orm/bun-sqlite'
 import { eq, sql } from 'drizzle-orm'
-import { sqliteTable, text, integer, primaryKey } from 'drizzle-orm/sqlite-core'
+import { sqliteTable, text, integer, primaryKey, type AnySQLiteColumn } from 'drizzle-orm/sqlite-core'
 
 const DB_PATH = process.env.DB_PATH ?? 'queriocity.db'
 
@@ -134,6 +134,11 @@ export const uploadedFiles = sqliteTable('uploaded_files', {
    *  call failed or the `resource_summary` setting is off — neither is required by anything. */
   summary: text('summary'),
   topics: text('topics'),
+  /** The resource a transform produced this note from. Nulled rather than cascaded when that
+   *  resource is deleted: the note is the user's own text and outlives what prompted it. The same
+   *  provenance is also written into the note's first line, which is what carries it into retrieval
+   *  and export — this column exists so the panel can link back. */
+  derivedFrom: text('derived_from').references((): AnySQLiteColumn => uploadedFiles.id, { onDelete: 'set null' }),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }),
 })
@@ -191,53 +196,41 @@ export const monitorRuns = sqliteTable('monitor_runs', {
 
 export const EMBED_DIMS = parseInt(process.env.EMBED_DIMENSIONS ?? '1536')
 
-/** Drops every file vector so the table can be recreated at a new dimension, keeping notes.
+/** True when a vec0 table exists at a dimension other than the one now configured. */
+function dimensionChanged(table: string): boolean {
+  const existing = sqlite.query(
+    `SELECT sql FROM sqlite_master WHERE type='table' AND name='${table}'`
+  ).get() as { sql: string } | null
+  return !!existing && !existing.sql.includes(`FLOAT[${EMBED_DIMS}]`)
+}
+
+/** Drops the file vectors so the table can be recreated at the new dimension. Nothing else goes.
  *
- *  Uploaded files go: their vectors are unusable at the new dimension and their text exists only as
- *  those chunks, so the row would point at nothing — but the file itself can be uploaded again. A
- *  note cannot: the user wrote it, and this app is the only place it lives. Its markdown is in
- *  `body`, which is exactly what lets it be re-embedded, and reindexNotes() does that at startup.
+ *  A vector is derived data; the text it was built from is not. `file_chunk_meta.content` holds
+ *  every chunk verbatim, and chunk boundaries depend on the mime type rather than the model — so a
+ *  dimension change needs re-embedding, never re-chunking, and never the loss of a resource. This
+ *  used to delete every uploaded file, which also took its space tags and any note derived from it.
  *
- *  Exported for the test that guards the distinction; initSchema is the only caller in production. */
+ *  Exported for the test that guards that; initSchema is the only caller in production. */
 export function resetFileEmbeddings(): void {
   sqlite.run('DROP TABLE IF EXISTS file_chunks')
-  sqlite.run('DELETE FROM file_chunk_meta')
-  sqlite.run(`DELETE FROM uploaded_files WHERE kind = 'file'`)
 }
 
 function initSchema() {
-  // Ahead of the reset below rather than with the other ALTERs further down, because that reset
-  // reads `kind` to decide what it may delete. A database old enough to lack the column also
-  // predates notes, so the fallback of deleting everything is still correct there.
+  // Ahead of everything below: the notes work added it, and several statements here read it.
   try { sqlite.run(`ALTER TABLE uploaded_files ADD COLUMN kind TEXT NOT NULL DEFAULT 'file'`) } catch { /* already present, or no table yet */ }
 
-  // Recreate file_chunks if the embedding dimension changed
-  const existing = sqlite.query(
-    "SELECT sql FROM sqlite_master WHERE type='table' AND name='file_chunks'"
-  ).get() as { sql: string } | null
-  if (existing && !existing.sql.includes(`FLOAT[${EMBED_DIMS}]`)) {
-    if (!process.env.ALLOW_EMBED_RESET) {
-      throw new Error(
-        `[db] EMBED_DIMENSIONS changed to ${EMBED_DIMS} — set ALLOW_EMBED_RESET=true to wipe and recreate embedding tables (all uploads will be deleted)`
-      )
-    }
-    console.log(`[db] Embedding dimension changed → recreating file_chunks (${EMBED_DIMS} dims), clearing uploaded files`)
+  // Recreate the vector tables if the embedding dimension changed. Both keep their `*_chunk_meta`
+  // rows, so reembedMissingVectors() at startup restores them from text already on disk — which is
+  // why neither is gated behind ALLOW_EMBED_RESET any more: there is nothing left to destroy.
+  if (dimensionChanged('file_chunks')) {
+    console.log(`[db] Embedding dimension changed → recreating file_chunks (${EMBED_DIMS} dims), resources kept for re-embedding`)
     resetFileEmbeddings()
   }
 
-  // Recreate chat_chunks if the embedding dimension changed
-  const existingChat = sqlite.query(
-    "SELECT sql FROM sqlite_master WHERE type='table' AND name='chat_chunks'"
-  ).get() as { sql: string } | null
-  if (existingChat && !existingChat.sql.includes(`FLOAT[${EMBED_DIMS}]`)) {
-    if (!process.env.ALLOW_EMBED_RESET) {
-      throw new Error(
-        `[db] EMBED_DIMENSIONS changed to ${EMBED_DIMS} — set ALLOW_EMBED_RESET=true to wipe and recreate embedding tables`
-      )
-    }
-    console.log(`[db] Embedding dimension changed → recreating chat_chunks (${EMBED_DIMS} dims)`)
+  if (dimensionChanged('chat_chunks')) {
+    console.log(`[db] Embedding dimension changed → recreating chat_chunks (${EMBED_DIMS} dims), history kept for re-embedding`)
     sqlite.run('DROP TABLE IF EXISTS chat_chunks')
-    sqlite.run('DELETE FROM chat_chunk_meta')
   }
 
   sqlite.run(`
@@ -297,6 +290,7 @@ function initSchema() {
       body       TEXT,
       summary    TEXT,
       topics     TEXT,
+      derived_from TEXT REFERENCES uploaded_files(id) ON DELETE SET NULL,
       created_at INTEGER NOT NULL,
       updated_at INTEGER
     );
@@ -331,7 +325,8 @@ function initSchema() {
   // One vector per memory, keyed by the memory's own id — memories are single short facts, so
   // unlike chat/file content they need no chunking and no meta table; the text stays in
   // space_memories. Purely derived data: on a dimension change we drop and re-embed rather than
-  // demanding ALLOW_EMBED_RESET, because nothing is lost. buildMemoryBlock backfills lazily.
+  // demanding a confirmation, because nothing is lost. buildMemoryBlock backfills lazily — the
+  // same principle the file and chat vectors now follow, via reembedMissingVectors at startup.
   const existingMemVec = sqlite.query(
     "SELECT sql FROM sqlite_master WHERE type='table' AND name='memory_embeddings'"
   ).get() as { sql: string } | null
@@ -482,6 +477,10 @@ function initSchema() {
   try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN summary TEXT') } catch {}
   try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN topics TEXT') } catch {}
   try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN updated_at INTEGER') } catch {}
+  // No REFERENCES clause: SQLite's ALTER TABLE ADD COLUMN rejects one with a non-null default and
+  // cannot add the constraint to an existing table at all. New databases get it from the CREATE
+  // above; on an upgraded one the column is a plain id, and routes/files.ts nulls it on delete.
+  try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN derived_from TEXT') } catch {}
   // Migrate: backfill timezone from owner's settings for personal monitors that have none
   try {
     sqlite.run(`

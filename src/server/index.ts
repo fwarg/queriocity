@@ -33,6 +33,7 @@ import { runDueMonitors } from './lib/monitor-runner.ts'
 import { validateConfig, checkEmbeddingDimensions, checkAttachmentBudget } from './lib/config-check.ts'
 import { purgeOrphanVectors } from './lib/vector-cleanup.ts'
 import { reindexNotes } from './lib/files/notes.ts'
+import { reembedMissingVectors } from './lib/reembed.ts'
 import { EMBED_BATCH_CHARS, EMBED_MAX_INPUT_CHARS } from './lib/llm.ts'
 
 import { IMAGE_API, IMAGE_STEPS, imageStorageDir, imageUrlsIn, purgeOrphanImages } from './lib/image-store.ts'
@@ -194,12 +195,17 @@ async function sweepOrphanImages(): Promise<void> {
   await purgeOrphanImages(imageUrlsIn(rows.map(r => r.content)))
 }
 
-// A note keeps its text in `body`, so an ALLOW_EMBED_RESET run deletes its chunks but spares the
-// note itself — unlike a file, it cannot be uploaded again. Re-embedding it is the other half of
-// that decision, and this also recovers a note whose embedding call failed after the row was saved.
-// Off the startup path: it makes model calls, and a note missing from retrieval must not delay
-// serving everything else.
-reindexNotes().catch(e => console.error('[notes] re-embedding failed:', e))
+// Vectors are derived data; the text behind them is not. A changed EMBED_DIMENSIONS invalidates
+// every vector and nothing else, so recovery is re-embedding what `*_chunk_meta` already holds —
+// no re-chunking, and no resource deleted. Run in the background rather than on the startup path:
+// a large corpus takes a while, and degraded retrieval is far better than a server that will not
+// serve. reindexNotes covers the one case this cannot, a note whose chunk text was never written.
+rebuildEmbeddings().catch(e => console.error('[reembed] failed:', e))
+
+async function rebuildEmbeddings(): Promise<void> {
+  await reembedMissingVectors()
+  await reindexNotes()
+}
 
 preflight().catch(() => {})
 

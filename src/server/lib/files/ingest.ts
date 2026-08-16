@@ -103,13 +103,20 @@ export async function ingestFile(
     throw new Error(`Unsupported file type: ${mimeType}. Accepted types: PDF, plain text, images.`)
   }
 
-  // Dedup: return existing fileId if this user already uploaded identical content
+  // Dedup: return the existing fileId if this user already uploaded identical content — but only
+  // if that upload actually completed. A row whose indexing failed keeps its content hash, so
+  // without this check the retry matches it, returns instantly, and hands back a resource with no
+  // excerpts and no way to fix it but deleting it by hand.
   const contentHash = createHash('sha256').update(Buffer.from(buffer)).digest('hex')
   const existing = await db.select({ id: uploadedFiles.id })
     .from(uploadedFiles)
     .where(and(eq(uploadedFiles.userId, userId), eq(uploadedFiles.contentHash, contentHash)))
     .get()
-  if (existing) return existing.id
+  if (existing && chunkCount(existing.id) > 0) return existing.id
+  if (existing) {
+    console.warn(`  [ingest] "${filename}" matches ${existing.id}, which has no excerpts — re-ingesting over it`)
+    await removeResource(existing.id)
+  }
 
   const fileId = randomUUID()
 
@@ -119,7 +126,10 @@ export async function ingestFile(
     throw new Error('Could not extract readable text from this file. It may be corrupted or in an unsupported encoding.')
   }
 
-  // 2. Persist file record
+  // 2. Persist file record, then index. The row goes first so `describeResource` has something to
+  //    update, and is rolled back if indexing fails: a file whose text exists only in its chunks is
+  //    nothing without them, and leaving the row behind also poisons the dedup check above.
+  //    A note is the opposite case and deliberately keeps its row — see notes.ts.
   await db.insert(uploadedFiles).values({
     id: fileId,
     userId,
@@ -130,13 +140,25 @@ export async function ingestFile(
     kind: 'file',
     createdAt: new Date(),
   })
+  try {
+    await indexResourceText(fileId, fullText, mimeType)
+  } catch (e) {
+    await removeResource(fileId)
+    throw e
+  }
 
-  // 3. Chunk, embed and store
-  await indexResourceText(fileId, fullText, mimeType)
-
-  // 4. Summarise — best-effort, after the row is durable. A small-model outage must not lose an
+  // 3. Summarise — best-effort, after the row is durable. A small-model outage must not lose an
   //    upload the user has already waited through extraction and embedding for.
   await describeResource(fileId, fullText)
 
   return fileId
+}
+
+const chunkCount = (fileId: string): number =>
+  (sqlite.query('SELECT count(*) AS n FROM file_chunk_meta WHERE file_id = ?').get(fileId) as { n: number }).n
+
+/** Removes a resource and everything keyed to it. Chunks first: their tables carry no foreign key. */
+async function removeResource(fileId: string): Promise<void> {
+  deleteFileChunks(fileId)
+  await db.delete(uploadedFiles).where(eq(uploadedFiles.id, fileId))
 }

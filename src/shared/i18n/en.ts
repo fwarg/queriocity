@@ -160,6 +160,7 @@ export const en = {
   'files.summarizing': 'Summarizing…',
   'files.summarizeSelectedTitle': 'Summarize selected resources into a memory',
   'files.summarizeAllTitle': 'Summarize all tagged resources into a memory',
+  'files.deleteNamed': 'Delete resource "{name}"',
   'files.deleteConfirm': 'Delete "{name}"? Its excerpts are removed from every space it is tagged to.',
 
   // --- Notes ---
@@ -178,6 +179,7 @@ export const en = {
   'note.attach': 'Attach a note',
   'note.attachEmpty': 'No notes yet. Write one from the Resources view.',
   'note.kind': 'Note',
+  'note.sources': 'Sources',
   'note.emptyBody': 'This note is empty.',
 
   // --- Resource detail ---
@@ -197,6 +199,9 @@ export const en = {
   'resource.transformFailed': 'Transform failed',
   'resource.transformResult': 'Result',
   'resource.saveAsNote': 'Save as note',
+  'resource.derivedFrom': 'Created from',
+  'resource.derivedNotes': 'Notes made from this',
+  'resource.derivedFromLine': '{operation} from **{source}**',
   'resource.useTemplate': 'My templates',
   'transform.summarize': 'Summarize',
   'transform.keypoints': 'Key points',

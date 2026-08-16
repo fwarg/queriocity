@@ -8,6 +8,9 @@
  *  different points and a nearest-neighbour search returns something meaningful. */
 export function startFakeEmbeddings(dims: number) {
   const requests: unknown[] = []
+  /** Set to make every call fail. A 400 rather than a dead port or a 500: the AI SDK does not retry
+   *  it, so a test for the failure path finishes immediately instead of sitting through backoff. */
+  const state = { failing: false }
 
   const server = Bun.serve({
     port: 0,
@@ -16,6 +19,7 @@ export function startFakeEmbeddings(dims: number) {
       if (!url.pathname.endsWith('/embeddings')) return new Response('not found', { status: 404 })
       const body = await req.json().catch(() => null) as { input?: string | string[] } | null
       requests.push(body)
+      if (state.failing) return Response.json({ error: { message: 'embedding stub is failing' } }, { status: 400 })
 
       const inputs = Array.isArray(body?.input) ? body.input : [body?.input ?? '']
       return Response.json({
@@ -30,6 +34,11 @@ export function startFakeEmbeddings(dims: number) {
   return {
     baseURL: `http://localhost:${server.port}/v1`,
     requests,
+    /** Runs `fn` with every embedding call failing, restoring the server afterwards either way. */
+    async whileFailing<T>(fn: () => Promise<T>): Promise<T> {
+      state.failing = true
+      try { return await fn() } finally { state.failing = false }
+    },
     stop: () => server.stop(true),
   }
 }

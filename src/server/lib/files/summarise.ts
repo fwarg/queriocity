@@ -14,10 +14,14 @@ export interface ResourceDescription {
   topics: string[]
 }
 
+/** Both fields follow the document's own language: a Swedish note described in English reads as a
+ *  translation of itself, and the topics then fail to match the words a Swedish user would search
+ *  for. The rule is stated twice on purpose — one mention at the end was applied to the topics only. */
 const SYSTEM = `You describe a document for a research library.
+Write BOTH the summary and the topics in the same language as the document itself.
 Respond with ONLY a JSON object:
 {"summary":"one sentence, max 25 words, stating what the document is and what it covers","topics":["topic","topic","topic"]}
-Give 3 to 5 topics, each one to three words, in the language the document is written in.`
+Give 3 to 5 topics, each one to three words. Use the document's language for every value.`
 
 /** True unless an admin has turned summarising off — read per call, like every other app setting. */
 export const resourceSummaryEnabled = async (): Promise<boolean> =>

@@ -12,6 +12,7 @@ import { downloadGeneratedImage } from '../lib/image-download.ts'
 import { markSvg } from '@shared/ai-provenance.ts'
 import { useT } from '../lib/i18n.tsx'
 import { NoteEditor } from './NoteEditor.tsx'
+import { answerAsNoteBody } from '../lib/note-from-answer.ts'
 
 /** Whether downloaded images get a visible caption bar burned in. A context rather than a prop
  *  because the markdown component map is module-level, so there is nothing to drill through. */
@@ -407,7 +408,7 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
             {savingNote && (
               <NoteEditor
                 initialTitle={noteTitle ?? ''}
-                initialBody={msg.content}
+                initialBody={answerAsNoteBody(msg, t('note.sources'))}
                 onClose={() => setSavingNote(false)}
                 onSaved={() => {
                   setSavingNote(false)

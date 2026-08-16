@@ -14,13 +14,28 @@ const EMBED_MAX_CHARS = EMBED_MAX_INPUT_CHARS
 
 let warnedTruncation = false
 
+/** Removes unpaired surrogates, which cannot be encoded and fail the request rather than the string.
+ *
+ *  `JSON.stringify` emits a lone surrogate verbatim as `\ud83d`, and a strict JSON parser — which
+ *  most embedding servers have — rejects the whole body with "invalid high surrogate in string". So
+ *  one broken character anywhere in a batch of a hundred loses all hundred, and the caller sees an
+ *  opaque 400 after three retries rather than anything naming the input.
+ *
+ *  The chunker no longer creates these (see trimOrphanSurrogates), but text also arrives here from
+ *  PDF extraction, OCR and user queries, so this is the guarantee rather than the fix: nothing
+ *  leaves for the server that the server cannot parse. */
+const stripLoneSurrogates = (text: string): string =>
+  text.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '')
+
 function bound(text: string): string {
-  if (text.length <= EMBED_MAX_CHARS) return text
+  const clean = stripLoneSurrogates(text)
+  if (clean.length <= EMBED_MAX_CHARS) return clean
   if (!warnedTruncation) {
     warnedTruncation = true
-    console.warn(`  [embed] input of ${text.length} chars truncated to ${EMBED_MAX_CHARS} (EMBED_MAX_INPUT_CHARS). Expected for a query carrying a large attachment — a shorter query embeds to a sharper vector. If it fires for stored chunks, raise it.`)
+    console.warn(`  [embed] input of ${clean.length} chars truncated to ${EMBED_MAX_CHARS} (EMBED_MAX_INPUT_CHARS). Expected for a query carrying a large attachment — a shorter query embeds to a sharper vector. If it fires for stored chunks, raise it.`)
   }
-  return text.slice(0, EMBED_MAX_CHARS)
+  // Truncation is itself a cut at a code-unit index, so it can orphan a surrogate of its own.
+  return stripLoneSurrogates(clean.slice(0, EMBED_MAX_CHARS))
 }
 
 export async function embedText(text: string): Promise<number[]> {

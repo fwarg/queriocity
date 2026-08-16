@@ -156,6 +156,7 @@ export const sv: Catalog = {
   'files.summarizing': 'Sammanfattar…',
   'files.summarizeSelectedTitle': 'Sammanfatta valda resurser till ett minne',
   'files.summarizeAllTitle': 'Sammanfatta alla kopplade resurser till ett minne',
+  'files.deleteNamed': 'Ta bort resursen ”{name}”',
   'files.deleteConfirm': 'Ta bort ”{name}”? Utdragen försvinner från alla utrymmen den är kopplad till.',
 
   // --- Anteckningar ---
@@ -174,6 +175,7 @@ export const sv: Catalog = {
   'note.attach': 'Bifoga en anteckning',
   'note.attachEmpty': 'Inga anteckningar än. Skriv en från resursvyn.',
   'note.kind': 'Anteckning',
+  'note.sources': 'Källor',
   'note.emptyBody': 'Anteckningen är tom.',
 
   // --- Resursdetaljer ---
@@ -193,6 +195,9 @@ export const sv: Catalog = {
   'resource.transformFailed': 'Bearbetningen misslyckades',
   'resource.transformResult': 'Resultat',
   'resource.saveAsNote': 'Spara som anteckning',
+  'resource.derivedFrom': 'Skapad från',
+  'resource.derivedNotes': 'Anteckningar gjorda från denna',
+  'resource.derivedFromLine': '{operation} från **{source}**',
   'resource.useTemplate': 'Mina mallar',
   'transform.summarize': 'Sammanfatta',
   'transform.keypoints': 'Huvudpunkter',

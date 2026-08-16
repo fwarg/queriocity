@@ -5,7 +5,7 @@ import { ArrowLeft, FileText, NotebookPen } from 'lucide-react'
 import { NoteEditor } from './NoteEditor.tsx'
 import {
   fetchResource, fetchCustomTemplates, transformResource,
-  type CustomTemplate, type ResourceDetail as Detail, type TransformOperation,
+  type CustomTemplate, type ResourceDetail as Detail, type ResourceRef, type TransformOperation,
 } from '../lib/api.ts'
 import { useLang, useT } from '../lib/i18n.tsx'
 import { errorMessage } from '../lib/errors.ts'
@@ -21,11 +21,13 @@ interface Props {
   id: string
   onBack: () => void
   onChanged: () => void
+  /** Follow a provenance chip to another resource. */
+  onOpen: (id: string) => void
 }
 
 /** What a stored resource actually contains: its summary, the spaces it feeds, and the excerpts
  *  retrieval works from. Notes are editable here; every resource can be transformed into one. */
-export function ResourceDetail({ id, onBack, onChanged }: Props) {
+export function ResourceDetail({ id, onBack, onChanged, onOpen }: Props) {
   const t = useT()
   const { lang } = useLang()
   const [detail, setDetail] = useState<Detail | null>(null)
@@ -33,6 +35,7 @@ export function ResourceDetail({ id, onBack, onChanged }: Props) {
   const [editing, setEditing] = useState(false)
 
   const load = useCallback(() => {
+    setLoadError('')
     fetchResource(id)
       .then(setDetail)
       .catch(err => setLoadError(errorMessage(t, err, t('resource.loadFailed'))))
@@ -99,7 +102,21 @@ export function ResourceDetail({ id, onBack, onChanged }: Props) {
           )}
       </Section>
 
-      <TransformPanel id={id} onSaved={onChanged} />
+      {detail.derivedFrom && (
+        <Section title={t('resource.derivedFrom')}>
+          <ResourceChip resource={detail.derivedFrom} onOpen={onOpen} />
+        </Section>
+      )}
+
+      {detail.derived.length > 0 && (
+        <Section title={t('resource.derivedNotes')}>
+          <div className="flex flex-wrap gap-1.5">
+            {detail.derived.map(note => <ResourceChip key={note.id} resource={note} onOpen={onOpen} />)}
+          </div>
+        </Section>
+      )}
+
+      <TransformPanel id={id} sourceTitle={detail.filename} onSaved={onChanged} />
 
       {isNote && detail.body && (
         <Section title={t('note.body')}>
@@ -149,6 +166,22 @@ function Panel({ children, onBack }: { children: React.ReactNode; onBack: () => 
   )
 }
 
+/** A provenance link. The Resources view holds the open resource in state rather than in the URL,
+ *  so this asks the parent to switch rather than rendering an anchor. */
+function ResourceChip({ resource, onOpen }: { resource: ResourceRef; onOpen: (id: string) => void }) {
+  return (
+    <button
+      onClick={() => onOpen(resource.id)}
+      className="flex items-center gap-1.5 px-2 py-1 rounded text-xs bg-gray-800 text-gray-300 border border-gray-700 hover:border-gray-500 hover:text-gray-100 max-w-full"
+    >
+      {resource.kind === 'note'
+        ? <NotebookPen size={12} className="shrink-0 text-amber-400" />
+        : <FileText size={12} className="shrink-0 text-gray-500" />}
+      <span className="truncate">{resource.filename}</span>
+    </button>
+  )
+}
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-1.5">
@@ -160,7 +193,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 /** Runs a prompt over the resource and offers the result for saving. The result is held in state
  *  rather than written straight to a note: a transform that came back wrong should cost nothing. */
-function TransformPanel({ id, onSaved }: { id: string; onSaved: () => void }) {
+function TransformPanel({ id, sourceTitle, onSaved }: { id: string; sourceTitle: string; onSaved: () => void }) {
   const t = useT()
   const [templates, setTemplates] = useState<CustomTemplate[]>([])
   const [running, setRunning] = useState(false)
@@ -233,8 +266,14 @@ function TransformPanel({ id, onSaved }: { id: string; onSaved: () => void }) {
 
       {saving && result && (
         <NoteEditor
-          initialTitle={result.label}
-          initialBody={result.content}
+          // The title carries the source too, because it is the label every search hit and citation
+          // shows — "Open questions" on its own says nothing about which document they concern.
+          initialTitle={`${result.label} — ${sourceTitle}`}
+          // The provenance line is part of the text, not just metadata: a note is often read as a
+          // retrieved excerpt with everything around it stripped away, and the stored link below
+          // cannot travel that far. Editable like the rest, since it is only a first line.
+          initialBody={`> ${t('resource.derivedFromLine', { operation: result.label, source: sourceTitle })}\n\n${result.content}`}
+          derivedFrom={id}
           onClose={() => setSaving(false)}
           onSaved={() => { setSaving(false); setResult(null); onSaved() }}
         />

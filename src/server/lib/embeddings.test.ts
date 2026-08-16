@@ -70,3 +70,32 @@ describe('batching by total size', () => {
     expect(batchByTotalChars([], 4000)).toEqual([])
   })
 })
+
+/** A lone surrogate is not a string problem but a *request* problem: JSON.stringify writes it out
+ *  verbatim and the embedding server rejects the entire body, so one broken character loses every
+ *  text batched with it. Found when ingesting a GitHub README, where an emoji straddled a chunk
+ *  boundary and the whole URL ingest failed with an opaque 400 after three retries. */
+describe('unpairable characters', () => {
+  const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+
+  it('drops a high surrogate left without its pair', () => {
+    const broken = 'security notes \ud83d'
+    expect(lone.test(broken)).toBe(true)
+    expect(lone.test(bound(broken))).toBe(false)
+    expect(bound(broken)).toBe('security notes ')
+  })
+
+  it('drops a low surrogate left without its pair', () => {
+    expect(bound('\ude00 rest of the chunk')).toBe(' rest of the chunk')
+  })
+
+  it('leaves a whole emoji alone', () => {
+    expect(bound('locked 🔒 and private')).toBe('locked 🔒 and private')
+  })
+
+  it('does not orphan a surrogate when it truncates', () => {
+    // Truncation is itself a cut at a code-unit index, so the fix has to run on both sides of it.
+    const text = 'x'.repeat(EMBED_MAX_CHARS - 1) + '🔒' + 'y'.repeat(100)
+    expect(lone.test(bound(text))).toBe(false)
+  })
+})

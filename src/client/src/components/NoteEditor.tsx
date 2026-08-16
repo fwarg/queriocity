@@ -11,6 +11,8 @@ interface Props {
   id?: string
   initialTitle?: string
   initialBody?: string
+  /** The resource a transform produced this note from. Recorded once, at creation. */
+  derivedFrom?: string
   onClose: () => void
   onSaved: (id: string) => void
 }
@@ -19,7 +21,7 @@ interface Props {
  *
  *  Preview shares the markdown renderer with the message list but not its plugins: a note is prose,
  *  and citation links, maths and SVG blocks belong to an answer rather than to something typed. */
-export function NoteEditor({ id, initialTitle = '', initialBody = '', onClose, onSaved }: Props) {
+export function NoteEditor({ id, initialTitle = '', initialBody = '', derivedFrom, onClose, onSaved }: Props) {
   const t = useT()
   const [title, setTitle] = useState(initialTitle)
   const [body, setBody] = useState(initialBody)
@@ -38,7 +40,7 @@ export function NoteEditor({ id, initialTitle = '', initialBody = '', onClose, o
         await updateNote(id, { title: title.trim(), body: body.trim() })
         onSaved(id)
       } else {
-        const created = await createNote(title.trim(), body.trim())
+        const created = await createNote(title.trim(), body.trim(), derivedFrom)
         onSaved(created.id)
       }
     } catch (err: unknown) {

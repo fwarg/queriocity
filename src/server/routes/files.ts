@@ -105,8 +105,18 @@ filesRouter.get('/', async (c) => {
     updatedAt: uploadedFiles.updatedAt,
   }).from(uploadedFiles).where(eq(uploadedFiles.userId, userId))
 
-  return c.json(files.map(f => ({ ...f, topics: parseTopics(f.topics) })))
+  return c.json(files.map(f => ({
+    ...f,
+    topics: parseTopics(f.topics),
+    createdAt: epochSeconds(f.createdAt),
+    updatedAt: epochSeconds(f.updatedAt),
+  })))
 })
+
+/** Drizzle hands back a `Date` for a timestamp column, and `c.json` renders that as an ISO string —
+ *  which the client multiplies by 1000 and gets `Invalid Date`. Every other route converts here
+ *  rather than in the client, so this one does too. */
+const epochSeconds = (d: Date | null) => d ? Math.floor(d.getTime() / 1000) : null
 
 /** Topics are stored as a JSON array. A hand-edited or half-written value must not break the list,
  *  which is the one screen a user would go to in order to delete the offending resource. */
@@ -128,11 +138,13 @@ const noteBody = z.object({
   body: z.string().min(1).max(100_000),
 })
 
-filesRouter.post('/notes', zValidator('json', noteBody), async (c) => {
+filesRouter.post('/notes', zValidator('json', noteBody.extend({
+  derivedFrom: z.string().optional(),
+})), async (c) => {
   const userId = c.get('userId') as string
-  const { title, body } = c.req.valid('json')
+  const { title, body, derivedFrom } = c.req.valid('json')
   try {
-    const id = await saveNote(userId, { title, body })
+    const id = await saveNote(userId, { title, body, derivedFrom })
     return c.json({ id }, 201)
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : 'Could not save note' }, 400)
@@ -178,7 +190,19 @@ filesRouter.get('/:id', async (c) => {
     ORDER BY CAST(substr(chunk_id, instr(chunk_id, ':') + 1) AS INTEGER)
   `).all(resource.id) as Array<{ content: string }>
 
+  // Provenance both ways: what this note was transformed from, and what has been transformed out of
+  // it. Ownership is already established by `resource`, and derived_from can only point at a
+  // resource the same user owns, so neither query needs its own user filter.
+  const source = resource.derivedFrom
+    ? await db.select({ id: uploadedFiles.id, filename: uploadedFiles.filename, kind: uploadedFiles.kind })
+        .from(uploadedFiles).where(eq(uploadedFiles.id, resource.derivedFrom)).get()
+    : undefined
+  const derived = await db.select({ id: uploadedFiles.id, filename: uploadedFiles.filename, kind: uploadedFiles.kind })
+    .from(uploadedFiles).where(eq(uploadedFiles.derivedFrom, resource.id))
+
   return c.json({
+    derivedFrom: source ?? null,
+    derived,
     id: resource.id,
     filename: resource.filename,
     mimeType: resource.mimeType,
@@ -187,8 +211,8 @@ filesRouter.get('/:id', async (c) => {
     body: resource.body,
     summary: resource.summary,
     topics: parseTopics(resource.topics),
-    createdAt: resource.createdAt,
-    updatedAt: resource.updatedAt,
+    createdAt: epochSeconds(resource.createdAt),
+    updatedAt: epochSeconds(resource.updatedAt),
     spaces: taggedSpaces,
     chunks: chunks.map(ch => ch.content),
   })
@@ -255,6 +279,10 @@ filesRouter.delete('/:id', async (c) => {
   // Before the row goes: file_chunk_meta has no foreign key and file_chunks is a vec0 table that
   // cannot have one, so nothing else would ever remove them.
   deleteFileChunks(fileId)
+  // Notes derived from this one keep their text and lose only the link. A database created before
+  // notes existed has `derived_from` without its ON DELETE SET NULL — SQLite cannot add a
+  // constraint to an existing table — so this is done here rather than left to the schema.
+  await db.update(uploadedFiles).set({ derivedFrom: null }).where(eq(uploadedFiles.derivedFrom, fileId))
   await db.delete(uploadedFiles).where(eq(uploadedFiles.id, fileId))
 
   return c.json({ ok: true })

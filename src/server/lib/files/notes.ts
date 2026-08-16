@@ -19,6 +19,8 @@ export interface NoteInput {
   id?: string
   title: string
   body: string
+  /** The resource a transform produced this note from; set once, at creation. */
+  derivedFrom?: string
 }
 
 /** Creates or updates a note, re-indexing only when the text actually changed. */
@@ -43,9 +45,14 @@ export async function saveNote(userId: string, note: NoteInput): Promise<string>
       .set({ filename: title, body, size, updatedAt: now })
       .where(eq(uploadedFiles.id, id))
   } else {
+    // Only a resource this user owns, so a guessed id cannot reveal that someone else's exists.
+    const source = note.derivedFrom
+      ? await db.select({ id: uploadedFiles.id }).from(uploadedFiles)
+          .where(and(eq(uploadedFiles.id, note.derivedFrom), eq(uploadedFiles.userId, userId))).get()
+      : undefined
     await db.insert(uploadedFiles).values({
       id, userId, filename: title, mimeType: NOTE_MIME_TYPE, size,
-      kind: 'note', body, createdAt: now, updatedAt: now,
+      kind: 'note', body, derivedFrom: source?.id ?? null, createdAt: now, updatedAt: now,
     })
   }
 
@@ -57,12 +64,13 @@ export async function saveNote(userId: string, note: NoteInput): Promise<string>
   return id
 }
 
-/** Re-embeds notes that have no chunks, and reports how many it recovered.
+/** Re-chunks notes that have no chunks at all, and reports how many it recovered.
  *
- *  Two ways a note ends up here: an `ALLOW_EMBED_RESET` run, which deletes every chunk but keeps
- *  note rows precisely so this can restore them, and a save whose embedding call failed after the
- *  row was already durable. Called at startup, where a note with no vectors is otherwise invisible
- *  to retrieval with nothing to signal it. */
+ *  Narrower than reembedMissingVectors, which restores a vector from chunk text still on disk: this
+ *  is for a note whose chunk *text* was never written, because `indexResourceText` embedded before
+ *  it stored and the embedding call failed. Only a note can be recovered from that — its markdown is
+ *  in `body`, whereas an uploaded file's text exists nowhere but the chunks. Called at startup,
+ *  where a note missing from retrieval has nothing else to signal it. */
 export async function reindexNotes(): Promise<number> {
   const orphaned = await db.select({ id: uploadedFiles.id, body: uploadedFiles.body })
     .from(uploadedFiles)

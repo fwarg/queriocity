@@ -690,10 +690,16 @@ export interface Resource {
   updatedAt: number | null
 }
 
+/** A resource reference thin enough to render as a chip and click through to. */
+export interface ResourceRef { id: string; filename: string; kind: 'file' | 'note' }
+
 export interface ResourceDetail extends Resource {
   body: string | null
   spaces: Array<{ id: string; name: string }>
   chunks: string[]
+  /** The resource a transform produced this note from, if any, and the notes produced from it. */
+  derivedFrom: ResourceRef | null
+  derived: ResourceRef[]
 }
 
 export async function fetchFiles(): Promise<Resource[]> {
@@ -713,11 +719,11 @@ export async function fetchNoteText(id: string): Promise<{ filename: string; con
   return res.json()
 }
 
-export async function createNote(title: string, body: string): Promise<{ id: string }> {
+export async function createNote(title: string, body: string, derivedFrom?: string): Promise<{ id: string }> {
   const res = await fetch(`${BASE}/files/notes`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title, body }),
+    body: JSON.stringify({ title, body, derivedFrom }),
   })
   if (!res.ok) throw await apiError(res, 'Could not save note')
   return res.json()

@@ -33,6 +33,7 @@ through a single Bun process.
     - [URL and YouTube ingestion](#url-and-youtube-ingestion)
     - [Notes](#notes)
     - [Resource detail and transforms](#resource-detail-and-transforms)
+    - [Changing the embedding model](#changing-the-embedding-model)
   - [URL fetching](#url-fetching)
   - [Preventing data exfiltration](#preventing-data-exfiltration)
     - [Locked spaces](#locked-spaces)
@@ -307,7 +308,10 @@ Three ways to make one:
 - **Write it.** *+ New note* in the Resources view, with a preview toggle.
 - **Save an answer.** Every assistant message has a notebook icon next to its speaker icon. Clicking
   it opens the editor pre-filled with the answer and the question that produced it as a title, so a
-  result worth keeping does not have to be exported or pasted into a memory.
+  result worth keeping does not have to be exported or pasted into a memory. The answer's `[n]`
+  citation markers are rewritten to point straight at their URLs and the cited sources are appended
+  as a list, keeping their original numbers — a note carries no source panel of its own, so without
+  this the markers would arrive as dead text.
 - **Transform a resource.** See below.
 
 A note reaches a conversation two ways: as retrieved excerpts, like any other resource, and in full
@@ -334,8 +338,36 @@ built-in operations — *Summarize*, *Key points*, *Open questions*, *Outline* �
 transform that came back wrong costs nothing. The space-level *Summarize resources* button is the
 same machinery pointed at every tagged resource at once, saving to a memory instead of a note.
 
-Notes survive an embedding-dimension change (`ALLOW_EMBED_RESET`), which clears uploaded files: a
-file can be uploaded again, a note cannot, so its markdown is kept and re-embedded at the next start.
+A transformed note keeps its provenance in **two** places, because they reach different readers:
+
+- **In the text** — its title becomes *"Open questions — [source]"* and its first line names the
+  source. This is what travels, since a note is often read as a retrieved excerpt with everything
+  around it stripped away, and because the note is embedded, the model sees it too. Both are
+  editable like the rest of the note.
+- **In the detail view** — *Created from* on the new note and *Notes made from this* on the source,
+  as chips you can click through in either direction. Deleting the source clears the link and leaves
+  the note itself alone; a note is your text and outlives what prompted it.
+
+Every transform is also told to open with one sentence naming what the source is about. *Open
+questions* in particular used to produce a bare list of questions that read as nonsense once
+separated from the document they were asked of.
+
+### Changing the embedding model
+
+Changing `EMBED_DIMENSIONS` invalidates every stored vector, and nothing else. The chunk *text* is
+held in the database beside each vector, and chunk boundaries follow the file type rather than the
+model — so recovery is re-embedding what is already stored. No resource is deleted, nothing is
+re-chunked, and nothing has to be uploaded again. Space tags, notes derived from a resource, and the
+citations pointing at each chunk all survive unchanged.
+
+The rebuild runs in the background at the next start, over both the resource library and the chat
+history index, logging its progress as `[reembed] resource: 400/2000`. Until it finishes, retrieval
+returns whatever has been rebuilt so far — degraded, never wrong. A failure part-way leaves the rest
+for the following start rather than losing anything.
+
+Because nothing is destroyed, `ALLOW_EMBED_RESET` is obsolete: it is no longer read, and a dimension
+change no longer refuses to start. If your embedding model reports a different dimension than you
+configured, the startup config check says so.
 
 ---
 
@@ -1013,10 +1045,10 @@ JWT_SECRET=change-me-in-production-32chars!!
 # RATE_LIMIT_IMAGE_PER_MIN=10
 # RATE_LIMIT_INGEST_PER_MIN=10
 
-# ── Embedding reset (optional) ───────────────────────────────────────────────
-# Set to true when changing EMBED_DIMENSIONS to allow the embedding tables to be
-# wiped and recreated. WARNING: all uploaded file embeddings will be deleted.
-# ALLOW_EMBED_RESET=true
+# ── Embedding reset ──────────────────────────────────────────────────────────
+# ALLOW_EMBED_RESET is obsolete and no longer read. Changing EMBED_DIMENSIONS
+# now rebuilds the vector tables and re-embeds from the stored chunk text at the
+# next start; nothing is deleted, so there is nothing left to gate.
 
 # ── Reformulate context limits ────────────────────────────────────────────────
 # The small model receives recent conversation history so it can resolve

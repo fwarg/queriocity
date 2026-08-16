@@ -37,7 +37,7 @@ export function ResourcesView({ resources, onChanged }: Props) {
   const [urlError, setUrlError] = useState('')
 
   if (openId) {
-    return <ResourceDetail id={openId} onBack={() => setOpenId(null)} onChanged={onChanged} />
+    return <ResourceDetail id={openId} onBack={() => setOpenId(null)} onChanged={onChanged} onOpen={setOpenId} />
   }
 
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -174,11 +174,15 @@ export function ResourcesView({ resources, onChanged }: Props) {
                   </div>
                 )}
               </div>
+              {/* Matches the chat and space lists: a bare ×, labelled for screen readers, and
+                  revealed on hover only from `md` up — below that there is no hover, so an
+                  opacity-0 delete is simply unreachable on a phone. */}
               <button
                 onClick={e => handleDelete(r, e)}
-                className="text-xs text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                className="px-2 py-2 text-gray-600 hover:text-red-400 md:opacity-0 md:group-hover:opacity-100 transition-opacity shrink-0"
+                aria-label={t('files.deleteNamed', { name: r.filename })}
               >
-                {t('common.delete')}
+                ×
               </button>
             </div>
           ))}
