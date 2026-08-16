@@ -2,8 +2,21 @@ import { useRef, useState } from 'react'
 import { FileText, NotebookPen } from 'lucide-react'
 import { NoteEditor } from './NoteEditor.tsx'
 import { ResourceDetail } from './ResourceDetail.tsx'
+import { EMPTY_FILTER, matchesFilter, ResourceFilters, type ResourceFilter } from './ResourceFilters.tsx'
 import { deleteFile, ingestUrl, uploadFile, type Resource } from '../lib/api.ts'
 import { useLang, useT } from '../lib/i18n.tsx'
+
+/** A chip that narrows the list. Stops the row's own click, which opens the resource. */
+function Chip({ onClick, className, children }: { onClick: () => void; className: string; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={e => { e.stopPropagation(); onClick() }}
+      className={`px-1.5 py-0.5 rounded-full text-[11px] border transition-colors ${className}`}
+    >
+      {children}
+    </button>
+  )
+}
 
 function formatSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`
@@ -26,6 +39,7 @@ export function ResourcesView({ resources, onChanged }: Props) {
   const { lang } = useLang()
   const [openId, setOpenId] = useState<string | null>(null)
   const [writingNote, setWritingNote] = useState(false)
+  const [filter, setFilter] = useState<ResourceFilter>(EMPTY_FILTER)
 
   const fileRef = useRef<HTMLInputElement>(null)
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'ok' | 'error'>('idle')
@@ -35,6 +49,8 @@ export function ResourcesView({ resources, onChanged }: Props) {
   const [urlValue, setUrlValue] = useState('')
   const [urlStatus, setUrlStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [urlError, setUrlError] = useState('')
+
+  const shown = resources.filter(r => matchesFilter(r, filter))
 
   if (openId) {
     return <ResourceDetail id={openId} onBack={() => setOpenId(null)} onChanged={onChanged} onOpen={setOpenId} />
@@ -148,45 +164,69 @@ export function ResourcesView({ resources, onChanged }: Props) {
       {resources.length === 0 && !urlOpen ? (
         <p className="text-gray-500 text-sm">{t('files.none')}</p>
       ) : (
-        <div className="flex flex-col gap-2">
-          {resources.map(r => (
-            <div
-              key={r.id}
-              onClick={() => setOpenId(r.id)}
-              className="flex items-start gap-3 group px-4 py-3 rounded-lg bg-gray-800 hover:bg-gray-700 cursor-pointer"
-            >
-              {r.kind === 'note'
-                ? <NotebookPen size={16} className="text-amber-400 shrink-0 mt-0.5" />
-                : <FileText size={16} className="text-gray-500 shrink-0 mt-0.5" />}
-              <div className="flex-1 min-w-0">
-                <div className="text-sm text-gray-100 truncate">{r.filename}</div>
-                {r.summary && <div className="text-xs text-gray-400 mt-0.5 line-clamp-2">{r.summary}</div>}
-                <div className="text-xs text-gray-500 mt-0.5">
-                  {r.kind === 'note' ? t('note.kind') : r.mimeType} · {formatSize(r.size)} · {new Date((r.updatedAt ?? r.createdAt) * 1000).toLocaleDateString(lang)}
-                </div>
-                {r.topics.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-1.5">
-                    {r.topics.map(topic => (
-                      <span key={topic} className="px-1.5 py-0.5 rounded-full text-[11px] bg-gray-900 text-gray-400 border border-gray-700">
-                        {topic}
-                      </span>
-                    ))}
+        <>
+          {/* Worth its space only once scrolling stops being enough. */}
+          {resources.length > 8 && (
+            <ResourceFilters resources={resources} filter={filter} onChange={setFilter} shown={shown.length} />
+          )}
+          {shown.length === 0 ? (
+            <p className="text-gray-500 text-sm">{t('files.filterNone')}</p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {shown.map(r => (
+                <div
+                  key={r.id}
+                  onClick={() => setOpenId(r.id)}
+                  className="flex items-start gap-3 group px-4 py-3 rounded-lg bg-gray-800 hover:bg-gray-700 cursor-pointer"
+                >
+                  {r.kind === 'note'
+                    ? <NotebookPen size={16} className="text-amber-400 shrink-0 mt-0.5" />
+                    : <FileText size={16} className="text-gray-500 shrink-0 mt-0.5" />}
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm text-gray-100 truncate">{r.filename}</div>
+                    {r.summary && <div className="text-xs text-gray-400 mt-0.5 line-clamp-2">{r.summary}</div>}
+                    <div className="text-xs text-gray-500 mt-0.5">
+                      {r.kind === 'note' ? t('note.kind') : r.mimeType} · {formatSize(r.size)} · {new Date((r.updatedAt ?? r.createdAt) * 1000).toLocaleDateString(lang)}
+                    </div>
+                    {/* Space and topic chips both narrow the list rather than opening the resource,
+                        so they stop the row's own click — two grouping axes, one crossing projects
+                        and one following them. */}
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {r.spaces.map(space => (
+                        <Chip
+                          key={space.id}
+                          onClick={() => setFilter(f => ({ ...f, space: space.id }))}
+                          className="bg-indigo-950 text-indigo-300 border-indigo-900 hover:border-indigo-700"
+                        >
+                          {space.name}
+                        </Chip>
+                      ))}
+                      {r.topics.map(topic => (
+                        <Chip
+                          key={topic}
+                          onClick={() => setFilter(f => ({ ...f, topic }))}
+                          className="bg-gray-900 text-gray-400 border-gray-700 hover:border-gray-500"
+                        >
+                          {topic}
+                        </Chip>
+                      ))}
+                    </div>
                   </div>
-                )}
-              </div>
-              {/* Matches the chat and space lists: a bare ×, labelled for screen readers, and
-                  revealed on hover only from `md` up — below that there is no hover, so an
-                  opacity-0 delete is simply unreachable on a phone. */}
-              <button
-                onClick={e => handleDelete(r, e)}
-                className="px-2 py-2 text-gray-600 hover:text-red-400 md:opacity-0 md:group-hover:opacity-100 transition-opacity shrink-0"
-                aria-label={t('files.deleteNamed', { name: r.filename })}
-              >
-                ×
-              </button>
+                  {/* Matches the chat and space lists: a bare ×, labelled for screen readers, and
+                      revealed on hover only from `md` up — below that there is no hover, so an
+                      opacity-0 delete is simply unreachable on a phone. */}
+                  <button
+                    onClick={e => handleDelete(r, e)}
+                    className="px-2 py-2 text-gray-600 hover:text-red-400 md:opacity-0 md:group-hover:opacity-100 transition-opacity shrink-0"
+                    aria-label={t('files.deleteNamed', { name: r.filename })}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          )}
+        </>
       )}
 
       {writingNote && (

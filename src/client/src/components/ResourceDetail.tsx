@@ -4,8 +4,8 @@ import remarkGfm from 'remark-gfm'
 import { ArrowLeft, FileText, NotebookPen } from 'lucide-react'
 import { NoteEditor } from './NoteEditor.tsx'
 import {
-  fetchResource, fetchCustomTemplates, transformResource,
-  type CustomTemplate, type ResourceDetail as Detail, type ResourceRef, type TransformOperation,
+  fetchResource, fetchCustomTemplates, fetchSpaces, tagFileToSpace, transformResource, untagFileFromSpace,
+  type CustomTemplate, type ResourceDetail as Detail, type ResourceRef, type Space, type TransformOperation,
 } from '../lib/api.ts'
 import { useLang, useT } from '../lib/i18n.tsx'
 import { errorMessage } from '../lib/errors.ts'
@@ -89,17 +89,7 @@ export function ResourceDetail({ id, onBack, onChanged, onOpen }: Props) {
       </Section>
 
       <Section title={t('resource.taggedTo')}>
-        {detail.spaces.length === 0
-          ? <p className="text-sm text-gray-500">{t('resource.taggedToNone')}</p>
-          : (
-            <div className="flex flex-wrap gap-1.5">
-              {detail.spaces.map(space => (
-                <span key={space.id} className="px-2 py-0.5 rounded text-xs bg-indigo-900/50 text-indigo-300 border border-indigo-800">
-                  {space.name}
-                </span>
-              ))}
-            </div>
-          )}
+        <SpaceTags detail={detail} onChanged={() => { load(); onChanged() }} />
       </Section>
 
       {detail.derivedFrom && (
@@ -162,6 +152,59 @@ function Panel({ children, onBack }: { children: React.ReactNode; onBack: () => 
         <ArrowLeft size={14} /> {t('resource.back')}
       </button>
       {children}
+    </div>
+  )
+}
+
+/** Tagging a resource to a space, from the resource rather than from the space.
+ *
+ *  Both directions now exist: the space panel still tags from its side, which suits setting a space
+ *  up, while this suits filing a document you are already looking at — the case that made a large
+ *  library tedious to organise, since it previously meant leaving the Resources view entirely. */
+function SpaceTags({ detail, onChanged }: { detail: Detail; onChanged: () => void }) {
+  const t = useT()
+  const [spaces, setSpaces] = useState<Space[]>([])
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => { fetchSpaces().then(setSpaces).catch(() => {}) }, [])
+
+  const tagged = new Set(detail.spaces.map(s => s.id))
+  const available = spaces.filter(s => !tagged.has(s.id))
+
+  async function change(action: Promise<void>) {
+    setBusy(true)
+    try { await action; onChanged() } catch { /* the reload below shows the true state either way */ }
+    finally { setBusy(false) }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {detail.spaces.length === 0 && <p className="text-sm text-gray-500">{t('resource.taggedToNone')}</p>}
+      {detail.spaces.map(space => (
+        <span key={space.id} className="flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-indigo-900/50 text-indigo-300 border border-indigo-800">
+          {space.name}
+          <button
+            onClick={() => change(untagFileFromSpace(space.id, detail.id))}
+            disabled={busy}
+            className="text-indigo-400 hover:text-red-300 disabled:opacity-50"
+            aria-label={t('resource.untagFrom', { name: space.name })}
+          >
+            ×
+          </button>
+        </span>
+      ))}
+      {available.length > 0 && (
+        <select
+          value=""
+          disabled={busy}
+          onChange={e => { if (e.target.value) change(tagFileToSpace(e.target.value, detail.id)) }}
+          aria-label={t('resource.tagTo')}
+          className="rounded bg-gray-800 border border-gray-700 px-2 py-0.5 text-xs text-gray-300 focus:outline-none focus:border-blue-500"
+        >
+          <option value="">+ {t('resource.tagTo')}</option>
+          {available.map(space => <option key={space.id} value={space.id}>{space.name}</option>)}
+        </select>
+      )}
     </div>
   )
 }

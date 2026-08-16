@@ -32,6 +32,7 @@ through a single Bun process.
     - [Library upload (persistent)](#library-upload-persistent-vector-searchable)
     - [URL and YouTube ingestion](#url-and-youtube-ingestion)
     - [Notes](#notes)
+    - [Finding things in a large library](#finding-things-in-a-large-library)
     - [Resource detail and transforms](#resource-detail-and-transforms)
     - [Changing the embedding model](#changing-the-embedding-model)
   - [URL fetching](#url-fetching)
@@ -318,6 +319,27 @@ A note reaches a conversation two ways: as retrieved excerpts, like any other re
 by picking it from the notebook icon beside the paperclip in the chat input. Only notes can be
 attached that way — a file's text is stored solely as overlapping excerpts, so injecting it would
 repeat passages; the paperclip already covers sending a document whole.
+
+### Finding things in a large library
+
+Once the library passes a handful of resources, a filter bar appears above the list:
+
+- A **filter box** over filename, summary and topics — the three things you are likely to remember
+  about a document. Chunk *content* is deliberately not searched here; that is what the model's
+  semantic search is for, and a substring match against every excerpt would return hits the list
+  cannot explain.
+- **Space chips** with counts, plus **Untagged**, so you can see and browse the grouping you already
+  have rather than only apply it. Resources tagged to several spaces appear under each.
+- **Topic chips on each row are clickable**, and narrow the list to everything sharing that topic —
+  an axis that cuts *across* projects, unlike spaces which follow them.
+
+There is no separate folder or collection concept, on purpose. Space tagging already provides
+many-to-many grouping and earns its keep twice, since it also drives [space RAG](#rag-retrieval-augmented-generation);
+a second taxonomy would mean two overlapping groupings of the same resources, both half-maintained.
+What was missing was not a way to group but a way to *see* the grouping — and a way to apply it
+without leaving the Resources view, which is why a resource's detail panel can now add and remove
+its own space tags. The space panel still tags from its side; that direction suits setting a space
+up, this one suits filing a document you are already looking at.
 
 ### Resource detail and transforms
 

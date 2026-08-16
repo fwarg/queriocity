@@ -686,6 +686,8 @@ export interface Resource {
   kind: 'file' | 'note'
   summary: string | null
   topics: string[]
+  /** The spaces this resource is tagged to — the library's grouping, used to filter the list. */
+  spaces: Array<{ id: string; name: string }>
   createdAt: number
   updatedAt: number | null
 }
@@ -695,7 +697,6 @@ export interface ResourceRef { id: string; filename: string; kind: 'file' | 'not
 
 export interface ResourceDetail extends Resource {
   body: string | null
-  spaces: Array<{ id: string; name: string }>
   chunks: string[]
   /** The resource a transform produced this note from, if any, and the notes produced from it. */
   derivedFrom: ResourceRef | null

@@ -10,7 +10,7 @@ import { collectResourceText } from '../lib/files/resource-context.ts'
 import { operationPrompt, transformPrompt, TRANSFORM_MAX_CHARS, TRANSFORM_OPERATIONS } from '../lib/files/transforms.ts'
 import { getChatModel } from '../lib/llm.ts'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
-import { fetchUrl, extractYoutubeVideoId } from '../lib/fetch-url.ts'
+import { fetchUrl, urlLabel } from '../lib/fetch-url.ts'
 import { rateLimitByUser, ingestLimiter } from '../lib/rate-limit.ts'
 import { deleteFileChunks } from '../lib/vector-cleanup.ts'
 
@@ -49,16 +49,12 @@ filesRouter.post('/ingest-url', rateLimitByUser(ingestLimiter, 'ingest-url'), as
   const body = await c.req.json() as { url?: string }
   const url = body.url?.trim()
   if (!url) return c.json({ error: 'No URL provided' }, 400)
-  let parsed: URL
-  try { parsed = new URL(url) } catch { return c.json({ error: 'Invalid URL' }, 400) }
+  try { new URL(url) } catch { return c.json({ error: 'Invalid URL' }, 400) }
   console.log(`\n━━━ [ingest-url] ${url}`)
 
-  const videoId = extractYoutubeVideoId(url)
   const text = await fetchUrl(url)
   if (text.startsWith('Error fetching')) return c.json({ error: `Could not fetch URL: ${text}` }, 400)
-  const filename = videoId
-    ? `youtube-${videoId}.txt`
-    : parsed.hostname + (parsed.pathname !== '/' ? parsed.pathname.replace(/\/$/, '').split('/').pop() ?? '' : '') + '.txt'
+  const filename = urlLabel(url)
 
   const buffer = new TextEncoder().encode(text).buffer as ArrayBuffer
   try {
@@ -105,9 +101,30 @@ filesRouter.get('/', async (c) => {
     updatedAt: uploadedFiles.updatedAt,
   }).from(uploadedFiles).where(eq(uploadedFiles.userId, userId))
 
+  // Space tags come with the list rather than per row: they are what the library is filtered by,
+  // and one grouped query beats one request per resource. Scoped through the resources this user
+  // owns, so a space someone else tagged the same file to cannot leak in.
+  const tags = await db.select({
+    fileId: spaceFiles.fileId,
+    id: spaces.id,
+    name: spaces.name,
+  })
+    .from(spaceFiles)
+    .innerJoin(spaces, eq(spaces.id, spaceFiles.spaceId))
+    .innerJoin(uploadedFiles, eq(uploadedFiles.id, spaceFiles.fileId))
+    .where(eq(uploadedFiles.userId, userId))
+
+  const byFile = new Map<string, Array<{ id: string; name: string }>>()
+  for (const tag of tags) {
+    const list = byFile.get(tag.fileId) ?? []
+    list.push({ id: tag.id, name: tag.name })
+    byFile.set(tag.fileId, list)
+  }
+
   return c.json(files.map(f => ({
     ...f,
     topics: parseTopics(f.topics),
+    spaces: byFile.get(f.id) ?? [],
     createdAt: epochSeconds(f.createdAt),
     updatedAt: epochSeconds(f.updatedAt),
   })))
