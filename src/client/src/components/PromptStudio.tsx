@@ -2,6 +2,15 @@ import { useState, useRef, useEffect } from 'react'
 import { Modal } from './Modal.tsx'
 import { streamChat, createCustomTemplate, updateCustomTemplate, type CustomTemplate } from '../lib/api.ts'
 import type { FocusMode } from '../lib/templates.ts'
+import { useT } from '../lib/i18n.tsx'
+import type { TranslationKey } from '@shared/i18n/index.ts'
+
+const MODE_LABEL_KEYS: Record<FocusMode, TranslationKey> = {
+  flash: 'mode.flash',
+  balanced: 'mode.balanced',
+  thorough: 'mode.thorough',
+  image: 'mode.image',
+}
 
 const PLACEHOLDER_RE = /\{\{(\w+)\}\}/g
 
@@ -29,6 +38,7 @@ interface Props {
 const MODE_OPTIONS: FocusMode[] = ['flash', 'balanced', 'thorough']
 
 export function PromptStudio({ initial, onSave, onClose }: Props) {
+  const t = useT()
   const [promptText, setPromptText] = useState(initial?.promptText ?? '')
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({})
   const [mode, setMode] = useState<FocusMode>(initial?.suggestedMode ?? 'balanced')
@@ -72,7 +82,7 @@ export function PromptStudio({ initial, onSave, onClose }: Props) {
       }
     } catch (e: unknown) {
       if (!(e instanceof Error && e.name === 'AbortError')) {
-        setStatus(e instanceof Error ? e.message : 'Request failed.')
+        setStatus(e instanceof Error ? e.message : t('studio.requestFailed'))
       }
     } finally {
       setStatus('')
@@ -100,7 +110,7 @@ export function PromptStudio({ initial, onSave, onClose }: Props) {
       }
       onSave(saved)
     } catch (e: unknown) {
-      setSaveError(e instanceof Error ? e.message : 'Save failed.')
+      setSaveError(e instanceof Error ? e.message : t('studio.saveFailed'))
     } finally {
       setSaving(false)
     }
@@ -111,7 +121,7 @@ export function PromptStudio({ initial, onSave, onClose }: Props) {
   }, [])
 
   return (
-    <Modal title={initial ? 'Edit template' : 'New template'} onClose={onClose} maxWidth="max-w-4xl">
+    <Modal title={t(initial ? 'studio.editTitle' : 'studio.newTitle')} onClose={onClose} maxWidth="max-w-4xl">
       <div className="flex flex-col gap-4">
 
         {/* Editor + Output */}
@@ -120,22 +130,22 @@ export function PromptStudio({ initial, onSave, onClose }: Props) {
           {/* Editor */}
           <div className="flex flex-col gap-3">
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Prompt text</label>
+              <label className="block text-xs text-gray-400 mb-1">{t('studio.promptText')}</label>
               <p className="text-xs text-gray-500 mb-1.5">
-                Use <code className="text-gray-400 bg-gray-800 px-1 rounded">{'{{field}}'}</code> for placeholders — they become input fields when using the template.
+                {t('studio.promptTextDescBefore')} <code className="text-gray-400 bg-gray-800 px-1 rounded">{'{{field}}'}</code> {t('studio.promptTextDescAfter')}
               </p>
               <textarea
                 value={promptText}
                 onChange={e => setPromptText(e.target.value)}
                 rows={8}
                 className="w-full rounded bg-gray-800 border border-gray-700 px-2.5 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500 resize-y font-mono"
-                placeholder={'Explain {{concept}} to a {{audience}} in under {{words}} words.'}
+                placeholder={t('studio.promptPlaceholder')}
               />
             </div>
 
             {fields.length > 0 && (
               <div className="flex flex-col gap-2">
-                <p className="text-xs text-gray-400 font-medium">Test values</p>
+                <p className="text-xs text-gray-400 font-medium">{t('studio.testValues')}</p>
                 {fields.map(f => (
                   <div key={f}>
                     <label className="block text-xs text-gray-500 mb-0.5">{fieldLabel(f)}</label>
@@ -157,7 +167,7 @@ export function PromptStudio({ initial, onSave, onClose }: Props) {
                 onChange={e => setMode(e.target.value as FocusMode)}
                 className="rounded bg-gray-800 border border-gray-700 px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500"
               >
-                {MODE_OPTIONS.map(m => <option key={m} value={m}>{m}</option>)}
+                {MODE_OPTIONS.map(m => <option key={m} value={m}>{t(MODE_LABEL_KEYS[m])}</option>)}
               </select>
               <button
                 type="button"
@@ -165,7 +175,7 @@ export function PromptStudio({ initial, onSave, onClose }: Props) {
                 disabled={!canRun}
                 className="px-3 py-1.5 rounded bg-green-700 hover:bg-green-600 disabled:opacity-40 text-sm font-medium transition-colors"
               >
-                {running ? 'Running…' : '▶ Run'}
+                {running ? t('studio.running') : `▶ ${t('studio.run')}`}
               </button>
               {running && (
                 <button
@@ -173,7 +183,7 @@ export function PromptStudio({ initial, onSave, onClose }: Props) {
                   onClick={() => abortRef.current?.abort()}
                   className="px-2 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-xs text-gray-300 transition-colors"
                 >
-                  Stop
+                  {t('studio.stop')}
                 </button>
               )}
             </div>
@@ -181,10 +191,10 @@ export function PromptStudio({ initial, onSave, onClose }: Props) {
 
           {/* Output */}
           <div className="flex flex-col gap-1">
-            <p className="text-xs text-gray-400">Output</p>
+            <p className="text-xs text-gray-400">{t('studio.output')}</p>
             {status && <p className="text-xs text-blue-400 italic">{status}</p>}
             <div className="rounded bg-gray-800 border border-gray-700 p-2.5 text-sm text-gray-300 min-h-[14rem] max-h-[26rem] overflow-y-auto whitespace-pre-wrap">
-              {output || <span className="text-gray-600 italic">Run to see output here…</span>}
+              {output || <span className="text-gray-600 italic">{t('studio.outputEmpty')}</span>}
             </div>
           </div>
         </div>
@@ -194,7 +204,7 @@ export function PromptStudio({ initial, onSave, onClose }: Props) {
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <label className="block text-xs text-gray-400 mb-1">
-                Template name <span className="text-blue-400">*</span>
+                {t('studio.name')} <span className="text-blue-400">*</span>
               </label>
               <input
                 type="text"
@@ -202,18 +212,18 @@ export function PromptStudio({ initial, onSave, onClose }: Props) {
                 onChange={e => setName(e.target.value)}
                 maxLength={100}
                 className="w-full rounded bg-gray-800 border border-gray-700 px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500"
-                placeholder="e.g. Explain concept"
+                placeholder={t('studio.namePlaceholder')}
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Description</label>
+              <label className="block text-xs text-gray-400 mb-1">{t('studio.description')}</label>
               <input
                 type="text"
                 value={description}
                 onChange={e => setDescription(e.target.value)}
                 maxLength={200}
                 className="w-full rounded bg-gray-800 border border-gray-700 px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500"
-                placeholder="Short description (optional)"
+                placeholder={t('studio.descriptionPlaceholder')}
               />
             </div>
           </div>
@@ -224,7 +234,7 @@ export function PromptStudio({ initial, onSave, onClose }: Props) {
             disabled={!canSave}
             className="self-start px-4 py-1.5 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-sm font-medium transition-colors"
           >
-            {saving ? 'Saving…' : initial ? 'Update template' : 'Save template'}
+            {saving ? t('common.saving') : t(initial ? 'studio.update' : 'studio.save')}
           </button>
         </div>
       </div>

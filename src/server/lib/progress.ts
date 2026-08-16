@@ -8,6 +8,8 @@
  *  Durations are deliberately not sent: the client times the gap between steps itself, which
  *  keeps the wall-clock honest across a slow connection and needs no extra events. */
 
+import type { TranslationKey } from '../../shared/i18n/index.ts'
+
 export type StepKind =
   | 'understand'   // reformulating, building context — before anything is fetched
   | 'read'         // fetching URLs the user pasted
@@ -27,9 +29,13 @@ export interface ProgressStep {
   count?: number
   index?: number
   total?: number
-  /** Free-text rider on the line: which image operation, or what a fetched page had to be
-   *  reduced to (see describeOutcome in fetch-url.ts). */
+  /** Free-text rider on the line: what a fetched page had to be reduced to (see describeOutcome
+   *  in fetch-url.ts). Numbers, not prose — it reaches the user untranslated. */
   detail?: string
+  /** Names one of the closed set of sub-states, for the client to translate. Sent alongside the
+   *  English `detail` rather than instead of it, so `stepText` below — which feeds PromptStudio's
+   *  status line and the server log — needs no catalog of its own. */
+  detailKey?: TranslationKey
 }
 
 /** The one-line prose form, kept identical to what the status line showed before the log existed. */

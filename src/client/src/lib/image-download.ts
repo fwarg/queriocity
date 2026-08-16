@@ -3,8 +3,10 @@ import { extractProvenanceChunk, reapplyProvenance } from '@shared/ai-provenance
 /** Visible AI disclosure for downloaded images — EU AI Act Art 50(4).
  *
  *  Drawn as a bar *beneath* the image rather than over it: Art 50(4) requires disclosure "in an
- *  appropriate manner that does not hamper the display or enjoyment of the work". */
-const CAPTION = 'AI-generated image · Queriocity'
+ *  appropriate manner that does not hamper the display or enjoyment of the work".
+ *
+ *  The text is passed in rather than fixed here: a disclosure is only a disclosure if the person
+ *  downloading it can read it, and this module has no React context to reach the catalog with. */
 const CAPTION_HEIGHT = 30
 const CAPTION_FONT = '15px system-ui, -apple-system, Segoe UI, sans-serif'
 
@@ -17,7 +19,7 @@ function save(blob: Blob, filename: string) {
 }
 
 /** Redraw the image, optionally adding the caption bar. Null if the browser refuses the canvas. */
-async function redraw(blob: Blob, caption: boolean): Promise<Blob | null> {
+async function redraw(blob: Blob, caption: string | null): Promise<Blob | null> {
   const bitmap = await createImageBitmap(blob)
   const canvas = document.createElement('canvas')
   canvas.width = bitmap.width
@@ -33,7 +35,7 @@ async function redraw(blob: Blob, caption: boolean): Promise<Blob | null> {
     ctx.fillStyle = '#e5e7eb'
     ctx.font = CAPTION_FONT
     ctx.textBaseline = 'middle'
-    ctx.fillText(CAPTION, 10, canvas.height - CAPTION_HEIGHT / 2)
+    ctx.fillText(caption, 10, canvas.height - CAPTION_HEIGHT / 2)
   }
 
   return new Promise(resolve => canvas.toBlob(resolve, 'image/png'))
@@ -48,7 +50,7 @@ async function redraw(blob: Blob, caption: boolean): Promise<Blob | null> {
  *
  *  The provenance chunk is carried across from the original rather than rebuilt, because the
  *  server records the generating model and the browser has no way to know it. */
-export async function downloadGeneratedImage(url: string, filename: string, caption: boolean): Promise<void> {
+export async function downloadGeneratedImage(url: string, filename: string, caption: string | null): Promise<void> {
   const res = await fetch(`${url}?dl=1`)
   if (!res.ok) throw new Error(`Could not fetch image (${res.status})`)
   const original = await res.blob()

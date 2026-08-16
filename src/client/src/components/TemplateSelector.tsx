@@ -3,6 +3,29 @@ import { ArrowLeft, Pencil, Trash2, Plus } from 'lucide-react'
 import { TEMPLATES, type Template, type FocusMode, type TemplateField } from '../lib/templates.ts'
 import { fetchCustomTemplates, deleteCustomTemplate, type CustomTemplate } from '../lib/api.ts'
 import { PromptStudio } from './PromptStudio.tsx'
+import { useT } from '../lib/i18n.tsx'
+import type { TranslationKey } from '@shared/i18n/index.ts'
+
+/** Copy for the built-in templates is keyed by the ids already in templates.ts rather than by
+ *  extra fields on the data, so adding a template is one entry there and a block in the catalogs.
+ *
+ *  The cast is what a runtime-assembled key costs; templates-i18n.test.ts asserts every id in
+ *  TEMPLATES resolves, which is the check the compiler cannot do here. Custom templates are the
+ *  user's own words and are shown as written. */
+const templateKey = (...parts: string[]): TranslationKey => `template.${parts.join('.')}` as TranslationKey
+
+/** Select options are shown translated but stored — and sent to the model — as the English token
+ *  the template's `assemble()` builds its prompt from. Translating the value would change what the
+ *  model is asked; translating only the label is the whole point of the split. */
+const optionSlug = (option: string) => option.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+
+/** Modes are labelled the same way as in the composer. */
+const MODE_LABEL_KEYS: Record<FocusMode, TranslationKey> = {
+  flash: 'mode.flash',
+  balanced: 'mode.balanced',
+  thorough: 'mode.thorough',
+  image: 'mode.image',
+}
 
 interface Props {
   onSelect: (text: string, mode: FocusMode) => void
@@ -40,6 +63,7 @@ function customToTemplate(ct: CustomTemplate): Template {
 }
 
 export function TemplateSelector({ onSelect, onClose }: Props) {
+  const t = useT()
   const [active, setActive] = useState<Template | null>(null)
   const [values, setValues] = useState<Record<string, string>>({})
   const [customTemplates, setCustomTemplates] = useState<CustomTemplate[]>([])
@@ -125,24 +149,24 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
       >
         {!active ? (
           <div className="p-3">
-            <p className="text-xs text-gray-400 mb-2 px-1">Choose a prompt template</p>
+            <p className="text-xs text-gray-400 mb-2 px-1">{t('template.choose')}</p>
 
             {/* Built-in templates */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {TEMPLATES.map(t => (
+              {TEMPLATES.map(tpl => (
                 <button
-                  key={t.id}
+                  key={tpl.id}
                   type="button"
-                  onClick={() => selectTemplate(t)}
+                  onClick={() => selectTemplate(tpl)}
                   className="text-left p-3 rounded-md bg-gray-800 hover:bg-gray-700 transition-colors"
                 >
                   <div className="flex items-start justify-between gap-2 mb-1">
-                    <span className="text-sm font-medium text-white leading-tight">{t.name}</span>
-                    <span className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium ${MODE_COLORS[t.suggestedMode]}`}>
-                      {t.suggestedMode}
+                    <span className="text-sm font-medium text-white leading-tight">{t(templateKey(tpl.id, 'name'))}</span>
+                    <span className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium ${MODE_COLORS[tpl.suggestedMode]}`}>
+                      {t(MODE_LABEL_KEYS[tpl.suggestedMode])}
                     </span>
                   </div>
-                  <p className="text-xs text-gray-400 leading-snug">{t.description}</p>
+                  <p className="text-xs text-gray-400 leading-snug">{t(templateKey(tpl.id, 'desc'))}</p>
                 </button>
               ))}
             </div>
@@ -150,7 +174,7 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
             {/* Custom templates */}
             {customTemplates.length > 0 && (
               <div className="mt-3">
-                <p className="text-xs text-gray-500 mb-2 px-1">Custom</p>
+                <p className="text-xs text-gray-500 mb-2 px-1">{t('template.custom')}</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {customTemplates.map(ct => (
                     <div key={ct.id} className="relative group">
@@ -162,7 +186,7 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
                         <div className="flex items-start justify-between gap-2 mb-1">
                           <span className="text-sm font-medium text-white leading-tight">{ct.name}</span>
                           <span className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium ${MODE_COLORS[ct.suggestedMode as FocusMode] ?? MODE_COLORS.balanced}`}>
-                            {ct.suggestedMode}
+                            {t(MODE_LABEL_KEYS[ct.suggestedMode])}
                           </span>
                         </div>
                         {ct.description && (
@@ -174,7 +198,7 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
                           type="button"
                           onClick={e => { e.stopPropagation(); setConfirmDeleteId(null); setStudio(ct) }}
                           className="p-1 rounded text-gray-500 hover:text-gray-200 hover:bg-gray-600 transition-colors"
-                          aria-label="Edit template"
+                          aria-label={t('template.edit')}
                         >
                           <Pencil size={12} />
                         </button>
@@ -184,15 +208,15 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
                               type="button"
                               onClick={e => handleDeleteCustom(e, ct.id)}
                               className="p-1 rounded text-red-400 bg-gray-700 hover:bg-gray-600 transition-colors text-[10px] font-medium"
-                              aria-label="Confirm delete"
+                              aria-label={t('template.confirmDelete')}
                             >
-                              Del
+                              {t('template.deleteShort')}
                             </button>
                             <button
                               type="button"
                               onClick={e => { e.stopPropagation(); setConfirmDeleteId(null) }}
                               className="p-1 rounded text-gray-400 bg-gray-700 hover:bg-gray-600 transition-colors text-[10px] font-medium"
-                              aria-label="Cancel delete"
+                              aria-label={t('template.cancelDelete')}
                             >
                               ✕
                             </button>
@@ -202,7 +226,7 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
                             type="button"
                             onClick={e => handleDeleteCustom(e, ct.id)}
                             className="p-1 rounded text-gray-500 hover:text-red-400 hover:bg-gray-600 transition-colors"
-                            aria-label="Delete template"
+                            aria-label={t('template.delete')}
                           >
                             <Trash2 size={12} />
                           </button>
@@ -221,23 +245,28 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
               className="mt-3 w-full flex items-center justify-center gap-1.5 py-1.5 rounded-md border border-dashed border-gray-700 text-xs text-gray-500 hover:text-gray-300 hover:border-gray-500 transition-colors"
             >
               <Plus size={12} />
-              Create custom template
+              {t('template.create')}
             </button>
           </div>
-        ) : (
+        ) : (() => {
+          // Custom templates are turned into Templates with a `custom-` id; only the built-ins
+          // have catalog entries, and only they should be looked up.
+          const isBuiltIn = TEMPLATES.some(tpl => tpl.id === active.id)
+          const activeName = isBuiltIn ? t(templateKey(active.id, 'name')) : active.name
+          return (
           <div className="p-3">
             <div className="flex items-center gap-2 mb-3">
               <button
                 type="button"
                 onClick={back}
                 className="text-gray-400 hover:text-white p-1 -ml-1 rounded"
-                aria-label="Back to template list"
+                aria-label={t('template.back')}
               >
                 <ArrowLeft size={14} />
               </button>
-              <span className="text-sm font-medium text-white">{active.name}</span>
+              <span className="text-sm font-medium text-white">{activeName}</span>
               <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded font-medium ${MODE_COLORS[active.suggestedMode]}`}>
-                {active.suggestedMode}
+                {t(MODE_LABEL_KEYS[active.suggestedMode])}
               </span>
             </div>
 
@@ -245,7 +274,7 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
               {active.fields.map(field => (
                 <div key={field.id}>
                   <label className="block text-xs text-gray-400 mb-1">
-                    {field.label}
+                    {isBuiltIn ? t(templateKey(active.id, field.id, 'label')) : field.label}
                     {field.required && <span className="text-blue-400 ml-0.5">*</span>}
                   </label>
 
@@ -256,7 +285,9 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
                       className="w-full rounded bg-gray-800 border border-gray-700 px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500"
                     >
                       {field.options?.map(opt => (
-                        <option key={opt} value={opt}>{opt}</option>
+                        <option key={opt} value={opt}>
+                          {isBuiltIn ? t(templateKey(active.id, field.id, 'opt', optionSlug(opt))) : opt}
+                        </option>
                       ))}
                     </select>
                   ) : field.type === 'toggle' ? (
@@ -267,14 +298,14 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
                         onChange={e => setValues(prev => ({ ...prev, [field.id]: e.target.checked ? 'true' : 'false' }))}
                         className="rounded accent-blue-500"
                       />
-                      <span className="text-sm text-gray-300">Yes</span>
+                      <span className="text-sm text-gray-300">{t('common.yes')}</span>
                     </label>
                   ) : (
                     <input
                       type="text"
                       value={values[field.id] ?? ''}
                       onChange={e => setValues(prev => ({ ...prev, [field.id]: e.target.value }))}
-                      placeholder={field.placeholder}
+                      placeholder={isBuiltIn && field.placeholder ? t(templateKey(active.id, field.id, 'ph')) : field.placeholder}
                       className="w-full rounded bg-gray-800 border border-gray-700 px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500 placeholder-gray-600"
                     />
                   )}
@@ -288,10 +319,11 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
               disabled={!canSubmit}
               className="mt-3 w-full py-1.5 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-sm font-medium transition-colors"
             >
-              Use template
+              {t('template.use')}
             </button>
           </div>
-        )}
+          )
+        })()}
       </div>
     </>
   )

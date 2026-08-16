@@ -510,7 +510,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
             } else if (part.toolName === 'generate_image') {
               await out.writeSSE({ data: stepEvent({ kind: 'image' }) })
             } else if (part.toolName === 'edit_image') {
-              await out.writeSSE({ data: stepEvent({ kind: 'image', detail: 'Editing image…' }) })
+              await out.writeSSE({ data: stepEvent({ kind: 'image', detail: 'Editing image…', detailKey: 'log.imageEdit' }) })
             }
           } else if (part.type === 'tool-result' && part.toolName === 'web_search') {
             if (pendingImageSources.length) {
@@ -806,7 +806,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       if (drainFinishReason === 'tool-calls' || !fullContent.trim()) {
         console.warn(`  [${focusMode}] no answer (finish=${drainFinishReason}, ${fullContent.length} chars) — running no-tool synthesis fallback`)
         fullContent = ''
-        await emitStep({ kind: 'write', detail: 'Synthesising answer…' })
+        await emitStep({ kind: 'write', detail: 'Synthesising answer…', detailKey: 'log.synthesise' })
         const fallback = runSynthesisFallback({
           results: [...(initialResults ?? []), ...fullSources],
           messages: msgs,

@@ -7,6 +7,7 @@
 import './test-support/test-env.ts'
 import { describe, expect, test, beforeAll, afterAll } from 'bun:test'
 import { startFakeOpenAI } from './test-support/fake-openai.ts'
+import { envOverride } from './test-support/env-override.ts'
 import { CHARS_PER_TOKEN } from './llm.ts'
 import {
   processUrlsForContext, MIN_URL_CONTEXT_CHARS, DEFAULT_MAX_URL_CONTEXT_CHARS, worthSummarizing, describeOutcome,
@@ -80,25 +81,15 @@ describe('summarizeContent bounds', () => {
   const HUGE = 'summary. '.repeat(20_000)   // 180k chars, far over any cap
   let server: ReturnType<typeof startFakeOpenAI>
 
-  // Pointed at the stub through the environment rather than `mock.module`: a module mock is
-  // process-wide, outlives this file, and cannot be undone by re-mocking — it mutates the live
-  // namespace in place, so the captured "real" module has already become the mock. Every file
-  // running after would then call a small model aimed at the server stopped below.
-  const saved: Record<string, string | undefined> = {}
-  const setEnv = (k: string, v: string) => { saved[k] = process.env[k]; process.env[k] = v }
+  let restoreEnv: () => void
 
   beforeAll(() => {
     server = startFakeOpenAI([{ text: [HUGE] }])
-    setEnv('SMALL_BASE_URL', server.baseURL)
-    setEnv('SMALL_API_KEY', 'test')
-    setEnv('SMALL_MODEL', 'fake-small')
+    restoreEnv = envOverride({ SMALL_BASE_URL: server.baseURL, SMALL_API_KEY: 'test', SMALL_MODEL: 'fake-small' })
   })
   afterAll(() => {
     server?.stop()
-    for (const [k, v] of Object.entries(saved)) {
-      if (v === undefined) delete process.env[k]
-      else process.env[k] = v
-    }
+    restoreEnv?.()
   })
 
   test('caps a model that ignores its length instruction', async () => {

@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react'
+import { useT, type TFunction } from '../lib/i18n.tsx'
+import type { TranslationKey } from '@shared/i18n/index.ts'
 
 /** One entry in the activity log, as built by useChat from the server's `status` events.
  *  Timing is client-side: the server sends no durations, so a slow connection shows the
@@ -12,6 +14,9 @@ export interface LogStep {
   index?: number
   total?: number
   detail?: string
+  /** A key for one of the closed set of sub-states the server names, translated on arrival.
+   *  `detail` stays for the free-form text alongside it. */
+  detailKey?: TranslationKey
   startedAt: number
   endedAt?: number
 }
@@ -34,24 +39,35 @@ export function Elapsed({ from, to }: { from: number; to?: number }) {
   return <span className="tabular-nums">{to === undefined ? `${Math.floor(ms / 1000)}s` : `${(ms / 1000).toFixed(1)}s`}</span>
 }
 
-function label(step: LogStep): string {
+/** The step's line in the log.
+ *
+ *  Built from the structured fields rather than the server's `text`, so it needs no server round
+ *  trip to be translated. `detailKey` is the server naming one of a closed set of sub-states;
+ *  `detail` is free-form and stays as sent — it carries numbers, not prose (see describeOutcome
+ *  in fetch-url.ts). */
+function label(step: LogStep, t: TFunction): string {
   const n = step.queries?.length ?? 0
+  const detail = step.detailKey ? t(step.detailKey) : step.detail?.replace(/…$/, '')
   switch (step.kind) {
-    case 'understand': return 'Understanding your question'
-    case 'read':       return `Read ${step.hosts?.join(', ') ?? ''}${step.detail ? ` — ${step.detail}` : ''}`
-    case 'search':     return n === 0 ? 'Searched the web'
-                            : n > 1 ? `Searched "${step.queries![0]}" +${n - 1} more`
-                            : `Searched "${step.queries![0]}"`
-    case 'results':    return `Found ${step.count} result${step.count === 1 ? '' : 's'}`
-    case 'reason':     return step.total ? `Thinking · step ${step.index} of ${step.total}` : 'Thinking'
-    case 'write':      return step.detail ? step.detail.replace(/…$/, '') : 'Writing answer'
-    case 'memory':     return 'Saved to memory'
-    case 'image':      return step.detail ? step.detail.replace(/…$/, '') : 'Generating image'
+    case 'understand': return t('log.understand')
+    case 'read':       return t('log.read', { hosts: step.hosts?.join(', ') ?? '' })
+                              + (step.detail ? ` — ${step.detail}` : '')
+    case 'search':     return n === 0 ? t('log.searchedWeb')
+                            : n > 1 ? t('log.searchedMore', { query: step.queries![0], count: n - 1 })
+                            : t('log.searched', { query: step.queries![0] })
+    case 'results':    return t('log.results', { count: step.count ?? 0 })
+    case 'reason':     return step.total
+                            ? t('log.thinkingStep', { index: step.index ?? 0, total: step.total })
+                            : t('log.thinking')
+    case 'write':      return detail ?? t('log.write')
+    case 'memory':     return t('log.memory')
+    case 'image':      return detail ?? t('log.image')
     default:           return step.text
   }
 }
 
 function StepRow({ step }: { step: LogStep }) {
+  const t = useT()
   const [open, setOpen] = useState(false)
   const done = step.endedAt !== undefined
   const extra = (step.queries?.length ?? 0) > 1
@@ -66,7 +82,7 @@ function StepRow({ step }: { step: LogStep }) {
           onClick={() => setOpen(o => !o)}
           className={`text-left ${extra ? 'hover:text-gray-300 cursor-pointer' : 'cursor-default'}`}
         >
-          {label(step)}
+          {label(step, t)}
         </button>
         {open && (
           <span className="block pl-1 text-gray-600">
@@ -84,10 +100,10 @@ function StepRow({ step }: { step: LogStep }) {
 
 /** Summary shown once the answer starts. Deliberately not a duration or a source count —
  *  the "Answered in Xs · N search results" line below already carries both. */
-function summary(steps: LogStep[]): string {
+function summary(steps: LogStep[], t: TFunction): string {
   const searches = steps.filter(s => s.kind === 'search').length
-  const parts = [`${steps.length} step${steps.length === 1 ? '' : 's'}`]
-  if (searches) parts.unshift(`${searches} search${searches === 1 ? '' : 'es'}`)
+  const parts = [t('log.steps', { count: steps.length })]
+  if (searches) parts.unshift(t('log.searches', { count: searches }))
   return parts.join(', ')
 }
 
@@ -95,6 +111,7 @@ function summary(steps: LogStep[]): string {
  *  Collapsing rather than disappearing keeps the record reachable without holding screen space,
  *  which matters most on a phone. Session-only — a reload drops it. */
 export function ProgressLog({ steps, collapsed }: { steps: LogStep[]; collapsed: boolean }) {
+  const t = useT()
   const [expanded, setExpanded] = useState(false)
   if (steps.length === 0) return null
 
@@ -105,7 +122,7 @@ export function ProgressLog({ steps, collapsed }: { steps: LogStep[]; collapsed:
         onClick={() => setExpanded(true)}
         className="px-4 py-1 text-xs text-gray-600 hover:text-gray-400 text-left"
       >
-        ▸ Researched · {summary(steps)}
+        ▸ {t('log.researched')} · {summary(steps, t)}
       </button>
     )
   }
@@ -114,7 +131,7 @@ export function ProgressLog({ steps, collapsed }: { steps: LogStep[]; collapsed:
     <div className="px-4 py-1 text-xs text-gray-500">
       {collapsed && (
         <button type="button" onClick={() => setExpanded(false)} className="hover:text-gray-300 mb-0.5">
-          ▾ Researched · {summary(steps)}
+          ▾ {t('log.researched')} · {summary(steps, t)}
         </button>
       )}
       <ul className="flex flex-col gap-0.5">

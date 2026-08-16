@@ -37,6 +37,7 @@ through a single Bun process.
   - [Prompt templates](#prompt-templates)
     - [Prompt Studio](#prompt-studio)
   - [Settings](#settings)
+    - [Languages](#languages)
   - [Image generation](#image-generation)
   - [Spaces](#spaces)
     - [How memory works](#how-memory-works)
@@ -449,9 +450,54 @@ Open **Settings** from the bottom of the sidebar. Settings are saved per user.
 | **Follow-up suggestions** | Show up to three suggested follow-up questions as chips under a finished answer. Powered by the flash model, one call per answer. Disabling it skips the call entirely. |
 | **Image labelling** | On by default. Adds a visible "AI-generated" caption bar beneath images saved with the **Download PNG** link. Machine-readable provenance metadata is embedded either way; the caption is what survives a site that strips metadata on upload. Note that the download link always re-encodes, which drops the diffusion server's prompt metadata — right-click if you want the file exactly as stored. See [AI transparency](#ai-transparency-eu-ai-act-article-50). |
 | **About you** | Off by default. Keeps a short list of facts about you that apply in *every* chat, space or not, and lets you build it by hand or from a reviewed scan of your recent chats. See [Memory about you](#memory-about-you). |
+| **Language** | Interface language, with a flag selector. Also offered on the sign-up form, so a new account starts in the right language. Signed out, the login page follows your browser's language (or your last choice on this device). This changes the interface only — the assistant still answers in whatever language you write in. See [Languages](#languages). |
 | **Font size** | UI font size: Small (15 px), Normal (17 px), Large (19 px), XL (21 px). Sizes scale up automatically on narrow viewports. |
 | **Timezone** | IANA timezone (e.g. `Europe/Stockholm`) used when scheduling monitors at a specific hour of the day. Defaults to server time (UTC in Docker) if not set. |
 | **Password** | Change your password. Requires the current one; the new one needs 8+ characters with upper and lower case, a digit and a symbol. Changing it signs out your other devices but keeps the current session. |
+
+### Languages
+
+English and Swedish ship in the box. The interface language is a per-user setting; the assistant's
+answer language is not affected by it — the prompts tell the model to reply in whatever language the
+question was asked in, so a Swedish question gets a Swedish answer regardless of this setting.
+
+Where the language comes from, in order: the signed-in user's setting, then `localStorage`, then the
+browser's `Accept-Language` list, then English.
+
+**Adding a language** is two edits and no new dependency:
+
+1. Copy `src/shared/i18n/en.ts` to `src/shared/i18n/<code>.ts`, rename the export, type it as
+   `Catalog`, and translate the values. English is the source of truth: `bun run typecheck` lists
+   every key the new file is missing and every key it has that English no longer does.
+2. Add a row to `LANGUAGES` in `src/shared/i18n/index.ts`:
+
+   ```ts
+   { code: 'de', label: 'Deutsch', flag: '🇩🇪' },
+   ```
+
+   The selector, the settings schema and the browser-language matching all read that list, so
+   nothing else needs changing.
+
+Then `bun run check`. Three tests cover what the compiler cannot:
+
+| Test | What it catches |
+|---|---|
+| `src/shared/i18n/i18n.test.ts` | A catalog whose key set has drifted from English's, a renamed placeholder (`{count}` → `{antal}` typechecks fine and then prints raw braces), an empty string, and an error code with no `error.<code>` entry. |
+| `src/client/src/lib/templates-i18n.test.ts` | A built-in prompt template whose name, description, field label, placeholder or select option has no catalog key — that copy is looked up by template id at runtime, so the compiler cannot check it. |
+| `src/client/src/untranslated-strings.test.ts` | Text never turned into a key at all: bare JSX text, `<option>` children, copy parked in a data array, and the three attributes a person reads (`title`, `placeholder`, `aria-label`). |
+
+Counted strings use `{ one, other }` and are selected with `Intl.PluralRules`, so a language with
+different plural rules does not need code — just both forms.
+
+Select options are shown translated but **submitted in English**: a template's `assemble()` builds
+the model's prompt from the option value, so `structured report` must reach the model unchanged
+even when the dropdown reads *strukturerad rapport*. Only the label is translated; the value is not.
+
+Left in English deliberately: the admin panel, and the news-feed catalogue (source names, regions
+and ownership labels are data from the feed list). API errors are translated where the route sends
+a stable code (see `src/shared/error-codes.ts`); the rest fall back to the server's English text.
+The PWA manifest description and the `<meta name="description">` in `index.html` are baked in at
+build time and cannot follow the reader's language — they match the English `app.tagline`.
 
 ---
 

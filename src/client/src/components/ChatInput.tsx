@@ -3,6 +3,8 @@ import { Send, Paperclip, X, Square, LayoutGrid, ChevronDown, ChevronUp } from '
 import { AI_SYSTEM_NOTICE_SHORT } from '../lib/ai-notice.ts'
 import { extractFileForContext, fetchSuggestions } from '../lib/api.ts'
 import { TemplateSelector } from './TemplateSelector.tsx'
+import { useT } from '../lib/i18n.tsx'
+import type { TranslationKey } from '@shared/i18n/index.ts'
 
 type FocusMode = 'flash' | 'balanced' | 'thorough' | 'image'
 type SearchCategory = 'news' | 'science' | 'discussions' | 'tech'
@@ -34,21 +36,35 @@ interface Attachment {
 
 const FLASH_MAX = 200
 
-const MODE_DESCRIPTIONS: Record<FocusMode, string> = {
-  flash: 'Direct answer from model knowledge — no web search, max 5 sentences.',
-  balanced: 'LLM-reformulated query with web search and inline citations.',
-  thorough: 'Multi-angle research with a dedicated writing pass — slower but more comprehensive.',
-  image: 'Generate or edit images — researches unfamiliar topics automatically for better results.',
+/** One key per mode, so the description and the button label move together in a new catalog. */
+const MODE_DESCRIPTION_KEYS: Record<FocusMode, TranslationKey> = {
+  flash: 'mode.flashDesc',
+  balanced: 'mode.balancedDesc',
+  thorough: 'mode.thoroughDesc',
+  image: 'mode.imageDesc',
+}
+const MODE_LABEL_KEYS: Record<FocusMode, TranslationKey> = {
+  flash: 'mode.flash',
+  balanced: 'mode.balanced',
+  thorough: 'mode.thorough',
+  image: 'mode.image',
+}
+const CATEGORY_LABEL_KEYS: Record<SearchCategory, TranslationKey> = {
+  news: 'category.news',
+  science: 'category.science',
+  discussions: 'category.discussions',
+  tech: 'category.tech',
 }
 
 export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, suggestionsEnabled, lockedSpace = false, related = [], onRelatedSelect }: Props) {
+  const t = useT()
   const [value, setValue] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [extractStatus, setExtractStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [extractError, setExtractError] = useState('')
   const [showTemplates, setShowTemplates] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
-  const [visibleDesc, setVisibleDesc] = useState<string | null>(null)
+  const [visibleDesc, setVisibleDesc] = useState<TranslationKey | null>(null)
   const [categoryOpen, setCategoryOpen] = useState(false)
   const [suggestions, setSuggestions] = useState<string[]>([])
   const fileRef = useRef<HTMLInputElement>(null)
@@ -58,7 +74,7 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
   function handleModeChange(m: FocusMode) {
     onFocusModeChange(m)
     if (descTimerRef.current) clearTimeout(descTimerRef.current)
-    setVisibleDesc(MODE_DESCRIPTIONS[m])
+    setVisibleDesc(MODE_DESCRIPTION_KEYS[m])
     descTimerRef.current = setTimeout(() => setVisibleDesc(null), 2500)
   }
 
@@ -113,7 +129,7 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
       setExtractStatus('idle')
     } catch (err: unknown) {
       setExtractStatus('error')
-      setExtractError(err instanceof Error ? err.message : 'Failed to read file')
+      setExtractError(err instanceof Error ? err.message : t('input.readFileFailed'))
       setTimeout(() => setExtractStatus('idle'), 4000)
     } finally {
       e.target.value = ''
@@ -126,7 +142,7 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
         type="button"
         onClick={() => setCollapsed(v => !v)}
         className="flex justify-center py-1 text-gray-700 hover:text-gray-400 transition-colors"
-        aria-label={collapsed ? 'Expand input' : 'Collapse input'}
+        aria-label={t(collapsed ? 'input.expand' : 'input.collapse')}
       >
         {collapsed ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
       </button>
@@ -144,7 +160,7 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
         />
       )}
       <div className={`overflow-hidden text-xs text-gray-500 flex items-center transition-all duration-500 ${visibleDesc ? 'max-h-7 opacity-100' : 'max-h-0 opacity-0'}`}>
-        {visibleDesc}
+        {visibleDesc && t(visibleDesc)}
       </div>
       <div className="flex items-center gap-2 text-xs">
         {(['flash', 'balanced', 'thorough', 'image'] as const).map(m => {
@@ -157,10 +173,10 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
               type="button"
               disabled={blocked}
               onClick={() => handleModeChange(m)}
-              title={blocked ? 'Not available in a locked space' : undefined}
+              title={blocked ? t('mode.blockedLocked') : undefined}
               className={`px-2 py-1 rounded capitalize ${focusMode === m ? 'bg-blue-600' : blocked ? 'bg-gray-800/50 text-gray-600 cursor-not-allowed' : 'bg-gray-800 hover:bg-gray-700'}`}
             >
-              {m}
+              {t(MODE_LABEL_KEYS[m])}
             </button>
           )
         })}
@@ -176,7 +192,7 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
             onClick={() => setCategoryOpen(o => !o)}
             className={`flex items-center gap-1 px-2 py-1 rounded text-xs ${searchCategories.length > 0 ? 'bg-indigo-700 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
           >
-            {searchCategories.length === 0 ? 'All' : searchCategories.join('+')}
+            {searchCategories.length === 0 ? t('category.all') : searchCategories.map(c => t(CATEGORY_LABEL_KEYS[c])).join('+')}
             <span className="opacity-60">{categoryOpen ? '▴' : '▾'}</span>
           </button>
         )}
@@ -195,7 +211,7 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
               }}
               className={`px-2 py-0.5 rounded capitalize text-xs ${searchCategories.includes(cat) ? 'bg-indigo-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'}`}
             >
-              {cat}
+              {t(CATEGORY_LABEL_KEYS[cat])}
             </button>
           ))}
         </div>
@@ -246,7 +262,7 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
         </div>
       )}
       {extractStatus === 'loading' && (
-        <div className="text-xs text-gray-400 animate-pulse">Reading file…</div>
+        <div className="text-xs text-gray-400 animate-pulse">{t('input.readingFile')}</div>
       )}
       {extractStatus === 'error' && (
         <div className="text-xs text-red-400">{extractError}</div>
@@ -258,7 +274,7 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
           value={value}
           onChange={e => { setValue(e.target.value); handleSuggestionFetch(e.target.value) }}
           onKeyDown={handleKey}
-          placeholder="Ask anything… (Enter to send, Shift+Enter for newline)"
+          placeholder={t('input.placeholder')}
           disabled={disabled}
         />
         <div className="flex flex-col gap-2">
@@ -266,8 +282,8 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
             type="button"
             onClick={() => setShowTemplates(v => !v)}
             className={`p-2 rounded ${showTemplates ? 'bg-blue-700 hover:bg-blue-600' : 'bg-gray-800 hover:bg-gray-700'}`}
-            title="Use a prompt template"
-            aria-label="Prompt templates"
+            title={t('input.templateTitle')}
+            aria-label={t('input.templates')}
           >
             <LayoutGrid size={16} />
           </button>
@@ -276,8 +292,8 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
             onClick={() => fileRef.current?.click()}
             disabled={isFlash || extractStatus === 'loading'}
             className="p-2 rounded bg-gray-800 hover:bg-gray-700 disabled:opacity-50"
-            title={isFlash ? 'Not available in flash mode' : 'Attach file to this message (not stored)'}
-            aria-label={isFlash ? 'Attach file (not available in flash mode)' : 'Attach file to this message'}
+            title={t(isFlash ? 'input.attachBlockedFlash' : 'input.attachTitle')}
+            aria-label={t(isFlash ? 'input.attachBlockedFlashLabel' : 'input.attach')}
           >
             <Paperclip size={16} className={extractStatus === 'loading' ? 'animate-pulse' : ''} />
           </button>
@@ -286,8 +302,8 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
               type="button"
               onClick={onCancel}
               className="p-2 rounded bg-red-700 hover:bg-red-600"
-              title="Stop generation"
-              aria-label="Stop generation"
+              title={t('input.stop')}
+              aria-label={t('input.stop')}
             >
               <Square size={16} />
             </button>
@@ -296,7 +312,7 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
               type="submit"
               disabled={disabled || (!value.trim() && attachments.length === 0) || isOverLimit}
               className="p-2 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50"
-              aria-label="Send message"
+              aria-label={t('input.send')}
             >
               <Send size={16} />
             </button>
@@ -308,7 +324,7 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
       {/* Outside the collapsible block, so it stays visible and does not eat into that block's
           max-height budget. A session restored from a cookie or the PWA never passes the login
           screen, so this is the only AI notice such a user sees. */}
-      <p className="pb-1 text-center text-[11px] text-gray-600">{AI_SYSTEM_NOTICE_SHORT}</p>
+      <p className="pb-1 text-center text-[11px] text-gray-600">{t(AI_SYSTEM_NOTICE_SHORT)}</p>
     </form>
   )
 }
