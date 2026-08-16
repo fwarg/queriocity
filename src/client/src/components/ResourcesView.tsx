@@ -2,18 +2,40 @@ import { useRef, useState } from 'react'
 import { FileText, NotebookPen } from 'lucide-react'
 import { NoteEditor } from './NoteEditor.tsx'
 import { ResourceDetail } from './ResourceDetail.tsx'
-import { EMPTY_FILTER, matchesFilter, ResourceFilters, type ResourceFilter } from './ResourceFilters.tsx'
+import { EMPTY_FILTER, isFiltered, matchesFilter, ResourceFilters, toggleSpace, toggleTopic, type ResourceFilter } from './ResourceFilters.tsx'
 import { deleteFile, ingestUrl, uploadFile, type Resource } from '../lib/api.ts'
 import { useLang, useT } from '../lib/i18n.tsx'
 
-/** A chip that narrows the list. Stops the row's own click, which opens the resource. */
-function Chip({ onClick, className, children }: { onClick: () => void; className: string; children: React.ReactNode }) {
+/** Above this many resources the filter bar is always shown; below it, only while filtering. */
+const FILTER_BAR_THRESHOLD = 8
+
+const CHIP_TONES = {
+  space: {
+    idle: 'bg-indigo-950 text-indigo-300 border-indigo-900 hover:border-indigo-700',
+    active: 'bg-indigo-700 text-white border-indigo-500',
+  },
+  topic: {
+    idle: 'bg-gray-900 text-gray-400 border-gray-700 hover:border-gray-500',
+    active: 'bg-gray-600 text-white border-gray-400',
+  },
+} as const
+
+/** A chip that toggles a filter. Stops the row's own click, which opens the resource. */
+function Chip({ tone, active, onClick, children }: {
+  tone: keyof typeof CHIP_TONES
+  active: boolean
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  const t = useT()
   return (
     <button
       onClick={e => { e.stopPropagation(); onClick() }}
-      className={`px-1.5 py-0.5 rounded-full text-[11px] border transition-colors ${className}`}
+      aria-pressed={active}
+      title={t(active ? 'files.filterRemove' : 'files.filterBy')}
+      className={`px-1.5 py-0.5 rounded-full text-[11px] border transition-colors ${CHIP_TONES[tone][active ? 'active' : 'idle']}`}
     >
-      {children}
+      {children}{active && ' ×'}
     </button>
   )
 }
@@ -165,8 +187,10 @@ export function ResourcesView({ resources, onChanged }: Props) {
         <p className="text-gray-500 text-sm">{t('files.none')}</p>
       ) : (
         <>
-          {/* Worth its space only once scrolling stops being enough. */}
-          {resources.length > 8 && (
+          {/* Worth its space once scrolling stops being enough — but always while a filter is
+              active, whatever the count. A row's chips can set one at any size, and hiding the bar
+              then left the list narrowed with nothing naming the filter and no way to clear it. */}
+          {(resources.length > FILTER_BAR_THRESHOLD || isFiltered(filter)) && (
             <ResourceFilters resources={resources} filter={filter} onChange={setFilter} shown={shown.length} />
           )}
           {shown.length === 0 ? (
@@ -190,13 +214,16 @@ export function ResourcesView({ resources, onChanged }: Props) {
                     </div>
                     {/* Space and topic chips both narrow the list rather than opening the resource,
                         so they stop the row's own click — two grouping axes, one crossing projects
-                        and one following them. */}
+                        and one following them. Each toggles: the chip that applied a filter is the
+                        obvious place to look for the way back out of it, and shows itself selected
+                        so the filter is visible on every row it matched, not only in the bar. */}
                     <div className="flex flex-wrap gap-1 mt-1.5">
                       {r.spaces.map(space => (
                         <Chip
                           key={space.id}
-                          onClick={() => setFilter(f => ({ ...f, space: space.id }))}
-                          className="bg-indigo-950 text-indigo-300 border-indigo-900 hover:border-indigo-700"
+                          tone="space"
+                          active={filter.space === space.id}
+                          onClick={() => setFilter(f => toggleSpace(f, space.id))}
                         >
                           {space.name}
                         </Chip>
@@ -204,8 +231,9 @@ export function ResourcesView({ resources, onChanged }: Props) {
                       {r.topics.map(topic => (
                         <Chip
                           key={topic}
-                          onClick={() => setFilter(f => ({ ...f, topic }))}
-                          className="bg-gray-900 text-gray-400 border-gray-700 hover:border-gray-500"
+                          tone="topic"
+                          active={filter.topic === topic}
+                          onClick={() => setFilter(f => toggleTopic(f, topic))}
                         >
                           {topic}
                         </Chip>

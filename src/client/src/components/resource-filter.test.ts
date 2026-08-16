@@ -3,7 +3,7 @@
  *  would actually recall about a resource. */
 
 import { describe, expect, test } from 'bun:test'
-import { ALL_SPACES, EMPTY_FILTER, isFiltered, matchesFilter, UNTAGGED } from './ResourceFilters.tsx'
+import { ALL_SPACES, EMPTY_FILTER, isFiltered, matchesFilter, toggleSpace, toggleTopic, UNTAGGED } from './ResourceFilters.tsx'
 import type { Resource } from '../lib/api.ts'
 
 const resource = (partial: Partial<Resource>): Resource => ({
@@ -76,12 +76,51 @@ describe('matchesFilter', () => {
   })
 })
 
+/** `isFiltered` decides whether the filter bar is shown at all below the size threshold, and whether
+ *  the clear-filters affordance appears. Getting it wrong stranded the user in a narrowed list with
+ *  nothing naming the filter and no way out but leaving the view — which is what happened: a row's
+ *  chip could set a filter on a library too small for the bar to be rendered. */
 describe('isFiltered', () => {
-  test('reports each axis, so the clear-filters affordance appears when it should', () => {
+  test('reports each axis on its own', () => {
     expect(isFiltered({ ...EMPTY_FILTER, text: 'x' })).toBe(true)
     expect(isFiltered({ ...EMPTY_FILTER, space: UNTAGGED })).toBe(true)
     expect(isFiltered({ ...EMPTY_FILTER, topic: 'RAG' })).toBe(true)
-    // Whitespace alone is not a filter — it would otherwise hide the whole list with no explanation.
+  })
+
+  test('a real space id counts, not only the pseudo-values', () => {
+    expect(isFiltered({ ...EMPTY_FILTER, space: THESIS.id })).toBe(true)
+  })
+
+  test('the empty filter and whitespace alone are not filters', () => {
+    expect(isFiltered(EMPTY_FILTER)).toBe(false)
+    // Whitespace would otherwise hide the whole list with no explanation and no visible cause.
     expect(isFiltered({ ...EMPTY_FILTER, text: '   ' })).toBe(false)
+  })
+})
+
+/** Chips toggle: clicking the one that applied a filter is the obvious way back out, and it is the
+ *  affordance a user reaches for first. The two axes have to agree, so both go through one exported
+ *  helper each rather than an expression inlined at the call site. */
+describe('chip toggling', () => {
+  test('a topic chip applies then clears its own filter', () => {
+    const applied = toggleTopic(EMPTY_FILTER, 'RAG')
+    expect(applied.topic).toBe('RAG')
+    expect(toggleTopic(applied, 'RAG')).toEqual(EMPTY_FILTER)
+  })
+
+  test('a space chip applies then clears its own filter', () => {
+    const applied = toggleSpace(EMPTY_FILTER, THESIS.id)
+    expect(applied.space).toBe(THESIS.id)
+    expect(toggleSpace(applied, THESIS.id)).toEqual(EMPTY_FILTER)
+  })
+
+  test('a different chip switches rather than clearing', () => {
+    const applied = toggleSpace(EMPTY_FILTER, THESIS.id)
+    expect(toggleSpace(applied, CLIENT.id).space).toBe(CLIENT.id)
+  })
+
+  test('toggling one axis leaves the others alone', () => {
+    const both = { text: 'survey', space: THESIS.id, topic: 'RAG' }
+    expect(toggleTopic(both, 'RAG')).toEqual({ text: 'survey', space: THESIS.id, topic: '' })
   })
 })

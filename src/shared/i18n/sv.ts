@@ -160,6 +160,8 @@ export const sv: Catalog = {
   'files.filterAll': 'Alla {count}',
   'files.filterUntagged': 'Okopplade',
   'files.filterShowing': { one: '{count} resurs', other: '{count} resurser' },
+  'files.filterBy': 'Filtrera listan på detta',
+  'files.filterRemove': 'Ta bort filtret',
   'files.filterClear': 'Rensa filter',
   'files.filterNone': 'Inga resurser matchar filtret.',
   'files.deleteNamed': 'Ta bort resursen ”{name}”',

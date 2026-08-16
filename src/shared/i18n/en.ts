@@ -164,6 +164,8 @@ export const en = {
   'files.filterAll': 'All {count}',
   'files.filterUntagged': 'Untagged',
   'files.filterShowing': { one: '{count} resource', other: '{count} resources' },
+  'files.filterBy': 'Filter the list by this',
+  'files.filterRemove': 'Remove this filter',
   'files.filterClear': 'Clear filters',
   'files.filterNone': 'No resources match this filter.',
   'files.deleteNamed': 'Delete resource "{name}"',
