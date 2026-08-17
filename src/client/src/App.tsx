@@ -238,9 +238,12 @@ export default function App() {
   useEffect(() => {
     setPinnedFileIds([])
     setPinnedMemoryIds([])
-    if (currentSpaceId) {
+    if (currentSpaceId) fetchSpaceFiles(currentSpaceId).then(setTaggedFiles).catch(() => {})
+    else setTaggedFiles([])
+    // Chats, memories and the chat index describe conversations, which a collection has none of.
+    // `activeSpaceIsCollection` is a dependency so promotion fills them in without reopening.
+    if (currentSpaceId && !activeSpaceIsCollection) {
       fetchSpaceMemories(currentSpaceId).then(({ memories }) => { setSpaceMemories(memories) }).catch(() => {})
-      fetchSpaceFiles(currentSpaceId).then(setTaggedFiles).catch(() => {})
       fetchChatIndexStatus(currentSpaceId).then(setChatIndexStatus).catch(() => {})
       // Fetched per space rather than filtered out of `sessions`: that array holds only the most
       // recent page, so a space with no recently-updated chats would look empty.
@@ -250,7 +253,6 @@ export default function App() {
         .catch(() => setSpaceChats([]))
     } else {
       setSpaceMemories([])
-      setTaggedFiles([])
       setChatIndexStatus(null)
       setSpaceChats(null)
       setPinnedFileIds([])
@@ -262,7 +264,7 @@ export default function App() {
     setNewMemoryOpen(false)
     setCompactResult(null)
     setRecreateProgress(null)
-  }, [currentSpaceId])
+  }, [currentSpaceId, activeSpaceIsCollection])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -723,7 +725,7 @@ export default function App() {
           onClick={() => { setView(v => v === 'spaces' ? 'chat' : 'spaces'); setCurrentSpaceId(null); setSidebarOpen(false) }}
           className={`w-full text-left px-3 py-2 rounded text-sm font-medium ${view === 'spaces' ? 'bg-indigo-700 text-white' : 'text-indigo-400 hover:bg-gray-800'}`}
         >
-          {t('nav.groupings')} ({spaces.length})
+          {t('nav.workspaces')} ({spaces.length})
         </button>
         <button
           onClick={() => { setView(v => v === 'monitors' ? 'chat' : 'monitors'); setSidebarOpen(false) }}
@@ -888,7 +890,7 @@ export default function App() {
                   onClick={() => setCurrentSpaceId(null)}
                   className="text-gray-500 hover:text-gray-300 text-sm"
                 >
-                  ← {t('nav.groupings')}
+                  ← {t('nav.workspaces')}
                 </button>
                 {editingSpaceId === currentSpaceId ? (
                   <input
@@ -929,8 +931,9 @@ export default function App() {
                   </button>
                 )}
               </div>
-              {/* Memory, chats and the chat index all describe conversations, which a collection has
-                  none of. Its resources section below is the whole of it. */}
+              {/* Memory describes conversations, which a collection has none of — as do the chat
+                  index and the chat list further down, each guarded the same way because the
+                  resources section sits between them. Resources are the whole of a collection. */}
               {!activeSpaceIsCollection && <>
               {/* Memory section */}
               <div className="border border-gray-800 rounded-lg p-3">
@@ -1172,7 +1175,7 @@ export default function App() {
                 )}
               </div>
 
-              {chatIndexStatus !== null && (
+              {!activeSpaceIsCollection && chatIndexStatus !== null && (
                 <div className="border border-gray-800 rounded-lg p-3 flex items-center justify-between gap-2">
                   <span className="text-xs text-gray-500">
                     {t('space.chatIndex', { indexed: chatIndexStatus.indexed, total: chatIndexStatus.total })}
@@ -1204,7 +1207,7 @@ export default function App() {
                 </div>
               )}
 
-              {(() => {
+              {!activeSpaceIsCollection && (() => {
                 const loaded = spaceChats ?? []
                 const filtered = loaded.filter(s => !sessionSearch || s.title.toLowerCase().includes(sessionSearch.toLowerCase()))
                 return (

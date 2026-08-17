@@ -58,7 +58,9 @@ filesRouter.post('/ingest-url', rateLimitByUser(ingestLimiter, 'ingest-url'), as
 
   const buffer = new TextEncoder().encode(text).buffer as ArrayBuffer
   try {
-    const fileId = await ingestFile(buffer, filename, 'text/plain', userId)
+    // The address itself, not the label derived from it: urlLabel() drops the scheme and
+    // truncates, so it cannot be turned back into something fetchable.
+    const fileId = await ingestFile(buffer, filename, 'text/plain', userId, url)
     console.log(`  [ingest-url] done → fileId=${fileId}`)
     return c.json({ fileId, filename }, 201)
   } catch (e) {
@@ -97,6 +99,7 @@ filesRouter.get('/', async (c) => {
     kind: uploadedFiles.kind,
     summary: uploadedFiles.summary,
     topics: uploadedFiles.topics,
+    origin: uploadedFiles.origin,
     createdAt: uploadedFiles.createdAt,
     updatedAt: uploadedFiles.updatedAt,
   }).from(uploadedFiles).where(eq(uploadedFiles.userId, userId))
@@ -189,6 +192,32 @@ filesRouter.patch('/notes/:id', zValidator('json', noteBody.partial()), async (c
   }
 })
 
+/** Renames any resource — an uploaded file and an ingested URL as much as a note.
+ *
+ *  A filename here is a *title*: nothing writes it to disk or reads an extension from it, and it is
+ *  the label the Resources list shows and every retrieval citation carries. So `report_final_v3.pdf`
+ *  or `github.com/lfnovo/open-notebook` can be given a name that says what the thing is, and future
+ *  citations say it too. Answers already stored keep the name they cited at the time.
+ *
+ *  No re-indexing: the chunk text is untouched, so the vectors still describe the same content. */
+filesRouter.patch('/:id', zValidator('json', z.object({
+  // Trimmed before the length check, not after: `min(1)` accepts "   ", and trimming afterwards
+  // then writes an empty title — a resource with no name anywhere in the list or its citations.
+  filename: z.string().trim().min(1).max(200),
+})), async (c) => {
+  const userId = c.get('userId') as string
+  const id = c.req.param('id')
+  const { filename } = c.req.valid('json')
+
+  const resource = await ownedResource(id, userId)
+  if (!resource) return c.json({ error: 'Not found' }, 404)
+
+  await db.update(uploadedFiles)
+    .set({ filename, updatedAt: new Date() })
+    .where(eq(uploadedFiles.id, id))
+  return c.json({ ok: true })
+})
+
 filesRouter.get('/:id', async (c) => {
   const userId = c.get('userId') as string
   const resource = await ownedResource(c.req.param('id'), userId)
@@ -228,6 +257,7 @@ filesRouter.get('/:id', async (c) => {
     body: resource.body,
     summary: resource.summary,
     topics: parseTopics(resource.topics),
+    origin: resource.origin,
     createdAt: epochSeconds(resource.createdAt),
     updatedAt: epochSeconds(resource.updatedAt),
     spaces: taggedSpaces,

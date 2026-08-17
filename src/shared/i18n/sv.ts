@@ -43,7 +43,7 @@ export const sv: Catalog = {
 
   // --- Navigering ---
   'nav.chats': 'Chattar',
-  'nav.groupings': 'Utrymmen & samlingar',
+  'nav.workspaces': 'Arbetsytor',
   'nav.spaces': 'Utrymmen',
   'nav.resources': 'Resurser',
   'nav.monitors': 'Bevakningar',
@@ -219,6 +219,9 @@ export const sv: Catalog = {
   'resource.transformFailed': 'Bearbetningen misslyckades',
   'resource.transformResult': 'Resultat',
   'resource.saveAsNote': 'Spara som anteckning',
+  'resource.origin': 'Från',
+  'resource.rename': 'Byt namn',
+  'resource.renameFailed': 'Kunde inte byta namn på resursen',
   'resource.tagTo': 'Lägg till i utrymme',
   'resource.untagFrom': 'Ta bort från ”{name}”',
   'resource.derivedFrom': 'Skapad från',

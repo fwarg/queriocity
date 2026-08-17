@@ -98,6 +98,9 @@ export async function ingestFile(
   filename: string,
   mimeType: string,
   userId: string,
+  /** Where this came from — the URL for a page, the original filename for an upload. `filename` is
+   *  a title the user may rename, so this is the only durable record of the source. */
+  origin?: string,
 ): Promise<string> {
   if (!ACCEPTED_MIME_TYPES.has(mimeType.split(';')[0].trim())) {
     throw new Error(`Unsupported file type: ${mimeType}. Accepted types: PDF, plain text, images.`)
@@ -138,6 +141,7 @@ export async function ingestFile(
     size: buffer.byteLength,
     contentHash,
     kind: 'file',
+    origin: origin ?? filename,
     createdAt: new Date(),
   })
   try {

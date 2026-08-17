@@ -707,6 +707,9 @@ export interface Resource {
   topics: string[]
   /** The spaces this resource is tagged to — the library's grouping, used to filter the list. */
   spaces: Array<{ id: string; name: string }>
+  /** Where it came from: the URL for an ingested page, the original filename for an upload, null
+   *  for a note. Never edited — `filename` is a renameable title, this is the record of the source. */
+  origin: string | null
   createdAt: number
   updatedAt: number | null
 }
@@ -747,6 +750,17 @@ export async function createNote(title: string, body: string, derivedFrom?: stri
   })
   if (!res.ok) throw await apiError(res, 'Could not save note')
   return res.json()
+}
+
+/** Renames any resource. The filename is a title: it is what the list and every future citation
+ *  show, and it has no bearing on the stored content. */
+export async function renameResource(id: string, filename: string): Promise<void> {
+  const res = await fetch(`${BASE}/files/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filename }),
+  })
+  if (!res.ok) throw await apiError(res, 'Could not rename')
 }
 
 export async function updateNote(id: string, patch: { title?: string; body?: string }): Promise<void> {

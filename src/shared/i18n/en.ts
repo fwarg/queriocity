@@ -47,7 +47,7 @@ export const en = {
 
   // --- Navigation ---
   'nav.chats': 'Chats',
-  'nav.groupings': 'Spaces & collections',
+  'nav.workspaces': 'Workspaces',
   'nav.spaces': 'Spaces',
   'nav.resources': 'Resources',
   'nav.monitors': 'Monitors',
@@ -223,6 +223,9 @@ export const en = {
   'resource.transformFailed': 'Transform failed',
   'resource.transformResult': 'Result',
   'resource.saveAsNote': 'Save as note',
+  'resource.origin': 'From',
+  'resource.rename': 'Rename',
+  'resource.renameFailed': 'Could not rename this resource',
   'resource.tagTo': 'Add to space',
   'resource.untagFrom': 'Remove from "{name}"',
   'resource.derivedFrom': 'Created from',

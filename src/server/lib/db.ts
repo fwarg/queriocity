@@ -143,6 +143,11 @@ export const uploadedFiles = sqliteTable('uploaded_files', {
    *  call failed or the `resource_summary` setting is off — neither is required by anything. */
   summary: text('summary'),
   topics: text('topics'),
+  /** Where this came from: the full URL for an ingested page, the original filename for an upload,
+   *  null for a note. Set once at ingest and never edited — `filename` is a *title* the user may
+   *  rename, so without this the address of an ingested page was recorded nowhere at all, and even
+   *  unrenamed it survived only as the lossy label `urlLabel()` derives (no scheme, 120 chars). */
+  origin: text('origin'),
   /** The resource a transform produced this note from. Nulled rather than cascaded when that
    *  resource is deleted: the note is the user's own text and outlives what prompted it. The same
    *  provenance is also written into the note's first line, which is what carries it into retrieval
@@ -300,6 +305,7 @@ function initSchema() {
       body       TEXT,
       summary    TEXT,
       topics     TEXT,
+      origin     TEXT,
       derived_from TEXT REFERENCES uploaded_files(id) ON DELETE SET NULL,
       created_at INTEGER NOT NULL,
       updated_at INTEGER
@@ -492,6 +498,7 @@ function initSchema() {
   // above; on an upgraded one the column is a plain id, and routes/files.ts nulls it on delete.
   try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN derived_from TEXT') } catch {}
   try { sqlite.run(`ALTER TABLE spaces ADD COLUMN kind TEXT NOT NULL DEFAULT 'space'`) } catch {}
+  try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN origin TEXT') } catch {}
   // Migrate: backfill timezone from owner's settings for personal monitors that have none
   try {
     sqlite.run(`

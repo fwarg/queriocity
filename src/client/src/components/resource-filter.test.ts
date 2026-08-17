@@ -15,6 +15,7 @@ const resource = (partial: Partial<Resource>): Resource => ({
   summary: null,
   topics: [],
   spaces: [],
+  origin: null,
   createdAt: 0,
   updatedAt: null,
   ...partial,

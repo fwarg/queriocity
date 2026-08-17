@@ -11,7 +11,8 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { startFakeEmbeddings } from '../test-support/fake-embeddings.ts'
 import { envOverride } from '../test-support/env-override.ts'
 
-const { db, sqlite, users, setAppSetting, EMBED_DIMS } = await import('../db.ts')
+const { db, sqlite, users, uploadedFiles, setAppSetting, EMBED_DIMS } = await import('../db.ts')
+const { eq } = await import('drizzle-orm')
 const { ingestFile } = await import('./ingest.ts')
 
 let server: ReturnType<typeof startFakeEmbeddings>
@@ -60,6 +61,17 @@ describe('ingestFile', () => {
     const second = await ingestFile(asBuffer(DOCUMENT), 'report-copy.txt', 'text/plain', 'iu')
     expect(second).toBe(first)
     expect(rowCount()).toBe(1)
+  })
+
+  test('records where the content came from', async () => {
+    // An upload has only its original filename as provenance; a URL ingest passes the address, which
+    // is the case that matters — `urlLabel()` derives a lossy title that cannot be fetched again.
+    const id = await ingestFile(asBuffer(DOCUMENT), 'report.txt', 'text/plain', 'iu')
+    expect((await db.select().from(uploadedFiles).where(eq(uploadedFiles.id, id)).get())?.origin).toBe('report.txt')
+
+    const url = 'https://example.com/very/long/path?id=42'
+    const other = await ingestFile(asBuffer(DOCUMENT + ' distinct'), 'example.com/very/long/path', 'text/plain', 'iu', url)
+    expect((await db.select().from(uploadedFiles).where(eq(uploadedFiles.id, other)).get())?.origin).toBe(url)
   })
 
   test('leaves nothing behind when indexing fails', async () => {

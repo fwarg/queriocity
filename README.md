@@ -329,18 +329,20 @@ Once the library passes a handful of resources, a filter bar appears above the l
   about a document. Chunk *content* is deliberately not searched here; that is what the model's
   semantic search is for, and a substring match against every excerpt would return hits the list
   cannot explain.
-- **Space chips** with counts, plus **Untagged**, so you can see and browse the grouping you already
-  have rather than only apply it. Resources tagged to several spaces appear under each.
+- **Grouping chips** with counts — every space and [collection](#collections) holding a resource,
+  plus **Untagged** — so you can see and browse the grouping you already have rather than only apply
+  it. A resource tagged to several appears under each.
 - **Topic chips on each row are clickable**, and narrow the list to everything sharing that topic —
   an axis that cuts *across* projects, unlike spaces which follow them.
 
-There is no separate folder or collection concept, on purpose. Space tagging already provides
-many-to-many grouping and earns its keep twice, since it also drives [space RAG](#rag-retrieval-augmented-generation);
-a second taxonomy would mean two overlapping groupings of the same resources, both half-maintained.
-What was missing was not a way to group but a way to *see* the grouping — and a way to apply it
-without leaving the Resources view, which is why a resource's detail panel can now add and remove
-its own space tags. The space panel still tags from its side; that direction suits setting a space
-up, this one suits filing a document you are already looking at.
+There is no folder concept and no second taxonomy: the chips above are the grouping you already
+have. A resource is tagged from the space or collection's own panel, or from the resource's detail
+panel — the first suits setting a grouping up, the second suits filing a document you are already
+looking at.
+
+For reference material that belongs to no conversation, a [collection](#collections) groups resources
+without the chats, memory and lock a space carries. Collections appear among the chips above like any
+other grouping.
 
 ### Resource detail and transforms
 
@@ -351,6 +353,16 @@ Click any resource to open it. The detail view shows:
   generation off (Admin > System settings); it is best-effort either way, and a resource whose
   summary failed works normally without one.
 - Which **spaces** the resource is tagged to.
+- **From** — where the resource came from: the full URL for an ingested page, shown as a link, or the
+  original filename for an upload. Recorded once at ingest and never edited, so it survives any
+  renaming below. This is what makes an ingested page traceable at all: the title is derived from the
+  URL and drops the scheme, so it was never something you could follow back.
+- The **title**, which the ✎ beside it renames — for uploaded files and ingested URLs as much as for
+  notes. A file arrives named by whoever made it (`report_final_v3.pdf`) and a URL by its address, and
+  neither is reliably descriptive. This name is also the label every retrieval citation carries, so
+  renaming makes later answers say what the source actually is. Answers already given keep the name
+  they cited at the time, and nothing is re-indexed — the excerpts describe content a rename leaves
+  alone.
 - The **indexed excerpts**, in order. This is what retrieval actually sees, which is the thing worth
   checking when a PDF or a YouTube transcript has extracted badly. They overlap by design, so text
   repeats where two excerpts meet.
@@ -735,7 +747,7 @@ Set `IMAGE_BASE_URL` in your environment to enable the feature (see [Environment
 
 ## Spaces
 
-**Spaces** are named workspaces that group related chats together. Each space has:
+**Spaces** group related chats together. Each space has:
 
 - A persistent **memory store** — facts extracted from conversations, injected into future system prompts
 - A **chat history index** — full message content embedded for semantic retrieval
@@ -749,10 +761,11 @@ A **collection** is the other kind of grouping: it holds resources and nothing e
 memory, no monitors, no lock. It exists for reference material that belongs to no conversation, where
 filing it into a space would mean inventing a project that does not exist.
 
-Both kinds live in the **Spaces** view, in two labelled sections. A resource is tagged to a collection
-exactly as it is tagged to a space — from the space detail view, or from the resource's own detail
-panel — and collections appear alongside spaces as [filter chips](#finding-things-in-a-large-library)
-in the Resources list.
+Both kinds live under **Workspaces** in the sidebar, in two labelled sections — the entry is named for
+what it lists, and "space" keeps its usual meaning everywhere else in the app: the kind that holds
+chats. A resource is tagged to a collection exactly as it is tagged to a space, from either panel, and
+collections appear alongside spaces as [filter chips](#finding-things-in-a-large-library) in the
+Resources list.
 
 **Using a collection in a chat.** Tick one or more below the message box and that turn also retrieves
 from their resources, whether or not the chat is in a space. The selection is per request, not stored
@@ -795,7 +808,7 @@ For RAG over chat history to work, messages must be indexed. New messages are in
 
 ### Tagged resources
 
-Any file in your library can be tagged to a space from the space detail view. Tagged resources are searched semantically on every request in that space (within the RAG budget), injecting relevant excerpts as additional context. This is useful for persistent reference material — specs, style guides, background documents — that should inform all conversations in the space.
+Any file in your library can be tagged to a space from the space detail view, or from the resource's own detail panel in [Resources](#resources) — the same tagging serves [collections](#collections). Tagged resources are searched semantically on every request in that space (within the RAG budget), injecting relevant excerpts as additional context. This is useful for persistent reference material — specs, style guides, background documents — that should inform all conversations in the space.
 
 #### Fine-grained context control
 
@@ -1589,7 +1602,7 @@ The **Admin panel > System settings** tab exposes runtime-configurable parameter
 |---|---|---|---|
 | Memory | Token budget | 1000 | Max tokens of space memory injected into each request. Memories are chosen by relevance to the query, so this caps how many appear at once, not how many a space may hold |
 | Memory | User memory budget | 300 | Max tokens of *About you* memory injected into every chat, space or not. Only applies to users who enabled the setting; 0 disables it globally |
-| Memory | RAG budget | 500 | Additional tokens reserved for RAG results (chat history + tagged files); 0 disables RAG |
+| Memory | RAG budget | 500 | Additional tokens reserved for RAG results (chat history + tagged files); 0 disables RAG. Also bounds a [collection](#collections) block, which is budgeted separately, so a request with collections ticked may spend it twice |
 | Memory | Dream hour | Disabled | Server hour (0–23) to run nightly compaction, or disabled |
 | Memory | Dream threshold | 1500 | Compaction triggers when space memory exceeds this many tokens |
 | Memory | Dream target | 700 | Token target after compaction |

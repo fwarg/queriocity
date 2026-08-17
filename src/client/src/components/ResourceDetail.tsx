@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { ArrowLeft, FileText, NotebookPen } from 'lucide-react'
+import { ArrowLeft, ExternalLink, FileText, NotebookPen } from 'lucide-react'
 import { NoteEditor } from './NoteEditor.tsx'
 import {
-  fetchResource, fetchCustomTemplates, fetchSpaces, tagFileToSpace, transformResource, untagFileFromSpace,
+  fetchResource, fetchCustomTemplates, fetchSpaces, renameResource, tagFileToSpace, transformResource, untagFileFromSpace,
   type CustomTemplate, type ResourceDetail as Detail, type ResourceRef, type Space, type TransformOperation,
 } from '../lib/api.ts'
 import { useLang, useT } from '../lib/i18n.tsx'
@@ -57,7 +57,11 @@ export function ResourceDetail({ id, onBack, onChanged, onOpen }: Props) {
             ? <NotebookPen size={18} className="text-amber-400 shrink-0 mt-0.5" />
             : <FileText size={18} className="text-gray-500 shrink-0 mt-0.5" />}
           <div className="min-w-0">
-            <h2 className="text-lg font-semibold text-gray-200 break-words">{detail.filename}</h2>
+            <ResourceTitle
+              key={detail.id}
+              detail={detail}
+              onRenamed={() => { load(); onChanged() }}
+            />
             <p className="text-xs text-gray-500">
               {isNote ? t('note.kind') : detail.mimeType} · {stamp} · {t('resource.chunks', { count: detail.chunks.length })}
             </p>
@@ -72,6 +76,12 @@ export function ResourceDetail({ id, onBack, onChanged, onOpen }: Props) {
           </button>
         )}
       </div>
+
+      {detail.origin && detail.origin !== detail.filename && (
+        <Section title={t('resource.origin')}>
+          <ResourceOrigin origin={detail.origin} />
+        </Section>
+      )}
 
       <Section title={t('resource.summary')}>
         {detail.summary
@@ -141,6 +151,90 @@ export function ResourceDetail({ id, onBack, onChanged, onOpen }: Props) {
         />
       )}
     </Panel>
+  )
+}
+
+/** The title, renameable in place for every kind of resource.
+ *
+ *  An uploaded file arrives named by whoever made it and a URL by its address — neither is reliably
+ *  descriptive. Since this column is also the label every retrieval citation carries, renaming is
+ *  how a resource comes to say what it is in the answers that quote it. */
+function ResourceTitle({ detail, onRenamed }: { detail: Detail; onRenamed: () => void }) {
+  const t = useT()
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(detail.filename)
+  const [error, setError] = useState('')
+
+  async function save() {
+    const name = draft.trim()
+    setEditing(false)
+    if (!name || name === detail.filename) { setDraft(detail.filename); return }
+    try {
+      await renameResource(detail.id, name)
+      onRenamed()
+    } catch (err: unknown) {
+      setDraft(detail.filename)
+      setError(errorMessage(t, err, t('resource.renameFailed')))
+    }
+  }
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        value={draft}
+        maxLength={200}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={save}
+        onKeyDown={e => {
+          if (e.key === 'Enter') save()
+          if (e.key === 'Escape') { setDraft(detail.filename); setEditing(false) }
+        }}
+        aria-label={t('resource.rename')}
+        className="w-full text-lg font-semibold bg-transparent border-b border-indigo-500 text-gray-100 focus:outline-none"
+      />
+    )
+  }
+
+  return (
+    <>
+      <h2 className="text-lg font-semibold text-gray-200 break-words flex items-start gap-1.5">
+        <span className="break-words">{detail.filename}</span>
+        <button
+          onClick={() => { setDraft(detail.filename); setError(''); setEditing(true) }}
+          className="text-gray-600 hover:text-gray-400 text-sm shrink-0 mt-0.5"
+          aria-label={t('resource.rename')}
+          title={t('resource.rename')}
+        >
+          ✎
+        </button>
+      </h2>
+      {error && <p className="text-xs text-red-400">{error}</p>}
+    </>
+  )
+}
+
+/** Where a resource came from. A link only for http(s) — an upload's origin is a bare filename, and
+ *  anything else parsed as a URL would be a scheme this app never ingests. */
+function ResourceOrigin({ origin }: { origin: string }) {
+  const url = (() => {
+    try {
+      const parsed = new URL(origin)
+      return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? parsed.href : null
+    } catch { return null }
+  })()
+
+  if (!url) return <p className="text-sm text-gray-400 break-words">{origin}</p>
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer noopener"
+      className="text-sm text-blue-400 hover:text-blue-300 break-all inline-flex items-start gap-1.5"
+    >
+      <ExternalLink size={13} className="shrink-0 mt-0.5" />
+      <span className="break-all">{origin}</span>
+    </a>
   )
 }
 
