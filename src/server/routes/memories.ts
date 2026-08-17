@@ -4,6 +4,7 @@ import { eq, and, ne, sql } from 'drizzle-orm'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
+import { COLLECTION_HOLDS_NO_CHATS } from '../lib/ownership.ts'
 import { getSpaceMemories, saveMemory, compactSpaceMemories, extractMemoriesPostHoc, embedMemory, deleteMemoryEmbeddings } from '../lib/memory.ts'
 import { getAppSetting } from '../lib/db.ts'
 import { indexSession } from '../lib/chat-indexer.ts'
@@ -76,7 +77,11 @@ memoriesRouter.post('/:spaceId/memories', zValidator('json', z.object({
 })), async (c) => {
   const userId = c.get('userId') as string
   const spaceId = c.req.param('spaceId')
-  if (!await verifySpaceOwner(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
+  const space = await verifySpaceOwner(spaceId, userId)
+  if (!space) return c.json({ error: 'Not found' }, 404)
+  // Memory is accumulated from conversations, and a collection has none. The other routes on this
+  // file only read, so an empty answer is already correct for them; this is the one that writes.
+  if (space.kind === 'collection') return c.json({ error: COLLECTION_HOLDS_NO_CHATS }, 400)
   const { content } = c.req.valid('json')
   const id = await saveMemory(spaceId, content, 'manual')
   const memory = await db.select().from(spaceMemories).where(eq(spaceMemories.id, id)).get()

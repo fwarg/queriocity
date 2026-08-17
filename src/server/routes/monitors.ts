@@ -6,7 +6,7 @@ import { eq, and, or, desc } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { runMonitorNow, computeNextRunAt } from '../lib/monitor-runner.ts'
-import { ownsSpace } from '../lib/ownership.ts'
+import { COLLECTION_HOLDS_NO_CHATS, isCollection, ownsSpace } from '../lib/ownership.ts'
 import { isSpaceLocked } from '../lib/space-lock.ts'
 
 export const monitorsRouter = new Hono<AppEnv>()
@@ -168,6 +168,8 @@ monitorsRouter.post('/', zValidator('json', monitorBody), async (c) => {
   const userId = c.get('userId') as string
   const body = c.req.valid('json')
   if (body.spaceId && !await ownsSpace(body.spaceId, userId)) return c.json({ error: 'Space not found' }, 404)
+  // A monitor writes its runs into the space as chats, which a collection has no room for.
+  if (body.spaceId && await isCollection(body.spaceId)) return c.json({ error: COLLECTION_HOLDS_NO_CHATS }, 400)
   // A monitor is a scheduled web-research run, which is the one thing a locked space exists to
   // prevent. Refused rather than silently run without tools, which would produce empty digests.
   if (body.spaceId && await isSpaceLocked(body.spaceId)) {
@@ -212,6 +214,8 @@ monitorsRouter.patch('/:id', zValidator('json', monitorBody.partial()), async (c
     .where(and(eq(monitors.id, id), eq(monitors.userId, userId))).get()
   if (!monitor) return c.json({ error: 'Not found' }, 404)
   if (body.spaceId && !await ownsSpace(body.spaceId, userId)) return c.json({ error: 'Space not found' }, 404)
+  // A monitor writes its runs into the space as chats, which a collection has no room for.
+  if (body.spaceId && await isCollection(body.spaceId)) return c.json({ error: COLLECTION_HOLDS_NO_CHATS }, 400)
   // A monitor is a scheduled web-research run, which is the one thing a locked space exists to
   // prevent. Refused rather than silently run without tools, which would produce empty digests.
   if (body.spaceId && await isSpaceLocked(body.spaceId)) {

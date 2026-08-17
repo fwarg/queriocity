@@ -292,7 +292,7 @@ export function MonitorEditor({ initial, spaces, timezone, onSave, onClose, isGl
               </div>
             )}
 
-            {!isGlobal && spaces.length > 0 && (
+            {!isGlobal && spaces.some(s => s.kind === 'space') && (
               <div>
                 <label className="block text-xs text-gray-400 mb-1">{t('monitorEdit.spaceContext')}</label>
                 <select
@@ -301,7 +301,8 @@ export function MonitorEditor({ initial, spaces, timezone, onSave, onClose, isGl
                   className="w-full rounded bg-gray-800 border border-gray-700 px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500"
                 >
                   <option value="">{t('monitorEdit.spaceNone')}</option>
-                  {spaces.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  {/* A monitor writes its runs into the space as chats, which a collection has no room for. */}
+                  {spaces.filter(s => s.kind === 'space').map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
               </div>
             )}

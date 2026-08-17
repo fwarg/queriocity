@@ -202,7 +202,13 @@ function SpaceTags({ detail, onChanged }: { detail: Detail; onChanged: () => voi
           className="rounded bg-gray-800 border border-gray-700 px-2 py-0.5 text-xs text-gray-300 focus:outline-none focus:border-blue-500"
         >
           <option value="">+ {t('resource.tagTo')}</option>
-          {available.map(space => <option key={space.id} value={space.id}>{space.name}</option>)}
+          {/* Both kinds tag the same way — `space_files` does not care — but they read differently
+              to a user, so the list says which is which. */}
+          {available.map(space => (
+            <option key={space.id} value={space.id}>
+              {space.name} · {space.kind === 'collection' ? t('collection.kind') : t('space.kind')}
+            </option>
+          ))}
         </select>
       )}
     </div>

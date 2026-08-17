@@ -31,14 +31,20 @@ export interface AuthUser {
   mustChangePassword?: boolean
 }
 
+export type SpaceKind = 'space' | 'collection'
+
 export interface Space {
   id: string
   name: string
+  /** A collection groups resources only — no chats, memory, monitors or lock. Same table, and the
+   *  same tagging, so a collection can be promoted to a space without moving anything. */
+  kind: SpaceKind
   /** Locked: no web search, URL fetching or image generation for any chat in this space.
    *  Effectively one-way once the space holds anything — see the server's canUnlock. */
   offline: boolean
   chatCount: number
   memoryCount: number
+  resourceCount: number
   createdAt: number
 }
 
@@ -194,6 +200,7 @@ export async function* streamChat(
   searchCategories?: Array<'news' | 'science' | 'discussions' | 'tech'>,
   includeFileIds?: string[],
   includeMemoryIds?: string[],
+  collectionIds?: string[],
   regenerate?: boolean,
 ): AsyncGenerator<{ type: string; [k: string]: unknown }> {
   const res = await fetch(`${BASE}/chat`, {
@@ -213,6 +220,7 @@ export async function* streamChat(
       ...(searchCategories?.length ? { searchCategories } : {}),
       ...(includeFileIds?.length ? { includeFileIds } : {}),
       ...(includeMemoryIds?.length ? { includeMemoryIds } : {}),
+      ...(collectionIds?.length ? { collectionIds } : {}),
       ...(regenerate ? { regenerate: true } : {}),
     }),
     signal,
@@ -381,13 +389,24 @@ export async function fetchSpaces(): Promise<Space[]> {
   return res.json()
 }
 
-export async function createSpace(name: string, offline = false): Promise<Space> {
+export async function createSpace(name: string, kind: SpaceKind = 'space', offline = false): Promise<Space> {
   const res = await fetch(`${BASE}/spaces`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, offline }),
+    body: JSON.stringify({ name, kind, offline }),
   })
+  if (!res.ok) throw await apiError(res, 'Could not create')
   return res.json()
+}
+
+/** Turns a collection into a space. One-way — the server refuses the reverse. */
+export async function promoteCollection(id: string): Promise<void> {
+  const res = await fetch(`${BASE}/spaces/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind: 'space' }),
+  })
+  if (!res.ok) throw await apiError(res, 'Could not promote')
 }
 
 /** Rename and/or change the lock. Returns the server's refusal message when unlocking is not

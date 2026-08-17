@@ -43,6 +43,7 @@ export const sv: Catalog = {
 
   // --- Navigering ---
   'nav.chats': 'Chattar',
+  'nav.groupings': 'Utrymmen & samlingar',
   'nav.spaces': 'Utrymmen',
   'nav.resources': 'Resurser',
   'nav.monitors': 'Bevakningar',
@@ -166,6 +167,21 @@ export const sv: Catalog = {
   'files.filterNone': 'Inga resurser matchar filtret.',
   'files.deleteNamed': 'Ta bort resursen ”{name}”',
   'files.deleteConfirm': 'Ta bort ”{name}”? Utdragen försvinner från alla utrymmen den är kopplad till.',
+
+  'space.kind': 'Utrymme',
+
+  // --- Samlingar ---
+  'collection.plural': 'Samlingar',
+  'collection.new': 'Ny samling',
+  'collection.none': 'Inga samlingar än. En samling grupperar resurser utan någon konversation.',
+  'collection.intro': 'En samling grupperar bara resurser — inga chattar, inget minne. Kryssa i en under meddelanderutan för att svara utifrån den, i vilken chatt som helst.',
+  'collection.namePlaceholder': 'Namn på samlingen…',
+  'collection.holdsResources': { one: '{count} resurs', other: '{count} resurser' },
+  'collection.kind': 'Samling',
+  'collection.attach': 'Svara utifrån samlingar',
+  'collection.promote': 'Gör om till utrymme',
+  'collection.promoteTitle': 'Gör om samlingen till ett utrymme och behåll resurserna. Detta går inte att ångra.',
+  'collection.promoteFailed': 'Kunde inte göra om samlingen till ett utrymme',
 
   // --- Anteckningar ---
   'note.new': 'Ny anteckning',

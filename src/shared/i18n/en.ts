@@ -47,6 +47,7 @@ export const en = {
 
   // --- Navigation ---
   'nav.chats': 'Chats',
+  'nav.groupings': 'Spaces & collections',
   'nav.spaces': 'Spaces',
   'nav.resources': 'Resources',
   'nav.monitors': 'Monitors',
@@ -170,6 +171,21 @@ export const en = {
   'files.filterNone': 'No resources match this filter.',
   'files.deleteNamed': 'Delete resource "{name}"',
   'files.deleteConfirm': 'Delete "{name}"? Its excerpts are removed from every space it is tagged to.',
+
+  'space.kind': 'Space',
+
+  // --- Collections ---
+  'collection.plural': 'Collections',
+  'collection.new': 'New collection',
+  'collection.none': 'No collections yet. A collection groups resources without a conversation.',
+  'collection.intro': 'A collection groups resources and nothing else — no chats, no memory. Tick one below the message box to answer from it, in any chat.',
+  'collection.namePlaceholder': 'Collection name…',
+  'collection.holdsResources': { one: '{count} resource', other: '{count} resources' },
+  'collection.kind': 'Collection',
+  'collection.attach': 'Answer from collections',
+  'collection.promote': 'Make this a space',
+  'collection.promoteTitle': 'Turn this collection into a space, keeping its resources. This cannot be undone.',
+  'collection.promoteFailed': 'Could not turn this collection into a space',
 
   // --- Notes ---
   'note.new': 'New note',

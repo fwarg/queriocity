@@ -21,6 +21,10 @@ interface Props {
   searchCategories: SearchCategory[]
   onSearchCategoriesChange: (cats: SearchCategory[]) => void
   suggestionsEnabled?: boolean
+  /** The user's collections, and which are picked for the next message. */
+  collections: Array<{ id: string; name: string }>
+  selectedCollections: string[]
+  onCollectionsChange: (ids: string[]) => void
   /** The chat's space is locked: no web search, URL fetching or image generation. Advisory only —
    *  the server enforces it — but the controls should not offer what will be refused. */
   lockedSpace?: boolean
@@ -57,7 +61,7 @@ const CATEGORY_LABEL_KEYS: Record<SearchCategory, TranslationKey> = {
   tech: 'category.tech',
 }
 
-export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, suggestionsEnabled, lockedSpace = false, related = [], onRelatedSelect }: Props) {
+export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, collections, selectedCollections, onCollectionsChange, suggestionsEnabled, lockedSpace = false, related = [], onRelatedSelect }: Props) {
   const t = useT()
   const [value, setValue] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
@@ -214,6 +218,29 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
           </button>
         )}
       </div>
+      {collections.length > 0 && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {/* Picked per request, not stored on the chat: a collection is a shelf you reach for, and
+              the selection is as cheap to change as the research mode beside it. */}
+          <span className="text-xs text-gray-500 mr-0.5">{t('collection.attach')}</span>
+          {collections.map(collection => {
+            const on = selectedCollections.includes(collection.id)
+            return (
+              <button
+                key={collection.id}
+                type="button"
+                aria-pressed={on}
+                onClick={() => onCollectionsChange(
+                  on ? selectedCollections.filter(id => id !== collection.id) : [...selectedCollections, collection.id],
+                )}
+                className={`px-2 py-0.5 rounded text-xs ${on ? 'bg-amber-700 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'}`}
+              >
+                {collection.name}
+              </button>
+            )
+          })}
+        </div>
+      )}
       {categoryOpen && !lockedSpace && (focusMode === 'balanced' || focusMode === 'thorough') && (
         <div className="flex items-center gap-1.5 flex-wrap">
           {SEARCH_CATEGORIES.map(cat => (

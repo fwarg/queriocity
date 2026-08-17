@@ -7,6 +7,7 @@ import { embedText, embedTexts } from './embeddings.ts'
 import { searchSpaceFiles, searchUploads, spaceHasTaggedFiles, type ChunkResult } from './files/uploads-search.ts'
 import { rerank, rerankEnabled } from './reranker.ts'
 import { ragTopK } from './rag-settings.ts'
+import { searchCollections } from './files/collections.ts'
 
 export interface SpaceMemory {
   id: string
@@ -16,6 +17,50 @@ export interface SpaceMemory {
   sessionId: string | null
   createdAt: Date
   updatedAt: Date
+}
+
+/** Renders retrieved excerpts into a prompt block, spending a token budget newest-relevance-first.
+ *
+ *  `labelPrefix` keeps two blocks in the same prompt from colliding: a chat can carry both its own
+ *  document excerpts and a collection's, and two `[F1]`s pointing at different files would make
+ *  every citation in the answer ambiguous. */
+function renderFileBlock(
+  rows: ChunkResult[],
+  ragBudget: number,
+  heading: string,
+  labelPrefix: string,
+  logTag: string,
+): MemoryBlock {
+  if (!rows.length) return { block: '', fileSources: [] }
+
+  const citedFiles = new Map<string, { filename: string; label: string }>()
+  let fileCounter = 0
+  let ragRemaining = ragBudget
+  const fileLines: string[] = []
+
+  for (const chunk of rows) {
+    const cost = estimateTokens(chunk.content)
+    if (cost > ragRemaining) continue
+    ragRemaining -= cost
+    if (!citedFiles.has(chunk.fileId)) {
+      citedFiles.set(chunk.fileId, { filename: chunk.filename, label: `${labelPrefix}${++fileCounter}` })
+    }
+    const { label } = citedFiles.get(chunk.fileId)!
+    fileLines.push(`[${label}] ${chunk.content}`)
+    console.log(`    [rag:${logTag}] ${chunk.content.length} chars: ${JSON.stringify(chunk.content.slice(0, 60))}`)
+    if (ragRemaining <= 0) break
+  }
+
+  if (!fileLines.length) return { block: '', fileSources: [] }
+
+  const fileSources = Array.from(citedFiles.entries())
+    .map(([fileId, { filename, label }]) => ({ title: `[${label}] ${filename}`, url: `file:${fileId}` }))
+
+  let block = `## ${heading}\n` + fileLines.map(l => `> ${l}`).join('\n\n')
+  block += `\n\nWhen your answer draws on the excerpts above, cite them inline using their label (e.g. [${labelPrefix}1]). Do not add other citation formats.`
+
+  console.log(`  [memory] ${logTag}: ${fileLines.length} chunks, ${fileSources.length} files (~${estimateTokens(block)} tokens)`)
+  return { block, fileSources }
 }
 
 /** Build a file RAG block for non-space chats from the user's own uploaded files. */
@@ -34,36 +79,36 @@ export async function buildChatFileBlock(
     return { block: '', fileSources: [] }
   }
 
-  if (!fileRows.length) return { block: '', fileSources: [] }
+  return renderFileBlock(fileRows, ragBudget, 'Relevant document excerpts', 'F', 'chat-file')
+}
 
-  const citedFiles = new Map<string, { filename: string; label: string }>()
-  let fileCounter = 0
-  let ragRemaining = ragBudget
-  const fileLines: string[] = []
+/** Excerpts from the collections picked for this request, whether or not the chat is in a space.
+ *
+ *  A block of its own rather than another source folded into `buildMemoryBlock`'s joint rerank: the
+ *  selection is an explicit per-query act, so these documents were asked for and should not have to
+ *  out-compete whatever the space itself holds. The cost is a second budget — a request with
+ *  collections selected carries a larger prompt — and no cross-ranking between the two. */
+export async function buildCollectionBlock(
+  collectionIds: string[],
+  query: string,
+  ragBudget = 500,
+): Promise<MemoryBlock> {
+  if (!collectionIds.length || !query.trim() || ragBudget <= 0) return { block: '', fileSources: [] }
 
-  for (const chunk of fileRows) {
-    const cost = estimateTokens(chunk.content)
-    if (cost > ragRemaining) continue
-    ragRemaining -= cost
-    if (!citedFiles.has(chunk.fileId)) {
-      citedFiles.set(chunk.fileId, { filename: chunk.filename, label: `F${++fileCounter}` })
+  let rows: ChunkResult[] = []
+  try {
+    const embedding = await embedText(query)
+    rows = await searchCollections(collectionIds, query, embedding)
+    if (rerankEnabled && rows.length) {
+      const order = await rerank(query, rows.map(r => r.content), rows.length)
+      rows = order.map(i => rows[i])
     }
-    const { label } = citedFiles.get(chunk.fileId)!
-    fileLines.push(`[${label}] ${chunk.content}`)
-    console.log(`    [rag:chat-file] ${chunk.content.length} chars: ${JSON.stringify(chunk.content.slice(0, 60))}`)
-    if (ragRemaining <= 0) break
+  } catch (e) {
+    console.error('  [memory] collection RAG failed:', e)
+    return { block: '', fileSources: [] }
   }
 
-  if (!fileLines.length) return { block: '', fileSources: [] }
-
-  const fileSources = Array.from(citedFiles.entries())
-    .map(([fileId, { filename, label }]) => ({ title: `[${label}] ${filename}`, url: `file:${fileId}` }))
-
-  let block = '## Relevant document excerpts\n' + fileLines.map(l => `> ${l}`).join('\n\n')
-  block += '\n\nWhen your answer draws on document excerpts above, cite them inline using their label (e.g. [F1]). Do not add other citation formats.'
-
-  console.log(`  [memory] chat file RAG: ${fileLines.length} chunks, ${fileSources.length} files (~${estimateTokens(block)} tokens)`)
-  return { block, fileSources }
+  return renderFileBlock(rows, ragBudget, 'Excerpts from selected collections', 'C', 'collection')
 }
 
 export interface HistoryHit {

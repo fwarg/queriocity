@@ -44,6 +44,7 @@ through a single Bun process.
     - [Languages](#languages)
   - [Image generation](#image-generation)
   - [Spaces](#spaces)
+    - [Collections](#collections)
     - [How memory works](#how-memory-works)
     - [Memory about you](#memory-about-you)
   - [Monitors](#monitors)
@@ -482,9 +483,10 @@ chat itself carries a banner for as long as it is open.
 3. **Attach the document to that chat**, using the paperclip.
 
 Step 3 matters as much as the others. A file added to your **library** is searchable from *every*
-chat you own, including online ones in other spaces — locking a space afterwards does not retract
-it. A chat attachment is ephemeral and never enters the library, so it exists only in the locked
-conversation.
+chat you own — including online ones in other spaces, and any chat where you tick a
+[collection](#collections) that holds it, which need not be in a space at all. Locking a space
+afterwards does not retract it. A chat attachment is ephemeral and never enters the library, so it
+exists only in the locked conversation.
 
 **Locking is close to one-way, by design.** While a space is empty you can unlock it freely. Once it
 holds a chat or a memory you cannot, because unlocking would hand web access to everything gathered
@@ -740,6 +742,35 @@ Set `IMAGE_BASE_URL` in your environment to enable the feature (see [Environment
 - **Tagged files** — library documents linked to the space for contextual retrieval
 - An optional **lock** — see [Locked spaces](#locked-spaces): chats in a locked space get no web
   search, URL fetching or image generation, for analysing something that must not leave the machine
+
+### Collections
+
+A **collection** is the other kind of grouping: it holds resources and nothing else — no chats, no
+memory, no monitors, no lock. It exists for reference material that belongs to no conversation, where
+filing it into a space would mean inventing a project that does not exist.
+
+Both kinds live in the **Spaces** view, in two labelled sections. A resource is tagged to a collection
+exactly as it is tagged to a space — from the space detail view, or from the resource's own detail
+panel — and collections appear alongside spaces as [filter chips](#finding-things-in-a-large-library)
+in the Resources list.
+
+**Using a collection in a chat.** Tick one or more below the message box and that turn also retrieves
+from their resources, whether or not the chat is in a space. The selection is per request, not stored
+on the chat: it is as cheap to change as the research mode beside it, and stays lit until you untick
+it. Excerpts arrive as their own block, cited `[C1]`, `[C2]` — distinct from the `[F1]` labels a
+space's own tagged resources carry, so a citation is never ambiguous about which shelf it came from.
+
+Because these excerpts are asked for explicitly, they are not made to compete with whatever the space
+itself holds: they carry their own retrieval budget rather than being ranked against it. A request
+with collections selected therefore builds a somewhat larger prompt.
+
+**Promotion.** A collection can be turned into a space from its detail view, keeping every tagged
+resource — nothing moves, because both kinds tag the same way. This is one-way: a space that already
+holds chats, memories and possibly a lock has no sensible reading as a collection, so the reverse is
+refused.
+
+**Collections cannot be locked.** Locking denies a chat web access, and a collection has no chats.
+Confidential material belongs in a [locked space](#locked-spaces).
 
 ### Assigning chats to spaces
 

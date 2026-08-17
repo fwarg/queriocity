@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
-import { RotateCcw, Lock, Unlock, ShieldCheck } from 'lucide-react'
+import { RotateCcw, Lock, ShieldCheck } from 'lucide-react'
 import { MessageList, ImageCaptionContext } from './components/MessageList.tsx'
 import { ProgressLog, Elapsed } from './components/ProgressLog.tsx'
 import { ApprovalPrompt } from './components/ApprovalPrompt.tsx'
@@ -9,17 +9,18 @@ import { RegisterPage } from './components/RegisterPage.tsx'
 import { SettingsPanel } from './components/SettingsPanel.tsx'
 import { AdminPanel } from './components/AdminPanel.tsx'
 import { MonitorsView } from './components/MonitorsView.tsx'
+import { SpacesView } from './components/SpacesView.tsx'
 import { ResourcesView } from './components/ResourcesView.tsx'
 import {
   fetchHistory, fetchSession, deleteSession, updateSessionTitle,
   fetchFiles, getMe, hasUsers, logout,
-  fetchSpaces, createSpace, updateSpace, deleteSpace, assignChatToSpace, recreateChatMemories,
+  fetchSpaces, createSpace, promoteCollection, updateSpace, deleteSpace, assignChatToSpace, recreateChatMemories,
   fetchSpaceMemories, createSpaceMemory, updateSpaceMemory, deleteSpaceMemory, compactSpaceMemories, recreateAllSpaceMemories, clearSpaceMemories,
   fetchChatIndexStatus, rebuildChatIndex, searchHistory,
   fetchSpaceFiles, tagFileToSpace, untagFileFromSpace, transformSpace,
   fetchMonitors,
 } from './lib/api.ts'
-import type { AuthUser, Message, Resource, Space, SpaceMemory, SpaceFile } from './lib/api.ts'
+import type { AuthUser, Message, Resource, Space, SpaceKind, SpaceMemory, SpaceFile } from './lib/api.ts'
 import { useChat } from './hooks/useChat.ts'
 import { useLang, useT } from './lib/i18n.tsx'
 
@@ -52,6 +53,13 @@ export default function App() {
 
   const [focusMode, setFocusMode] = useState<'flash' | 'balanced' | 'thorough' | 'image'>('balanced')
   const [searchCategories, setSearchCategories] = useState<Array<'news' | 'science' | 'discussions' | 'tech'>>([])
+  /** Collections picked for the next message — per request, never stored on the chat.
+   *
+   *  Held here rather than in ChatInput, which remounts per session, so a selection survives asking
+   *  several questions in a row. It also survives switching chats, which is deliberate: the chips
+   *  are visibly lit, so an unwanted one is obvious and one click away, whereas silently clearing a
+   *  shelf the user had set up would be the more surprising of the two. */
+  const [selectedCollections, setSelectedCollections] = useState<string[]>([])
 
   const [sessionId, setSessionId] = useState<string | undefined>()
   const [sessions, setSessions] = useState<Session[]>([])
@@ -70,8 +78,6 @@ export default function App() {
   const [currentSpaceId, setCurrentSpaceId] = useState<string | null>(null)
   const [editingSpaceId, setEditingSpaceId] = useState<string | null>(null)
   const [spaceDraft, setSpaceDraft] = useState('')
-  const [newSpaceOpen, setNewSpaceOpen] = useState(false)
-  const [newSpaceDraft, setNewSpaceDraft] = useState('')
   const [spacePickerOpen, setSpacePickerOpen] = useState<string | null>(null)
   const [spaceMemories, setSpaceMemories] = useState<SpaceMemory[]>([])
   const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null)
@@ -122,12 +128,17 @@ export default function App() {
   // banner and the disabled controls, so a stale value degrades the UI, never the guarantee.
   const activeSpaceLocked = !!activeSpaceId && spaces.some(s => s.id === activeSpaceId && s.offline)
   const spaceIsLocked = (id: string | null | undefined) => !!id && spaces.some(sp => sp.id === id && sp.offline)
+  const activeSpaceIsCollection = spaces.some(sp => sp.id === currentSpaceId && sp.kind === 'collection')
+  /** Only spaces can hold a chat, so only spaces are offered as a destination for one. The server
+   *  refuses a collection either way; this keeps the UI from proposing what it will refuse. */
+  const chatSpaces = spaces.filter(sp => sp.kind === 'space')
 
   const { messages, setMessages, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, regenerate, cancel, reset, related, setRelated, steps, runStartedAt, approval, decideApproval } = useChat({
     sessionId,
     focusMode,
     searchCategories,
     includeFileIds: pinnedFileIds.length ? pinnedFileIds : undefined,
+    collectionIds: selectedCollections.length ? selectedCollections : undefined,
     includeMemoryIds: pinnedMemoryIds.length ? pinnedMemoryIds : undefined,
     spaceId: activeSpaceId ?? undefined,
     followUpSuggestions: currentUser?.settings?.followUpSuggestions !== false,
@@ -444,14 +455,17 @@ export default function App() {
     }).catch(() => setStatus(t('chat.deleteFailed')))
   }
 
-  function handleCreateSpace() {
-    const name = newSpaceDraft.trim()
-    if (!name) { setNewSpaceOpen(false); return }
-    createSpace(name).then(s => {
-      setSpaces(prev => [...prev, s])
-      setNewSpaceDraft('')
-      setNewSpaceOpen(false)
-    }).catch(() => {})
+  function handleCreateSpace(name: string, kind: SpaceKind) {
+    createSpace(name, kind).then(s => setSpaces(prev => [...prev, s])).catch(() => {})
+  }
+
+  /** One-way, and stated as such before it happens: the server refuses the reverse. */
+  function handlePromoteCollection() {
+    if (!currentSpaceId) return
+    if (!confirm(t('collection.promoteTitle'))) return
+    promoteCollection(currentSpaceId)
+      .then(() => fetchSpaces().then(setSpaces))
+      .catch(err => setSpaceError(err instanceof Error ? err.message : t('collection.promoteFailed')))
   }
 
   function handleDeleteSpace(id: string, e: React.MouseEvent) {
@@ -709,7 +723,7 @@ export default function App() {
           onClick={() => { setView(v => v === 'spaces' ? 'chat' : 'spaces'); setCurrentSpaceId(null); setSidebarOpen(false) }}
           className={`w-full text-left px-3 py-2 rounded text-sm font-medium ${view === 'spaces' ? 'bg-indigo-700 text-white' : 'text-indigo-400 hover:bg-gray-800'}`}
         >
-          {t('nav.spaces')} ({spaces.length})
+          {t('nav.groupings')} ({spaces.length})
         </button>
         <button
           onClick={() => { setView(v => v === 'monitors' ? 'chat' : 'monitors'); setSidebarOpen(false) }}
@@ -823,7 +837,7 @@ export default function App() {
                           {/* A chat in a locked space may only move to another locked space, and
                               "remove from space" is the most permissive destination of all. Shown
                               disabled rather than hidden, so the restriction is legible. */}
-                          {spaces.map(sp => {
+                          {chatSpaces.map(sp => {
                             const blocked = spaceIsLocked(s.spaceId) && !sp.offline
                             return (
                               <button
@@ -874,7 +888,7 @@ export default function App() {
                   onClick={() => setCurrentSpaceId(null)}
                   className="text-gray-500 hover:text-gray-300 text-sm"
                 >
-                  ← Spaces
+                  ← {t('nav.groupings')}
                 </button>
                 {editingSpaceId === currentSpaceId ? (
                   <input
@@ -898,13 +912,26 @@ export default function App() {
                     </button>
                   </h2>
                 )}
-                <button
-                  onClick={() => newChat(currentSpaceId!)}
-                  className="ml-auto px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-sm font-medium whitespace-nowrap"
-                >
-                  + {t('chat.new')}
-                </button>
+                {activeSpaceIsCollection ? (
+                  <button
+                    onClick={handlePromoteCollection}
+                    title={t('collection.promoteTitle')}
+                    className="ml-auto px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-sm font-medium whitespace-nowrap"
+                  >
+                    {t('collection.promote')}
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => newChat(currentSpaceId!)}
+                    className="ml-auto px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-sm font-medium whitespace-nowrap"
+                  >
+                    + {t('chat.new')}
+                  </button>
+                )}
               </div>
+              {/* Memory, chats and the chat index all describe conversations, which a collection has
+                  none of. Its resources section below is the whole of it. */}
+              {!activeSpaceIsCollection && <>
               {/* Memory section */}
               <div className="border border-gray-800 rounded-lg p-3">
                 <div className="flex items-center justify-between">
@@ -1060,6 +1087,8 @@ export default function App() {
                 ))}
               </div>
 
+              </>}
+
               {/* Tagged files section */}
               <div className="border border-gray-800 rounded-lg p-3">
                 <div className="flex items-center justify-between">
@@ -1212,7 +1241,7 @@ export default function App() {
                       </button>
                       {spacePickerOpen === s.id && (
                         <div className="absolute right-0 top-full mt-1 z-10 bg-gray-800 border border-gray-700 rounded shadow-lg min-w-36 py-1" onClick={e => e.stopPropagation()}>
-                          {spaces.map(sp => {
+                          {chatSpaces.map(sp => {
                             const blocked = spaceIsLocked(s.spaceId) && !sp.offline
                             return (
                               <button
@@ -1252,62 +1281,13 @@ export default function App() {
               })()}
             </div>
           ) : (
-            <div className="flex flex-col flex-1 overflow-y-auto p-6 gap-3">
-              <div className="flex items-center justify-between mb-2">
-                <h2 className="text-lg font-semibold text-gray-200">{t('nav.spaces')}</h2>
-                {!newSpaceOpen && (
-                  <button
-                    onClick={() => setNewSpaceOpen(true)}
-                    className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-sm font-medium whitespace-nowrap"
-                  >
-                    + {t('space.new')}
-                  </button>
-                )}
-              </div>
-              {newSpaceOpen && (
-                <div className="flex gap-2 items-center">
-                  <input
-                    autoFocus
-                    type="text"
-                    value={newSpaceDraft}
-                    onChange={e => setNewSpaceDraft(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') handleCreateSpace(); if (e.key === 'Escape') { setNewSpaceOpen(false); setNewSpaceDraft('') } }}
-                    onBlur={handleCreateSpace}
-                    placeholder={t('space.namePlaceholder')}
-                    className="flex-1 px-3 py-2 rounded bg-gray-800 border border-gray-700 text-sm text-gray-200 focus:outline-none focus:border-blue-500"
-                  />
-                </div>
-              )}
-              {spaces.length === 0 && !newSpaceOpen ? (
-                <p className="text-gray-500 text-sm">{t('space.none')}</p>
-              ) : spaces.map(sp => (
-                <div key={sp.id} className="flex items-center gap-2 group">
-                  <button
-                    onClick={() => setCurrentSpaceId(sp.id)}
-                    className="flex-1 text-left px-4 py-3 rounded-lg bg-gray-800 hover:bg-gray-700 text-sm text-gray-100"
-                  >
-                    {sp.offline && <Lock size={12} className="inline mr-1.5 -mt-0.5 text-amber-400" aria-label={t('space.locked')} />}
-                    {sp.name}
-                    <span className="ml-2 text-xs text-gray-500">{t('space.holdsChats', { count: sp.chatCount })}{sp.memoryCount > 0 ? ` · ${t('space.holdsMemories', { count: sp.memoryCount })}` : ''}</span>
-                  </button>
-                  <button
-                    onClick={() => handleToggleSpaceLock(sp.id)}
-                    className={`px-2 py-2 shrink-0 transition-opacity ${sp.offline ? 'text-amber-400 hover:text-amber-300' : 'text-gray-600 hover:text-gray-300 md:opacity-0 md:group-hover:opacity-100'}`}
-                    title={t(sp.offline ? 'space.lockedTitle' : 'space.lockTitle')}
-                    aria-label={sp.offline ? t('space.unlockNamed', { name: sp.name }) : t('space.lockNamed', { name: sp.name })}
-                  >
-                    {sp.offline ? <Lock size={14} /> : <Unlock size={14} />}
-                  </button>
-                  <button
-                    onClick={(e) => handleDeleteSpace(sp.id, e)}
-                    className="px-2 py-2 text-gray-600 hover:text-red-400 md:opacity-0 md:group-hover:opacity-100 transition-opacity shrink-0"
-                    aria-label={t('space.deleteNamed', { name: sp.name })}
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
+            <SpacesView
+              spaces={spaces}
+              onOpen={setCurrentSpaceId}
+              onCreate={handleCreateSpace}
+              onToggleLock={handleToggleSpaceLock}
+              onDelete={handleDeleteSpace}
+            />
           )
         ) : view === 'files' ? (
           <ResourcesView resources={files} onChanged={reloadFiles} />
@@ -1361,7 +1341,7 @@ export default function App() {
                             </button>
                             {spacePickerOpen === pickerId && (
                               <div className="absolute right-0 top-full mt-1 z-10 bg-gray-800 border border-gray-700 rounded shadow-lg min-w-36 py-1">
-                                {spaces.map(sp => {
+                                {chatSpaces.map(sp => {
                                   const blocked = spaceIsLocked(session?.spaceId) && !sp.offline
                                   return (
                                     <button
@@ -1550,6 +1530,9 @@ export default function App() {
               onFocusModeChange={setFocusMode}
               searchCategories={searchCategories}
               onSearchCategoriesChange={setSearchCategories}
+              collections={spaces.filter(sp => sp.kind === 'collection')}
+              selectedCollections={selectedCollections}
+              onCollectionsChange={setSelectedCollections}
               suggestionsEnabled={currentUser?.settings?.querySuggestions !== false}
               lockedSpace={activeSpaceLocked}
               related={related}

@@ -55,10 +55,19 @@ export const appSettings = sqliteTable('app_settings', {
   value: text('value').notNull(),
 })
 
+/** Named groupings, in two kinds.
+ *
+ *  A **space** organises chats: it accumulates memory, indexes its conversations, can be locked, and
+ *  may hold tagged resources. A **collection** organises resources only — no chats, no memory, no
+ *  monitors, no lock. One table rather than two because everything a collection needs already exists
+ *  here: `space_files` tagging, ownership checks, delete-cascade, the Resources filter chips, and
+ *  `searchSpaceFiles()`, which works on a collection id verbatim. */
 export const spaces = sqliteTable('spaces', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  /** `'space'` is the default so every pre-existing row is already correct without a backfill. */
+  kind: text('kind', { enum: ['space', 'collection'] }).notNull().default('space'),
   /** Locked: chats here get no web search, no URL fetching and no image generation.
    *
    *  A capability control, not a detection one — the tools are absent rather than screened, so
@@ -262,6 +271,7 @@ function initSchema() {
       id         TEXT PRIMARY KEY,
       name       TEXT NOT NULL,
       user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      kind       TEXT NOT NULL DEFAULT 'space' CHECK(kind IN ('space','collection')),
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
@@ -481,6 +491,7 @@ function initSchema() {
   // cannot add the constraint to an existing table at all. New databases get it from the CREATE
   // above; on an upgraded one the column is a plain id, and routes/files.ts nulls it on delete.
   try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN derived_from TEXT') } catch {}
+  try { sqlite.run(`ALTER TABLE spaces ADD COLUMN kind TEXT NOT NULL DEFAULT 'space'`) } catch {}
   // Migrate: backfill timezone from owner's settings for personal monitors that have none
   try {
     sqlite.run(`

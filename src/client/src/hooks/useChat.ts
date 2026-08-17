@@ -19,6 +19,7 @@ interface UseChatOptions {
   focusMode: 'flash' | 'balanced' | 'thorough' | 'image'
   searchCategories?: Array<'news' | 'science' | 'discussions' | 'tech'>
   includeFileIds?: string[]
+  collectionIds?: string[]
   includeMemoryIds?: string[]
   spaceId?: string
   /** User setting; when false no related-questions call is made at all. */
@@ -26,7 +27,7 @@ interface UseChatOptions {
   onSessionCreated: (id: string, title: string) => void
 }
 
-export function useChat({ sessionId, focusMode, searchCategories, includeFileIds, includeMemoryIds, spaceId, followUpSuggestions = true, onSessionCreated }: UseChatOptions) {
+export function useChat({ sessionId, focusMode, searchCategories, includeFileIds, includeMemoryIds, collectionIds, spaceId, followUpSuggestions = true, onSessionCreated }: UseChatOptions) {
   const t = useT()
   const [messages, setMessages] = useState<Message[]>([])
   const [streaming, setStreaming] = useState('')
@@ -117,7 +118,7 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
     let wasAborted = false
 
     try {
-      for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId, undefined, searchCategories, includeFileIds, includeMemoryIds, regenerating)) {
+      for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId, undefined, searchCategories, includeFileIds, includeMemoryIds, collectionIds, regenerating)) {
         if (chunk.type === 'text') {
           accumulated += chunk.delta as string
           cancelAnimationFrame(rafRef.current)
