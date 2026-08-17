@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useConfirm } from './confirm.tsx'
 import { listUsers, setUserRole, deleteUser, createInvite, listInvites, revokeInvite, resetUserPassword, testModels, fetchAdminSettings, updateAdminSettings, triggerDream, reindexChats, type ModelTestResult, type Invite } from '../lib/api.ts'
 import { Modal } from './Modal.tsx'
 
@@ -12,6 +13,7 @@ type UserRow = { id: string; email: string; name: string | null; role: string; c
 type Tab = 'settings' | 'users'
 
 export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
+  const confirm = useConfirm()
   const [tab, setTab] = useState<Tab>('settings')
 
   // Settings tab state
@@ -175,7 +177,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   }
 
   async function handleDelete(id: string) {
-    if (!confirm('Delete this user and all their data?')) return
+    if (!await confirm({ message: 'Delete this user and all their data?', confirmLabel: 'Delete', danger: true })) return
     try {
       await deleteUser(id)
       setUserList(prev => prev.filter(x => x.id !== id))
@@ -197,7 +199,11 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   }
 
   async function handleResetPassword(id: string) {
-    if (!confirm('Replace this user\'s password with a temporary one? Their current password stops working and any open session is signed out.')) return
+    if (!await confirm({
+      message: 'Replace this user\'s password with a temporary one? Their current password stops working and any open session is signed out.',
+      confirmLabel: 'Reset password',
+      danger: true,
+    })) return
     setBusy(true)
     setError('')
     try {

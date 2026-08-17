@@ -547,7 +547,7 @@ Prompt Studio is a built-in editor for creating and iterating on your own prompt
 4. Iterate: edit the prompt, adjust values, run again.
 5. When satisfied, give the template a name and click **Save template**.
 
-Saved templates appear in the template picker under **Custom**. Each card has always-visible **Edit** (pencil) and **Delete** (trash) buttons. Tapping delete requires a confirmation step (a **Del** / **✕** pair appears inline) to prevent accidental deletion. Editing re-opens Prompt Studio pre-filled with the existing template.
+Saved templates appear in the template picker under **Custom**. Each card has always-visible **Edit** (pencil) and **Delete** (trash) buttons. Delete asks for confirmation first, as every destructive action in the app does. Editing re-opens Prompt Studio pre-filled with the existing template.
 
 Templates are stored per user in the database and persist across sessions.
 
@@ -831,7 +831,7 @@ To do the same to one resource, and keep the result as an editable note rather t
 - **New facts are reconciled against existing ones on write.** Rather than appending everything, the small model decides whether each fact is genuinely new, supersedes an existing memory, or is already covered — so "I've moved to SQLite" replaces "I use Postgres" instead of sitting next to it. A memory you wrote yourself, or marked *always keep*, is never overwritten or discarded this way.
 - **Memories are selected by relevance to the question**, not by age. Each memory is embedded, and the ones nearest the current query (re-scored by the reranker when one is configured) are injected up to the token budget. A space can therefore hold far more memories than fit in one request without the older ones becoming unreachable. Without a configured embedder, or on a request with no query text, selection falls back to newest-first.
 - You can view, add, edit, and delete individual memories in the space detail view.
-- **★ Always keep** — starring a memory (the star appears on hover) injects it in every request regardless of relevance, and protects it from being merged away by compaction. Use it for standing instructions and facts that must never be dropped.
+- **★ Always keep** — starring a memory (the star appears on hover, and is always visible on a touch screen) injects it in every request regardless of relevance, and protects it from being merged away by compaction. Use it for standing instructions and facts that must never be dropped.
 
 ### Memory compaction and management
 

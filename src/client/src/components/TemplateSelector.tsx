@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { useConfirm } from './confirm.tsx'
 import { ArrowLeft, Pencil, Trash2, Plus } from 'lucide-react'
 import { TEMPLATES, type Template, type FocusMode, type TemplateField } from '../lib/templates.ts'
 import { fetchCustomTemplates, deleteCustomTemplate, type CustomTemplate } from '../lib/api.ts'
@@ -64,11 +65,11 @@ function customToTemplate(ct: CustomTemplate): Template {
 
 export function TemplateSelector({ onSelect, onClose }: Props) {
   const t = useT()
+  const confirm = useConfirm()
   const [active, setActive] = useState<Template | null>(null)
   const [values, setValues] = useState<Record<string, string>>({})
   const [customTemplates, setCustomTemplates] = useState<CustomTemplate[]>([])
   const [studio, setStudio] = useState<'create' | CustomTemplate | null>(null)
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const studioRef = useRef<'create' | CustomTemplate | null>(null)
 
@@ -107,8 +108,7 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
 
   async function handleDeleteCustom(e: React.MouseEvent, id: string) {
     e.stopPropagation()
-    if (confirmDeleteId !== id) { setConfirmDeleteId(id); return }
-    setConfirmDeleteId(null)
+    if (!await confirm({ message: t('template.deleteConfirm'), confirmLabel: t('common.delete'), danger: true })) return
     await deleteCustomTemplate(id)
     setCustomTemplates(prev => prev.filter(t => t.id !== id))
   }
@@ -196,41 +196,20 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
                       <div className="absolute top-2 right-2 flex gap-1">
                         <button
                           type="button"
-                          onClick={e => { e.stopPropagation(); setConfirmDeleteId(null); setStudio(ct) }}
+                          onClick={e => { e.stopPropagation(); setStudio(ct) }}
                           className="p-1 rounded text-gray-500 hover:text-gray-200 hover:bg-gray-600 transition-colors"
                           aria-label={t('template.edit')}
                         >
                           <Pencil size={12} />
                         </button>
-                        {confirmDeleteId === ct.id ? (
-                          <>
-                            <button
-                              type="button"
-                              onClick={e => handleDeleteCustom(e, ct.id)}
-                              className="p-1 rounded text-red-400 bg-gray-700 hover:bg-gray-600 transition-colors text-[10px] font-medium"
-                              aria-label={t('template.confirmDelete')}
-                            >
-                              {t('template.deleteShort')}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={e => { e.stopPropagation(); setConfirmDeleteId(null) }}
-                              className="p-1 rounded text-gray-400 bg-gray-700 hover:bg-gray-600 transition-colors text-[10px] font-medium"
-                              aria-label={t('template.cancelDelete')}
-                            >
-                              ✕
-                            </button>
-                          </>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={e => handleDeleteCustom(e, ct.id)}
-                            className="p-1 rounded text-gray-500 hover:text-red-400 hover:bg-gray-600 transition-colors"
-                            aria-label={t('template.delete')}
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          onClick={e => handleDeleteCustom(e, ct.id)}
+                          className="p-1 rounded text-gray-500 hover:text-red-400 hover:bg-gray-600 transition-colors"
+                          aria-label={t('template.delete')}
+                        >
+                          <Trash2 size={12} />
+                        </button>
                       </div>
                     </div>
                   ))}

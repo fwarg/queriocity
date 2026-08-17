@@ -1,6 +1,9 @@
 import { useRef, useState } from 'react'
-import { FileText, NotebookPen } from 'lucide-react'
+import { FileText, NotebookPen, Trash2, X } from 'lucide-react'
 import { NoteEditor } from './NoteEditor.tsx'
+import { SectionHeader } from './SectionHeader.tsx'
+import { useConfirm } from './confirm.tsx'
+import { EmptyState, ListRow, PRIMARY_BTN, RowAction } from './ui.tsx'
 import { ResourceDetail } from './ResourceDetail.tsx'
 import { EMPTY_FILTER, isFiltered, matchesFilter, ResourceFilters, toggleSpace, toggleTopic, type ResourceFilter } from './ResourceFilters.tsx'
 import { deleteFile, ingestUrl, uploadFile, type Resource } from '../lib/api.ts'
@@ -35,7 +38,7 @@ function Chip({ tone, active, onClick, children }: {
       title={t(active ? 'files.filterRemove' : 'files.filterBy')}
       className={`px-1.5 py-0.5 rounded-full text-[11px] border transition-colors ${CHIP_TONES[tone][active ? 'active' : 'idle']}`}
     >
-      {children}{active && ' ×'}
+      {children}{active && <X size={10} className="inline ml-0.5 -mt-0.5" />}
     </button>
   )
 }
@@ -58,6 +61,7 @@ interface Props {
  *  the list state stays with the parent, which needs the same resources for space tagging. */
 export function ResourcesView({ resources, onChanged }: Props) {
   const t = useT()
+  const confirm = useConfirm()
   const { lang } = useLang()
   const [openId, setOpenId] = useState<string | null>(null)
   const [writingNote, setWritingNote] = useState(false)
@@ -114,21 +118,20 @@ export function ResourcesView({ resources, onChanged }: Props) {
     }
   }
 
-  function handleDelete(resource: Resource, e: React.MouseEvent) {
-    e.stopPropagation()
-    if (!confirm(t('files.deleteConfirm', { name: resource.filename }))) return
+  async function handleDelete(resource: Resource) {
+    if (!await confirm({
+      message: t('files.deleteConfirm', { name: resource.filename }),
+      confirmLabel: t('common.delete'),
+      danger: true,
+    })) return
     deleteFile(resource.id).then(onChanged).catch(() => {})
   }
 
   return (
     <div className="flex flex-col flex-1 overflow-y-auto p-6 gap-4">
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex flex-col gap-1">
-          <h2 className="text-lg font-semibold text-gray-200">{t('nav.resources')}</h2>
-          <p className="text-xs text-gray-500 max-w-lg">{t('files.intro')}</p>
-        </div>
-        <div className="flex flex-col items-end gap-1 shrink-0">
-          <div className="flex gap-2">
+      <SectionHeader title={t('nav.resources')} intro={t('files.intro')} about={t('files.aboutTitle')}>
+        <div className="flex flex-col gap-1 items-end">
+          <div className="flex flex-wrap gap-2">
             <button
               onClick={() => setWritingNote(true)}
               className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-sm font-medium whitespace-nowrap"
@@ -144,7 +147,7 @@ export function ResourcesView({ resources, onChanged }: Props) {
             <button
               onClick={() => fileRef.current?.click()}
               disabled={uploadStatus === 'uploading'}
-              className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-sm font-medium whitespace-nowrap"
+              className={PRIMARY_BTN}
             >
               {uploadStatus === 'uploading' ? t('files.uploadingShort') : `+ ${t('files.upload')}`}
             </button>
@@ -156,7 +159,7 @@ export function ResourcesView({ resources, onChanged }: Props) {
           )}
           <input ref={fileRef} type="file" className="hidden" onChange={handleUpload} />
         </div>
-      </div>
+      </SectionHeader>
 
       {urlOpen && (
         <div className="flex flex-col gap-1.5 p-3 rounded-lg bg-gray-800 border border-gray-700">
@@ -174,7 +177,7 @@ export function ResourcesView({ resources, onChanged }: Props) {
             <button
               onClick={handleUrlIngest}
               disabled={!urlValue.trim() || urlStatus === 'loading'}
-              className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-sm font-medium"
+              className={PRIMARY_BTN}
             >
               {urlStatus === 'loading' ? t('files.fetching') : t('files.fetchAndAdd')}
             </button>
@@ -184,7 +187,7 @@ export function ResourcesView({ resources, onChanged }: Props) {
       )}
 
       {resources.length === 0 && !urlOpen ? (
-        <p className="text-gray-500 text-sm">{t('files.none')}</p>
+        <EmptyState>{t('files.none')}</EmptyState>
       ) : (
         <>
           {/* Worth its space once scrolling stops being enough — but always while a filter is
@@ -194,15 +197,11 @@ export function ResourcesView({ resources, onChanged }: Props) {
             <ResourceFilters resources={resources} filter={filter} onChange={setFilter} shown={shown.length} />
           )}
           {shown.length === 0 ? (
-            <p className="text-gray-500 text-sm">{t('files.filterNone')}</p>
+            <EmptyState>{t('files.filterNone')}</EmptyState>
           ) : (
             <div className="flex flex-col gap-2">
               {shown.map(r => (
-                <div
-                  key={r.id}
-                  onClick={() => setOpenId(r.id)}
-                  className="flex items-start gap-3 group px-4 py-3 rounded-lg bg-gray-800 hover:bg-gray-700 cursor-pointer"
-                >
+                <ListRow key={r.id} onClick={() => setOpenId(r.id)}>
                   {r.kind === 'note'
                     ? <NotebookPen size={16} className="text-amber-400 shrink-0 mt-0.5" />
                     : <FileText size={16} className="text-gray-500 shrink-0 mt-0.5" />}
@@ -240,17 +239,13 @@ export function ResourcesView({ resources, onChanged }: Props) {
                       ))}
                     </div>
                   </div>
-                  {/* Matches the chat and space lists: a bare ×, labelled for screen readers, and
-                      revealed on hover only from `md` up — below that there is no hover, so an
-                      opacity-0 delete is simply unreachable on a phone. */}
-                  <button
-                    onClick={e => handleDelete(r, e)}
-                    className="px-2 py-2 text-gray-600 hover:text-red-400 md:opacity-0 md:group-hover:opacity-100 transition-opacity shrink-0"
-                    aria-label={t('files.deleteNamed', { name: r.filename })}
-                  >
-                    ×
-                  </button>
-                </div>
+                  <RowAction
+                    icon={<Trash2 size={14} />}
+                    tone="danger"
+                    label={t('files.deleteNamed', { name: r.filename })}
+                    onClick={() => handleDelete(r)}
+                  />
+                </ListRow>
               ))}
             </div>
           )}

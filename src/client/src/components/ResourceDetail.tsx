@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { ArrowLeft, ExternalLink, FileText, NotebookPen } from 'lucide-react'
+import { ArrowLeft, ExternalLink, FileText, NotebookPen, X } from 'lucide-react'
 import { NoteEditor } from './NoteEditor.tsx'
 import {
   fetchResource, fetchCustomTemplates, fetchSpaces, renameResource, tagFileToSpace, transformResource, untagFileFromSpace,
@@ -283,7 +283,7 @@ function SpaceTags({ detail, onChanged }: { detail: Detail; onChanged: () => voi
             className="text-indigo-400 hover:text-red-300 disabled:opacity-50"
             aria-label={t('resource.untagFrom', { name: space.name })}
           >
-            ×
+            <X size={12} />
           </button>
         </span>
       ))}

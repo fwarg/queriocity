@@ -32,6 +32,7 @@ export const sv: Catalog = {
   'common.processing': 'Bearbetar ({progress})',
   'common.add': 'Lägg till',
   'common.cancel': 'Avbryt',
+  'common.confirm': 'Bekräfta',
   'common.delete': 'Ta bort',
   'common.edit': 'Redigera',
   'common.dismiss': 'Stäng',
@@ -62,6 +63,8 @@ export const sv: Catalog = {
   'chat.noneSaved': 'Inga sparade chattar än.',
   'chat.noneInSpace': 'Inga chattar i det här utrymmet än.',
   'chat.noneMatching': 'Inga chattar matchar din sökning.',
+  'chat.aboutTitle': 'Om chattar',
+  'chat.intro': 'Alla samtal sparas här och går att söka igenom. En chatt kan läggas i ett utrymme när som helst, med knappen bredvid titeln.',
   'chat.sortActive': 'Aktiva',
   'chat.sortCreated': 'Skapade',
   'chat.searchPlaceholder': 'Sök chattar…',
@@ -85,6 +88,8 @@ export const sv: Catalog = {
 
   // --- Utrymmen ---
   'space.new': 'Nytt utrymme',
+  'space.aboutTitle': 'Om utrymmen',
+  'space.intro': 'Ett utrymme grupperar besläktade chattar och bygger ett minne av dem, som senare chattar i samma utrymme använder. Resurser kan taggas till ett utrymme, och ett utrymme kan låsas så att dess chattar inte når nätet.',
   'space.none': 'Inga utrymmen än.',
   'space.namePlaceholder': 'Namn på utrymmet…',
   'space.rename': 'Byt namn på utrymmet',
@@ -104,6 +109,7 @@ export const sv: Catalog = {
   'space.lockedBannerTitle': 'Låst utrymme.',
   'space.lockedBannerBody': 'Ingen webbsökning, URL-hämtning eller bildgenerering — inget i den här chatten skickas någon annanstans än till din modellserver.',
   'space.lockChangeFailed': 'Kunde inte ändra låset.',
+  'space.lockAction': 'Lås',
   'space.transformFailed': 'Sammanställningen misslyckades',
   'space.holdsChats': { one: '{count} chatt', other: '{count} chattar' },
   'space.holdsMemories': { one: '{count} minne', other: '{count} minnen' },
@@ -140,6 +146,7 @@ export const sv: Catalog = {
 
   // --- Resurser ---
   'files.none': 'Inga resurser än. Ladda upp en fil eller lägg till en URL.',
+  'files.aboutTitle': 'Om resurser',
   'files.intro': 'Resurser delas upp i bitar, bäddas in och genomsöks automatiskt när din fråga kan besvaras av deras innehåll — du behöver inte hänvisa till dem uttryckligen. Använd gemet i inmatningsfältet i stället om du vill fråga om en viss fil utan att lagra den. Stöds: PDF, oformaterad text, Markdown, CSV, HTML, bilder (PNG/JPEG/GIF/WebP) och webbsidor (via URL).',
   'files.noneTagged': 'Inga resurser kopplade. Koppla resurser för att lägga in relevanta utdrag i utrymmets kontext.',
   'files.noneUntagged': 'Inga okopplade filer tillgängliga.',
@@ -174,6 +181,7 @@ export const sv: Catalog = {
   'collection.plural': 'Samlingar',
   'collection.new': 'Ny samling',
   'collection.none': 'Inga samlingar än. En samling grupperar resurser utan någon konversation.',
+  'collection.aboutTitle': 'Om samlingar',
   'collection.intro': 'En samling grupperar bara resurser — inga chattar, inget minne. Välj den under meddelanderutan för att svara utifrån den, i vilken chatt som helst.',
   'collection.namePlaceholder': 'Namn på samlingen…',
   'collection.holdsResources': { one: '{count} resurs', other: '{count} resurser' },
@@ -362,9 +370,7 @@ export const sv: Catalog = {
   'template.create': 'Skapa egen mall',
   'template.edit': 'Redigera mallen',
   'template.delete': 'Ta bort mallen',
-  'template.deleteShort': 'Ta bort',
-  'template.confirmDelete': 'Bekräfta borttagning',
-  'template.cancelDelete': 'Avbryt borttagning',
+  'template.deleteConfirm': 'Ta bort mallen? Detta går inte att ångra.',
   'template.back': 'Tillbaka till mallistan',
   'template.use': 'Använd mallen',
   'template.research.name': 'Djupdykning',
@@ -464,6 +470,8 @@ export const sv: Catalog = {
 
   // --- Bevakningar ---
   'monitor.new': 'Ny bevakning',
+  'monitor.aboutTitle': 'Om bevakningar',
+  'monitor.intro': 'En bevakning kör en fråga enligt ett schema och sparar varje körning som en chatt. Äldre körningar rensas bort när antalet som ska sparas nås.',
   'monitor.none': 'Inga bevakningar än. Skapa en för att köra en fråga automatiskt enligt schema.',
   'monitor.edit': 'Redigera bevakningen',
   'monitor.delete': 'Ta bort bevakningen',

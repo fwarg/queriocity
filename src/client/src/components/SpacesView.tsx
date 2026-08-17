@@ -1,5 +1,7 @@
 import { useState } from 'react'
-import { Lock, Unlock, MessagesSquare, Library } from 'lucide-react'
+import { Lock, Unlock, MessagesSquare, Library, Trash2 } from 'lucide-react'
+import { SectionHeader } from './SectionHeader.tsx'
+import { EmptyState, ListRow, RowAction } from './ui.tsx'
 import type { Space, SpaceKind } from '../lib/api.ts'
 import { useT } from '../lib/i18n.tsx'
 
@@ -8,7 +10,7 @@ interface Props {
   onOpen: (id: string) => void
   onCreate: (name: string, kind: SpaceKind) => void
   onToggleLock: (id: string) => void
-  onDelete: (id: string, e: React.MouseEvent) => void
+  onDelete: (id: string) => void
 }
 
 /** Both kinds of grouping, in two labelled sections.
@@ -28,9 +30,17 @@ export function SpacesView({ spaces, onOpen, onCreate, onToggleLock, onDelete }:
     setCreating(null)
   }
 
-  const sections: Array<{ kind: SpaceKind; title: string; empty: string; add: string }> = [
-    { kind: 'space', title: t('nav.spaces'), empty: t('space.none'), add: t('space.new') },
-    { kind: 'collection', title: t('collection.plural'), empty: t('collection.none'), add: t('collection.new') },
+  /** `intro` is optional and folded behind the ⓘ beside the heading: it is onboarding, and left
+   *  standing it took most of a phone screen before the first row. */
+  const sections: Array<{ kind: SpaceKind; title: string; empty: string; add: string; intro?: string; about?: string }> = [
+    {
+      kind: 'space', title: t('nav.spaces'), empty: t('space.none'), add: t('space.new'),
+      intro: t('space.intro'), about: t('space.aboutTitle'),
+    },
+    {
+      kind: 'collection', title: t('collection.plural'), empty: t('collection.none'), add: t('collection.new'),
+      intro: t('collection.intro'), about: t('collection.aboutTitle'),
+    },
   ]
 
   return (
@@ -39,8 +49,7 @@ export function SpacesView({ spaces, onOpen, onCreate, onToggleLock, onDelete }:
         const rows = spaces.filter(s => s.kind === section.kind)
         return (
           <div key={section.kind} className="flex flex-col gap-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-gray-200">{section.title}</h2>
+            <SectionHeader title={section.title} intro={section.intro} about={section.about}>
               {creating !== section.kind && (
                 <button
                   onClick={() => { setCreating(section.kind); setDraft('') }}
@@ -49,11 +58,7 @@ export function SpacesView({ spaces, onOpen, onCreate, onToggleLock, onDelete }:
                   + {section.add}
                 </button>
               )}
-            </div>
-
-            {section.kind === 'collection' && (
-              <p className="text-xs text-gray-500 max-w-lg -mt-1">{t('collection.intro')}</p>
-            )}
+            </SectionHeader>
 
             {creating === section.kind && (
               <input
@@ -69,44 +74,38 @@ export function SpacesView({ spaces, onOpen, onCreate, onToggleLock, onDelete }:
             )}
 
             {rows.length === 0 && creating !== section.kind ? (
-              <p className="text-gray-500 text-sm">{section.empty}</p>
+              <EmptyState>{section.empty}</EmptyState>
             ) : rows.map(sp => (
-              <div key={sp.id} className="flex items-center gap-2 group">
-                <button
-                  onClick={() => onOpen(sp.id)}
-                  className="flex-1 text-left px-4 py-3 rounded-lg bg-gray-800 hover:bg-gray-700 text-sm text-gray-100 flex items-center gap-2 min-w-0"
-                >
+              <ListRow key={sp.id} align="center" onClick={() => onOpen(sp.id)}>
+                {sp.kind === 'collection'
+                  ? <Library size={14} className="shrink-0 text-amber-400" />
+                  : <MessagesSquare size={14} className="shrink-0 text-indigo-400" />}
+                {sp.offline && <Lock size={12} className="shrink-0 -ml-1.5 text-amber-400" aria-label={t('space.locked')} />}
+                <span className="truncate text-sm text-gray-100">{sp.name}</span>
+                {/* A collection is measured by what it holds, a space by what happens in it. */}
+                <span className="ml-auto pl-2 text-xs text-gray-500 shrink-0">
                   {sp.kind === 'collection'
-                    ? <Library size={14} className="shrink-0 text-amber-400" />
-                    : <MessagesSquare size={14} className="shrink-0 text-indigo-400" />}
-                  {sp.offline && <Lock size={12} className="shrink-0 -ml-0.5 text-amber-400" aria-label={t('space.locked')} />}
-                  <span className="truncate">{sp.name}</span>
-                  {/* A collection is measured by what it holds, a space by what happens in it. */}
-                  <span className="ml-auto pl-2 text-xs text-gray-500 shrink-0">
-                    {sp.kind === 'collection'
-                      ? t('collection.holdsResources', { count: sp.resourceCount })
-                      : `${t('space.holdsChats', { count: sp.chatCount })}${sp.memoryCount > 0 ? ` · ${t('space.holdsMemories', { count: sp.memoryCount })}` : ''}`}
-                  </span>
-                </button>
-                {/* Locking denies a chat web access, so it is offered only where there are chats. */}
+                    ? t('collection.holdsResources', { count: sp.resourceCount })
+                    : `${t('space.holdsChats', { count: sp.chatCount })}${sp.memoryCount > 0 ? ` · ${t('space.holdsMemories', { count: sp.memoryCount })}` : ''}`}
+                </span>
+                {/* Locking denies a chat web access, so it is offered only where there are chats.
+                    Persistent once on: a lock is state the row should state at rest, not on hover. */}
                 {sp.kind === 'space' && (
-                  <button
+                  <RowAction
+                    icon={sp.offline ? <Lock size={14} /> : <Unlock size={14} />}
+                    tone={sp.offline ? 'active' : 'default'}
+                    persistent={sp.offline}
+                    label={sp.offline ? t('space.unlockNamed', { name: sp.name }) : t('space.lockNamed', { name: sp.name })}
                     onClick={() => onToggleLock(sp.id)}
-                    className={`px-2 py-2 shrink-0 transition-opacity ${sp.offline ? 'text-amber-400 hover:text-amber-300' : 'text-gray-600 hover:text-gray-300 md:opacity-0 md:group-hover:opacity-100'}`}
-                    title={t(sp.offline ? 'space.lockedTitle' : 'space.lockTitle')}
-                    aria-label={sp.offline ? t('space.unlockNamed', { name: sp.name }) : t('space.lockNamed', { name: sp.name })}
-                  >
-                    {sp.offline ? <Lock size={14} /> : <Unlock size={14} />}
-                  </button>
+                  />
                 )}
-                <button
-                  onClick={e => onDelete(sp.id, e)}
-                  className="px-2 py-2 text-gray-600 hover:text-red-400 md:opacity-0 md:group-hover:opacity-100 transition-opacity shrink-0"
-                  aria-label={t('space.deleteNamed', { name: sp.name })}
-                >
-                  ×
-                </button>
-              </div>
+                <RowAction
+                  icon={<Trash2 size={14} />}
+                  tone="danger"
+                  label={t('space.deleteNamed', { name: sp.name })}
+                  onClick={() => onDelete(sp.id)}
+                />
+              </ListRow>
             ))}
           </div>
         )

@@ -36,6 +36,7 @@ export const en = {
   'common.processing': 'Processing ({progress})',
   'common.add': 'Add',
   'common.cancel': 'Cancel',
+  'common.confirm': 'Confirm',
   'common.delete': 'Delete',
   'common.edit': 'Edit',
   'common.dismiss': 'Dismiss',
@@ -66,6 +67,8 @@ export const en = {
   'chat.noneSaved': 'No saved chats yet.',
   'chat.noneInSpace': 'No chats in this space yet.',
   'chat.noneMatching': 'No chats match your search.',
+  'chat.aboutTitle': 'About chats',
+  'chat.intro': 'Every conversation is saved here and can be searched across all chats. A chat can be assigned to a space at any time, from the button beside its title.',
   'chat.sortActive': 'Active',
   'chat.sortCreated': 'Created',
   'chat.searchPlaceholder': 'Search chats…',
@@ -89,6 +92,8 @@ export const en = {
 
   // --- Spaces ---
   'space.new': 'New space',
+  'space.aboutTitle': 'About spaces',
+  'space.intro': 'A space groups related chats and builds a memory from them, which later chats in the same space draw on. Resources can be tagged to a space, and a space can be locked so its chats get no web access.',
   'space.none': 'No spaces yet.',
   'space.namePlaceholder': 'Space name…',
   'space.rename': 'Rename space',
@@ -108,6 +113,7 @@ export const en = {
   'space.lockedBannerTitle': 'Locked space.',
   'space.lockedBannerBody': 'No web search, URL fetching or image generation — nothing in this chat is sent anywhere except your model server.',
   'space.lockChangeFailed': 'Could not change the lock.',
+  'space.lockAction': 'Lock',
   'space.transformFailed': 'Transform failed',
   'space.holdsChats': { one: '{count} chat', other: '{count} chats' },
   'space.holdsMemories': { one: '{count} memory', other: '{count} memories' },
@@ -144,6 +150,7 @@ export const en = {
 
   // --- Resources ---
   'files.none': 'No resources yet. Upload a file or add a URL.',
+  'files.aboutTitle': 'About resources',
   'files.intro': 'Resources are chunked, embedded, and searched automatically whenever your query might be answered by their content — no need to reference them explicitly. To ask about a specific file without storing it, use the paperclip in the chat input instead. Supported: PDF, plain text, Markdown, CSV, HTML, images (PNG/JPEG/GIF/WebP), and web pages (via URL).',
   'files.noneTagged': 'No resources tagged. Tag resources to inject relevant excerpts into the space context.',
   'files.noneUntagged': 'No untagged files available.',
@@ -178,6 +185,7 @@ export const en = {
   'collection.plural': 'Collections',
   'collection.new': 'New collection',
   'collection.none': 'No collections yet. A collection groups resources without a conversation.',
+  'collection.aboutTitle': 'About collections',
   'collection.intro': 'A collection groups resources and nothing else — no chats, no memory. Pick one below the message box to answer from it, in any chat.',
   'collection.namePlaceholder': 'Collection name…',
   'collection.holdsResources': { one: '{count} resource', other: '{count} resources' },
@@ -366,9 +374,7 @@ export const en = {
   'template.create': 'Create custom template',
   'template.edit': 'Edit template',
   'template.delete': 'Delete template',
-  'template.deleteShort': 'Del',
-  'template.confirmDelete': 'Confirm delete',
-  'template.cancelDelete': 'Cancel delete',
+  'template.deleteConfirm': 'Delete this template? This cannot be undone.',
   'template.back': 'Back to template list',
   'template.use': 'Use template',
   'template.research.name': 'Research deep-dive',
@@ -468,6 +474,8 @@ export const en = {
 
   // --- Monitors ---
   'monitor.new': 'New monitor',
+  'monitor.aboutTitle': 'About monitors',
+  'monitor.intro': 'A monitor re-runs a query on a schedule and stores each run as a chat. Older runs are pruned once the keep count is reached.',
   'monitor.none': 'No monitors yet. Create one to run a query automatically on a schedule.',
   'monitor.edit': 'Edit monitor',
   'monitor.delete': 'Delete monitor',

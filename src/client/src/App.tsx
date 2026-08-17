@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
-import { RotateCcw, Lock, ShieldCheck } from 'lucide-react'
+import { RotateCcw, Lock, ShieldCheck, Trash2, X } from 'lucide-react'
 import { MessageList, ImageCaptionContext } from './components/MessageList.tsx'
 import { ProgressLog, Elapsed } from './components/ProgressLog.tsx'
 import { ApprovalPrompt } from './components/ApprovalPrompt.tsx'
@@ -9,6 +9,10 @@ import { RegisterPage } from './components/RegisterPage.tsx'
 import { SettingsPanel } from './components/SettingsPanel.tsx'
 import { AdminPanel } from './components/AdminPanel.tsx'
 import { MonitorsView } from './components/MonitorsView.tsx'
+import { ChatRow } from './components/ChatRow.tsx'
+import { useConfirm } from './components/confirm.tsx'
+import { EmptyState, PRIMARY_BTN, RowAction } from './components/ui.tsx'
+import { SectionHeader } from './components/SectionHeader.tsx'
 import { SpacesView } from './components/SpacesView.tsx'
 import { ResourcesView } from './components/ResourcesView.tsx'
 import {
@@ -46,6 +50,7 @@ function countOverflowMemories(memories: SpaceMemory[], budget: number): number 
 
 export default function App() {
   const t = useT()
+  const confirm = useConfirm()
   const { lang, setLang } = useLang()
   const [authView, setAuthView] = useState<AuthView>('loading')
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null)
@@ -92,7 +97,6 @@ export default function App() {
   const [filesSectionOpen, setFilesSectionOpen] = useState(false)
   const [allUserFiles, setAllUserFiles] = useState<Array<{ id: string; filename: string; size: number }>>([])
   const [filePickerOpen, setFilePickerOpen] = useState(false)
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [pinnedFileIds, setPinnedFileIds] = useState<string[]>([])
   const [pinnedMemoryIds, setPinnedMemoryIds] = useState<string[]>([])
   /** Chats belonging to the open space, fetched server-side. `null` while loading. */
@@ -434,15 +438,10 @@ export default function App() {
     window.print()
   }
 
-  function handleDeleteSession(id: string, e: React.MouseEvent) {
-    e.stopPropagation()
-    setConfirmDeleteId(id)
-  }
-
-  function confirmDeleteSession() {
-    if (!confirmDeleteId) return
-    const id = confirmDeleteId
-    setConfirmDeleteId(null)
+  /** `e` only from the sidebar row, whose own click opens the chat. RowAction stops it itself. */
+  async function handleDeleteSession(id: string, e?: React.MouseEvent) {
+    e?.stopPropagation()
+    if (!await confirm({ message: t('chat.deleteConfirm'), confirmLabel: t('common.delete'), danger: true })) return
     deleteSession(id).then(() => {
       // The chat may be listed only in the open space's list, so resolve its space from either.
       const spaceOfChat = sessions.find(s => s.id === id)?.spaceId
@@ -462,16 +461,15 @@ export default function App() {
   }
 
   /** One-way, and stated as such before it happens: the server refuses the reverse. */
-  function handlePromoteCollection() {
+  async function handlePromoteCollection() {
     if (!currentSpaceId) return
-    if (!confirm(t('collection.promoteTitle'))) return
+    if (!await confirm({ message: t('collection.promoteTitle'), confirmLabel: t('collection.promote'), danger: true })) return
     promoteCollection(currentSpaceId)
       .then(() => fetchSpaces().then(setSpaces))
       .catch(err => setSpaceError(err instanceof Error ? err.message : t('collection.promoteFailed')))
   }
 
-  function handleDeleteSpace(id: string, e: React.MouseEvent) {
-    e.stopPropagation()
+  async function handleDeleteSpace(id: string) {
     const sp = spaces.find(s => s.id === id)
     const label = sp ? `"${sp.name}"` : t('space.thisSpace')
     // A locked space takes its chats with it. Unassigning them instead would turn every one into an
@@ -480,7 +478,7 @@ export default function App() {
     const warning = sp?.offline
       ? t('space.deleteLockedConfirm', { label, count: sp.chatCount })
       : t('space.deleteConfirm', { label })
-    if (!confirm(warning)) return
+    if (!await confirm({ message: warning, confirmLabel: t('common.delete'), danger: true })) return
     deleteSpace(id).then(({ deletedChats }) => {
       setSpaces(prev => prev.filter(s => s.id !== id))
       setSessions(prev => deletedChats > 0
@@ -495,7 +493,7 @@ export default function App() {
    *  Locking a space that already holds something is confirmed first: it is not a leak risk, but it
    *  cannot be undone afterwards without deleting the contents, and a toggle that silently becomes
    *  permanent is a trap. Unlocking is decided by the server, which refuses while anything remains. */
-  function handleToggleSpaceLock(id: string) {
+  async function handleToggleSpaceLock(id: string) {
     const sp = spaces.find(s => s.id === id)
     if (!sp) return
     const next = !sp.offline
@@ -507,7 +505,7 @@ export default function App() {
       const msg = holds
         ? t('space.lockConfirmHolding', { name: sp.name, holds })
         : t('space.lockConfirmEmpty', { name: sp.name })
-      if (!confirm(msg)) return
+      if (!await confirm({ message: msg, confirmLabel: t('space.lockAction'), danger: true })) return
     }
     setSpaces(prev => prev.map(s => s.id === id ? { ...s, offline: next } : s))
     updateSpace(id, { offline: next }).then(res => {
@@ -749,9 +747,13 @@ export default function App() {
               <button onClick={() => { loadSession(s.id, s.title); setSidebarOpen(false) }} className="flex-1 text-left px-3 py-2 text-sm truncate">
                 {s.title}
               </button>
-              <button onClick={(e) => handleDeleteSession(s.id, e)} className="px-2 py-2 text-gray-600 hover:text-red-400 shrink-0" aria-label={t('chat.deleteNamed', { title: s.title })}>
-                ×
-              </button>
+              <RowAction
+                icon={<Trash2 size={14} />}
+                tone="danger"
+                persistent
+                label={t('chat.deleteNamed', { title: s.title })}
+                onClick={() => handleDeleteSession(s.id)}
+              />
             </div>
           ))}
           <div ref={sidebarSentinelRef} className="py-1 text-center text-xs text-gray-600">
@@ -790,8 +792,8 @@ export default function App() {
         </div>
         {view === 'chats' ? (
           <div className="flex flex-col flex-1 overflow-y-auto p-6 gap-3" onClick={() => setSpacePickerOpen(null)}>
-            <div className="flex items-center justify-between mb-2">
-              <h2 className="text-lg font-semibold text-gray-200">{t('nav.chats')}</h2>
+            <div className="mb-2">
+            <SectionHeader title={t('nav.chats')} intro={t('chat.intro')} about={t('chat.aboutTitle')}>
               {!chatSearchResults && (
                 <div className="flex items-center gap-1 text-xs">
                   <button onClick={() => setChatSort('updated')} className={chatSort === 'updated' ? 'text-indigo-400' : 'text-gray-500 hover:text-gray-300'}>{t('chat.sortActive')}</button>
@@ -799,6 +801,7 @@ export default function App() {
                   <button onClick={() => setChatSort('created')} className={chatSort === 'created' ? 'text-indigo-400' : 'text-gray-500 hover:text-gray-300'}>{t('chat.sortCreated')}</button>
                 </div>
               )}
+            </SectionHeader>
             </div>
             <input
               type="search"
@@ -813,69 +816,21 @@ export default function App() {
               </p>
             )}
             {(chatSearchResults ?? sessions).length === 0 && !chatSearch ? (
-              <p className="text-gray-500 text-sm">{t('chat.noneSaved')}</p>
-            ) : (chatSearchResults ?? sessions).map(s => {
-              const spaceName = s.spaceId ? spaces.find(sp => sp.id === s.spaceId)?.name : null
-              return (
-                <div key={s.id} className="flex items-center gap-2 group relative">
-                  <button
-                    onClick={() => loadSession(s.id, s.title)}
-                    className="flex-1 text-left px-4 py-3 rounded-lg bg-gray-800 hover:bg-gray-700 text-sm text-gray-100"
-                  >
-                    {spaceIsLocked(s.spaceId) && <Lock size={11} className="inline mr-1.5 -mt-0.5 text-amber-400" aria-label={t('space.inLocked')} />}
-                    {s.title}
-                  </button>
-                  {spaces.length > 0 && (
-                    <div className="relative shrink-0">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setSpacePickerOpen(prev => prev === s.id ? null : s.id) }}
-                        className={`px-2 py-1 rounded text-xs transition-opacity ${spaceName ? 'text-indigo-400 bg-indigo-900/40' : 'text-gray-600 hover:text-gray-400 md:opacity-0 md:group-hover:opacity-100'}`}
-                        title={t('space.moveTo')}
-                      >
-                        {spaceName ?? '⊡'}
-                      </button>
-                      {spacePickerOpen === s.id && (
-                        <div className="absolute right-0 top-full mt-1 z-10 bg-gray-800 border border-gray-700 rounded shadow-lg min-w-36 py-1" onClick={e => e.stopPropagation()}>
-                          {/* A chat in a locked space may only move to another locked space, and
-                              "remove from space" is the most permissive destination of all. Shown
-                              disabled rather than hidden, so the restriction is legible. */}
-                          {chatSpaces.map(sp => {
-                            const blocked = spaceIsLocked(s.spaceId) && !sp.offline
-                            return (
-                              <button
-                                key={sp.id}
-                                disabled={blocked}
-                                onClick={() => handleAssignToSpace(s.id, sp.id)}
-                                title={blocked ? t('space.moveBlocked') : undefined}
-                                className={`w-full text-left px-3 py-1.5 text-xs ${blocked ? 'text-gray-600 cursor-not-allowed' : 'hover:bg-gray-700'} ${s.spaceId === sp.id ? 'text-indigo-400' : blocked ? '' : 'text-gray-300'}`}
-                              >
-                                {sp.offline && <Lock size={10} className="inline mr-1 -mt-0.5" />}
-                                {sp.name}
-                              </button>
-                            )
-                          })}
-                          {s.spaceId && !spaceIsLocked(s.spaceId) && (
-                            <button
-                              onClick={() => handleAssignToSpace(s.id, null)}
-                              className="w-full text-left px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-700 hover:text-red-400 border-t border-gray-700 mt-1 pt-1"
-                            >
-                              {t('space.removeFrom')}
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  <button
-                    onClick={(e) => handleDeleteSession(s.id, e)}
-                    className="px-2 py-2 text-gray-600 hover:text-red-400 md:opacity-0 md:group-hover:opacity-100 transition-opacity shrink-0"
-                    aria-label={t('chat.deleteNamed', { title: s.title })}
-                  >
-                    ×
-                  </button>
-                </div>
-              )
-            })}
+              <EmptyState>{t('chat.noneSaved')}</EmptyState>
+            ) : (chatSearchResults ?? sessions).map(s => (
+              <ChatRow
+                key={s.id}
+                chat={s}
+                spaceName={s.spaceId ? spaces.find(sp => sp.id === s.spaceId)?.name ?? null : null}
+                chatSpaces={chatSpaces}
+                spaceIsLocked={spaceIsLocked}
+                pickerOpen={spacePickerOpen === s.id}
+                onOpen={() => loadSession(s.id, s.title)}
+                onTogglePicker={() => setSpacePickerOpen(prev => prev === s.id ? null : s.id)}
+                onAssign={spaceId => handleAssignToSpace(s.id, spaceId)}
+                onDelete={() => handleDeleteSession(s.id)}
+              />
+            ))}
             {!chatSearchResults && (
               <div ref={sentinelRef} className="py-1 text-center text-xs text-gray-600">
                 {chatLoadingMore ? t('common.loading') : ''}
@@ -925,7 +880,7 @@ export default function App() {
                 ) : (
                   <button
                     onClick={() => newChat(currentSpaceId!)}
-                    className="ml-auto px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-sm font-medium whitespace-nowrap"
+                    className={`ml-auto ${PRIMARY_BTN}`}
                   >
                     + {t('chat.new')}
                   </button>
@@ -970,7 +925,7 @@ export default function App() {
                       {compactResult && <span className="text-xs text-gray-500">{compactResult}</span>}
                       <button
                         onClick={async () => {
-                          if (!confirm(t('memory.recreateConfirm'))) return
+                          if (!await confirm({ message: t('memory.recreateConfirm'), confirmLabel: t('memory.recreateAll'), danger: true })) return
                           setRecreating(true)
                           setRecreateProgress(null)
                           setCompactResult(null)
@@ -997,7 +952,7 @@ export default function App() {
                       </button>
                       <button
                         onClick={async () => {
-                          if (!confirm(t('memory.clearConfirm'))) return
+                          if (!await confirm({ message: t('memory.clearConfirm'), confirmLabel: t('common.clearAll'), danger: true })) return
                           await clearSpaceMemories(currentSpaceId!)
                           setSpaceMemories([])
                         }}
@@ -1045,7 +1000,7 @@ export default function App() {
                     />
                     <button
                       onClick={() => handleMemoryAlwaysKeep(m.id, !m.alwaysKeep)}
-                      className={`shrink-0 text-xs leading-none mt-0.5 transition-colors ${m.alwaysKeep ? 'text-amber-400 hover:text-amber-300' : 'text-gray-700 hover:text-gray-500 opacity-0 group-hover:opacity-100'}`}
+                      className={`shrink-0 text-xs leading-none mt-0.5 transition-colors ${m.alwaysKeep ? 'text-amber-400 hover:text-amber-300' : 'text-gray-700 hover:text-gray-500 md:opacity-0 md:group-hover:opacity-100'}`}
                       title={m.alwaysKeep ? t('memory.alwaysKeptTitle') : t('memory.alwaysKeepTitle')}
                       aria-label={m.alwaysKeep ? t('memory.alwaysKeepUnset') : t('memory.alwaysKeep')}
                       aria-pressed={m.alwaysKeep}
@@ -1074,18 +1029,18 @@ export default function App() {
                     {editingMemoryId !== m.id && (
                       <button
                         onClick={() => { setMemoryDraft(m.content); setEditingMemoryId(m.id) }}
-                        className="text-gray-700 hover:text-gray-400 text-xs shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                        className="text-gray-700 hover:text-gray-400 text-xs shrink-0 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
                         aria-label={t('common.edit')}
                       >
                         ✎
                       </button>
                     )}
-                    <button
+                    <RowAction
+                      icon={<Trash2 size={14} />}
+                      tone="danger"
+                      label={t('common.delete')}
                       onClick={() => handleDeleteMemory(m.id)}
-                      className="text-gray-700 hover:text-red-400 text-xs shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                    >
-                      ×
-                    </button>
+                    />
                   </div>
                 ))}
               </div>
@@ -1148,16 +1103,16 @@ export default function App() {
                       title={t('files.pinTitle')}
                     />
                     <span className="text-xs text-gray-300 truncate flex-1 min-w-0">{f.filename}</span>
-                    <button
+                    <RowAction
+                      icon={<X size={14} />}
+                      tone="danger"
+                      label={t('resource.untagFrom', { name: f.filename })}
                       onClick={async () => {
                         await untagFileFromSpace(currentSpaceId!, f.id)
                         setPinnedFileIds(prev => prev.filter(id => id !== f.id))
                         setTaggedFiles(prev => prev.filter(t => t.id !== f.id))
                       }}
-                      className="text-gray-700 hover:text-red-400 text-xs shrink-0 opacity-0 group-hover:opacity-100 transition-opacity ml-1"
-                    >
-                      ×
-                    </button>
+                    />
                   </div>
                 ))}
                 {filesSectionOpen && taggedFiles.length > 0 && (
@@ -1220,65 +1175,23 @@ export default function App() {
                       className="px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-300 focus:outline-none focus:border-blue-500"
                     />
                     {spaceChats === null ? (
-                      <p className="text-gray-500 text-sm">{t('chat.loading')}</p>
+                      <EmptyState>{t('chat.loading')}</EmptyState>
                     ) : filtered.length === 0 ? (
-                      <p className="text-gray-500 text-sm">{t(loaded.length === 0 ? 'chat.noneInSpace' : 'chat.noneMatching')}</p>
-                    ) : filtered.map(s => {
-                const spaceName = spaces.find(sp => sp.id === s.spaceId)?.name ?? null
-                return (
-                  <div key={s.id} className="flex items-center gap-2 group">
-                    <button
-                      onClick={() => loadSession(s.id, s.title)}
-                      className="flex-1 text-left px-4 py-3 rounded-lg bg-gray-800 hover:bg-gray-700 text-sm text-gray-100"
-                    >
-                      {spaceIsLocked(s.spaceId) && <Lock size={11} className="inline mr-1.5 -mt-0.5 text-amber-400" aria-label={t('space.inLocked')} />}
-                      {s.title}
-                    </button>
-                    <div className="relative shrink-0">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setSpacePickerOpen(prev => prev === s.id ? null : s.id) }}
-                        className="px-2 py-1 rounded text-xs text-indigo-400 bg-indigo-900/40"
-                        title={t('space.moveTo')}
-                      >
-                        {spaceName}
-                      </button>
-                      {spacePickerOpen === s.id && (
-                        <div className="absolute right-0 top-full mt-1 z-10 bg-gray-800 border border-gray-700 rounded shadow-lg min-w-36 py-1" onClick={e => e.stopPropagation()}>
-                          {chatSpaces.map(sp => {
-                            const blocked = spaceIsLocked(s.spaceId) && !sp.offline
-                            return (
-                              <button
-                                key={sp.id}
-                                disabled={blocked}
-                                onClick={() => handleAssignToSpace(s.id, sp.id)}
-                                title={blocked ? t('space.moveBlocked') : undefined}
-                                className={`w-full text-left px-3 py-1.5 text-xs ${blocked ? 'text-gray-600 cursor-not-allowed' : 'hover:bg-gray-700'} ${s.spaceId === sp.id ? 'text-indigo-400' : blocked ? '' : 'text-gray-300'}`}
-                              >
-                                {sp.offline && <Lock size={10} className="inline mr-1 -mt-0.5" />}
-                                {sp.name}
-                              </button>
-                            )
-                          })}
-                          <button
-                            onClick={() => { recreateChatMemories(s.id).catch(() => {}); setSpacePickerOpen(null) }}
-                            className="w-full text-left px-3 py-1.5 text-xs text-gray-400 hover:bg-gray-700 hover:text-gray-200 border-t border-gray-700 mt-1 pt-1"
-                          >
-                            {t('memory.recreateForChat')}
-                          </button>
-                          {!spaceIsLocked(s.spaceId) && (
-                            <button
-                              onClick={() => handleAssignToSpace(s.id, null)}
-                              className="w-full text-left px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-700 hover:text-red-400"
-                            >
-                              {t('space.removeFrom')}
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
+                      <EmptyState>{t(loaded.length === 0 ? 'chat.noneInSpace' : 'chat.noneMatching')}</EmptyState>
+                    ) : filtered.map(s => (
+                      <ChatRow
+                        key={s.id}
+                        chat={s}
+                        spaceName={spaces.find(sp => sp.id === s.spaceId)?.name ?? null}
+                        chatSpaces={chatSpaces}
+                        spaceIsLocked={spaceIsLocked}
+                        pickerOpen={spacePickerOpen === s.id}
+                        onOpen={() => loadSession(s.id, s.title)}
+                        onTogglePicker={() => setSpacePickerOpen(prev => prev === s.id ? null : s.id)}
+                        onAssign={spaceId => handleAssignToSpace(s.id, spaceId)}
+                        onRecreateMemories={() => { recreateChatMemories(s.id).catch(() => {}); setSpacePickerOpen(null) }}
+                      />
+                    ))}
                   </>
                 )
               })()}
@@ -1427,9 +1340,9 @@ export default function App() {
                 </span>
                 <button
                   onClick={() => { setChatSearchOpen(false); setChatSearchQuery('') }}
-                  className="text-gray-600 hover:text-gray-400 text-xs px-1"
+                  className="text-gray-600 hover:text-gray-400 px-1"
                   title={t('chat.closeSearch')}
-                >×</button>
+                ><X size={14} /></button>
               </div>
             )}
             {/* Persistent while the chat is in a locked space. The whole value of the mode is
@@ -1446,7 +1359,7 @@ export default function App() {
             {spaceError && (
               <div className="mx-4 mt-3 flex items-start gap-2 rounded border border-red-700/50 bg-red-950/20 px-3 py-2 text-xs text-red-200">
                 <span className="flex-1">{spaceError}</span>
-                <button onClick={() => setSpaceError(null)} className="text-red-300 hover:text-red-100" aria-label={t('common.dismiss')}>×</button>
+                <button onClick={() => setSpaceError(null)} className="text-red-300 hover:text-red-100" aria-label={t('common.dismiss')}><X size={14} /></button>
               </div>
             )}
             {messages.length === 0 && !streaming ? (
@@ -1545,17 +1458,6 @@ export default function App() {
         )}
       </div>
     </div>
-    {confirmDeleteId && (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setConfirmDeleteId(null)}>
-        <div className="bg-gray-900 border border-gray-700 rounded-lg p-5 flex flex-col gap-4 w-72 shadow-xl" onClick={e => e.stopPropagation()}>
-          <p className="text-sm text-gray-200">{t('chat.deleteConfirm')}</p>
-          <div className="flex justify-end gap-2">
-            <button onClick={() => setConfirmDeleteId(null)} className="px-3 py-1.5 rounded text-sm bg-gray-700 hover:bg-gray-600 text-gray-200">{t('common.cancel')}</button>
-            <button onClick={confirmDeleteSession} className="px-3 py-1.5 rounded text-sm bg-red-700 hover:bg-red-600 text-white">{t('common.delete')}</button>
-          </div>
-        </div>
-      </div>
-    )}
     </>
   )
 }
