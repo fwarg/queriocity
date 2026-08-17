@@ -178,11 +178,10 @@ export const en = {
   'collection.plural': 'Collections',
   'collection.new': 'New collection',
   'collection.none': 'No collections yet. A collection groups resources without a conversation.',
-  'collection.intro': 'A collection groups resources and nothing else — no chats, no memory. Tick one below the message box to answer from it, in any chat.',
+  'collection.intro': 'A collection groups resources and nothing else — no chats, no memory. Pick one below the message box to answer from it, in any chat.',
   'collection.namePlaceholder': 'Collection name…',
   'collection.holdsResources': { one: '{count} resource', other: '{count} resources' },
   'collection.kind': 'Collection',
-  'collection.attach': 'Answer from collections',
   'collection.promote': 'Make this a space',
   'collection.promoteTitle': 'Turn this collection into a space, keeping its resources. This cannot be undone.',
   'collection.promoteFailed': 'Could not turn this collection into a space',
@@ -250,6 +249,8 @@ export const en = {
 
   // --- Search categories ---
   'category.all': 'All',
+  'category.allCategories': 'All categories',
+  'category.group': 'Search categories',
   'category.news': 'news',
   'category.science': 'science',
   'category.discussions': 'discussions',
