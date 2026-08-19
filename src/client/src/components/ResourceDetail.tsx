@@ -10,6 +10,8 @@ import {
 import { useLang, useT } from '../lib/i18n.tsx'
 import { errorMessage } from '../lib/errors.ts'
 import type { TranslationKey } from '@shared/i18n/index.ts'
+import { GuideLink } from './GuideView.tsx'
+import type { TopicId } from '@shared/guide/index.ts'
 
 const OPERATIONS: TransformOperation[] = ['summarize', 'keypoints', 'questions', 'outline']
 
@@ -325,10 +327,13 @@ function ResourceChip({ resource, onOpen }: { resource: ResourceRef; onOpen: (id
   )
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({ title, topic, children }: { title: string; topic?: TopicId; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <h3 className="text-xs font-medium uppercase tracking-wide text-gray-500">{title}</h3>
+      <h3 className="text-xs font-medium uppercase tracking-wide text-gray-500 flex items-center gap-2">
+        {title}
+        {topic && <span className="normal-case tracking-normal font-normal"><GuideLink topic={topic} /></span>}
+      </h3>
       {children}
     </div>
   )
@@ -361,7 +366,7 @@ function TransformPanel({ id, sourceTitle, onSaved }: { id: string; sourceTitle:
   }
 
   return (
-    <Section title={t('resource.transform')}>
+    <Section title={t('resource.transform')} topic="notes">
       <p className="text-xs text-gray-500">{t('resource.transformIntro')}</p>
       <div className="flex flex-wrap gap-2 mt-1">
         {OPERATIONS.map(op => (

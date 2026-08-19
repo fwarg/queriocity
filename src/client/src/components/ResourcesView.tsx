@@ -129,7 +129,7 @@ export function ResourcesView({ resources, onChanged }: Props) {
 
   return (
     <div className="flex flex-col flex-1 overflow-y-auto p-6 gap-4">
-      <SectionHeader title={t('nav.resources')} intro={t('files.intro')} about={t('files.aboutTitle')}>
+      <SectionHeader title={t('nav.resources')} intro={t('files.intro')} about={t('files.aboutTitle')} topic="resources">
         <div className="flex flex-col gap-1 items-end">
           <div className="flex flex-wrap gap-2">
             <button

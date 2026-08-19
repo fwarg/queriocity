@@ -52,6 +52,7 @@ export const en = {
   'nav.spaces': 'Spaces',
   'nav.resources': 'Resources',
   'nav.monitors': 'Monitors',
+  'nav.guide': 'Guide',
   'nav.settings': 'Settings',
   'nav.admin': 'Admin',
   'nav.signOut': 'Sign out',
@@ -59,6 +60,16 @@ export const en = {
 
   // --- App shell ---
   'app.tagline': 'Your private research assistant',
+  'guide.search': 'Search the guide',
+  'guide.noMatch': 'No topic matches that.',
+  'guide.back': 'All topics',
+  'guide.openTarget': 'Open {name}',
+  'guide.readMore': 'Read more',
+  'guide.tryOne': 'Try one:',
+  'guide.newHere': 'New here? Read the guide',
+  'guide.example1': 'What has happened in AI regulation this month?',
+  'guide.example2': 'Compare heat pumps and district heating for a 1950s house',
+  'guide.example3': 'Explain what a vector database is, simply',
 
   // --- Chats ---
   'chat.new': 'New chat',

@@ -48,6 +48,7 @@ export const sv: Catalog = {
   'nav.spaces': 'Utrymmen',
   'nav.resources': 'Resurser',
   'nav.monitors': 'Bevakningar',
+  'nav.guide': 'Guide',
   'nav.settings': 'Inställningar',
   'nav.admin': 'Admin',
   'nav.signOut': 'Logga ut',
@@ -55,6 +56,16 @@ export const sv: Catalog = {
 
   // --- Appen ---
   'app.tagline': 'Din privata assistent för research',
+  'guide.search': 'Sök i guiden',
+  'guide.noMatch': 'Inget avsnitt matchar det.',
+  'guide.back': 'Alla avsnitt',
+  'guide.openTarget': 'Öppna {name}',
+  'guide.readMore': 'Läs mer',
+  'guide.tryOne': 'Prova en:',
+  'guide.newHere': 'Ny här? Läs guiden',
+  'guide.example1': 'Vad har hänt inom AI-reglering den här månaden?',
+  'guide.example2': 'Jämför värmepump och fjärrvärme för ett 50-talshus',
+  'guide.example3': 'Förklara enkelt vad en vektordatabas är',
 
   // --- Chattar ---
   'chat.new': 'Ny chatt',

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Lock, Unlock, MessagesSquare, Library, Trash2 } from 'lucide-react'
 import { SectionHeader } from './SectionHeader.tsx'
+import type { TopicId } from '@shared/guide/index.ts'
 import { EmptyState, ListRow, RowAction } from './ui.tsx'
 import type { Space, SpaceKind } from '../lib/api.ts'
 import { useT } from '../lib/i18n.tsx'
@@ -32,14 +33,14 @@ export function SpacesView({ spaces, onOpen, onCreate, onToggleLock, onDelete }:
 
   /** `intro` is optional and folded behind the ⓘ beside the heading: it is onboarding, and left
    *  standing it took most of a phone screen before the first row. */
-  const sections: Array<{ kind: SpaceKind; title: string; empty: string; add: string; intro?: string; about?: string }> = [
+  const sections: Array<{ kind: SpaceKind; title: string; empty: string; add: string; intro?: string; about?: string; topic?: TopicId }> = [
     {
       kind: 'space', title: t('nav.spaces'), empty: t('space.none'), add: t('space.new'),
-      intro: t('space.intro'), about: t('space.aboutTitle'),
+      intro: t('space.intro'), about: t('space.aboutTitle'), topic: 'spaces',
     },
     {
       kind: 'collection', title: t('collection.plural'), empty: t('collection.none'), add: t('collection.new'),
-      intro: t('collection.intro'), about: t('collection.aboutTitle'),
+      intro: t('collection.intro'), about: t('collection.aboutTitle'), topic: 'collections',
     },
   ]
 
@@ -49,7 +50,7 @@ export function SpacesView({ spaces, onOpen, onCreate, onToggleLock, onDelete }:
         const rows = spaces.filter(s => s.kind === section.kind)
         return (
           <div key={section.kind} className="flex flex-col gap-3">
-            <SectionHeader title={section.title} intro={section.intro} about={section.about}>
+            <SectionHeader title={section.title} intro={section.intro} about={section.about} topic={section.topic}>
               {creating !== section.kind && (
                 <button
                   onClick={() => { setCreating(section.kind); setDraft('') }}

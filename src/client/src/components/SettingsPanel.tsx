@@ -11,6 +11,7 @@ import { LanguageSelect } from './LanguageSelect.tsx'
 import { useLang, useT } from '../lib/i18n.tsx'
 import { errorMessage } from '../lib/errors.ts'
 import type { Lang, TranslationKey } from '@shared/i18n/index.ts'
+import { GuideLink } from './GuideView.tsx'
 
 /** Inline CRUD for the user-level memory list. Kept in this panel because these facts are
  *  account-wide — there is no space to hang them off. */
@@ -389,7 +390,7 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
           <div className="border-t border-gray-800" />
           <div className="flex flex-col gap-2">
             <label className="text-xs text-gray-400 font-medium">{t('settings.aboutYou')}</label>
-            <p className="text-xs text-gray-500">{t('settings.aboutYouDesc')}</p>
+            <p className="text-xs text-gray-500">{t('settings.aboutYouDesc')} <GuideLink topic="settings" /></p>
             <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
               <input
                 type="checkbox"

@@ -6,6 +6,7 @@ import { fetchCustomTemplates, deleteCustomTemplate, type CustomTemplate } from 
 import { PromptStudio } from './PromptStudio.tsx'
 import { useT } from '../lib/i18n.tsx'
 import type { TranslationKey } from '@shared/i18n/index.ts'
+import { GuideLink } from './GuideView.tsx'
 
 /** Copy for the built-in templates is keyed by the ids already in templates.ts rather than by
  *  extra fields on the data, so adding a template is one entry there and a block in the catalogs.
@@ -149,7 +150,9 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
       >
         {!active ? (
           <div className="p-3">
-            <p className="text-xs text-gray-400 mb-2 px-1">{t('template.choose')}</p>
+            <p className="text-xs text-gray-400 mb-2 px-1">
+              {t('template.choose')} <GuideLink topic="templates" />
+            </p>
 
             {/* Built-in templates */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">

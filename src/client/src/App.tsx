@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
-import { RotateCcw, Lock, ShieldCheck, Trash2, X } from 'lucide-react'
+import { BookOpen, RotateCcw, Lock, ShieldCheck, Trash2, X } from 'lucide-react'
 import { MessageList, ImageCaptionContext } from './components/MessageList.tsx'
 import { ProgressLog, Elapsed } from './components/ProgressLog.tsx'
 import { ApprovalPrompt } from './components/ApprovalPrompt.tsx'
@@ -11,6 +11,8 @@ import { AdminPanel } from './components/AdminPanel.tsx'
 import { MonitorsView } from './components/MonitorsView.tsx'
 import { ChatRow } from './components/ChatRow.tsx'
 import { useConfirm } from './components/confirm.tsx'
+import { useGuide, useGuideNavigation } from './components/GuideView.tsx'
+import type { GuideTarget } from '@shared/guide/index.ts'
 import { EmptyState, PRIMARY_BTN, RowAction } from './components/ui.tsx'
 import { SectionHeader } from './components/SectionHeader.tsx'
 import { SpacesView } from './components/SpacesView.tsx'
@@ -27,6 +29,9 @@ import {
 import type { AuthUser, Message, Resource, Space, SpaceKind, SpaceMemory, SpaceFile } from './lib/api.ts'
 import { useChat } from './hooks/useChat.ts'
 import { useLang, useT } from './lib/i18n.tsx'
+
+/** One per mode worth showing off: something current, something comparative, something explained. */
+const EXAMPLE_KEYS = ['guide.example1', 'guide.example2', 'guide.example3'] as const
 
 type AuthView = 'loading' | 'login' | 'register'
 type MainView = 'chat' | 'chats' | 'files' | 'spaces' | 'monitors'
@@ -51,6 +56,7 @@ function countOverflowMemories(memories: SpaceMemory[], budget: number): number 
 export default function App() {
   const t = useT()
   const confirm = useConfirm()
+  const openGuide = useGuide()
   const { lang, setLang } = useLang()
   const [authView, setAuthView] = useState<AuthView>('loading')
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null)
@@ -116,6 +122,15 @@ export default function App() {
   const [chatSearch, setChatSearch] = useState('')
   const [chatSearchResults, setChatSearchResults] = useState<Session[] | null>(null)
   const [chatTotal, setChatTotal] = useState(0)
+
+  // The guide's "Open Spaces →" buttons. Registered rather than passed, because the guide is
+  // mounted above App so that any view's ⓘ can open it.
+  useGuideNavigation(useCallback((target: GuideTarget) => {
+    if (target === 'settings') { setShowSettings(true); return }
+    if (target === 'spaces') setCurrentSpaceId(null)
+    setView(target)
+    setSidebarOpen(false)
+  }, []))
   const [chatHasMore, setChatHasMore] = useState(false)
   const [chatLoadingMore, setChatLoadingMore] = useState(false)
   const chatOffsetRef = useRef(0)
@@ -763,6 +778,9 @@ export default function App() {
 
         {/* Bottom user area */}
         <div className="border-t border-gray-800 pt-2 flex flex-col gap-1">
+          <button onClick={() => { openGuide(); setSidebarOpen(false) }} className="w-full text-left px-3 py-2 rounded text-xs text-gray-400 hover:bg-gray-800 flex items-center gap-1.5">
+            <BookOpen size={12} /> {t('nav.guide')}
+          </button>
           <button onClick={() => { setShowSettings(true); setSidebarOpen(false) }} className="w-full text-left px-3 py-2 rounded text-xs text-gray-400 hover:bg-gray-800">
             ⚙ {t('nav.settings')}
           </button>
@@ -793,7 +811,7 @@ export default function App() {
         {view === 'chats' ? (
           <div className="flex flex-col flex-1 overflow-y-auto p-6 gap-3" onClick={() => setSpacePickerOpen(null)}>
             <div className="mb-2">
-            <SectionHeader title={t('nav.chats')} intro={t('chat.intro')} about={t('chat.aboutTitle')}>
+            <SectionHeader title={t('nav.chats')} intro={t('chat.intro')} about={t('chat.aboutTitle')} topic="gettingStarted">
               {!chatSearchResults && (
                 <div className="flex items-center gap-1 text-xs">
                   <button onClick={() => setChatSort('updated')} className={chatSort === 'updated' ? 'text-indigo-400' : 'text-gray-500 hover:text-gray-300'}>{t('chat.sortActive')}</button>
@@ -1363,10 +1381,33 @@ export default function App() {
               </div>
             )}
             {messages.length === 0 && !streaming ? (
-              <div className="flex flex-col items-center justify-center flex-1 gap-3 text-gray-500">
+              <div className="flex flex-col items-center justify-center flex-1 gap-3 text-gray-500 px-4">
                 <img src="/logo.webp" alt="Queriocity" className="w-24 sm:w-32 md:w-40 h-auto" />
                 <span className="text-2xl font-semibold text-gray-300">Queriocity</span>
                 <span className="text-sm">{t('app.tagline')}</span>
+                {/* The screen a new account lands on was otherwise blank. Clicking an example
+                    sends it, exactly as a follow-up chip does — seeing one real answer explains
+                    more than any amount of text about what the app is. */}
+                <span className="text-xs text-gray-600 mt-2">{t('guide.tryOne')}</span>
+                <div className="flex flex-col items-stretch gap-1.5 w-full max-w-sm">
+                  {EXAMPLE_KEYS.map(key => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => submit(t(key))}
+                      className="rounded-lg border border-gray-800 bg-gray-900/60 px-3 py-2 text-xs text-left text-gray-400 hover:border-gray-700 hover:text-gray-200"
+                    >
+                      {t(key)}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => openGuide()}
+                  className="text-xs text-blue-400 hover:underline"
+                >
+                  {t('guide.newHere')} →
+                </button>
               </div>
             ) : (
               <ImageCaptionContext.Provider value={currentUser?.settings?.imageWatermark !== false}>

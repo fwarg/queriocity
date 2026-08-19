@@ -272,6 +272,7 @@ export function MonitorsView({ spaces, isAdmin, timezone, onOpenSession, onCount
           title={t('nav.monitors')}
           intro={t('monitor.intro')}
           about={t('monitor.aboutTitle')}
+          topic="monitors"
         >
           <button
             type="button"

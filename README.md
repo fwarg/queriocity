@@ -42,6 +42,7 @@ through a single Bun process.
     - [Prompt Studio](#prompt-studio)
   - [Settings](#settings)
     - [Languages](#languages)
+  - [In-app guide](#in-app-guide)
   - [Image generation](#image-generation)
   - [Spaces](#spaces)
     - [Collections](#collections)
@@ -618,6 +619,20 @@ The PWA manifest description and the `<meta name="description">` in `index.html`
 build time and cannot follow the reader's language — they match the English `app.tagline`.
 
 ---
+
+## In-app guide
+
+Most of what is on this page is also in the app, shorter. **Guide**, above Settings at the bottom of
+the sidebar, opens a panel of twelve topics — one per feature — that can be read in any order and
+searched. Each topic that has somewhere to go ends with a button that takes you there.
+
+The same guide is reachable from where a question actually arises: the ⓘ beside a view's heading
+folds open a sentence about that view and links on to the matching topic. New accounts meet it a
+third way, on the empty chat screen, alongside three example questions that send when clicked.
+
+The guide is deliberately the *short* version and lives in `src/shared/guide/`, one catalog per
+language and typed so a missing translation fails the build. This README stays the reference: when
+the two disagree about detail, this one is right.
 
 ## Image generation
 
