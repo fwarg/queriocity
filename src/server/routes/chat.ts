@@ -20,7 +20,8 @@ import { fetchUrlAllPages, processUrlsForContext, describeOutcome, DEFAULT_MAX_U
 import { getFlashModel, getChatModel, getThinkingModelOrFallback, RESEARCH_MAX_TOKENS } from '../lib/llm.ts'
 import { ThinkExtractor } from '../lib/think-extractor.ts'
 import { rerankSearchResults } from '../lib/reranker.ts'
-import { buildMemoryBlock, buildChatFileBlock, extractMemoriesPostHoc, userMemoryBlockIfEnabled, joinMemoryBlocks } from '../lib/memory.ts'
+import { buildMemoryBlock, buildChatFileBlock, buildCollectionBlock, extractMemoriesPostHoc, userMemoryBlockIfEnabled, joinMemoryBlocks } from '../lib/memory.ts'
+import { ownedCollectionIds } from '../lib/files/collections.ts'
 import { trimMessages, contextCharBudget, CONTEXT_RESERVE_FRACTION } from '../lib/trim-messages.ts'
 import { indexContents, deindexContent } from '../lib/chat-indexer.ts'
 import { ownsSpace, sessionOwnership } from '../lib/ownership.ts'
@@ -82,6 +83,8 @@ const chatSchema = z.object({
   searchCategories: z.array(z.enum(['news', 'science', 'discussions', 'tech'])).optional(),
   includeFileIds: z.array(z.string()).optional(),
   includeMemoryIds: z.array(z.string()).optional(),
+  /** Collections picked for this request only — they apply with or without a space. */
+  collectionIds: z.array(z.string()).max(20).optional(),
   ephemeral: z.boolean().optional(),
   /** Re-answering the last question: replaces the previous answer instead of appending. */
   regenerate: z.boolean().optional(),
@@ -123,6 +126,14 @@ const STORED_SNIPPET_CHARS = 300
 /** Latest user message, the query every relevance decision is made against. */
 const userQueryOf = (msgs: Array<{ role: string; content: string }>) =>
   [...msgs].reverse().find(m => m.role === 'user')?.content ?? ''
+
+/** Token budget for the collections picked this request, or 0 when none are.
+ *
+ *  Reads `space_rag_budget` rather than adding a setting of its own: it is the same question — how
+ *  many tokens of retrieved document may enter a prompt — and one knob is easier to reason about
+ *  than two. Read only when collections are actually selected, so the usual request is unchanged. */
+const collectionRagBudget = async (collections: string[]): Promise<number> =>
+  collections.length ? Number(await getAppSetting('space_rag_budget', '500')) : 0
 
 const toStoredSource = (r: SearchResult) => ({
   title: r.title,
@@ -226,7 +237,7 @@ chatRouter.post('/:sessionId/approve', zValidator('json', z.object({
 
 chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', chatSchema), async (c) => {
   const userId = c.get('userId') as string
-  const { sessionId, spaceId, messages: msgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, ephemeral, regenerate } = c.req.valid('json')
+  const { sessionId, spaceId, messages: msgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, collectionIds, ephemeral, regenerate } = c.req.valid('json')
   const searchCategory = toSearxngCategories(searchCategories)
   const sid = sessionId ?? randomUUID()
 
@@ -234,6 +245,11 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   // another user's memories into this answer, and a known session id appends to their chat.
   if (spaceId && !await ownsSpace(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
   if (sessionId && await sessionOwnership(sessionId, userId) === 'other') return c.json({ error: 'Not found' }, 404)
+
+  // Same reason, one id at a time; unlike the two above this filters rather than refusing, because
+  // a collection deleted in another tab should let the turn proceed without it rather than fail it.
+  // Sorted so the cache key does not depend on the order the client happened to send.
+  const collections = (await ownedCollectionIds(collectionIds ?? [], userId)).sort()
 
   // Read from the database, never from the request body — a lock the client could assert would be
   // decorative. Resolved from the chat's own space when it has one, so an existing chat stays
@@ -264,6 +280,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     userId, spaceId ?? '',
     [...(includeFileIds ?? [])].sort().join(','),
     [...(includeMemoryIds ?? [])].sort().join(','),
+    collections.join(','),
     customPrompt ?? '',
     [...(searchCategories ?? [])].sort().join(','),
     locked ? 'locked' : '',
@@ -289,7 +306,8 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       await out.writeSSE({ data: JSON.stringify({ type: 'session', sessionId: sid }) })
       await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: cached.content }) })
       if (cached.sources.length) await out.writeSSE({ data: JSON.stringify({ type: 'sources', sources: cached.sources }) })
-      await finishTurn(out, { sid, userId, msgs, fullContent: cached.content, sources: cached.sources, spaceId, regenerate, ephemeral, t0 })
+      if (cached.fileSources.length) await out.writeSSE({ data: JSON.stringify({ type: 'file_sources', sources: cached.fileSources }) })
+      await finishTurn(out, { sid, userId, msgs, fullContent: cached.content, sources: cached.sources, fileSources: cached.fileSources, spaceId, regenerate, ephemeral, t0 })
     })
   }
 
@@ -301,9 +319,13 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     const userQuery = lastUser?.content ?? ''
     const effectiveRag = (parsedSettings.useSpaceRag !== false) ? ragBudget : 0
     const { block: flashScopedBlock, fileSources: flashFileSources } = spaceId ? await buildMemoryBlock(spaceId, memoryBudget, effectiveRag, userQuery, includeFileIds, includeMemoryIds) : { block: '', fileSources: [] }
+    // Collections are picked per request and apply with or without a space, so they get their own
+    // budget rather than the space one — which is deliberately 0 for a chat that has no space.
+    const flashCollections = await buildCollectionBlock(collections, userQuery, await collectionRagBudget(collections))
     const resolvedMemoryBlock = joinMemoryBlocks(
       await userMemoryBlockIfEnabled(userId, parsedSettings, userQuery),
       flashScopedBlock,
+      flashCollections.block,
     )
     const t0 = Date.now()
     let fullContent = ''
@@ -312,7 +334,10 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       // Plain status rather than a log step: flash has exactly one phase, so a log of it would
       // be a list of length one. The client pairs this with a ticking timer.
       await out.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Thinking…' }) })
-      if (flashFileSources.length > 0) await out.writeSSE({ data: JSON.stringify({ type: 'file_sources', sources: flashFileSources }) })
+      // Collection excerpts carry [C1] labels of their own, so their sources ride along or the
+      // citations in the answer resolve to nothing.
+      const flashSources = [...flashFileSources, ...flashCollections.fileSources]
+      if (flashSources.length > 0) await out.writeSSE({ data: JSON.stringify({ type: 'file_sources', sources: flashSources }) })
       const flashSystem = FLASH_SYSTEM
         + (customPrompt ? `\n\nAdditional instructions:\n${customPrompt}` : '')
         + (resolvedMemoryBlock ? '\n\n' + resolvedMemoryBlock : '')
@@ -338,8 +363,8 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       }
       await emitFlash(flashExtractor.flush().text)
       console.log(`  [flash] done in ${Date.now() - t0}ms, ${fullContent.length} chars`)
-      if (fullContent.length >= 50) setCached(ck, { content: fullContent, sources: [] })
-      await finishTurn(out, { sid, userId, msgs, fullContent, sources: [], spaceId, regenerate, ephemeral, t0 })
+      if (fullContent.length >= 50) setCached(ck, { content: fullContent, sources: [], fileSources: flashSources })
+      await finishTurn(out, { sid, userId, msgs, fullContent, sources: [], fileSources: flashSources, spaceId, regenerate, ephemeral, t0 })
     })
   }
 
@@ -354,7 +379,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         // Through the shared tail like every other mode: calling persistMessage directly ignored
         // `ephemeral`, so a request that asked never to be stored wrote a session, a user message
         // and an empty assistant message anyway — and skipped the rest of the contract besides.
-        await finishTurn(out, { sid, userId, msgs, fullContent: notConfigured, sources: [], spaceId, regenerate, ephemeral, t0 })
+        await finishTurn(out, { sid, userId, msgs, fullContent: notConfigured, sources: [], fileSources: [], spaceId, regenerate, ephemeral, t0 })
       })
     }
     let pendingImageUrl: string | undefined
@@ -535,7 +560,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         clearInterval(keepalive)
       }
       console.log(`  [image] done in ${Date.now() - t0}ms, ${fullContent.length} chars`)
-      await finishTurn(out, { sid, userId, msgs, fullContent, sources: imageSources, spaceId, regenerate, ephemeral, t0 })
+      await finishTurn(out, { sid, userId, msgs, fullContent, sources: imageSources, fileSources: [], spaceId, regenerate, ephemeral, t0 })
     })
   }
 
@@ -612,10 +637,12 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       : (hasFiles && parsedSettings.useChatRag !== false)
         ? await buildChatFileBlock(userId, userQuery, ragBudget)
         : { block: '', fileSources: [] }
+    const collectionBlock = await buildCollectionBlock(collections, userQuery, await collectionRagBudget(collections))
     // User memory applies to every chat, including those with no space at all.
     const memoryBlock = joinMemoryBlocks(
       await userMemoryBlockIfEnabled(userId, parsedSettings, userQuery),
       scopedBlock,
+      collectionBlock.block,
     )
     const showThinkingSettings = (parsedSettings.showThinking ?? { balanced: false, thorough: false }) as { balanced: boolean; thorough: boolean }
     const showThinking = focusMode === 'balanced' ? showThinkingSettings.balanced
@@ -634,7 +661,8 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     let fullContent = ''
     const sources: unknown[] = []
 
-    if (fileSources.length > 0) await out.writeSSE({ data: JSON.stringify({ type: 'file_sources', sources: fileSources }) })
+    const allFileSources = [...fileSources, ...collectionBlock.fileSources]
+    if (allFileSources.length > 0) await out.writeSSE({ data: JSON.stringify({ type: 'file_sources', sources: allFileSources }) })
 
     // Warn when a search came back empty *because* engines were blocked/suspended
     // (rate-limit, CAPTCHA, access denied) — distinct from a query that simply matched
@@ -844,30 +872,32 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
 
     // Never cache the failure notice — it would be replayed as the answer for every repeat of
     // this question until the entry expires.
-    if (!emptyAnswer && fullContent.length >= 50) setCached(ck, { content: fullContent, sources })
-    await finishTurn(out, { sid, userId, msgs, fullContent, sources, spaceId, regenerate, ephemeral, t0 })
+    if (!emptyAnswer && fullContent.length >= 50) setCached(ck, { content: fullContent, sources, fileSources: allFileSources })
+    await finishTurn(out, { sid, userId, msgs, fullContent, sources, fileSources: allFileSources, spaceId, regenerate, ephemeral, t0 })
   })
 })
 
 /** What a cached answer has to carry. Content alone is not enough: the client resolves `[N]`
  *  positionally against the sources it was sent, so replaying text without them renders every
- *  citation dead. */
+ *  citation dead. Same for `fileSources` and `[F1]`/`[C1]`. */
 interface CachedAnswer {
   content: string
   sources: unknown[]
+  fileSources: unknown[]
 }
 
 /** Common tail for every mode: persist the exchange, close the stream, and kick off the
  *  background memory/index work. Centralised because four branches ran their own copy and the
  *  cached-answer path quietly omitted all of it — losing the turn from the conversation. */
 async function finishTurn(out: SSEStream, {
-  sid, userId, msgs, fullContent, sources, spaceId, regenerate, ephemeral, t0,
+  sid, userId, msgs, fullContent, sources, fileSources, spaceId, regenerate, ephemeral, t0,
 }: {
   sid: string
   userId: string
   msgs: Array<{ role: 'user' | 'assistant'; content: string }>
   fullContent: string
   sources: unknown[]
+  fileSources: unknown[]
   spaceId?: string
   regenerate?: boolean
   ephemeral?: boolean
@@ -878,7 +908,7 @@ async function finishTurn(out: SSEStream, {
     await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, elapsedMs }) })
     return
   }
-  const { title, supersededAnswer } = await persistMessage(sid, userId, msgs, fullContent, sources, spaceId, regenerate)
+  const { title, supersededAnswer } = await persistMessage(sid, userId, msgs, fullContent, sources, fileSources, spaceId, regenerate)
   await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title, elapsedMs }) })
   // Outside the spaceId block below: a regenerate strands its predecessor's image whether or not
   // the chat belongs to a space. Fire-and-forget, as the chat-delete path does — a failed unlink
@@ -1018,6 +1048,7 @@ async function persistMessage(
   msgs: Array<{ role: 'user' | 'assistant'; content: string }>,
   assistantContent: string,
   sources: unknown[],
+  fileSources: unknown[],
   spaceId?: string,
   regenerate = false,
 ): Promise<{ title: string; supersededAnswer?: string }> {
@@ -1044,7 +1075,7 @@ async function persistMessage(
     } else if (lastUser) {
       await tx.insert(messages).values({ id: randomUUID(), sessionId, role: 'user', content: lastUser.content, createdAt: now })
     }
-    await tx.insert(messages).values({ id: randomUUID(), sessionId, role: 'assistant', content: assistantContent, sources: JSON.stringify(sources), createdAt: now })
+    await tx.insert(messages).values({ id: randomUUID(), sessionId, role: 'assistant', content: assistantContent, sources: JSON.stringify(sources), fileSources: JSON.stringify(fileSources), createdAt: now })
   })
 
   return { title, supersededAnswer }

@@ -31,14 +31,20 @@ export interface AuthUser {
   mustChangePassword?: boolean
 }
 
+export type SpaceKind = 'space' | 'collection'
+
 export interface Space {
   id: string
   name: string
+  /** A collection groups resources only — no chats, memory, monitors or lock. Same table, and the
+   *  same tagging, so a collection can be promoted to a space without moving anything. */
+  kind: SpaceKind
   /** Locked: no web search, URL fetching or image generation for any chat in this space.
    *  Effectively one-way once the space holds anything — see the server's canUnlock. */
   offline: boolean
   chatCount: number
   memoryCount: number
+  resourceCount: number
   createdAt: number
 }
 
@@ -50,11 +56,16 @@ export interface SpaceMemory {
 /** `content` is a short snippet, shown as a preview when hovering the [N] citation. */
 export interface Source { title: string; url: string; content?: string }
 
+/** `label` (e.g. "F1", "C2") is the inline citation token the model was told to use for this
+ *  resource — kept separate from `title` so the client can match a `[F1]` in the answer text
+ *  without parsing it back out of the display title. */
+export interface FileSource { title: string; url: string; label: string }
+
 export interface Message {
   role: 'user' | 'assistant'
   content: string
   sources?: Source[]
-  fileSources?: Array<{ title: string; url: string }>
+  fileSources?: FileSource[]
   thinking?: string
   images?: Array<{ url: string; alt: string }>
 }
@@ -194,6 +205,7 @@ export async function* streamChat(
   searchCategories?: Array<'news' | 'science' | 'discussions' | 'tech'>,
   includeFileIds?: string[],
   includeMemoryIds?: string[],
+  collectionIds?: string[],
   regenerate?: boolean,
 ): AsyncGenerator<{ type: string; [k: string]: unknown }> {
   const res = await fetch(`${BASE}/chat`, {
@@ -213,6 +225,7 @@ export async function* streamChat(
       ...(searchCategories?.length ? { searchCategories } : {}),
       ...(includeFileIds?.length ? { includeFileIds } : {}),
       ...(includeMemoryIds?.length ? { includeMemoryIds } : {}),
+      ...(collectionIds?.length ? { collectionIds } : {}),
       ...(regenerate ? { regenerate: true } : {}),
     }),
     signal,
@@ -334,13 +347,14 @@ export async function fetchSession(id: string): Promise<Message[]> {
   const res = await fetch(`${BASE}/history/${id}`)
   const { messages } = await res.json()
   const FIRST_PNG_RE = /!\[([^\]]*)\]\(([^)]+\.png)\)/
-  return (messages as Array<{ role: 'user' | 'assistant'; content: string; sources?: string }>).map(m => {
+  return (messages as Array<{ role: 'user' | 'assistant'; content: string; sources?: string; fileSources?: string }>).map(m => {
     const sources = m.sources ? JSON.parse(m.sources) : undefined
+    const fileSources = m.fileSources ? JSON.parse(m.fileSources) : undefined
     if (m.role === 'assistant') {
       const match = FIRST_PNG_RE.exec(m.content)
-      return { role: m.role, content: m.content, sources, images: match ? [{ alt: match[1], url: match[2] }] : undefined }
+      return { role: m.role, content: m.content, sources, fileSources, images: match ? [{ alt: match[1], url: match[2] }] : undefined }
     }
-    return { role: m.role, content: m.content, sources }
+    return { role: m.role, content: m.content, sources, fileSources }
   })
 }
 
@@ -381,13 +395,24 @@ export async function fetchSpaces(): Promise<Space[]> {
   return res.json()
 }
 
-export async function createSpace(name: string, offline = false): Promise<Space> {
+export async function createSpace(name: string, kind: SpaceKind = 'space', offline = false): Promise<Space> {
   const res = await fetch(`${BASE}/spaces`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, offline }),
+    body: JSON.stringify({ name, kind, offline }),
   })
+  if (!res.ok) throw await apiError(res, 'Could not create')
   return res.json()
+}
+
+/** Turns a collection into a space. One-way — the server refuses the reverse. */
+export async function promoteCollection(id: string): Promise<void> {
+  const res = await fetch(`${BASE}/spaces/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind: 'space' }),
+  })
+  if (!res.ok) throw await apiError(res, 'Could not promote')
 }
 
 /** Rename and/or change the lock. Returns the server's refusal message when unlocking is not
@@ -473,11 +498,11 @@ export async function ingestUrl(url: string): Promise<{ fileId: string; filename
   return res.json()
 }
 
-export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; userMemoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; ragTopK: number; attachmentChars: number; spaceRagBudget: number; queryReformulation: boolean; rssFeedCharsBudget: number; fetchMaxPages: number; fetchMaxUrlContextChars: number; fetchSummarizeOverflow: boolean; compressHistoryOverflow: boolean; limits: { smallModelInputChars: number; embedInputChars: number; scrapeMaxChars: number; minUrlContextChars: number } }> {
+export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; userMemoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; ragTopK: number; ragMinRelevance: number; attachmentChars: number; spaceRagBudget: number; queryReformulation: boolean; rssFeedCharsBudget: number; fetchMaxPages: number; fetchMaxUrlContextChars: number; fetchSummarizeOverflow: boolean; compressHistoryOverflow: boolean; resourceSummary: boolean; limits: { smallModelInputChars: number; embedInputChars: number; scrapeMaxChars: number; minUrlContextChars: number } }> {
   return fetch(`${BASE}/admin/settings`).then(r => r.json())
 }
 
-export async function updateAdminSettings(s: { memoryTokenBudget?: number; userMemoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; dreamDeep?: boolean; memoryExtractChars?: number; rerankTopN?: number; ragTopK?: number; attachmentChars?: number; spaceRagBudget?: number; queryReformulation?: boolean; rssFeedCharsBudget?: number; fetchMaxPages?: number; fetchMaxUrlContextChars?: number; fetchSummarizeOverflow?: boolean; compressHistoryOverflow?: boolean }): Promise<void> {
+export async function updateAdminSettings(s: { memoryTokenBudget?: number; userMemoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; dreamDeep?: boolean; memoryExtractChars?: number; rerankTopN?: number; ragTopK?: number; ragMinRelevance?: number; attachmentChars?: number; spaceRagBudget?: number; queryReformulation?: boolean; rssFeedCharsBudget?: number; fetchMaxPages?: number; fetchMaxUrlContextChars?: number; fetchSummarizeOverflow?: boolean; compressHistoryOverflow?: boolean; resourceSummary?: boolean }): Promise<void> {
   await fetch(`${BASE}/admin/settings`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -676,8 +701,95 @@ export async function uploadFile(file: File): Promise<{ fileId: string; filename
   return res.json()
 }
 
-export async function fetchFiles(): Promise<Array<{ id: string; filename: string; mimeType: string; size: number; createdAt: number }>> {
+/** A library resource: an uploaded file, an ingested URL, or a note. `kind` tells them apart; a
+ *  note additionally carries its markdown in `body`, which only the detail endpoint returns. */
+export interface Resource {
+  id: string
+  filename: string
+  mimeType: string
+  size: number
+  kind: 'file' | 'note'
+  summary: string | null
+  topics: string[]
+  /** The spaces this resource is tagged to — the library's grouping, used to filter the list. */
+  spaces: Array<{ id: string; name: string }>
+  /** Where it came from: the URL for an ingested page, the original filename for an upload, null
+   *  for a note. Never edited — `filename` is a renameable title, this is the record of the source. */
+  origin: string | null
+  createdAt: number
+  updatedAt: number | null
+}
+
+/** A resource reference thin enough to render as a chip and click through to. */
+export interface ResourceRef { id: string; filename: string; kind: 'file' | 'note' }
+
+export interface ResourceDetail extends Resource {
+  body: string | null
+  chunks: string[]
+  /** The resource a transform produced this note from, if any, and the notes produced from it. */
+  derivedFrom: ResourceRef | null
+  derived: ResourceRef[]
+}
+
+export async function fetchFiles(): Promise<Resource[]> {
   const res = await fetch(`${BASE}/files`)
+  return res.json()
+}
+
+export async function fetchResource(id: string): Promise<ResourceDetail> {
+  const res = await fetch(`${BASE}/files/${id}`)
+  if (!res.ok) throw await apiError(res, 'Could not load resource')
+  return res.json()
+}
+
+export async function fetchNoteText(id: string): Promise<{ filename: string; content: string }> {
+  const res = await fetch(`${BASE}/files/${id}/text`)
+  if (!res.ok) throw await apiError(res, 'Could not load note')
+  return res.json()
+}
+
+export async function createNote(title: string, body: string, derivedFrom?: string): Promise<{ id: string }> {
+  const res = await fetch(`${BASE}/files/notes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, body, derivedFrom }),
+  })
+  if (!res.ok) throw await apiError(res, 'Could not save note')
+  return res.json()
+}
+
+/** Renames any resource. The filename is a title: it is what the list and every future citation
+ *  show, and it has no bearing on the stored content. */
+export async function renameResource(id: string, filename: string): Promise<void> {
+  const res = await fetch(`${BASE}/files/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filename }),
+  })
+  if (!res.ok) throw await apiError(res, 'Could not rename')
+}
+
+export async function updateNote(id: string, patch: { title?: string; body?: string }): Promise<void> {
+  const res = await fetch(`${BASE}/files/notes/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  })
+  if (!res.ok) throw await apiError(res, 'Could not save note')
+}
+
+export type TransformOperation = 'summarize' | 'keypoints' | 'questions' | 'outline'
+
+export async function transformResource(
+  id: string,
+  target: { operation: TransformOperation } | { templateId: string },
+): Promise<{ content: string }> {
+  const res = await fetch(`${BASE}/files/${id}/transform`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(target),
+  })
+  if (!res.ok) throw await apiError(res, 'Transform failed')
   return res.json()
 }
 

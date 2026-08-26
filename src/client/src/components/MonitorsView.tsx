@@ -1,5 +1,8 @@
 import { useState, useEffect } from 'react'
-import { Plus, Pencil, Trash2, Play, ChevronDown, ChevronRight } from 'lucide-react'
+import { SectionHeader } from './SectionHeader.tsx'
+import { useConfirm } from './confirm.tsx'
+import { EmptyState, PRIMARY_BTN, RowAction } from './ui.tsx'
+import { Plus, Pencil, Trash2, Play, X, ChevronDown, ChevronRight } from 'lucide-react'
 import {
   fetchMonitors, createMonitor, updateMonitor, deleteMonitor,
   triggerMonitorRun, fetchMonitorRuns, fetchGlobalMonitors,
@@ -133,41 +136,26 @@ function MonitorCard({ monitor, onEdit, onDelete, onRun, onOpenSession, isGlobal
             type="button"
             onClick={handleRun}
             disabled={running}
-            className="p-1.5 rounded text-gray-500 hover:text-green-400 hover:bg-gray-700 disabled:opacity-40 transition-colors"
+            className="p-1.5 rounded shrink-0 text-gray-600 hover:text-green-400 disabled:opacity-40 transition-colors"
             aria-label={t('monitor.runNow')}
             title={t('monitor.runNow')}
           >
-            {running ? <span className="text-xs">…</span> : <Play size={12} />}
+            {running ? <span className="text-xs">…</span> : <Play size={14} />}
           </button>
           {!isGlobalCard && (
             <>
-              <button
-                type="button"
-                onClick={() => onEdit(monitor)}
-                className="p-1.5 rounded text-gray-500 hover:text-gray-200 hover:bg-gray-700 transition-colors"
-                aria-label={t('monitor.edit')}
-              >
-                <Pencil size={12} />
-              </button>
-              <button
-                type="button"
-                onClick={() => onDelete(monitor.id)}
-                className="p-1.5 rounded text-gray-500 hover:text-red-400 hover:bg-gray-700 transition-colors"
-                aria-label={t('monitor.delete')}
-              >
-                <Trash2 size={12} />
-              </button>
+              <RowAction icon={<Pencil size={14} />} label={t('monitor.edit')} persistent onClick={() => onEdit(monitor)} />
+              <RowAction icon={<Trash2 size={14} />} tone="danger" label={t('monitor.delete')} persistent onClick={() => onDelete(monitor.id)} />
             </>
           )}
           {isGlobalCard && onUnsubscribe && (
-            <button
-              type="button"
+            <RowAction
+              icon={<X size={14} />}
+              tone="danger"
+              persistent
+              label={t('monitor.unsubscribe')}
               onClick={() => onUnsubscribe(monitor.id)}
-              className="px-2 py-1 rounded text-xs text-gray-500 hover:text-red-400 hover:bg-gray-700 transition-colors"
-              title={t('monitor.unsubscribe')}
-            >
-              ×
-            </button>
+            />
           )}
         </div>
       </div>
@@ -175,9 +163,9 @@ function MonitorCard({ monitor, onEdit, onDelete, onRun, onOpenSession, isGlobal
       {expanded && (
         <div className="border-t border-gray-700 px-3 py-2">
           {loadingRuns ? (
-            <p className="text-xs text-gray-600 italic">{t('monitor.loadingRuns')}</p>
+            <EmptyState dense>{t('monitor.loadingRuns')}</EmptyState>
           ) : runs.length === 0 ? (
-            <p className="text-xs text-gray-600 italic">{t('monitor.noRuns')}</p>
+            <EmptyState dense>{t('monitor.noRuns')}</EmptyState>
           ) : (
             <ul className="flex flex-col gap-1">
               {runs.map(r => (
@@ -201,6 +189,7 @@ function MonitorCard({ monitor, onEdit, onDelete, onRun, onOpenSession, isGlobal
 
 export function MonitorsView({ spaces, isAdmin, timezone, onOpenSession, onCountChange }: Props) {
   const t = useT()
+  const confirm = useConfirm()
   const [monitors, setMonitors] = useState<Monitor[]>([])
   const [globalMonitors, setGlobalMonitors] = useState<Monitor[]>([])
   const [editor, setEditor] = useState<'new' | Monitor | null>(null)
@@ -244,13 +233,13 @@ export function MonitorsView({ spaces, isAdmin, timezone, onOpenSession, onCount
   }
 
   async function handleDelete(id: string) {
-    if (!window.confirm(t('monitor.deleteConfirm'))) return
+    if (!await confirm({ message: t('monitor.deleteConfirm'), confirmLabel: t('common.delete'), danger: true })) return
     await deleteMonitor(id)
     setMonitors(prev => prev.filter(m => m.id !== id))
   }
 
   async function handleGlobalDelete(id: string) {
-    if (!window.confirm(t('monitor.deleteGlobalConfirm'))) return
+    if (!await confirm({ message: t('monitor.deleteGlobalConfirm'), confirmLabel: t('common.delete'), danger: true })) return
     const { deleteGlobalMonitor } = await import('../lib/api.ts')
     await deleteGlobalMonitor(id)
     setGlobalMonitors(prev => prev.filter(m => m.id !== id))
@@ -277,21 +266,27 @@ export function MonitorsView({ spaces, isAdmin, timezone, onOpenSession, onCount
   const subscribedMonitors = monitors.filter(m => m.subscribed)
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 max-w-2xl mx-auto w-full">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-base font-semibold text-gray-100">{t('nav.monitors')}</h2>
-        <button
-          type="button"
-          onClick={() => setEditor('new')}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-sm font-medium transition-colors"
+    <div className="flex-1 overflow-y-auto p-6 w-full">
+      <div className="mb-4">
+        <SectionHeader
+          title={t('nav.monitors')}
+          intro={t('monitor.intro')}
+          about={t('monitor.aboutTitle')}
+          topic="monitors"
         >
-          <Plus size={14} />
-          {t('monitor.new')}
-        </button>
+          <button
+            type="button"
+            onClick={() => setEditor('new')}
+            className={`flex items-center gap-1.5 ${PRIMARY_BTN}`}
+          >
+            <Plus size={14} />
+            {t('monitor.new')}
+          </button>
+        </SectionHeader>
       </div>
 
       {ownMonitors.length === 0 && subscribedMonitors.length === 0 ? (
-        <p className="text-sm text-gray-500 italic">{t('monitor.none')}</p>
+        <EmptyState>{t('monitor.none')}</EmptyState>
       ) : (
         <div className="flex flex-col gap-3">
           {ownMonitors.map(m => (
@@ -339,7 +334,7 @@ export function MonitorsView({ spaces, isAdmin, timezone, onOpenSession, onCount
         {globalExpanded && (
           <div className="mt-2 flex flex-col gap-2">
             {globalMonitors.length === 0 ? (
-              <p className="text-xs text-gray-600 italic">{t('monitor.noGlobal')}</p>
+              <EmptyState dense>{t('monitor.noGlobal')}</EmptyState>
             ) : (
               globalMonitors.map(m => {
                 const alreadySubscribed = subscribedIds.has(m.id)
@@ -396,20 +391,8 @@ export function MonitorsView({ spaces, isAdmin, timezone, onOpenSession, onCount
                     <div className="text-sm font-medium text-white truncate">{m.name}</div>
                     <div className="text-xs text-gray-500">{formatInterval(t, m.intervalMinutes)}</div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setGlobalEditor(m)}
-                    className="p-1 rounded text-gray-500 hover:text-gray-200 hover:bg-gray-700 transition-colors"
-                  >
-                    <Pencil size={12} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleGlobalDelete(m.id)}
-                    className="p-1 rounded text-gray-500 hover:text-red-400 hover:bg-gray-700 transition-colors"
-                  >
-                    <Trash2 size={12} />
-                  </button>
+                  <RowAction icon={<Pencil size={14} />} label={t('monitor.edit')} persistent onClick={() => setGlobalEditor(m)} />
+                  <RowAction icon={<Trash2 size={14} />} tone="danger" label={t('monitor.delete')} persistent onClick={() => handleGlobalDelete(m.id)} />
                 </div>
               ))}
             </div>

@@ -167,6 +167,27 @@ export function extractYoutubeVideoId(url: string): string | null {
   } catch { return null }
 }
 
+/** Long enough for a real article path, short enough not to swamp a list row or a citation label. */
+const MAX_URL_LABEL_CHARS = 120
+
+/** The title an ingested page carries in the library, and in every citation that quotes it.
+ *
+ *  Not a filename despite living in the `filename` column — nothing writes it to disk or reads an
+ *  extension from it, so it keeps the punctuation that makes a URL legible. The previous form
+ *  concatenated the host with only the *last* path segment and no separator, which turned
+ *  `https://github.com/lfnovo/open-notebook` into `github.comopen-notebook.txt`: unreadable, and
+ *  ambiguous too, since every owner's repo of the same name produced the same title. */
+export function urlLabel(url: string): string {
+  const videoId = extractYoutubeVideoId(url)
+  if (videoId) return `YouTube ${videoId}`
+  try {
+    const u = new URL(url)
+    return (u.hostname.replace(/^www\./, '') + u.pathname.replace(/\/+$/, '') + u.search).slice(0, MAX_URL_LABEL_CHARS)
+  } catch {
+    return url.slice(0, MAX_URL_LABEL_CHARS)
+  }
+}
+
 export async function fetchUrl(url: string): Promise<string> {
   try {
     await assertFetchableUrl(url)

@@ -104,7 +104,7 @@ export async function checkEmbeddingDimensions(): Promise<void> {
   try {
     const { embedding } = await embed({ model: getEmbeddingModel(), value: 'dimension check' })
     if (embedding.length !== configured) {
-      console.warn(`  [config] EMBED_DIMENSIONS is ${configured} but ${process.env.EMBED_MODEL ?? 'the embedding model'} returns ${embedding.length}. Set EMBED_DIMENSIONS=${embedding.length} (existing embeddings must be rebuilt — see ALLOW_EMBED_RESET).`)
+      console.warn(`  [config] EMBED_DIMENSIONS is ${configured} but ${process.env.EMBED_MODEL ?? 'the embedding model'} returns ${embedding.length}. Set EMBED_DIMENSIONS=${embedding.length}; existing vectors are then rebuilt from stored chunk text at the next start, and no resource is lost.`)
     } else {
       console.log(`  [preflight] embeddings OK (${embedding.length} dims)`)
     }

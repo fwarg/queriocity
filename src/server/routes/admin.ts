@@ -32,7 +32,7 @@ adminRouter.use('*', authMiddleware)
 adminRouter.use('*', adminMiddleware)
 
 adminRouter.get('/settings', async (c) => {
-  const [memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow, compressHistoryOverflow] = await Promise.all([
+  const [memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, ragMinRelevance, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow, compressHistoryOverflow, resourceSummary] = await Promise.all([
     getAppSetting('memory_token_budget', '1000').then(Number),
     getAppSetting('user_memory_token_budget', '300').then(Number),
     getAppSetting('dream_hour', '-1').then(Number),
@@ -42,6 +42,7 @@ adminRouter.get('/settings', async (c) => {
     getAppSetting('memory_extract_chars', '6000').then(Number),
     getAppSetting('rerank_top_n', '15').then(Number),
     getAppSetting('rag_top_k', '15').then(Number),
+    getAppSetting('rag_min_relevance', '0').then(Number),
     getAppSetting('attachment_chars', '20000').then(Number),
     getAppSetting('space_rag_budget', '500').then(Number),
     getAppSetting('query_reformulation', 'true').then(v => v === 'true'),
@@ -50,11 +51,12 @@ adminRouter.get('/settings', async (c) => {
     getAppSetting('fetch_max_url_context_chars', String(DEFAULT_MAX_URL_CONTEXT_CHARS)).then(Number),
     getAppSetting('fetch_summarize_overflow', 'false').then(v => v === 'true'),
     getAppSetting('compress_history_overflow', 'false').then(v => v === 'true'),
+    getAppSetting('resource_summary', 'true').then(v => v === 'true'),
   ])
   // Read-only, derived from the model context env vars. Two of the settings above are silently
   // clamped by these at use time, so the panel needs them to show what a value actually does
   // rather than what was typed.
-  return c.json({ memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow, compressHistoryOverflow, limits: { smallModelInputChars: SMALL_MODEL_INPUT_CHARS, embedInputChars: EMBED_MAX_INPUT_CHARS, scrapeMaxChars: SCRAPE_MAX_CHARS, minUrlContextChars: MIN_URL_CONTEXT_CHARS } })
+  return c.json({ memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, ragMinRelevance, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow, compressHistoryOverflow, resourceSummary, limits: { smallModelInputChars: SMALL_MODEL_INPUT_CHARS, embedInputChars: EMBED_MAX_INPUT_CHARS, scrapeMaxChars: SCRAPE_MAX_CHARS, minUrlContextChars: MIN_URL_CONTEXT_CHARS } })
 })
 
 adminRouter.patch('/settings', zValidator('json', z.object({
@@ -67,6 +69,7 @@ adminRouter.patch('/settings', zValidator('json', z.object({
   memoryExtractChars: z.number().int().min(500).max(100000).optional(),
   rerankTopN: z.number().int().min(1).max(100).optional(),
   ragTopK: z.number().int().min(1).max(100).optional(),
+  ragMinRelevance: z.number().min(0).max(1).optional(),
   attachmentChars: z.number().int().min(1000).max(500000).optional(),
   spaceRagBudget: z.number().int().min(0).max(10000).optional(),
   queryReformulation: z.boolean().optional(),
@@ -75,6 +78,7 @@ adminRouter.patch('/settings', zValidator('json', z.object({
   fetchMaxUrlContextChars: z.number().int().min(MIN_URL_CONTEXT_CHARS).max(SCRAPE_MAX_CHARS).optional(),
   fetchSummarizeOverflow: z.boolean().optional(),
   compressHistoryOverflow: z.boolean().optional(),
+  resourceSummary: z.boolean().optional(),
 })), async (c) => {
   const body = c.req.valid('json')
   if (body.dreamTarget != null && body.dreamThreshold != null && body.dreamTarget > body.dreamThreshold)
@@ -91,6 +95,7 @@ adminRouter.patch('/settings', zValidator('json', z.object({
   if (body.memoryExtractChars != null) ops.push(setAppSetting('memory_extract_chars', String(body.memoryExtractChars)))
   if (body.rerankTopN != null) ops.push(setAppSetting('rerank_top_n', String(body.rerankTopN)))
   if (body.ragTopK != null) ops.push(setAppSetting('rag_top_k', String(body.ragTopK)))
+  if (body.ragMinRelevance != null) ops.push(setAppSetting('rag_min_relevance', String(body.ragMinRelevance)))
   if (body.attachmentChars != null) ops.push(setAppSetting('attachment_chars', String(body.attachmentChars)))
   if (body.spaceRagBudget != null) ops.push(setAppSetting('space_rag_budget', String(body.spaceRagBudget)))
   if (body.queryReformulation != null) ops.push(setAppSetting('query_reformulation', String(body.queryReformulation)))
@@ -99,6 +104,7 @@ adminRouter.patch('/settings', zValidator('json', z.object({
   if (body.fetchMaxUrlContextChars != null) ops.push(setAppSetting('fetch_max_url_context_chars', String(body.fetchMaxUrlContextChars)))
   if (body.fetchSummarizeOverflow != null) ops.push(setAppSetting('fetch_summarize_overflow', String(body.fetchSummarizeOverflow)))
   if (body.compressHistoryOverflow != null) ops.push(setAppSetting('compress_history_overflow', String(body.compressHistoryOverflow)))
+  if (body.resourceSummary != null) ops.push(setAppSetting('resource_summary', String(body.resourceSummary)))
   await Promise.all(ops)
   return c.json({ ok: true })
 })

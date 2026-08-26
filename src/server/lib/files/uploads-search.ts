@@ -24,7 +24,7 @@ export function spaceHasTaggedFiles(spaceId: string): boolean {
  *  5 nearest chunks in the whole database and only then keeps this space's — which returns nothing
  *  at all once other spaces hold enough closer chunks. A pushed-down `IN` makes `k` mean "k nearest
  *  within this space", which is what every caller assumes. */
-export async function searchSpaceFiles(spaceId: string, query: string, embedding: number[], limit?: number, skipRerank = false, fileIds?: string[]): Promise<ChunkResult[]> {
+export async function searchSpaceFiles(spaceId: string, query: string, embedding: number[], limit?: number, skipRerank = false, fileIds?: string[], minScore?: number): Promise<ChunkResult[]> {
   const topK = limit ?? await ragTopK()
   const fileFilter = fileIds?.length
     ? `AND m2.file_id IN (${fileIds.map(() => '?').join(',')})`
@@ -48,11 +48,11 @@ export async function searchSpaceFiles(spaceId: string, query: string, embedding
   `).all(...params) as ChunkResult[]
 
   if (skipRerank || !rerankEnabled || rows.length === 0) return rows
-  const indices = await rerank(query, rows.map(r => r.content), rows.length)
+  const indices = await rerank(query, rows.map(r => r.content), rows.length, minScore)
   return indices.map(i => rows[i])
 }
 
-export async function searchUploads(query: string, userId: string, limit?: number): Promise<ChunkResult[]> {
+export async function searchUploads(query: string, userId: string, limit?: number, minScore?: number): Promise<ChunkResult[]> {
   const topK = limit ?? await ragTopK()
   const embedding = await embedText(query)
   const embeddingJson = JSON.stringify(embedding)
@@ -75,6 +75,6 @@ export async function searchUploads(query: string, userId: string, limit?: numbe
   `).all(embeddingJson, topK, userId) as ChunkResult[]
 
   if (!rerankEnabled || rows.length === 0) return rows
-  const indices = await rerank(query, rows.map(r => r.content), rows.length)
+  const indices = await rerank(query, rows.map(r => r.content), rows.length, minScore)
   return indices.map(i => rows[i])
 }

@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { db, spaces, chatSessions, spaceMemories, messages } from '../lib/db.ts'
+import { db, spaces, chatSessions, spaceMemories, spaceFiles, messages } from '../lib/db.ts'
 import { eq, and, sql, count } from 'drizzle-orm'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
@@ -14,6 +14,9 @@ export const spacesRouter = new Hono<AppEnv>()
 
 spacesRouter.use('*', authMiddleware)
 
+/** Named once: four routes refuse the same thing, and they should say so identically. */
+const NOT_LOCKABLE = 'A collection cannot be locked. Locking denies a chat web access, and a collection holds no chats — put confidential material in a locked space instead.'
+
 spacesRouter.get('/', async (c) => {
   const userId = c.get('userId') as string
 
@@ -27,18 +30,27 @@ spacesRouter.get('/', async (c) => {
     .groupBy(spaceMemories.spaceId)
     .as('mc')
 
+  // A collection is counted by what it holds — resources — the way a space is counted by chats.
+  const fileCountSq = db.select({ spaceId: spaceFiles.spaceId, fileN: count().as('file_n') })
+    .from(spaceFiles)
+    .groupBy(spaceFiles.spaceId)
+    .as('fc')
+
   const rows = await db
     .select({
       id: spaces.id,
       name: spaces.name,
+      kind: spaces.kind,
       offline: spaces.offline,
       createdAt: spaces.createdAt,
       chatCount: sql<number>`coalesce(${chatCountSq.chatN}, 0)`,
       memoryCount: sql<number>`coalesce(${memCountSq.memN}, 0)`,
+      resourceCount: sql<number>`coalesce(${fileCountSq.fileN}, 0)`,
     })
     .from(spaces)
     .leftJoin(chatCountSq, eq(spaces.id, chatCountSq.spaceId))
     .leftJoin(memCountSq, eq(spaces.id, memCountSq.spaceId))
+    .leftJoin(fileCountSq, eq(spaces.id, fileCountSq.spaceId))
     .where(eq(spaces.userId, userId))
     .orderBy(spaces.createdAt)
 
@@ -47,29 +59,50 @@ spacesRouter.get('/', async (c) => {
 
 spacesRouter.post('/', zValidator('json', z.object({
   name: z.string().min(1).max(100),
+  kind: z.enum(['space', 'collection']).optional().default('space'),
   // Settable at creation so the recommended flow — lock the space *before* putting anything in it —
   // needs no second call, and so the lock is in place before the first document arrives.
   offline: z.boolean().optional().default(false),
 })), async (c) => {
   const userId = c.get('userId') as string
-  const { name, offline } = c.req.valid('json')
+  const { name, kind, offline } = c.req.valid('json')
+  if (kind === 'collection' && offline) return c.json({ error: NOT_LOCKABLE }, 400)
   const now = new Date()
   const id = randomUUID()
-  await db.insert(spaces).values({ id, name, userId, offline, createdAt: now, updatedAt: now })
-  return c.json({ id, name, offline, chatCount: 0, memoryCount: 0, createdAt: Math.floor(now.getTime() / 1000) }, 201)
+  await db.insert(spaces).values({ id, name, userId, kind, offline, createdAt: now, updatedAt: now })
+  return c.json({
+    id, name, kind, offline,
+    chatCount: 0, memoryCount: 0, resourceCount: 0,
+    createdAt: Math.floor(now.getTime() / 1000),
+  }, 201)
 })
 
-/** Name and lock state. The lock is asymmetric on purpose — see canUnlock in lib/space-lock.ts. */
+/** Name, lock state, and promoting a collection.
+ *
+ *  The lock is asymmetric on purpose — see canUnlock in lib/space-lock.ts — and so is the kind:
+ *  a collection may become a space, never the reverse. */
 spacesRouter.patch('/:id', zValidator('json', z.object({
   name: z.string().min(1).max(100).optional(),
   offline: z.boolean().optional(),
+  kind: z.enum(['space', 'collection']).optional(),
 })), async (c) => {
   const userId = c.get('userId') as string
   const id = c.req.param('id')
-  const { name, offline } = c.req.valid('json')
+  const { name, offline, kind } = c.req.valid('json')
 
   const space = await db.select().from(spaces).where(and(eq(spaces.id, id), eq(spaces.userId, userId))).get()
   if (!space) return c.json({ error: 'Not found' }, 404)
+
+  // Locking denies a chat web search, URL fetching and image generation. A collection has no chats,
+  // so there is nothing to deny and the flag would only be a claim the app does not keep.
+  if (offline === true && space.kind === 'collection') return c.json({ error: NOT_LOCKABLE }, 400)
+
+  // One-way: promoting only adds capabilities to a grouping that has none, and its tagged resources
+  // are already in `space_files`, so nothing moves. Demoting would have to answer what happens to
+  // the chats, memories and lock a space may hold — a question worth not having.
+  if (kind === 'collection' && space.kind === 'space') {
+    return c.json({ error: 'A space cannot be turned into a collection. Create a collection and tag its resources instead.' }, 400)
+  }
 
   // Unlocking a space that still holds anything would hand web access back to chats and memories
   // built up while it was sealed. Refused with the contents named, so the UI can say what to clear.
@@ -99,10 +132,12 @@ spacesRouter.patch('/:id', zValidator('json', z.object({
   const update: Partial<typeof spaces.$inferInsert> = { updatedAt: new Date() }
   if (name !== undefined) update.name = name
   if (offline !== undefined) update.offline = offline
+  if (kind !== undefined) update.kind = kind
   await db.update(spaces).set(update).where(eq(spaces.id, id))
   if (offline !== undefined && offline !== space.offline) {
     console.log(`  [space] ${id} ${offline ? 'locked (offline)' : 'unlocked'}`)
   }
+  if (kind !== undefined && kind !== space.kind) console.log(`  [space] ${id} promoted to a space`)
   return c.json({ ok: true })
 })
 

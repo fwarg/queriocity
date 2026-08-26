@@ -1,4 +1,6 @@
 import { useState, useEffect, type FormEvent } from 'react'
+import { Trash2, X } from 'lucide-react'
+import { RowAction } from './ui.tsx'
 import {
   updateSettings, changePassword,
   fetchUserMemories, createUserMemory, updateUserMemory, deleteUserMemory, suggestUserMemories,
@@ -9,6 +11,7 @@ import { LanguageSelect } from './LanguageSelect.tsx'
 import { useLang, useT } from '../lib/i18n.tsx'
 import { errorMessage } from '../lib/errors.ts'
 import type { Lang, TranslationKey } from '@shared/i18n/index.ts'
+import { GuideLink } from './GuideView.tsx'
 
 /** Inline CRUD for the user-level memory list. Kept in this panel because these facts are
  *  account-wide — there is no space to hang them off. */
@@ -123,14 +126,12 @@ function UserMemoryList() {
               >
                 + Add
               </button>
-              <button
-                type="button"
+              <RowAction
+                icon={<X size={14} />}
+                persistent
+                label={t('common.dismiss')}
                 onClick={() => setSuggestions(prev => prev.filter(f => f !== fact))}
-                className="text-xs text-gray-600 hover:text-gray-400 shrink-0"
-                aria-label={t('common.dismiss')}
-              >
-                ✕
-              </button>
+              />
             </div>
           ))}
         </div>
@@ -143,7 +144,7 @@ function UserMemoryList() {
           <button
             type="button"
             onClick={() => toggleKeep(m)}
-            className={`shrink-0 text-xs leading-none mt-0.5 ${m.alwaysKeep ? 'text-amber-400' : 'text-gray-700 hover:text-gray-500 opacity-0 group-hover:opacity-100'}`}
+            className={`shrink-0 text-xs leading-none mt-0.5 ${m.alwaysKeep ? 'text-amber-400' : 'text-gray-700 hover:text-gray-500 md:opacity-0 md:group-hover:opacity-100'}`}
             title={t(m.alwaysKeep ? 'userMemory.alwaysIncludedTitle' : 'userMemory.alwaysIncludeTitle')}
             aria-pressed={m.alwaysKeep}
           >
@@ -168,14 +169,12 @@ function UserMemoryList() {
             </span>
           )}
           <span className="text-[10px] text-gray-600 shrink-0 mt-0.5">{t(m.source === 'tool' ? 'memory.sourceAuto' : 'memory.sourceManual')}</span>
-          <button
-            type="button"
+          <RowAction
+            icon={<Trash2 size={14} />}
+            tone="danger"
+            label={t('common.delete')}
             onClick={() => remove(m.id)}
-            className="text-gray-700 hover:text-red-400 text-xs shrink-0 opacity-0 group-hover:opacity-100"
-            aria-label={t('common.delete')}
-          >
-            ✕
-          </button>
+          />
         </div>
       ))}
     </div>
@@ -391,7 +390,7 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
           <div className="border-t border-gray-800" />
           <div className="flex flex-col gap-2">
             <label className="text-xs text-gray-400 font-medium">{t('settings.aboutYou')}</label>
-            <p className="text-xs text-gray-500">{t('settings.aboutYouDesc')}</p>
+            <p className="text-xs text-gray-500">{t('settings.aboutYouDesc')} <GuideLink topic="settings" /></p>
             <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
               <input
                 type="checkbox"

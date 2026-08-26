@@ -1,7 +1,8 @@
-import { useState, useRef, type FormEvent, type KeyboardEvent } from 'react'
-import { Send, Paperclip, X, Square, LayoutGrid, ChevronDown, ChevronUp } from 'lucide-react'
+import { useEffect, useState, useRef, type FormEvent, type KeyboardEvent } from 'react'
+import { Send, Paperclip, X, Square, LayoutGrid, ChevronDown, ChevronUp, NotebookPen } from 'lucide-react'
 import { AI_SYSTEM_NOTICE_SHORT } from '../lib/ai-notice.ts'
-import { extractFileForContext, fetchSuggestions } from '../lib/api.ts'
+import { extractFileForContext, fetchFiles, fetchNoteText, fetchSuggestions, type Resource } from '../lib/api.ts'
+import { Modal } from './Modal.tsx'
 import { TemplateSelector } from './TemplateSelector.tsx'
 import { useT } from '../lib/i18n.tsx'
 import type { TranslationKey } from '@shared/i18n/index.ts'
@@ -20,6 +21,10 @@ interface Props {
   searchCategories: SearchCategory[]
   onSearchCategoriesChange: (cats: SearchCategory[]) => void
   suggestionsEnabled?: boolean
+  /** The user's collections, and which are picked for the next message. */
+  collections: Array<{ id: string; name: string }>
+  selectedCollections: string[]
+  onCollectionsChange: (ids: string[]) => void
   /** The chat's space is locked: no web search, URL fetching or image generation. Advisory only —
    *  the server enforces it — but the controls should not offer what will be refused. */
   lockedSpace?: boolean
@@ -56,16 +61,17 @@ const CATEGORY_LABEL_KEYS: Record<SearchCategory, TranslationKey> = {
   tech: 'category.tech',
 }
 
-export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, suggestionsEnabled, lockedSpace = false, related = [], onRelatedSelect }: Props) {
+export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, collections, selectedCollections, onCollectionsChange, suggestionsEnabled, lockedSpace = false, related = [], onRelatedSelect }: Props) {
   const t = useT()
   const [value, setValue] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [extractStatus, setExtractStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [extractError, setExtractError] = useState('')
+  const [pickingNote, setPickingNote] = useState(false)
   const [showTemplates, setShowTemplates] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
   const [visibleDesc, setVisibleDesc] = useState<TranslationKey | null>(null)
-  const [categoryOpen, setCategoryOpen] = useState(false)
+  const [sourcesOpen, setSourcesOpen] = useState(false)
   const [suggestions, setSuggestions] = useState<string[]>([])
   const fileRef = useRef<HTMLInputElement>(null)
   const descTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -80,6 +86,24 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
 
   const isFlash = focusMode === 'flash'
   const isOverLimit = isFlash && value.length > FLASH_MAX
+
+  // Categories narrow a web search, so they are offered only where one happens; collections are
+  // local and offered everywhere. Either alone is enough to show the picker, which then renders
+  // whichever groups apply — the trigger names what is currently in force.
+  const categoriesAvailable = !lockedSpace && (focusMode === 'balanced' || focusMode === 'thorough')
+  const sourcesPicker = categoriesAvailable || collections.length > 0
+  const sourcesActive = searchCategories.length > 0 || selectedCollections.length > 0
+  const pickedNames = [
+    ...(categoriesAvailable && searchCategories.length > 0 ? [searchCategories.map(c => t(CATEGORY_LABEL_KEYS[c])).join('+')] : []),
+    ...collections.filter(c => selectedCollections.includes(c.id)).map(c => c.name),
+  ]
+  // "All" is a statement about categories only, and unqualified it reads as "everything" once
+  // collections share the button — no collection is picked by default.
+  const sourcesLabel = pickedNames.length > 0
+    ? pickedNames.join(' · ')
+    : categoriesAvailable
+      ? t(collections.length > 0 ? 'category.allCategories' : 'category.all')
+      : t('collection.plural')
 
   function handleSuggestionFetch(text: string) {
     if (suggestTimerRef.current) clearTimeout(suggestTimerRef.current)
@@ -115,6 +139,21 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSubmit(e as unknown as FormEvent)
+    }
+  }
+
+  async function attachNote(id: string) {
+    setPickingNote(false)
+    setExtractStatus('loading')
+    setExtractError('')
+    try {
+      const note = await fetchNoteText(id)
+      setAttachments(prev => [...prev, note])
+      setExtractStatus('idle')
+    } catch (err: unknown) {
+      setExtractStatus('error')
+      setExtractError(err instanceof Error ? err.message : t('input.readFileFailed'))
+      setTimeout(() => setExtractStatus('idle'), 4000)
     }
   }
 
@@ -162,7 +201,14 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
       <div className={`overflow-hidden text-xs text-gray-500 flex items-center transition-all duration-500 ${visibleDesc ? 'max-h-7 opacity-100' : 'max-h-0 opacity-0'}`}>
         {visibleDesc && t(visibleDesc)}
       </div>
-      <div className="flex items-center gap-2 text-xs">
+      {/* Wraps rather than a fixed second row: the sources button carries the picked names, so its
+          width is content, not layout. On a phone it drops below the modes; on a wide screen the
+          row stays one line. */}
+      <div className="flex items-center gap-2 gap-y-1.5 text-xs flex-wrap">
+        {/* One bordered group, because the modes are a choice of one — which is what separates them
+            from the sources button beside them, a choice of many. Inactive modes are transparent so
+            the container carries the grouping rather than four grey blocks. */}
+        <div className="flex items-center gap-0.5 rounded-lg border border-gray-800 bg-gray-900/70 p-0.5">
         {(['flash', 'balanced', 'thorough', 'image'] as const).map(m => {
           // Image generation sends the prompt to the diffusion server, which is egress like any
           // other, so a locked space refuses it. Disabled rather than hidden to keep the row stable.
@@ -174,46 +220,77 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
               disabled={blocked}
               onClick={() => handleModeChange(m)}
               title={blocked ? t('mode.blockedLocked') : undefined}
-              className={`px-2 py-1 rounded capitalize ${focusMode === m ? 'bg-blue-600' : blocked ? 'bg-gray-800/50 text-gray-600 cursor-not-allowed' : 'bg-gray-800 hover:bg-gray-700'}`}
+              className={`px-2 py-1 rounded-md capitalize ${focusMode === m ? 'bg-blue-600 text-white' : blocked ? 'text-gray-600 cursor-not-allowed' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'}`}
             >
               {t(MODE_LABEL_KEYS[m])}
             </button>
           )
         })}
+        </div>
         <span className="flex-1" />
         {isFlash && (
           <span className={isOverLimit ? 'text-red-400' : 'text-gray-500'}>
             {value.length}/{FLASH_MAX}
           </span>
         )}
-        {!lockedSpace && (focusMode === 'balanced' || focusMode === 'thorough') && (
+        {sourcesPicker && (
           <button
             type="button"
-            onClick={() => setCategoryOpen(o => !o)}
-            className={`flex items-center gap-1 px-2 py-1 rounded text-xs ${searchCategories.length > 0 ? 'bg-indigo-700 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
+            onClick={() => setSourcesOpen(o => !o)}
+            className={`flex items-center gap-1 px-2 py-1 rounded text-xs min-w-0 max-w-[16rem] ${sourcesActive ? 'bg-indigo-700 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
           >
-            {searchCategories.length === 0 ? t('category.all') : searchCategories.map(c => t(CATEGORY_LABEL_KEYS[c])).join('+')}
-            <span className="opacity-60">{categoryOpen ? '▴' : '▾'}</span>
+            <span className="truncate">{sourcesLabel}</span>
+            <span className="opacity-60 shrink-0">{sourcesOpen ? '▴' : '▾'}</span>
           </button>
         )}
       </div>
-      {categoryOpen && !lockedSpace && (focusMode === 'balanced' || focusMode === 'thorough') && (
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {SEARCH_CATEGORIES.map(cat => (
-            <button
-              key={cat}
-              type="button"
-              onClick={() => {
-                const next = searchCategories.includes(cat)
-                  ? searchCategories.filter(c => c !== cat)
-                  : [...searchCategories, cat]
-                onSearchCategoriesChange(next)
-              }}
-              className={`px-2 py-0.5 rounded capitalize text-xs ${searchCategories.includes(cat) ? 'bg-indigo-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'}`}
-            >
-              {t(CATEGORY_LABEL_KEYS[cat])}
-            </button>
-          ))}
+      {/* One expander, two groups: where the answer may look. Categories narrow the web search;
+          collections add the user's own resources. Both are picked per request, not stored on the
+          chat, so they belong beside the research mode rather than in the space. */}
+      {sourcesPicker && sourcesOpen && (
+        <div className="flex flex-col gap-1.5">
+          {categoriesAvailable && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-xs text-gray-500 mr-0.5">{t('category.group')}</span>
+              {SEARCH_CATEGORIES.map(cat => (
+                <button
+                  key={cat}
+                  type="button"
+                  aria-pressed={searchCategories.includes(cat)}
+                  onClick={() => {
+                    const next = searchCategories.includes(cat)
+                      ? searchCategories.filter(c => c !== cat)
+                      : [...searchCategories, cat]
+                    onSearchCategoriesChange(next)
+                  }}
+                  className={`px-2 py-0.5 rounded capitalize text-xs ${searchCategories.includes(cat) ? 'bg-indigo-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'}`}
+                >
+                  {t(CATEGORY_LABEL_KEYS[cat])}
+                </button>
+              ))}
+            </div>
+          )}
+          {collections.length > 0 && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-xs text-gray-500 mr-0.5">{t('collection.plural')}</span>
+              {collections.map(collection => {
+                const on = selectedCollections.includes(collection.id)
+                return (
+                  <button
+                    key={collection.id}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => onCollectionsChange(
+                      on ? selectedCollections.filter(id => id !== collection.id) : [...selectedCollections, collection.id],
+                    )}
+                    className={`px-2 py-0.5 rounded text-xs ${on ? 'bg-amber-700 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'}`}
+                  >
+                    {collection.name}
+                  </button>
+                )
+              })}
+            </div>
+          )}
         </div>
       )}
       {related.length > 0 && !disabled && (
@@ -277,7 +354,20 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
           placeholder={t('input.placeholder')}
           disabled={disabled}
         />
-        <div className="flex flex-col gap-2">
+        {/* 2×2 rather than a column of four: stacked, these ran far taller than the three-row
+            textarea beside them and that height was pure margin on a phone. Send sits bottom-right,
+            where it is reached last and hardest to hit by accident. */}
+        <div className="grid grid-cols-2 gap-2 content-start">
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            disabled={isFlash || extractStatus === 'loading'}
+            className="p-2 rounded bg-gray-800 hover:bg-gray-700 disabled:opacity-50"
+            title={t(isFlash ? 'input.attachBlockedFlash' : 'input.attachTitle')}
+            aria-label={t(isFlash ? 'input.attachBlockedFlashLabel' : 'input.attach')}
+          >
+            <Paperclip size={16} className={extractStatus === 'loading' ? 'animate-pulse' : ''} />
+          </button>
           <button
             type="button"
             onClick={() => setShowTemplates(v => !v)}
@@ -289,13 +379,13 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
           </button>
           <button
             type="button"
-            onClick={() => fileRef.current?.click()}
+            onClick={() => setPickingNote(true)}
             disabled={isFlash || extractStatus === 'loading'}
             className="p-2 rounded bg-gray-800 hover:bg-gray-700 disabled:opacity-50"
-            title={t(isFlash ? 'input.attachBlockedFlash' : 'input.attachTitle')}
-            aria-label={t(isFlash ? 'input.attachBlockedFlashLabel' : 'input.attach')}
+            title={t(isFlash ? 'input.attachBlockedFlash' : 'note.attach')}
+            aria-label={t(isFlash ? 'input.attachBlockedFlashLabel' : 'note.attach')}
           >
-            <Paperclip size={16} className={extractStatus === 'loading' ? 'animate-pulse' : ''} />
+            <NotebookPen size={16} />
           </button>
           {disabled && onCancel ? (
             <button
@@ -325,6 +415,42 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
           max-height budget. A session restored from a cookie or the PWA never passes the login
           screen, so this is the only AI notice such a user sees. */}
       <p className="pb-1 text-center text-[11px] text-gray-600">{t(AI_SYSTEM_NOTICE_SHORT)}</p>
+      {pickingNote && <NotePicker onPick={attachNote} onClose={() => setPickingNote(false)} />}
     </form>
+  )
+}
+
+/** Picks a note to inject in full into the next message.
+ *
+ *  Notes only: a file's text is stored as overlapping chunks, so attaching one would repeat passages
+ *  — the paperclip already covers sending a document whole. */
+function NotePicker({ onPick, onClose }: { onPick: (id: string) => void; onClose: () => void }) {
+  const t = useT()
+  const [notes, setNotes] = useState<Resource[] | null>(null)
+
+  useEffect(() => {
+    fetchFiles()
+      .then(rs => setNotes(rs.filter(r => r.kind === 'note')))
+      .catch(() => setNotes([]))
+  }, [])
+
+  return (
+    <Modal title={t('note.attach')} onClose={onClose}>
+      {notes === null && <p className="text-sm text-gray-500">{t('common.loading')}</p>}
+      {notes?.length === 0 && <p className="text-sm text-gray-500">{t('note.attachEmpty')}</p>}
+      <div className="flex flex-col gap-1.5">
+        {notes?.map(note => (
+          <button
+            key={note.id}
+            type="button"
+            onClick={() => onPick(note.id)}
+            className="text-left px-3 py-2 rounded bg-gray-800 hover:bg-gray-700"
+          >
+            <div className="text-sm text-gray-100 truncate">{note.filename}</div>
+            {note.summary && <div className="text-xs text-gray-500 line-clamp-1">{note.summary}</div>}
+          </button>
+        ))}
+      </div>
+    </Modal>
   )
 }

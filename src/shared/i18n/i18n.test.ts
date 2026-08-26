@@ -93,6 +93,22 @@ describe('toLang', () => {
   })
 })
 
+/** ResourceDetail builds a label per transform operation as `transform.<op>`, assembled at runtime,
+ *  so the compiler cannot tell it an operation has no label — the dropdown would simply render the
+ *  raw key. The list is the server's, in lib/files/transforms.ts. */
+describe('transform operations', () => {
+  const OPERATIONS = ['summarize', 'keypoints', 'questions', 'outline']
+
+  test('every operation has a catalog entry', () => {
+    expect(OPERATIONS.filter(op => !(`transform.${op}` in en))).toEqual([])
+  })
+
+  test('the catalog carries no entry for an operation that no longer exists', () => {
+    const known = new Set(OPERATIONS.map(op => `transform.${op}`))
+    expect(Object.keys(en).filter(k => k.startsWith('transform.') && !known.has(k))).toEqual([])
+  })
+})
+
 /** The codes are declared in shared/error-codes.ts, and the client looks them up as
  *  `error.<code>` — a union member with no catalog entry would fall back to the server's English
  *  string in every language, silently. */

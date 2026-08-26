@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useConfirm } from './confirm.tsx'
 import { listUsers, setUserRole, deleteUser, createInvite, listInvites, revokeInvite, resetUserPassword, testModels, fetchAdminSettings, updateAdminSettings, triggerDream, reindexChats, type ModelTestResult, type Invite } from '../lib/api.ts'
 import { Modal } from './Modal.tsx'
 
@@ -12,6 +13,7 @@ type UserRow = { id: string; email: string; name: string | null; role: string; c
 type Tab = 'settings' | 'users'
 
 export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
+  const confirm = useConfirm()
   const [tab, setTab] = useState<Tab>('settings')
 
   // Settings tab state
@@ -23,6 +25,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   const [extractCharsDraft, setExtractCharsDraft] = useState('6000')
   const [rerankTopNDraft, setRerankTopNDraft] = useState('15')
   const [ragTopKDraft, setRagTopKDraft] = useState('15')
+  const [ragMinRelevanceDraft, setRagMinRelevanceDraft] = useState('0')
   // Derived server-side from the model context env vars; two settings below are clamped by them.
   const [limits, setLimits] = useState<{ smallModelInputChars: number; embedInputChars: number; scrapeMaxChars: number; minUrlContextChars: number } | null>(null)
   const [attachmentCharsDraft, setAttachmentCharsDraft] = useState('20000')
@@ -34,6 +37,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   const [fetchMaxUrlContextCharsDraft, setFetchMaxUrlContextCharsDraft] = useState('40000')
   const [fetchSummarizeOverflowDraft, setFetchSummarizeOverflowDraft] = useState(false)
   const [compressHistoryOverflowDraft, setCompressHistoryOverflowDraft] = useState(false)
+  const [resourceSummaryDraft, setResourceSummaryDraft] = useState(true)
   const [savingBudget, setSavingBudget] = useState(false)
   const [budgetSaved, setBudgetSaved] = useState(false)
   const [dreamRunning, setDreamRunning] = useState(false)
@@ -63,6 +67,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
       setExtractCharsDraft(String(s.memoryExtractChars))
       setRerankTopNDraft(String(s.rerankTopN))
       setRagTopKDraft(String(s.ragTopK))
+      setRagMinRelevanceDraft(String(s.ragMinRelevance))
       setLimits(s.limits)
       setAttachmentCharsDraft(String(s.attachmentChars))
       setSpaceRagBudgetDraft(String(s.spaceRagBudget))
@@ -73,6 +78,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
       setFetchMaxUrlContextCharsDraft(String(s.fetchMaxUrlContextChars))
       setFetchSummarizeOverflowDraft(s.fetchSummarizeOverflow)
       setCompressHistoryOverflowDraft(s.compressHistoryOverflow)
+      setResourceSummaryDraft(s.resourceSummary)
     }).catch(() => setError('Failed to load settings.'))
   }, [])
 
@@ -91,6 +97,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     const extractChars = parseInt(extractCharsDraft)
     const rerankTopN = parseInt(rerankTopNDraft)
     const ragTopK = parseInt(ragTopKDraft)
+    const ragMinRelevance = parseFloat(ragMinRelevanceDraft)
     const attachmentChars = parseInt(attachmentCharsDraft)
     const spaceRagBudget = parseInt(spaceRagBudgetDraft)
     const userMemoryTokenBudget = parseInt(userMemoryBudgetDraft)
@@ -105,6 +112,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     if (isNaN(dreamTarget) || dreamTarget < 100) return
     if (isNaN(extractChars) || extractChars < 500) return
     if (isNaN(rerankTopN) || rerankTopN < 1) return
+    if (isNaN(ragMinRelevance) || ragMinRelevance < 0 || ragMinRelevance > 1) return
     if (isNaN(attachmentChars) || attachmentChars < 1000) return
     if (isNaN(spaceRagBudget) || spaceRagBudget < 0) return
     if (isNaN(userMemoryTokenBudget) || userMemoryTokenBudget < 0) return
@@ -117,7 +125,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     setError('')
     setSavingBudget(true)
     try {
-      await updateAdminSettings({ memoryTokenBudget: budget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, ragTopK, attachmentChars, spaceRagBudget, queryReformulation: queryReformulationDraft, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow: fetchSummarizeOverflowDraft, compressHistoryOverflow: compressHistoryOverflowDraft })
+      await updateAdminSettings({ memoryTokenBudget: budget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, ragTopK, ragMinRelevance, attachmentChars, spaceRagBudget, queryReformulation: queryReformulationDraft, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow: fetchSummarizeOverflowDraft, compressHistoryOverflow: compressHistoryOverflowDraft, resourceSummary: resourceSummaryDraft })
 
       onBudgetChange?.(budget)
       setBudgetSaved(true)
@@ -173,7 +181,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   }
 
   async function handleDelete(id: string) {
-    if (!confirm('Delete this user and all their data?')) return
+    if (!await confirm({ message: 'Delete this user and all their data?', confirmLabel: 'Delete', danger: true })) return
     try {
       await deleteUser(id)
       setUserList(prev => prev.filter(x => x.id !== id))
@@ -195,7 +203,11 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   }
 
   async function handleResetPassword(id: string) {
-    if (!confirm('Replace this user\'s password with a temporary one? Their current password stops working and any open session is signed out.')) return
+    if (!await confirm({
+      message: 'Replace this user\'s password with a temporary one? Their current password stops working and any open session is signed out.',
+      confirmLabel: 'Reset password',
+      danger: true,
+    })) return
     setBusy(true)
     setError('')
     try {
@@ -350,6 +362,13 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                   onChange={e => setRerankTopNDraft(e.target.value)}
                   className="w-24 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
               </div>
+              <div className="flex flex-col gap-1.5">
+                <p className="text-xs text-gray-400 font-medium">Minimum relevance for resources</p>
+                <p className="text-xs text-gray-500">Reranker score (0–1) a resource/collection excerpt must clear to be injected at all, instead of always filling out the chunk count above regardless of match quality. 0 disables the floor. Only applies when a reranker model is configured.</p>
+                <input type="number" min={0} max={1} step={0.05} value={ragMinRelevanceDraft}
+                  onChange={e => setRagMinRelevanceDraft(e.target.value)}
+                  className="w-24 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
+              </div>
             </div>
 
             {/* Search */}
@@ -406,6 +425,20 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                 <p className="text-xs text-gray-500">When a research turn's conversation history must be trimmed to fit the context budget, summarize the dropped messages with the small model and fold the summary into the system prompt instead of discarding them outright. Adds latency; only applies to balanced/thorough research turns.</p>
                 <label className="flex items-center gap-2 cursor-pointer w-fit">
                   <input type="checkbox" checked={compressHistoryOverflowDraft} onChange={e => setCompressHistoryOverflowDraft(e.target.checked)}
+                    className="accent-blue-500 w-3.5 h-3.5" />
+                  <span className="text-xs text-gray-400">Enabled</span>
+                </label>
+              </div>
+            </div>
+
+            {/* Resources */}
+            <div className="flex flex-col gap-3 border-t border-gray-800 pt-5">
+              <p className="text-xs font-semibold text-gray-300 uppercase tracking-wider">Resources</p>
+              <div className="flex flex-col gap-1.5">
+                <p className="text-xs text-gray-400 font-medium">Summarize on ingest</p>
+                <p className="text-xs text-gray-500">Generate a one-line summary and a few topics for every uploaded file, ingested URL and note, shown in the Resources list and detail view. One small-model call per resource, made after the resource is stored — a failure leaves it without a summary rather than losing it. Turn off on slow hardware.</p>
+                <label className="flex items-center gap-2 cursor-pointer w-fit">
+                  <input type="checkbox" checked={resourceSummaryDraft} onChange={e => setResourceSummaryDraft(e.target.checked)}
                     className="accent-blue-500 w-3.5 h-3.5" />
                   <span className="text-xs text-gray-400">Enabled</span>
                 </label>

@@ -17,3 +17,10 @@ import { getAppSetting } from './db.ts'
  *  Read per call: it is an Admin setting and takes effect without a restart. */
 export const ragTopK = async (): Promise<number> =>
   parseInt(await getAppSetting('rag_top_k', '15'), 10) || 15
+
+/** Minimum cross-encoder relevance score a resource/document chunk must clear to be injected at
+ *  all, instead of always filling out the top-K regardless of how weak the match is. `0` (default)
+ *  disables the floor. Only meaningful when reranking is enabled — there is no model-agnostic
+ *  equivalent over raw vector distance, so callers without a reranker are unaffected. */
+export const ragMinRelevance = async (): Promise<number> =>
+  parseFloat(await getAppSetting('rag_min_relevance', '0')) || 0

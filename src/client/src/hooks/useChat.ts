@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 import { streamChat, stopChat, fetchRelatedQuestions, decideEgress } from '../lib/api.ts'
-import type { Message, Source } from '../lib/api.ts'
+import type { Message, Source, FileSource } from '../lib/api.ts'
 import type { LogStep } from '../components/ProgressLog.tsx'
 import { useT } from '../lib/i18n.tsx'
 
@@ -19,6 +19,7 @@ interface UseChatOptions {
   focusMode: 'flash' | 'balanced' | 'thorough' | 'image'
   searchCategories?: Array<'news' | 'science' | 'discussions' | 'tech'>
   includeFileIds?: string[]
+  collectionIds?: string[]
   includeMemoryIds?: string[]
   spaceId?: string
   /** User setting; when false no related-questions call is made at all. */
@@ -26,7 +27,7 @@ interface UseChatOptions {
   onSessionCreated: (id: string, title: string) => void
 }
 
-export function useChat({ sessionId, focusMode, searchCategories, includeFileIds, includeMemoryIds, spaceId, followUpSuggestions = true, onSessionCreated }: UseChatOptions) {
+export function useChat({ sessionId, focusMode, searchCategories, includeFileIds, includeMemoryIds, collectionIds, spaceId, followUpSuggestions = true, onSessionCreated }: UseChatOptions) {
   const t = useT()
   const [messages, setMessages] = useState<Message[]>([])
   const [streaming, setStreaming] = useState('')
@@ -111,13 +112,13 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
     let accumulated = ''
     let thinkingAccumulated = ''
     const sources: Source[] = []
-    const fileSources: Array<{ title: string; url: string }> = []
+    const fileSources: FileSource[] = []
     const images: Array<{ url: string; alt: string }> = []
     const blockedEngines: Array<{ engine: string; reason: string }> = []
     let wasAborted = false
 
     try {
-      for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId, undefined, searchCategories, includeFileIds, includeMemoryIds, regenerating)) {
+      for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId, undefined, searchCategories, includeFileIds, includeMemoryIds, collectionIds, regenerating)) {
         if (chunk.type === 'text') {
           accumulated += chunk.delta as string
           cancelAnimationFrame(rafRef.current)
@@ -147,7 +148,7 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
         } else if (chunk.type === 'sources') {
           sources.push(...(chunk.sources as Source[]))
         } else if (chunk.type === 'file_sources') {
-          fileSources.push(...(chunk.sources as Array<{ title: string; url: string }>))
+          fileSources.push(...(chunk.sources as FileSource[]))
         } else if (chunk.type === 'approval') {
           setApproval({
             id: chunk.id as string,

@@ -32,6 +32,8 @@ import { runDream } from './lib/memory.ts'
 import { runDueMonitors } from './lib/monitor-runner.ts'
 import { validateConfig, checkEmbeddingDimensions, checkAttachmentBudget } from './lib/config-check.ts'
 import { purgeOrphanVectors } from './lib/vector-cleanup.ts'
+import { reindexNotes } from './lib/files/notes.ts'
+import { reembedMissingVectors } from './lib/reembed.ts'
 import { EMBED_BATCH_CHARS, EMBED_MAX_INPUT_CHARS } from './lib/llm.ts'
 
 import { IMAGE_API, IMAGE_STEPS, imageStorageDir, imageUrlsIn, purgeOrphanImages } from './lib/image-store.ts'
@@ -191,6 +193,18 @@ sweepOrphanImages().catch(e => console.error('[image] orphan sweep failed:', e))
 async function sweepOrphanImages(): Promise<void> {
   const rows = await db.select({ content: messages.content }).from(messages)
   await purgeOrphanImages(imageUrlsIn(rows.map(r => r.content)))
+}
+
+// Vectors are derived data; the text behind them is not. A changed EMBED_DIMENSIONS invalidates
+// every vector and nothing else, so recovery is re-embedding what `*_chunk_meta` already holds —
+// no re-chunking, and no resource deleted. Run in the background rather than on the startup path:
+// a large corpus takes a while, and degraded retrieval is far better than a server that will not
+// serve. reindexNotes covers the one case this cannot, a note whose chunk text was never written.
+rebuildEmbeddings().catch(e => console.error('[reembed] failed:', e))
+
+async function rebuildEmbeddings(): Promise<void> {
+  await reembedMissingVectors()
+  await reindexNotes()
 }
 
 preflight().catch(() => {})

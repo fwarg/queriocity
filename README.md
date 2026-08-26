@@ -31,6 +31,10 @@ through a single Bun process.
     - [Chat attachment (ephemeral)](#chat-attachment-ephemeral)
     - [Library upload (persistent)](#library-upload-persistent-vector-searchable)
     - [URL and YouTube ingestion](#url-and-youtube-ingestion)
+    - [Notes](#notes)
+    - [Finding things in a large library](#finding-things-in-a-large-library)
+    - [Resource detail and transforms](#resource-detail-and-transforms)
+    - [Changing the embedding model](#changing-the-embedding-model)
   - [URL fetching](#url-fetching)
   - [Preventing data exfiltration](#preventing-data-exfiltration)
     - [Locked spaces](#locked-spaces)
@@ -38,8 +42,10 @@ through a single Bun process.
     - [Prompt Studio](#prompt-studio)
   - [Settings](#settings)
     - [Languages](#languages)
+  - [In-app guide](#in-app-guide)
   - [Image generation](#image-generation)
   - [Spaces](#spaces)
+    - [Collections](#collections)
     - [How memory works](#how-memory-works)
     - [Memory about you](#memory-about-you)
   - [Monitors](#monitors)
@@ -235,7 +241,8 @@ Categories are multi-select — e.g. "news+science" searches both simultaneously
 
 ## Resources
 
-There are three ways to bring file content into a conversation.
+There are three ways to bring file content into a conversation, plus [notes](#notes) — the resource
+you write yourself rather than upload.
 
 ### Chat attachment (ephemeral)
 
@@ -286,6 +293,117 @@ Click **+ Add URL** in the Resources view to permanently ingest a web page or Yo
 - **YouTube videos** — paste any YouTube URL (`youtube.com/watch?v=…`, `youtu.be/…`, shorts, embeds) and the video's transcript is fetched automatically via the YouTube transcript API. No local download or `yt-dlp` required. The transcript is stored as a searchable document.
 
 Ingested URLs work the same as uploaded files: they appear in the Resources list, can be tagged to spaces, and are available to the `uploads_search` tool.
+
+### Notes
+
+A **note** is a resource you write rather than upload. Click **+ New note** in the Resources view,
+give it a title and some markdown, and it is chunked and embedded exactly like an uploaded file — so
+it can be tagged to spaces, is searched by `uploads_search`, and appears in the same list. Unlike a
+file, a note stays editable.
+
+This fills the gap between the two things Queriocity already stores. A [space memory](#how-memory-works)
+is a sentence, selected by relevance against a token budget and liable to be rewritten by compaction.
+A library file is fixed once uploaded. A note is text you own, kept exactly as written, for as long
+as you want it.
+
+Three ways to make one:
+
+- **Write it.** *+ New note* in the Resources view, with a preview toggle.
+- **Save an answer.** Every assistant message has a notebook icon next to its speaker icon. Clicking
+  it opens the editor pre-filled with the answer and the question that produced it as a title, so a
+  result worth keeping does not have to be exported or pasted into a memory. The answer's `[n]`
+  citation markers are rewritten to point straight at their URLs and the cited sources are appended
+  as a list, keeping their original numbers — a note carries no source panel of its own, so without
+  this the markers would arrive as dead text.
+- **Transform a resource.** See below.
+
+A note reaches a conversation two ways: as retrieved excerpts, like any other resource, and in full
+by picking it from the notebook icon beside the paperclip in the chat input. Only notes can be
+attached that way — a file's text is stored solely as overlapping excerpts, so injecting it would
+repeat passages; the paperclip already covers sending a document whole.
+
+### Finding things in a large library
+
+Once the library passes a handful of resources, a filter bar appears above the list:
+
+- A **filter box** over filename, summary and topics — the three things you are likely to remember
+  about a document. Chunk *content* is deliberately not searched here; that is what the model's
+  semantic search is for, and a substring match against every excerpt would return hits the list
+  cannot explain.
+- **Grouping chips** with counts — every space and [collection](#collections) holding a resource,
+  plus **Untagged** — so you can see and browse the grouping you already have rather than only apply
+  it. A resource tagged to several appears under each.
+- **Topic chips on each row are clickable**, and narrow the list to everything sharing that topic —
+  an axis that cuts *across* projects, unlike spaces which follow them.
+
+There is no folder concept and no second taxonomy: the chips above are the grouping you already
+have. A resource is tagged from the space or collection's own panel, or from the resource's detail
+panel — the first suits setting a grouping up, the second suits filing a document you are already
+looking at.
+
+For reference material that belongs to no conversation, a [collection](#collections) groups resources
+without the chats, memory and lock a space carries. Collections appear among the chips above like any
+other grouping.
+
+### Resource detail and transforms
+
+Click any resource to open it. The detail view shows:
+
+- The **summary and topics** generated at ingest by the small model, which also appear in the list —
+  what makes a library of two hundred documents readable at a glance. Administrators can turn the
+  generation off (Admin > System settings); it is best-effort either way, and a resource whose
+  summary failed works normally without one.
+- Which **spaces** the resource is tagged to.
+- **From** — where the resource came from: the full URL for an ingested page, shown as a link, or the
+  original filename for an upload. Recorded once at ingest and never edited, so it survives any
+  renaming below. This is what makes an ingested page traceable at all: the title is derived from the
+  URL and drops the scheme, so it was never something you could follow back.
+- The **title**, which the ✎ beside it renames — for uploaded files and ingested URLs as much as for
+  notes. A file arrives named by whoever made it (`report_final_v3.pdf`) and a URL by its address, and
+  neither is reliably descriptive. This name is also the label every retrieval citation carries, so
+  renaming makes later answers say what the source actually is. Answers already given keep the name
+  they cited at the time, and nothing is re-indexed — the excerpts describe content a rename leaves
+  alone.
+- The **indexed excerpts**, in order. This is what retrieval actually sees, which is the thing worth
+  checking when a PDF or a YouTube transcript has extracted badly. They overlap by design, so text
+  repeats where two excerpts meet.
+
+**Transform** runs a prompt over the resource and offers the result for saving as a new note. Four
+built-in operations — *Summarize*, *Key points*, *Open questions*, *Outline* — plus any of your own
+[prompt templates](#prompt-templates). The output is shown first and saved only if you keep it, so a
+transform that came back wrong costs nothing. The space-level *Summarize resources* button is the
+same machinery pointed at every tagged resource at once, saving to a memory instead of a note.
+
+A transformed note keeps its provenance in **two** places, because they reach different readers:
+
+- **In the text** — its title becomes *"Open questions — [source]"* and its first line names the
+  source. This is what travels, since a note is often read as a retrieved excerpt with everything
+  around it stripped away, and because the note is embedded, the model sees it too. Both are
+  editable like the rest of the note.
+- **In the detail view** — *Created from* on the new note and *Notes made from this* on the source,
+  as chips you can click through in either direction. Deleting the source clears the link and leaves
+  the note itself alone; a note is your text and outlives what prompted it.
+
+Every transform is also told to open with one sentence naming what the source is about. *Open
+questions* in particular used to produce a bare list of questions that read as nonsense once
+separated from the document they were asked of.
+
+### Changing the embedding model
+
+Changing `EMBED_DIMENSIONS` invalidates every stored vector, and nothing else. The chunk *text* is
+held in the database beside each vector, and chunk boundaries follow the file type rather than the
+model — so recovery is re-embedding what is already stored. No resource is deleted, nothing is
+re-chunked, and nothing has to be uploaded again. Space tags, notes derived from a resource, and the
+citations pointing at each chunk all survive unchanged.
+
+The rebuild runs in the background at the next start, over both the resource library and the chat
+history index, logging its progress as `[reembed] resource: 400/2000`. Until it finishes, retrieval
+returns whatever has been rebuilt so far — degraded, never wrong. A failure part-way leaves the rest
+for the following start rather than losing anything.
+
+Because nothing is destroyed, `ALLOW_EMBED_RESET` is obsolete: it is no longer read, and a dimension
+change no longer refuses to start. If your embedding model reports a different dimension than you
+configured, the startup config check says so.
 
 ---
 
@@ -378,9 +496,10 @@ chat itself carries a banner for as long as it is open.
 3. **Attach the document to that chat**, using the paperclip.
 
 Step 3 matters as much as the others. A file added to your **library** is searchable from *every*
-chat you own, including online ones in other spaces — locking a space afterwards does not retract
-it. A chat attachment is ephemeral and never enters the library, so it exists only in the locked
-conversation.
+chat you own — including online ones in other spaces, and any chat where you tick a
+[collection](#collections) that holds it, which need not be in a space at all. Locking a space
+afterwards does not retract it. A chat attachment is ephemeral and never enters the library, so it
+exists only in the locked conversation.
 
 **Locking is close to one-way, by design.** While a space is empty you can unlock it freely. Once it
 holds a chat or a memory you cannot, because unlocking would hand web access to everything gathered
@@ -429,7 +548,7 @@ Prompt Studio is a built-in editor for creating and iterating on your own prompt
 4. Iterate: edit the prompt, adjust values, run again.
 5. When satisfied, give the template a name and click **Save template**.
 
-Saved templates appear in the template picker under **Custom**. Each card has always-visible **Edit** (pencil) and **Delete** (trash) buttons. Tapping delete requires a confirmation step (a **Del** / **✕** pair appears inline) to prevent accidental deletion. Editing re-opens Prompt Studio pre-filled with the existing template.
+Saved templates appear in the template picker under **Custom**. Each card has always-visible **Edit** (pencil) and **Delete** (trash) buttons. Delete asks for confirmation first, as every destructive action in the app does. Editing re-opens Prompt Studio pre-filled with the existing template.
 
 Templates are stored per user in the database and persist across sessions.
 
@@ -500,6 +619,20 @@ The PWA manifest description and the `<meta name="description">` in `index.html`
 build time and cannot follow the reader's language — they match the English `app.tagline`.
 
 ---
+
+## In-app guide
+
+Most of what is on this page is also in the app, shorter. **Guide**, above Settings at the bottom of
+the sidebar, opens a panel of twelve topics — one per feature — that can be read in any order and
+searched. Each topic that has somewhere to go ends with a button that takes you there.
+
+The same guide is reachable from where a question actually arises: the ⓘ beside a view's heading
+folds open a sentence about that view and links on to the matching topic. New accounts meet it a
+third way, on the empty chat screen, alongside three example questions that send when clicked.
+
+The guide is deliberately the *short* version and lives in `src/shared/guide/`, one catalog per
+language and typed so a missing translation fails the build. This README stays the reference: when
+the two disagree about detail, this one is right.
 
 ## Image generation
 
@@ -629,13 +762,43 @@ Set `IMAGE_BASE_URL` in your environment to enable the feature (see [Environment
 
 ## Spaces
 
-**Spaces** are named workspaces that group related chats together. Each space has:
+**Spaces** group related chats together. Each space has:
 
 - A persistent **memory store** — facts extracted from conversations, injected into future system prompts
 - A **chat history index** — full message content embedded for semantic retrieval
 - **Tagged files** — library documents linked to the space for contextual retrieval
 - An optional **lock** — see [Locked spaces](#locked-spaces): chats in a locked space get no web
   search, URL fetching or image generation, for analysing something that must not leave the machine
+
+### Collections
+
+A **collection** is the other kind of grouping: it holds resources and nothing else — no chats, no
+memory, no monitors, no lock. It exists for reference material that belongs to no conversation, where
+filing it into a space would mean inventing a project that does not exist.
+
+Both kinds live under **Workspaces** in the sidebar, in two labelled sections — the entry is named for
+what it lists, and "space" keeps its usual meaning everywhere else in the app: the kind that holds
+chats. A resource is tagged to a collection exactly as it is tagged to a space, from either panel, and
+collections appear alongside spaces as [filter chips](#finding-things-in-a-large-library) in the
+Resources list.
+
+**Using a collection in a chat.** Tick one or more below the message box and that turn also retrieves
+from their resources, whether or not the chat is in a space. The selection is per request, not stored
+on the chat: it is as cheap to change as the research mode beside it, and stays lit until you untick
+it. Excerpts arrive as their own block, cited `[C1]`, `[C2]` — distinct from the `[F1]` labels a
+space's own tagged resources carry, so a citation is never ambiguous about which shelf it came from.
+
+Because these excerpts are asked for explicitly, they are not made to compete with whatever the space
+itself holds: they carry their own retrieval budget rather than being ranked against it. A request
+with collections selected therefore builds a somewhat larger prompt.
+
+**Promotion.** A collection can be turned into a space from its detail view, keeping every tagged
+resource — nothing moves, because both kinds tag the same way. This is one-way: a space that already
+holds chats, memories and possibly a lock has no sensible reading as a collection, so the reverse is
+refused.
+
+**Collections cannot be locked.** Locking denies a chat web access, and a collection has no chats.
+Confidential material belongs in a [locked space](#locked-spaces).
 
 ### Assigning chats to spaces
 
@@ -660,7 +823,7 @@ For RAG over chat history to work, messages must be indexed. New messages are in
 
 ### Tagged resources
 
-Any file in your library can be tagged to a space from the space detail view. Tagged resources are searched semantically on every request in that space (within the RAG budget), injecting relevant excerpts as additional context. This is useful for persistent reference material — specs, style guides, background documents — that should inform all conversations in the space.
+Any file in your library can be tagged to a space from the space detail view, or from the resource's own detail panel in [Resources](#resources) — the same tagging serves [collections](#collections). Tagged resources are searched semantically on every request in that space (within the RAG budget), injecting relevant excerpts as additional context. This is useful for persistent reference material — specs, style guides, background documents — that should inform all conversations in the space.
 
 #### Fine-grained context control
 
@@ -675,13 +838,15 @@ This lets you focus a query on a specific document or make sure a particular not
 
 The tagged resources section has a **Summarize resources** button. Clicking it sends all tagged resource content through the chat model and saves the result as a new space memory (type: *extraction*). This is useful for distilling a set of documents into a standing summary that the model can draw on in every conversation.
 
+To do the same to one resource, and keep the result as an editable note rather than a memory, use [Transform](#resource-detail-and-transforms) in that resource's detail view.
+
 ### How memory works
 
 - After each assistant response, the small model extracts noteworthy facts, preferences, and decisions and saves them to the space.
 - **New facts are reconciled against existing ones on write.** Rather than appending everything, the small model decides whether each fact is genuinely new, supersedes an existing memory, or is already covered — so "I've moved to SQLite" replaces "I use Postgres" instead of sitting next to it. A memory you wrote yourself, or marked *always keep*, is never overwritten or discarded this way.
 - **Memories are selected by relevance to the question**, not by age. Each memory is embedded, and the ones nearest the current query (re-scored by the reranker when one is configured) are injected up to the token budget. A space can therefore hold far more memories than fit in one request without the older ones becoming unreachable. Without a configured embedder, or on a request with no query text, selection falls back to newest-first.
 - You can view, add, edit, and delete individual memories in the space detail view.
-- **★ Always keep** — starring a memory (the star appears on hover) injects it in every request regardless of relevance, and protects it from being merged away by compaction. Use it for standing instructions and facts that must never be dropped.
+- **★ Always keep** — starring a memory (the star appears on hover, and is always visible on a touch screen) injects it in every request regardless of relevance, and protects it from being merged away by compaction. Use it for standing instructions and facts that must never be dropped.
 
 ### Memory compaction and management
 
@@ -961,10 +1126,10 @@ JWT_SECRET=change-me-in-production-32chars!!
 # RATE_LIMIT_IMAGE_PER_MIN=10
 # RATE_LIMIT_INGEST_PER_MIN=10
 
-# ── Embedding reset (optional) ───────────────────────────────────────────────
-# Set to true when changing EMBED_DIMENSIONS to allow the embedding tables to be
-# wiped and recreated. WARNING: all uploaded file embeddings will be deleted.
-# ALLOW_EMBED_RESET=true
+# ── Embedding reset ──────────────────────────────────────────────────────────
+# ALLOW_EMBED_RESET is obsolete and no longer read. Changing EMBED_DIMENSIONS
+# now rebuilds the vector tables and re-embeds from the stored chunk text at the
+# next start; nothing is deleted, so there is nothing left to gate.
 
 # ── Reformulate context limits ────────────────────────────────────────────────
 # The small model receives recent conversation history so it can resolve
@@ -1452,7 +1617,7 @@ The **Admin panel > System settings** tab exposes runtime-configurable parameter
 |---|---|---|---|
 | Memory | Token budget | 1000 | Max tokens of space memory injected into each request. Memories are chosen by relevance to the query, so this caps how many appear at once, not how many a space may hold |
 | Memory | User memory budget | 300 | Max tokens of *About you* memory injected into every chat, space or not. Only applies to users who enabled the setting; 0 disables it globally |
-| Memory | RAG budget | 500 | Additional tokens reserved for RAG results (chat history + tagged files); 0 disables RAG |
+| Memory | RAG budget | 500 | Additional tokens reserved for RAG results (chat history + tagged files); 0 disables RAG. Also bounds a [collection](#collections) block, which is budgeted separately, so a request with collections ticked may spend it twice |
 | Memory | Dream hour | Disabled | Server hour (0–23) to run nightly compaction, or disabled |
 | Memory | Dream threshold | 1500 | Compaction triggers when space memory exceeds this many tokens |
 | Memory | Dream target | 700 | Token target after compaction |
@@ -1465,6 +1630,7 @@ The **Admin panel > System settings** tab exposes runtime-configurable parameter
 | Search | Max pages per URL | 8 | How many paginated pages to fetch when a user provides a URL (`?page=2`, `?page=3`…). 0 = unlimited. |
 | Search | Summarize oversized URL content | Off | Summarize fetched URL content that exceeds the context budget with the small model instead of hard-truncating. Adds latency. |
 | Context | Compress dropped history | Off | When a research turn's conversation history must be trimmed to fit the context budget, summarize the dropped messages with the small model instead of discarding them, folded into the system prompt. Adds latency; only applies to balanced/thorough turns. |
+| Resources | Summarize on ingest | On | Generate a one-line summary and a few topics for every uploaded file, ingested URL and note, shown in the Resources list and detail view. One small-model call per resource, made after it is stored — a failure leaves it without a summary rather than losing it |
 | Attachments | Max context chars | 20000 | Max characters extracted from an attached file and sent as context. The chat model receives all of it and the text is indexed for later search, but the *query* embedding for that turn uses only the first `EMBED_MAX_INPUT_CHARS` — a startup warning appears if you set this much higher |
 
 The **RAG context budget** field also has a **Re-index chats** button that queues a background

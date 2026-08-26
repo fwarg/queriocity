@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
-import { RotateCcw, Lock, Unlock, ShieldCheck } from 'lucide-react'
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
+import { BookOpen, RotateCcw, Lock, ShieldCheck, Trash2, X } from 'lucide-react'
 import { MessageList, ImageCaptionContext } from './components/MessageList.tsx'
 import { ProgressLog, Elapsed } from './components/ProgressLog.tsx'
 import { ApprovalPrompt } from './components/ApprovalPrompt.tsx'
@@ -9,30 +9,33 @@ import { RegisterPage } from './components/RegisterPage.tsx'
 import { SettingsPanel } from './components/SettingsPanel.tsx'
 import { AdminPanel } from './components/AdminPanel.tsx'
 import { MonitorsView } from './components/MonitorsView.tsx'
+import { ChatRow } from './components/ChatRow.tsx'
+import { useConfirm } from './components/confirm.tsx'
+import { useGuide, useGuideNavigation } from './components/GuideView.tsx'
+import type { GuideTarget } from '@shared/guide/index.ts'
+import { EmptyState, PRIMARY_BTN, RowAction } from './components/ui.tsx'
+import { SectionHeader } from './components/SectionHeader.tsx'
+import { SpacesView } from './components/SpacesView.tsx'
+import { ResourcesView } from './components/ResourcesView.tsx'
 import {
   fetchHistory, fetchSession, deleteSession, updateSessionTitle,
-  fetchFiles, deleteFile, uploadFile, getMe, hasUsers, logout,
-  fetchSpaces, createSpace, updateSpace, deleteSpace, assignChatToSpace, recreateChatMemories,
+  fetchFiles, getMe, hasUsers, logout,
+  fetchSpaces, createSpace, promoteCollection, updateSpace, deleteSpace, assignChatToSpace, recreateChatMemories,
   fetchSpaceMemories, createSpaceMemory, updateSpaceMemory, deleteSpaceMemory, compactSpaceMemories, recreateAllSpaceMemories, clearSpaceMemories,
   fetchChatIndexStatus, rebuildChatIndex, searchHistory,
-  fetchSpaceFiles, tagFileToSpace, untagFileFromSpace, ingestUrl, transformSpace,
+  fetchSpaceFiles, tagFileToSpace, untagFileFromSpace, transformSpace,
   fetchMonitors,
 } from './lib/api.ts'
-import type { AuthUser, Message, Space, SpaceMemory, SpaceFile } from './lib/api.ts'
+import type { AuthUser, Message, Resource, Space, SpaceKind, SpaceMemory, SpaceFile } from './lib/api.ts'
 import { useChat } from './hooks/useChat.ts'
 import { useLang, useT } from './lib/i18n.tsx'
+
+/** One per mode worth showing off: something current, something comparative, something explained. */
+const EXAMPLE_KEYS = ['guide.example1', 'guide.example2', 'guide.example3'] as const
 
 type AuthView = 'loading' | 'login' | 'register'
 type MainView = 'chat' | 'chats' | 'files' | 'spaces' | 'monitors'
 type Session = { id: string; title: string; spaceId: string | null; locked?: boolean }
-
-type UploadedFile = { id: string; filename: string; mimeType: string; size: number; createdAt: number }
-
-function formatSize(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
 
 const MEMORY_HEADER_TOKENS = 30
 
@@ -52,6 +55,8 @@ function countOverflowMemories(memories: SpaceMemory[], budget: number): number 
 
 export default function App() {
   const t = useT()
+  const confirm = useConfirm()
+  const openGuide = useGuide()
   const { lang, setLang } = useLang()
   const [authView, setAuthView] = useState<AuthView>('loading')
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null)
@@ -59,11 +64,18 @@ export default function App() {
 
   const [focusMode, setFocusMode] = useState<'flash' | 'balanced' | 'thorough' | 'image'>('balanced')
   const [searchCategories, setSearchCategories] = useState<Array<'news' | 'science' | 'discussions' | 'tech'>>([])
+  /** Collections picked for the next message — per request, never stored on the chat.
+   *
+   *  Held here rather than in ChatInput, which remounts per session, so a selection survives asking
+   *  several questions in a row. It also survives switching chats, which is deliberate: the chips
+   *  are visibly lit, so an unwanted one is obvious and one click away, whereas silently clearing a
+   *  shelf the user had set up would be the more surprising of the two. */
+  const [selectedCollections, setSelectedCollections] = useState<string[]>([])
 
   const [sessionId, setSessionId] = useState<string | undefined>()
   const [sessions, setSessions] = useState<Session[]>([])
   const [sessionSearch, setSessionSearch] = useState('')
-  const [files, setFiles] = useState<UploadedFile[]>([])
+  const [files, setFiles] = useState<Resource[]>([])
   const [spaces, setSpaces] = useState<Space[]>([])
   /** Message from a refused lock change or chat move — both are server decisions the user cannot
    *  predict from the UI alone, so the reason has to be surfaced rather than silently reverted. */
@@ -77,8 +89,6 @@ export default function App() {
   const [currentSpaceId, setCurrentSpaceId] = useState<string | null>(null)
   const [editingSpaceId, setEditingSpaceId] = useState<string | null>(null)
   const [spaceDraft, setSpaceDraft] = useState('')
-  const [newSpaceOpen, setNewSpaceOpen] = useState(false)
-  const [newSpaceDraft, setNewSpaceDraft] = useState('')
   const [spacePickerOpen, setSpacePickerOpen] = useState<string | null>(null)
   const [spaceMemories, setSpaceMemories] = useState<SpaceMemory[]>([])
   const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null)
@@ -93,11 +103,6 @@ export default function App() {
   const [filesSectionOpen, setFilesSectionOpen] = useState(false)
   const [allUserFiles, setAllUserFiles] = useState<Array<{ id: string; filename: string; size: number }>>([])
   const [filePickerOpen, setFilePickerOpen] = useState(false)
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
-  const [urlIngestOpen, setUrlIngestOpen] = useState(false)
-  const [urlIngestValue, setUrlIngestValue] = useState('')
-  const [urlIngestStatus, setUrlIngestStatus] = useState<'idle' | 'loading' | 'error'>('idle')
-  const [urlIngestError, setUrlIngestError] = useState('')
   const [pinnedFileIds, setPinnedFileIds] = useState<string[]>([])
   const [pinnedMemoryIds, setPinnedMemoryIds] = useState<string[]>([])
   /** Chats belonging to the open space, fetched server-side. `null` while loading. */
@@ -109,6 +114,14 @@ export default function App() {
   const [recreating, setRecreating] = useState(false)
   const [recreateProgress, setRecreateProgress] = useState<string | null>(null)
   const [view, setView] = useState<MainView>('chat')
+  // Which resource's detail panel is open in the Resources view. Lives here rather than inside
+  // ResourcesView so a chat citation's [F1]/[C1] reference can open one directly from outside it.
+  const [openResourceId, setOpenResourceId] = useState<string | null>(null)
+  const openResource = useCallback((id: string) => {
+    setOpenResourceId(id)
+    setView('files')
+    setSidebarOpen(false)
+  }, [])
   const [showSettings, setShowSettings] = useState(false)
   const [showAdmin, setShowAdmin] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -117,6 +130,16 @@ export default function App() {
   const [chatSearch, setChatSearch] = useState('')
   const [chatSearchResults, setChatSearchResults] = useState<Session[] | null>(null)
   const [chatTotal, setChatTotal] = useState(0)
+
+  // The guide's "Open Spaces →" buttons. Registered rather than passed, because the guide is
+  // mounted above App so that any view's ⓘ can open it.
+  useGuideNavigation(useCallback((target: GuideTarget) => {
+    if (target === 'settings') { setShowSettings(true); return }
+    if (target === 'spaces') setCurrentSpaceId(null)
+    if (target === 'files') setOpenResourceId(null)
+    setView(target)
+    setSidebarOpen(false)
+  }, []))
   const [chatHasMore, setChatHasMore] = useState(false)
   const [chatLoadingMore, setChatLoadingMore] = useState(false)
   const chatOffsetRef = useRef(0)
@@ -133,12 +156,17 @@ export default function App() {
   // banner and the disabled controls, so a stale value degrades the UI, never the guarantee.
   const activeSpaceLocked = !!activeSpaceId && spaces.some(s => s.id === activeSpaceId && s.offline)
   const spaceIsLocked = (id: string | null | undefined) => !!id && spaces.some(sp => sp.id === id && sp.offline)
+  const activeSpaceIsCollection = spaces.some(sp => sp.id === currentSpaceId && sp.kind === 'collection')
+  /** Only spaces can hold a chat, so only spaces are offered as a destination for one. The server
+   *  refuses a collection either way; this keeps the UI from proposing what it will refuse. */
+  const chatSpaces = spaces.filter(sp => sp.kind === 'space')
 
   const { messages, setMessages, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, regenerate, cancel, reset, related, setRelated, steps, runStartedAt, approval, decideApproval } = useChat({
     sessionId,
     focusMode,
     searchCategories,
     includeFileIds: pinnedFileIds.length ? pinnedFileIds : undefined,
+    collectionIds: selectedCollections.length ? selectedCollections : undefined,
     includeMemoryIds: pinnedMemoryIds.length ? pinnedMemoryIds : undefined,
     spaceId: activeSpaceId ?? undefined,
     followUpSuggestions: currentUser?.settings?.followUpSuggestions !== false,
@@ -238,9 +266,12 @@ export default function App() {
   useEffect(() => {
     setPinnedFileIds([])
     setPinnedMemoryIds([])
-    if (currentSpaceId) {
+    if (currentSpaceId) fetchSpaceFiles(currentSpaceId).then(setTaggedFiles).catch(() => {})
+    else setTaggedFiles([])
+    // Chats, memories and the chat index describe conversations, which a collection has none of.
+    // `activeSpaceIsCollection` is a dependency so promotion fills them in without reopening.
+    if (currentSpaceId && !activeSpaceIsCollection) {
       fetchSpaceMemories(currentSpaceId).then(({ memories }) => { setSpaceMemories(memories) }).catch(() => {})
-      fetchSpaceFiles(currentSpaceId).then(setTaggedFiles).catch(() => {})
       fetchChatIndexStatus(currentSpaceId).then(setChatIndexStatus).catch(() => {})
       // Fetched per space rather than filtered out of `sessions`: that array holds only the most
       // recent page, so a space with no recently-updated chats would look empty.
@@ -250,7 +281,6 @@ export default function App() {
         .catch(() => setSpaceChats([]))
     } else {
       setSpaceMemories([])
-      setTaggedFiles([])
       setChatIndexStatus(null)
       setSpaceChats(null)
       setPinnedFileIds([])
@@ -262,7 +292,7 @@ export default function App() {
     setNewMemoryOpen(false)
     setCompactResult(null)
     setRecreateProgress(null)
-  }, [currentSpaceId])
+  }, [currentSpaceId, activeSpaceIsCollection])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -432,15 +462,10 @@ export default function App() {
     window.print()
   }
 
-  function handleDeleteSession(id: string, e: React.MouseEvent) {
-    e.stopPropagation()
-    setConfirmDeleteId(id)
-  }
-
-  function confirmDeleteSession() {
-    if (!confirmDeleteId) return
-    const id = confirmDeleteId
-    setConfirmDeleteId(null)
+  /** `e` only from the sidebar row, whose own click opens the chat. RowAction stops it itself. */
+  async function handleDeleteSession(id: string, e?: React.MouseEvent) {
+    e?.stopPropagation()
+    if (!await confirm({ message: t('chat.deleteConfirm'), confirmLabel: t('common.delete'), danger: true })) return
     deleteSession(id).then(() => {
       // The chat may be listed only in the open space's list, so resolve its space from either.
       const spaceOfChat = sessions.find(s => s.id === id)?.spaceId
@@ -455,23 +480,20 @@ export default function App() {
     }).catch(() => setStatus(t('chat.deleteFailed')))
   }
 
-  function handleDeleteFile(id: string, e: React.MouseEvent) {
-    e.stopPropagation()
-    deleteFile(id).then(() => setFiles(prev => prev.filter(f => f.id !== id))).catch(() => {})
+  function handleCreateSpace(name: string, kind: SpaceKind) {
+    createSpace(name, kind).then(s => setSpaces(prev => [...prev, s])).catch(() => {})
   }
 
-  function handleCreateSpace() {
-    const name = newSpaceDraft.trim()
-    if (!name) { setNewSpaceOpen(false); return }
-    createSpace(name).then(s => {
-      setSpaces(prev => [...prev, s])
-      setNewSpaceDraft('')
-      setNewSpaceOpen(false)
-    }).catch(() => {})
+  /** One-way, and stated as such before it happens: the server refuses the reverse. */
+  async function handlePromoteCollection() {
+    if (!currentSpaceId) return
+    if (!await confirm({ message: t('collection.promoteTitle'), confirmLabel: t('collection.promote'), danger: true })) return
+    promoteCollection(currentSpaceId)
+      .then(() => fetchSpaces().then(setSpaces))
+      .catch(err => setSpaceError(err instanceof Error ? err.message : t('collection.promoteFailed')))
   }
 
-  function handleDeleteSpace(id: string, e: React.MouseEvent) {
-    e.stopPropagation()
+  async function handleDeleteSpace(id: string) {
     const sp = spaces.find(s => s.id === id)
     const label = sp ? `"${sp.name}"` : t('space.thisSpace')
     // A locked space takes its chats with it. Unassigning them instead would turn every one into an
@@ -480,7 +502,7 @@ export default function App() {
     const warning = sp?.offline
       ? t('space.deleteLockedConfirm', { label, count: sp.chatCount })
       : t('space.deleteConfirm', { label })
-    if (!confirm(warning)) return
+    if (!await confirm({ message: warning, confirmLabel: t('common.delete'), danger: true })) return
     deleteSpace(id).then(({ deletedChats }) => {
       setSpaces(prev => prev.filter(s => s.id !== id))
       setSessions(prev => deletedChats > 0
@@ -495,7 +517,7 @@ export default function App() {
    *  Locking a space that already holds something is confirmed first: it is not a leak risk, but it
    *  cannot be undone afterwards without deleting the contents, and a toggle that silently becomes
    *  permanent is a trap. Unlocking is decided by the server, which refuses while anything remains. */
-  function handleToggleSpaceLock(id: string) {
+  async function handleToggleSpaceLock(id: string) {
     const sp = spaces.find(s => s.id === id)
     if (!sp) return
     const next = !sp.offline
@@ -507,7 +529,7 @@ export default function App() {
       const msg = holds
         ? t('space.lockConfirmHolding', { name: sp.name, holds })
         : t('space.lockConfirmEmpty', { name: sp.name })
-      if (!confirm(msg)) return
+      if (!await confirm({ message: msg, confirmLabel: t('space.lockAction'), danger: true })) return
     }
     setSpaces(prev => prev.map(s => s.id === id ? { ...s, offline: next } : s))
     updateSpace(id, { offline: next }).then(res => {
@@ -599,10 +621,6 @@ export default function App() {
     updateSpaceMemory(currentSpaceId, id, { alwaysKeep }).catch(() => {})
   }
 
-  const kbFileRef = useRef<HTMLInputElement>(null)
-  const [kbUploadStatus, setKbUploadStatus] = useState<'idle' | 'uploading' | 'ok' | 'error'>('idle')
-  const [kbUploadMsg, setKbUploadMsg] = useState('')
-
   async function handleTransform() {
     if (!currentSpaceId) return
     setTransformStatus('loading')
@@ -619,41 +637,8 @@ export default function App() {
     }
   }
 
-  async function handleUrlIngest() {
-    if (!urlIngestValue.trim()) return
-    setUrlIngestStatus('loading')
-    setUrlIngestError('')
-    try {
-      await ingestUrl(urlIngestValue.trim())
-      fetchFiles().then(setFiles).catch(() => {})
-      setUrlIngestOpen(false)
-      setUrlIngestValue('')
-      setUrlIngestStatus('idle')
-    } catch (err: unknown) {
-      setUrlIngestStatus('error')
-      setUrlIngestError(err instanceof Error ? err.message : t('files.ingestFailed'))
-    }
-  }
-
-  async function handleKbUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setKbUploadStatus('uploading')
-    setKbUploadMsg(t('files.uploading', { name: file.name }))
-    try {
-      await uploadFile(file)
-      setKbUploadStatus('ok')
-      setKbUploadMsg(t('files.uploaded', { name: file.name }))
-      fetchFiles().then(setFiles).catch(() => {})
-      setTimeout(() => setKbUploadStatus('idle'), 3000)
-    } catch (err: unknown) {
-      setKbUploadStatus('error')
-      setKbUploadMsg(err instanceof Error ? err.message : t('files.uploadFailed'))
-      setTimeout(() => setKbUploadStatus('idle'), 4000)
-    } finally {
-      e.target.value = ''
-    }
-  }
+  /** ResourcesView mutates the library; the list stays here because the space panel tags from it. */
+  const reloadFiles = useCallback(() => { fetchFiles().then(setFiles).catch(() => {}) }, [])
 
   // Auth screens
   if (authView === 'loading' && !currentUser) {
@@ -753,7 +738,7 @@ export default function App() {
           {t('nav.chats')} ({chatTotal || sessions.length})
         </button>
         <button
-          onClick={() => { setView(v => v === 'files' ? 'chat' : 'files'); setSidebarOpen(false) }}
+          onClick={() => { setView(v => v === 'files' ? 'chat' : 'files'); setOpenResourceId(null); setSidebarOpen(false) }}
           className={`w-full text-left px-3 py-2 rounded text-sm font-medium ${view === 'files' ? 'bg-indigo-700 text-white' : 'text-indigo-400 hover:bg-gray-800'}`}
         >
           {t('nav.resources')} ({files.length})
@@ -762,7 +747,7 @@ export default function App() {
           onClick={() => { setView(v => v === 'spaces' ? 'chat' : 'spaces'); setCurrentSpaceId(null); setSidebarOpen(false) }}
           className={`w-full text-left px-3 py-2 rounded text-sm font-medium ${view === 'spaces' ? 'bg-indigo-700 text-white' : 'text-indigo-400 hover:bg-gray-800'}`}
         >
-          {t('nav.spaces')} ({spaces.length})
+          {t('nav.workspaces')} ({spaces.length})
         </button>
         <button
           onClick={() => { setView(v => v === 'monitors' ? 'chat' : 'monitors'); setSidebarOpen(false) }}
@@ -786,9 +771,13 @@ export default function App() {
               <button onClick={() => { loadSession(s.id, s.title); setSidebarOpen(false) }} className="flex-1 text-left px-3 py-2 text-sm truncate">
                 {s.title}
               </button>
-              <button onClick={(e) => handleDeleteSession(s.id, e)} className="px-2 py-2 text-gray-600 hover:text-red-400 shrink-0" aria-label={t('chat.deleteNamed', { title: s.title })}>
-                ×
-              </button>
+              <RowAction
+                icon={<Trash2 size={14} />}
+                tone="danger"
+                persistent
+                label={t('chat.deleteNamed', { title: s.title })}
+                onClick={() => handleDeleteSession(s.id)}
+              />
             </div>
           ))}
           <div ref={sidebarSentinelRef} className="py-1 text-center text-xs text-gray-600">
@@ -798,6 +787,9 @@ export default function App() {
 
         {/* Bottom user area */}
         <div className="border-t border-gray-800 pt-2 flex flex-col gap-1">
+          <button onClick={() => { openGuide(); setSidebarOpen(false) }} className="w-full text-left px-3 py-2 rounded text-xs text-gray-400 hover:bg-gray-800 flex items-center gap-1.5">
+            <BookOpen size={12} /> {t('nav.guide')}
+          </button>
           <button onClick={() => { setShowSettings(true); setSidebarOpen(false) }} className="w-full text-left px-3 py-2 rounded text-xs text-gray-400 hover:bg-gray-800">
             ⚙ {t('nav.settings')}
           </button>
@@ -827,8 +819,8 @@ export default function App() {
         </div>
         {view === 'chats' ? (
           <div className="flex flex-col flex-1 overflow-y-auto p-6 gap-3" onClick={() => setSpacePickerOpen(null)}>
-            <div className="flex items-center justify-between mb-2">
-              <h2 className="text-lg font-semibold text-gray-200">{t('nav.chats')}</h2>
+            <div className="mb-2">
+            <SectionHeader title={t('nav.chats')} intro={t('chat.intro')} about={t('chat.aboutTitle')} topic="gettingStarted">
               {!chatSearchResults && (
                 <div className="flex items-center gap-1 text-xs">
                   <button onClick={() => setChatSort('updated')} className={chatSort === 'updated' ? 'text-indigo-400' : 'text-gray-500 hover:text-gray-300'}>{t('chat.sortActive')}</button>
@@ -836,6 +828,7 @@ export default function App() {
                   <button onClick={() => setChatSort('created')} className={chatSort === 'created' ? 'text-indigo-400' : 'text-gray-500 hover:text-gray-300'}>{t('chat.sortCreated')}</button>
                 </div>
               )}
+            </SectionHeader>
             </div>
             <input
               type="search"
@@ -850,69 +843,21 @@ export default function App() {
               </p>
             )}
             {(chatSearchResults ?? sessions).length === 0 && !chatSearch ? (
-              <p className="text-gray-500 text-sm">{t('chat.noneSaved')}</p>
-            ) : (chatSearchResults ?? sessions).map(s => {
-              const spaceName = s.spaceId ? spaces.find(sp => sp.id === s.spaceId)?.name : null
-              return (
-                <div key={s.id} className="flex items-center gap-2 group relative">
-                  <button
-                    onClick={() => loadSession(s.id, s.title)}
-                    className="flex-1 text-left px-4 py-3 rounded-lg bg-gray-800 hover:bg-gray-700 text-sm text-gray-100"
-                  >
-                    {spaceIsLocked(s.spaceId) && <Lock size={11} className="inline mr-1.5 -mt-0.5 text-amber-400" aria-label={t('space.inLocked')} />}
-                    {s.title}
-                  </button>
-                  {spaces.length > 0 && (
-                    <div className="relative shrink-0">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setSpacePickerOpen(prev => prev === s.id ? null : s.id) }}
-                        className={`px-2 py-1 rounded text-xs transition-opacity ${spaceName ? 'text-indigo-400 bg-indigo-900/40' : 'text-gray-600 hover:text-gray-400 md:opacity-0 md:group-hover:opacity-100'}`}
-                        title={t('space.moveTo')}
-                      >
-                        {spaceName ?? '⊡'}
-                      </button>
-                      {spacePickerOpen === s.id && (
-                        <div className="absolute right-0 top-full mt-1 z-10 bg-gray-800 border border-gray-700 rounded shadow-lg min-w-36 py-1" onClick={e => e.stopPropagation()}>
-                          {/* A chat in a locked space may only move to another locked space, and
-                              "remove from space" is the most permissive destination of all. Shown
-                              disabled rather than hidden, so the restriction is legible. */}
-                          {spaces.map(sp => {
-                            const blocked = spaceIsLocked(s.spaceId) && !sp.offline
-                            return (
-                              <button
-                                key={sp.id}
-                                disabled={blocked}
-                                onClick={() => handleAssignToSpace(s.id, sp.id)}
-                                title={blocked ? t('space.moveBlocked') : undefined}
-                                className={`w-full text-left px-3 py-1.5 text-xs ${blocked ? 'text-gray-600 cursor-not-allowed' : 'hover:bg-gray-700'} ${s.spaceId === sp.id ? 'text-indigo-400' : blocked ? '' : 'text-gray-300'}`}
-                              >
-                                {sp.offline && <Lock size={10} className="inline mr-1 -mt-0.5" />}
-                                {sp.name}
-                              </button>
-                            )
-                          })}
-                          {s.spaceId && !spaceIsLocked(s.spaceId) && (
-                            <button
-                              onClick={() => handleAssignToSpace(s.id, null)}
-                              className="w-full text-left px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-700 hover:text-red-400 border-t border-gray-700 mt-1 pt-1"
-                            >
-                              {t('space.removeFrom')}
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  <button
-                    onClick={(e) => handleDeleteSession(s.id, e)}
-                    className="px-2 py-2 text-gray-600 hover:text-red-400 md:opacity-0 md:group-hover:opacity-100 transition-opacity shrink-0"
-                    aria-label={t('chat.deleteNamed', { title: s.title })}
-                  >
-                    ×
-                  </button>
-                </div>
-              )
-            })}
+              <EmptyState>{t('chat.noneSaved')}</EmptyState>
+            ) : (chatSearchResults ?? sessions).map(s => (
+              <ChatRow
+                key={s.id}
+                chat={s}
+                spaceName={s.spaceId ? spaces.find(sp => sp.id === s.spaceId)?.name ?? null : null}
+                chatSpaces={chatSpaces}
+                spaceIsLocked={spaceIsLocked}
+                pickerOpen={spacePickerOpen === s.id}
+                onOpen={() => loadSession(s.id, s.title)}
+                onTogglePicker={() => setSpacePickerOpen(prev => prev === s.id ? null : s.id)}
+                onAssign={spaceId => handleAssignToSpace(s.id, spaceId)}
+                onDelete={() => handleDeleteSession(s.id)}
+              />
+            ))}
             {!chatSearchResults && (
               <div ref={sentinelRef} className="py-1 text-center text-xs text-gray-600">
                 {chatLoadingMore ? t('common.loading') : ''}
@@ -927,7 +872,7 @@ export default function App() {
                   onClick={() => setCurrentSpaceId(null)}
                   className="text-gray-500 hover:text-gray-300 text-sm"
                 >
-                  ← Spaces
+                  ← {t('nav.workspaces')}
                 </button>
                 {editingSpaceId === currentSpaceId ? (
                   <input
@@ -951,13 +896,27 @@ export default function App() {
                     </button>
                   </h2>
                 )}
-                <button
-                  onClick={() => newChat(currentSpaceId!)}
-                  className="ml-auto px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-sm font-medium whitespace-nowrap"
-                >
-                  + {t('chat.new')}
-                </button>
+                {activeSpaceIsCollection ? (
+                  <button
+                    onClick={handlePromoteCollection}
+                    title={t('collection.promoteTitle')}
+                    className="ml-auto px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-sm font-medium whitespace-nowrap"
+                  >
+                    {t('collection.promote')}
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => newChat(currentSpaceId!)}
+                    className={`ml-auto ${PRIMARY_BTN}`}
+                  >
+                    + {t('chat.new')}
+                  </button>
+                )}
               </div>
+              {/* Memory describes conversations, which a collection has none of — as do the chat
+                  index and the chat list further down, each guarded the same way because the
+                  resources section sits between them. Resources are the whole of a collection. */}
+              {!activeSpaceIsCollection && <>
               {/* Memory section */}
               <div className="border border-gray-800 rounded-lg p-3">
                 <div className="flex items-center justify-between">
@@ -993,7 +952,7 @@ export default function App() {
                       {compactResult && <span className="text-xs text-gray-500">{compactResult}</span>}
                       <button
                         onClick={async () => {
-                          if (!confirm(t('memory.recreateConfirm'))) return
+                          if (!await confirm({ message: t('memory.recreateConfirm'), confirmLabel: t('memory.recreateAll'), danger: true })) return
                           setRecreating(true)
                           setRecreateProgress(null)
                           setCompactResult(null)
@@ -1020,7 +979,7 @@ export default function App() {
                       </button>
                       <button
                         onClick={async () => {
-                          if (!confirm(t('memory.clearConfirm'))) return
+                          if (!await confirm({ message: t('memory.clearConfirm'), confirmLabel: t('common.clearAll'), danger: true })) return
                           await clearSpaceMemories(currentSpaceId!)
                           setSpaceMemories([])
                         }}
@@ -1068,7 +1027,7 @@ export default function App() {
                     />
                     <button
                       onClick={() => handleMemoryAlwaysKeep(m.id, !m.alwaysKeep)}
-                      className={`shrink-0 text-xs leading-none mt-0.5 transition-colors ${m.alwaysKeep ? 'text-amber-400 hover:text-amber-300' : 'text-gray-700 hover:text-gray-500 opacity-0 group-hover:opacity-100'}`}
+                      className={`shrink-0 text-xs leading-none mt-0.5 transition-colors ${m.alwaysKeep ? 'text-amber-400 hover:text-amber-300' : 'text-gray-700 hover:text-gray-500 md:opacity-0 md:group-hover:opacity-100'}`}
                       title={m.alwaysKeep ? t('memory.alwaysKeptTitle') : t('memory.alwaysKeepTitle')}
                       aria-label={m.alwaysKeep ? t('memory.alwaysKeepUnset') : t('memory.alwaysKeep')}
                       aria-pressed={m.alwaysKeep}
@@ -1097,21 +1056,23 @@ export default function App() {
                     {editingMemoryId !== m.id && (
                       <button
                         onClick={() => { setMemoryDraft(m.content); setEditingMemoryId(m.id) }}
-                        className="text-gray-700 hover:text-gray-400 text-xs shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                        className="text-gray-700 hover:text-gray-400 text-xs shrink-0 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
                         aria-label={t('common.edit')}
                       >
                         ✎
                       </button>
                     )}
-                    <button
+                    <RowAction
+                      icon={<Trash2 size={14} />}
+                      tone="danger"
+                      label={t('common.delete')}
                       onClick={() => handleDeleteMemory(m.id)}
-                      className="text-gray-700 hover:text-red-400 text-xs shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                    >
-                      ×
-                    </button>
+                    />
                   </div>
                 ))}
               </div>
+
+              </>}
 
               {/* Tagged files section */}
               <div className="border border-gray-800 rounded-lg p-3">
@@ -1169,16 +1130,16 @@ export default function App() {
                       title={t('files.pinTitle')}
                     />
                     <span className="text-xs text-gray-300 truncate flex-1 min-w-0">{f.filename}</span>
-                    <button
+                    <RowAction
+                      icon={<X size={14} />}
+                      tone="danger"
+                      label={t('resource.untagFrom', { name: f.filename })}
                       onClick={async () => {
                         await untagFileFromSpace(currentSpaceId!, f.id)
                         setPinnedFileIds(prev => prev.filter(id => id !== f.id))
                         setTaggedFiles(prev => prev.filter(t => t.id !== f.id))
                       }}
-                      className="text-gray-700 hover:text-red-400 text-xs shrink-0 opacity-0 group-hover:opacity-100 transition-opacity ml-1"
-                    >
-                      ×
-                    </button>
+                    />
                   </div>
                 ))}
                 {filesSectionOpen && taggedFiles.length > 0 && (
@@ -1196,7 +1157,7 @@ export default function App() {
                 )}
               </div>
 
-              {chatIndexStatus !== null && (
+              {!activeSpaceIsCollection && chatIndexStatus !== null && (
                 <div className="border border-gray-800 rounded-lg p-3 flex items-center justify-between gap-2">
                   <span className="text-xs text-gray-500">
                     {t('space.chatIndex', { indexed: chatIndexStatus.indexed, total: chatIndexStatus.total })}
@@ -1228,7 +1189,7 @@ export default function App() {
                 </div>
               )}
 
-              {(() => {
+              {!activeSpaceIsCollection && (() => {
                 const loaded = spaceChats ?? []
                 const filtered = loaded.filter(s => !sessionSearch || s.title.toLowerCase().includes(sessionSearch.toLowerCase()))
                 return (
@@ -1241,205 +1202,38 @@ export default function App() {
                       className="px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-300 focus:outline-none focus:border-blue-500"
                     />
                     {spaceChats === null ? (
-                      <p className="text-gray-500 text-sm">{t('chat.loading')}</p>
+                      <EmptyState>{t('chat.loading')}</EmptyState>
                     ) : filtered.length === 0 ? (
-                      <p className="text-gray-500 text-sm">{t(loaded.length === 0 ? 'chat.noneInSpace' : 'chat.noneMatching')}</p>
-                    ) : filtered.map(s => {
-                const spaceName = spaces.find(sp => sp.id === s.spaceId)?.name ?? null
-                return (
-                  <div key={s.id} className="flex items-center gap-2 group">
-                    <button
-                      onClick={() => loadSession(s.id, s.title)}
-                      className="flex-1 text-left px-4 py-3 rounded-lg bg-gray-800 hover:bg-gray-700 text-sm text-gray-100"
-                    >
-                      {spaceIsLocked(s.spaceId) && <Lock size={11} className="inline mr-1.5 -mt-0.5 text-amber-400" aria-label={t('space.inLocked')} />}
-                      {s.title}
-                    </button>
-                    <div className="relative shrink-0">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setSpacePickerOpen(prev => prev === s.id ? null : s.id) }}
-                        className="px-2 py-1 rounded text-xs text-indigo-400 bg-indigo-900/40"
-                        title={t('space.moveTo')}
-                      >
-                        {spaceName}
-                      </button>
-                      {spacePickerOpen === s.id && (
-                        <div className="absolute right-0 top-full mt-1 z-10 bg-gray-800 border border-gray-700 rounded shadow-lg min-w-36 py-1" onClick={e => e.stopPropagation()}>
-                          {spaces.map(sp => {
-                            const blocked = spaceIsLocked(s.spaceId) && !sp.offline
-                            return (
-                              <button
-                                key={sp.id}
-                                disabled={blocked}
-                                onClick={() => handleAssignToSpace(s.id, sp.id)}
-                                title={blocked ? t('space.moveBlocked') : undefined}
-                                className={`w-full text-left px-3 py-1.5 text-xs ${blocked ? 'text-gray-600 cursor-not-allowed' : 'hover:bg-gray-700'} ${s.spaceId === sp.id ? 'text-indigo-400' : blocked ? '' : 'text-gray-300'}`}
-                              >
-                                {sp.offline && <Lock size={10} className="inline mr-1 -mt-0.5" />}
-                                {sp.name}
-                              </button>
-                            )
-                          })}
-                          <button
-                            onClick={() => { recreateChatMemories(s.id).catch(() => {}); setSpacePickerOpen(null) }}
-                            className="w-full text-left px-3 py-1.5 text-xs text-gray-400 hover:bg-gray-700 hover:text-gray-200 border-t border-gray-700 mt-1 pt-1"
-                          >
-                            {t('memory.recreateForChat')}
-                          </button>
-                          {!spaceIsLocked(s.spaceId) && (
-                            <button
-                              onClick={() => handleAssignToSpace(s.id, null)}
-                              className="w-full text-left px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-700 hover:text-red-400"
-                            >
-                              {t('space.removeFrom')}
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
+                      <EmptyState>{t(loaded.length === 0 ? 'chat.noneInSpace' : 'chat.noneMatching')}</EmptyState>
+                    ) : filtered.map(s => (
+                      <ChatRow
+                        key={s.id}
+                        chat={s}
+                        spaceName={spaces.find(sp => sp.id === s.spaceId)?.name ?? null}
+                        chatSpaces={chatSpaces}
+                        spaceIsLocked={spaceIsLocked}
+                        pickerOpen={spacePickerOpen === s.id}
+                        onOpen={() => loadSession(s.id, s.title)}
+                        onTogglePicker={() => setSpacePickerOpen(prev => prev === s.id ? null : s.id)}
+                        onAssign={spaceId => handleAssignToSpace(s.id, spaceId)}
+                        onRecreateMemories={() => { recreateChatMemories(s.id).catch(() => {}); setSpacePickerOpen(null) }}
+                      />
+                    ))}
                   </>
                 )
               })()}
             </div>
           ) : (
-            <div className="flex flex-col flex-1 overflow-y-auto p-6 gap-3">
-              <div className="flex items-center justify-between mb-2">
-                <h2 className="text-lg font-semibold text-gray-200">{t('nav.spaces')}</h2>
-                {!newSpaceOpen && (
-                  <button
-                    onClick={() => setNewSpaceOpen(true)}
-                    className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-sm font-medium whitespace-nowrap"
-                  >
-                    + {t('space.new')}
-                  </button>
-                )}
-              </div>
-              {newSpaceOpen && (
-                <div className="flex gap-2 items-center">
-                  <input
-                    autoFocus
-                    type="text"
-                    value={newSpaceDraft}
-                    onChange={e => setNewSpaceDraft(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') handleCreateSpace(); if (e.key === 'Escape') { setNewSpaceOpen(false); setNewSpaceDraft('') } }}
-                    onBlur={handleCreateSpace}
-                    placeholder={t('space.namePlaceholder')}
-                    className="flex-1 px-3 py-2 rounded bg-gray-800 border border-gray-700 text-sm text-gray-200 focus:outline-none focus:border-blue-500"
-                  />
-                </div>
-              )}
-              {spaces.length === 0 && !newSpaceOpen ? (
-                <p className="text-gray-500 text-sm">{t('space.none')}</p>
-              ) : spaces.map(sp => (
-                <div key={sp.id} className="flex items-center gap-2 group">
-                  <button
-                    onClick={() => setCurrentSpaceId(sp.id)}
-                    className="flex-1 text-left px-4 py-3 rounded-lg bg-gray-800 hover:bg-gray-700 text-sm text-gray-100"
-                  >
-                    {sp.offline && <Lock size={12} className="inline mr-1.5 -mt-0.5 text-amber-400" aria-label={t('space.locked')} />}
-                    {sp.name}
-                    <span className="ml-2 text-xs text-gray-500">{t('space.holdsChats', { count: sp.chatCount })}{sp.memoryCount > 0 ? ` · ${t('space.holdsMemories', { count: sp.memoryCount })}` : ''}</span>
-                  </button>
-                  <button
-                    onClick={() => handleToggleSpaceLock(sp.id)}
-                    className={`px-2 py-2 shrink-0 transition-opacity ${sp.offline ? 'text-amber-400 hover:text-amber-300' : 'text-gray-600 hover:text-gray-300 md:opacity-0 md:group-hover:opacity-100'}`}
-                    title={t(sp.offline ? 'space.lockedTitle' : 'space.lockTitle')}
-                    aria-label={sp.offline ? t('space.unlockNamed', { name: sp.name }) : t('space.lockNamed', { name: sp.name })}
-                  >
-                    {sp.offline ? <Lock size={14} /> : <Unlock size={14} />}
-                  </button>
-                  <button
-                    onClick={(e) => handleDeleteSpace(sp.id, e)}
-                    className="px-2 py-2 text-gray-600 hover:text-red-400 md:opacity-0 md:group-hover:opacity-100 transition-opacity shrink-0"
-                    aria-label={t('space.deleteNamed', { name: sp.name })}
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
+            <SpacesView
+              spaces={spaces}
+              onOpen={setCurrentSpaceId}
+              onCreate={handleCreateSpace}
+              onToggleLock={handleToggleSpaceLock}
+              onDelete={handleDeleteSpace}
+            />
           )
         ) : view === 'files' ? (
-          <div className="flex flex-col flex-1 overflow-y-auto p-6 gap-4">
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex flex-col gap-1">
-                <h2 className="text-lg font-semibold text-gray-200">{t('nav.resources')}</h2>
-                <p className="text-xs text-gray-500 max-w-lg">
-                  {t('files.intro')}
-                </p>
-              </div>
-              <div className="flex flex-col items-end gap-1 shrink-0">
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => { setUrlIngestOpen(o => !o); setUrlIngestValue(''); setUrlIngestStatus('idle') }}
-                    className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-sm font-medium whitespace-nowrap"
-                  >
-                    + {t('files.addUrl')}
-                  </button>
-                  <button
-                    onClick={() => kbFileRef.current?.click()}
-                    disabled={kbUploadStatus === 'uploading'}
-                    className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-sm font-medium whitespace-nowrap"
-                  >
-                    {kbUploadStatus === 'uploading' ? t('files.uploadingShort') : `+ ${t('files.upload')}`}
-                  </button>
-                </div>
-                {kbUploadStatus !== 'idle' && (
-                  <span className={`text-xs ${kbUploadStatus === 'error' ? 'text-red-400' : 'text-green-400'}`}>
-                    {kbUploadMsg}
-                  </span>
-                )}
-                <input ref={kbFileRef} type="file" className="hidden" onChange={handleKbUpload} />
-              </div>
-            </div>
-            {urlIngestOpen && (
-              <div className="flex flex-col gap-1.5 p-3 rounded-lg bg-gray-800 border border-gray-700">
-                <div className="flex gap-2">
-                  <input
-                    type="url"
-                    value={urlIngestValue}
-                    onChange={e => setUrlIngestValue(e.target.value)}
-                    placeholder="https://…"
-                    className="flex-1 text-sm bg-gray-900 border border-gray-700 rounded px-3 py-1.5 focus:outline-none focus:border-blue-500"
-                    onKeyDown={async e => { if (e.key === 'Enter') { e.preventDefault(); await handleUrlIngest() } }}
-                    disabled={urlIngestStatus === 'loading'}
-                    autoFocus
-                  />
-                  <button
-                    onClick={handleUrlIngest}
-                    disabled={!urlIngestValue.trim() || urlIngestStatus === 'loading'}
-                    className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-sm font-medium"
-                  >
-                    {urlIngestStatus === 'loading' ? t('files.fetching') : t('files.fetchAndAdd')}
-                  </button>
-                </div>
-                {urlIngestStatus === 'error' && <p className="text-xs text-red-400">{urlIngestError}</p>}
-              </div>
-            )}
-            {files.length === 0 && !urlIngestOpen ? (
-              <p className="text-gray-500 text-sm">{t('files.none')}</p>
-            ) : (
-              <div className="flex flex-col gap-2">
-                {files.map(f => (
-                  <div key={f.id} className="flex items-center gap-3 group px-4 py-3 rounded-lg bg-gray-800">
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm text-gray-100 truncate">{f.filename}</div>
-                      <div className="text-xs text-gray-500">{formatSize(f.size)} · {f.mimeType} · {new Date(f.createdAt * 1000).toLocaleDateString(lang)}</div>
-                    </div>
-                    <button
-                      onClick={(e) => handleDeleteFile(f.id, e)}
-                      className="text-xs text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
-                    >
-                      {t('common.delete')}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <ResourcesView resources={files} onChanged={reloadFiles} openId={openResourceId} onOpenIdChange={setOpenResourceId} />
         ) : view === 'monitors' ? (
           <MonitorsView
             spaces={spaces}
@@ -1490,7 +1284,7 @@ export default function App() {
                             </button>
                             {spacePickerOpen === pickerId && (
                               <div className="absolute right-0 top-full mt-1 z-10 bg-gray-800 border border-gray-700 rounded shadow-lg min-w-36 py-1">
-                                {spaces.map(sp => {
+                                {chatSpaces.map(sp => {
                                   const blocked = spaceIsLocked(session?.spaceId) && !sp.offline
                                   return (
                                     <button
@@ -1573,9 +1367,9 @@ export default function App() {
                 </span>
                 <button
                   onClick={() => { setChatSearchOpen(false); setChatSearchQuery('') }}
-                  className="text-gray-600 hover:text-gray-400 text-xs px-1"
+                  className="text-gray-600 hover:text-gray-400 px-1"
                   title={t('chat.closeSearch')}
-                >×</button>
+                ><X size={14} /></button>
               </div>
             )}
             {/* Persistent while the chat is in a locked space. The whole value of the mode is
@@ -1592,14 +1386,37 @@ export default function App() {
             {spaceError && (
               <div className="mx-4 mt-3 flex items-start gap-2 rounded border border-red-700/50 bg-red-950/20 px-3 py-2 text-xs text-red-200">
                 <span className="flex-1">{spaceError}</span>
-                <button onClick={() => setSpaceError(null)} className="text-red-300 hover:text-red-100" aria-label={t('common.dismiss')}>×</button>
+                <button onClick={() => setSpaceError(null)} className="text-red-300 hover:text-red-100" aria-label={t('common.dismiss')}><X size={14} /></button>
               </div>
             )}
             {messages.length === 0 && !streaming ? (
-              <div className="flex flex-col items-center justify-center flex-1 gap-3 text-gray-500">
+              <div className="flex flex-col items-center justify-center flex-1 gap-3 text-gray-500 px-4">
                 <img src="/logo.webp" alt="Queriocity" className="w-24 sm:w-32 md:w-40 h-auto" />
                 <span className="text-2xl font-semibold text-gray-300">Queriocity</span>
                 <span className="text-sm">{t('app.tagline')}</span>
+                {/* The screen a new account lands on was otherwise blank. Clicking an example
+                    sends it, exactly as a follow-up chip does — seeing one real answer explains
+                    more than any amount of text about what the app is. */}
+                <span className="text-xs text-gray-600 mt-2">{t('guide.tryOne')}</span>
+                <div className="flex flex-col items-stretch gap-1.5 w-full max-w-sm">
+                  {EXAMPLE_KEYS.map(key => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => submit(t(key))}
+                      className="rounded-lg border border-gray-800 bg-gray-900/60 px-3 py-2 text-xs text-left text-gray-400 hover:border-gray-700 hover:text-gray-200"
+                    >
+                      {t(key)}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => openGuide()}
+                  className="text-xs text-blue-400 hover:underline"
+                >
+                  {t('guide.newHere')} →
+                </button>
               </div>
             ) : (
               <ImageCaptionContext.Provider value={currentUser?.settings?.imageWatermark !== false}>
@@ -1611,6 +1428,7 @@ export default function App() {
                   searchQuery={chatSearchOpen ? chatSearchQuery : ''}
                   searchActiveIndex={chatSearchOpen && chatMatchIndices.length > 0 ? chatMatchIndices[chatSearchCursor] : -1}
                   searchMatchIndices={chatSearchOpen ? chatMatchIndices : []}
+                  onOpenResource={openResource}
                 />
               </ImageCaptionContext.Provider>
             )}
@@ -1679,6 +1497,9 @@ export default function App() {
               onFocusModeChange={setFocusMode}
               searchCategories={searchCategories}
               onSearchCategoriesChange={setSearchCategories}
+              collections={spaces.filter(sp => sp.kind === 'collection')}
+              selectedCollections={selectedCollections}
+              onCollectionsChange={setSelectedCollections}
               suggestionsEnabled={currentUser?.settings?.querySuggestions !== false}
               lockedSpace={activeSpaceLocked}
               related={related}
@@ -1688,17 +1509,6 @@ export default function App() {
         )}
       </div>
     </div>
-    {confirmDeleteId && (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setConfirmDeleteId(null)}>
-        <div className="bg-gray-900 border border-gray-700 rounded-lg p-5 flex flex-col gap-4 w-72 shadow-xl" onClick={e => e.stopPropagation()}>
-          <p className="text-sm text-gray-200">{t('chat.deleteConfirm')}</p>
-          <div className="flex justify-end gap-2">
-            <button onClick={() => setConfirmDeleteId(null)} className="px-3 py-1.5 rounded text-sm bg-gray-700 hover:bg-gray-600 text-gray-200">{t('common.cancel')}</button>
-            <button onClick={confirmDeleteSession} className="px-3 py-1.5 rounded text-sm bg-red-700 hover:bg-red-600 text-white">{t('common.delete')}</button>
-          </div>
-        </div>
-      </div>
-    )}
     </>
   )
 }

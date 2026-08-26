@@ -4,6 +4,7 @@ import { eq, and, desc, ne, count, isNull, or, sql } from 'drizzle-orm'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
+import { COLLECTION_HOLDS_NO_CHATS } from '../lib/ownership.ts'
 import { extractMemoriesPostHoc } from '../lib/memory.ts'
 import { deleteSessionImages } from '../lib/image-store.ts'
 import { canMoveChat } from '../lib/space-lock.ts'
@@ -105,6 +106,9 @@ historyRouter.patch('/:id', zValidator('json', z.object({
     if (body.spaceId !== null) {
       const space = await db.select().from(spaces).where(and(eq(spaces.id, body.spaceId), eq(spaces.userId, userId))).get()
       if (!space) return c.json({ error: 'Space not found' }, 404)
+      // A collection groups resources and holds no chats. Refused here rather than left to the UI:
+      // this is the one route that puts a chat in a space, so it is where the invariant lives.
+      if (space.kind === 'collection') return c.json({ error: COLLECTION_HOLDS_NO_CHATS }, 400)
     }
     // A chat in a locked space read its documents under a promise of no egress; moving it to a
     // space that still has web access breaks that. `null` is the most permissive destination here,
