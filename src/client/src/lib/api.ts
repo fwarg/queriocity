@@ -56,11 +56,16 @@ export interface SpaceMemory {
 /** `content` is a short snippet, shown as a preview when hovering the [N] citation. */
 export interface Source { title: string; url: string; content?: string }
 
+/** `label` (e.g. "F1", "C2") is the inline citation token the model was told to use for this
+ *  resource — kept separate from `title` so the client can match a `[F1]` in the answer text
+ *  without parsing it back out of the display title. */
+export interface FileSource { title: string; url: string; label: string }
+
 export interface Message {
   role: 'user' | 'assistant'
   content: string
   sources?: Source[]
-  fileSources?: Array<{ title: string; url: string }>
+  fileSources?: FileSource[]
   thinking?: string
   images?: Array<{ url: string; alt: string }>
 }
@@ -492,11 +497,11 @@ export async function ingestUrl(url: string): Promise<{ fileId: string; filename
   return res.json()
 }
 
-export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; userMemoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; ragTopK: number; attachmentChars: number; spaceRagBudget: number; queryReformulation: boolean; rssFeedCharsBudget: number; fetchMaxPages: number; fetchMaxUrlContextChars: number; fetchSummarizeOverflow: boolean; compressHistoryOverflow: boolean; resourceSummary: boolean; limits: { smallModelInputChars: number; embedInputChars: number; scrapeMaxChars: number; minUrlContextChars: number } }> {
+export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; userMemoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; ragTopK: number; ragMinRelevance: number; attachmentChars: number; spaceRagBudget: number; queryReformulation: boolean; rssFeedCharsBudget: number; fetchMaxPages: number; fetchMaxUrlContextChars: number; fetchSummarizeOverflow: boolean; compressHistoryOverflow: boolean; resourceSummary: boolean; limits: { smallModelInputChars: number; embedInputChars: number; scrapeMaxChars: number; minUrlContextChars: number } }> {
   return fetch(`${BASE}/admin/settings`).then(r => r.json())
 }
 
-export async function updateAdminSettings(s: { memoryTokenBudget?: number; userMemoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; dreamDeep?: boolean; memoryExtractChars?: number; rerankTopN?: number; ragTopK?: number; attachmentChars?: number; spaceRagBudget?: number; queryReformulation?: boolean; rssFeedCharsBudget?: number; fetchMaxPages?: number; fetchMaxUrlContextChars?: number; fetchSummarizeOverflow?: boolean; compressHistoryOverflow?: boolean; resourceSummary?: boolean }): Promise<void> {
+export async function updateAdminSettings(s: { memoryTokenBudget?: number; userMemoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; dreamDeep?: boolean; memoryExtractChars?: number; rerankTopN?: number; ragTopK?: number; ragMinRelevance?: number; attachmentChars?: number; spaceRagBudget?: number; queryReformulation?: boolean; rssFeedCharsBudget?: number; fetchMaxPages?: number; fetchMaxUrlContextChars?: number; fetchSummarizeOverflow?: boolean; compressHistoryOverflow?: boolean; resourceSummary?: boolean }): Promise<void> {
   await fetch(`${BASE}/admin/settings`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },

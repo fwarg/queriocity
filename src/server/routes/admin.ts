@@ -32,7 +32,7 @@ adminRouter.use('*', authMiddleware)
 adminRouter.use('*', adminMiddleware)
 
 adminRouter.get('/settings', async (c) => {
-  const [memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow, compressHistoryOverflow, resourceSummary] = await Promise.all([
+  const [memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, ragMinRelevance, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow, compressHistoryOverflow, resourceSummary] = await Promise.all([
     getAppSetting('memory_token_budget', '1000').then(Number),
     getAppSetting('user_memory_token_budget', '300').then(Number),
     getAppSetting('dream_hour', '-1').then(Number),
@@ -42,6 +42,7 @@ adminRouter.get('/settings', async (c) => {
     getAppSetting('memory_extract_chars', '6000').then(Number),
     getAppSetting('rerank_top_n', '15').then(Number),
     getAppSetting('rag_top_k', '15').then(Number),
+    getAppSetting('rag_min_relevance', '0').then(Number),
     getAppSetting('attachment_chars', '20000').then(Number),
     getAppSetting('space_rag_budget', '500').then(Number),
     getAppSetting('query_reformulation', 'true').then(v => v === 'true'),
@@ -55,7 +56,7 @@ adminRouter.get('/settings', async (c) => {
   // Read-only, derived from the model context env vars. Two of the settings above are silently
   // clamped by these at use time, so the panel needs them to show what a value actually does
   // rather than what was typed.
-  return c.json({ memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow, compressHistoryOverflow, resourceSummary, limits: { smallModelInputChars: SMALL_MODEL_INPUT_CHARS, embedInputChars: EMBED_MAX_INPUT_CHARS, scrapeMaxChars: SCRAPE_MAX_CHARS, minUrlContextChars: MIN_URL_CONTEXT_CHARS } })
+  return c.json({ memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, ragMinRelevance, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow, compressHistoryOverflow, resourceSummary, limits: { smallModelInputChars: SMALL_MODEL_INPUT_CHARS, embedInputChars: EMBED_MAX_INPUT_CHARS, scrapeMaxChars: SCRAPE_MAX_CHARS, minUrlContextChars: MIN_URL_CONTEXT_CHARS } })
 })
 
 adminRouter.patch('/settings', zValidator('json', z.object({
@@ -68,6 +69,7 @@ adminRouter.patch('/settings', zValidator('json', z.object({
   memoryExtractChars: z.number().int().min(500).max(100000).optional(),
   rerankTopN: z.number().int().min(1).max(100).optional(),
   ragTopK: z.number().int().min(1).max(100).optional(),
+  ragMinRelevance: z.number().min(0).max(1).optional(),
   attachmentChars: z.number().int().min(1000).max(500000).optional(),
   spaceRagBudget: z.number().int().min(0).max(10000).optional(),
   queryReformulation: z.boolean().optional(),
@@ -93,6 +95,7 @@ adminRouter.patch('/settings', zValidator('json', z.object({
   if (body.memoryExtractChars != null) ops.push(setAppSetting('memory_extract_chars', String(body.memoryExtractChars)))
   if (body.rerankTopN != null) ops.push(setAppSetting('rerank_top_n', String(body.rerankTopN)))
   if (body.ragTopK != null) ops.push(setAppSetting('rag_top_k', String(body.ragTopK)))
+  if (body.ragMinRelevance != null) ops.push(setAppSetting('rag_min_relevance', String(body.ragMinRelevance)))
   if (body.attachmentChars != null) ops.push(setAppSetting('attachment_chars', String(body.attachmentChars)))
   if (body.spaceRagBudget != null) ops.push(setAppSetting('space_rag_budget', String(body.spaceRagBudget)))
   if (body.queryReformulation != null) ops.push(setAppSetting('query_reformulation', String(body.queryReformulation)))

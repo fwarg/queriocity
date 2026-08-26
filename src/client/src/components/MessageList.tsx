@@ -7,7 +7,7 @@ import rehypeKatex from 'rehype-katex'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { ExternalLink, FileText, Download, Sparkles, Volume2, VolumeX, NotebookPen } from 'lucide-react'
-import type { Message, Source } from '../lib/api.ts'
+import type { Message, Source, FileSource } from '../lib/api.ts'
 import { downloadGeneratedImage } from '../lib/image-download.ts'
 import { markSvg } from '@shared/ai-provenance.ts'
 import { useT } from '../lib/i18n.tsx'
@@ -57,11 +57,21 @@ function escapeCurrencyDollars(content: string): string {
   return content.replace(/\$(?=\d)/g, '\\$')
 }
 
-/** Replace [N] with markdown links [[N]](url) so react-markdown renders them as links. */
-function insertCitationLinks(content: string, sources: Array<{ url: string }>) {
-  return content.replace(/\[(\d+)\]/g, (match, num) => {
-    const source = sources[parseInt(num) - 1]
-    return source ? `[[${num}]](${source.url})` : match
+/** A citation token as it appears inside [...] — a bare number for a web source ("1"), or a
+ *  letter-prefixed label for a resource excerpt ("F1", "C2"). */
+const CITATION_TOKEN = /\[(\d+|[A-Za-z]+\d+)\]/g
+
+/** Replace [N] and [F1]/[C1] with markdown links so react-markdown renders them through the same
+ *  `a` override. A token matching neither a source index nor a known file label is left as literal
+ *  text — this is the fallback for a stray label the model invented past the real resource count. */
+function insertCitationLinks(content: string, sources: Array<{ url: string }>, fileSources: Array<{ url: string; label: string }> = []) {
+  return content.replace(CITATION_TOKEN, (match, token: string) => {
+    if (/^\d+$/.test(token)) {
+      const source = sources[parseInt(token) - 1]
+      return source ? `[[${token}]](${source.url})` : match
+    }
+    const file = fileSources.find(f => f.label === token)
+    return file ? `[[${token}]](${file.url})` : match
   })
 }
 
@@ -131,14 +141,16 @@ function hostnameOf(url: string): string {
   try { return new URL(url).hostname.replace(/^www\./, '') } catch { return url }
 }
 
-function makeMdComponents(highlightedSource: number | null, onCitationClick: (n: number) => void, sources: Source[] = []) {
+function makeMdComponents(highlighted: string | null, onCitationClick: (key: string) => void, sources: Source[] = [], fileSources: FileSource[] = []) {
   return {
   a: ({ href, children }: { href?: string; children?: React.ReactNode }) => {
-    const match = /^\[(\d+)\]$/.exec(String(children))
-    const num = match ? parseInt(match[1]) : null
-    const isHighlighted = num !== null && num === highlightedSource
-    if (num !== null) {
-      const source = sources[num - 1]
+    const match = /^\[(\d+|[A-Za-z]+\d+)\]$/.exec(String(children))
+    const token = match ? match[1] : null
+    const isNumeric = token !== null && /^\d+$/.test(token)
+    const source = token !== null && isNumeric ? sources[parseInt(token) - 1] : undefined
+    const fileSource = token !== null && !isNumeric ? fileSources.find(f => f.label === token) : undefined
+    const isHighlighted = token !== null && token === highlighted
+    if (token !== null) {
       return (
         <span className="relative group inline-block">
           <a
@@ -146,18 +158,18 @@ function makeMdComponents(highlightedSource: number | null, onCitationClick: (n:
             target="_blank"
             rel="noopener noreferrer"
             className={`text-xs align-super leading-none ${isHighlighted ? 'text-yellow-400 font-bold' : 'text-blue-400 hover:text-blue-300'}`}
-            onClick={e => { e.preventDefault(); onCitationClick(num) }}
+            onClick={e => { e.preventDefault(); onCitationClick(token) }}
           >
             {children}
           </a>
-          {source && (
+          {(source || fileSource) && (
             <span
               role="tooltip"
               className="pointer-events-none invisible group-hover:visible opacity-0 group-hover:opacity-100 transition-opacity absolute left-0 bottom-full z-30 mb-1 w-72 max-w-[80vw] rounded border border-gray-700 bg-gray-900 p-2 text-left shadow-xl"
             >
-              <span className="block text-xs font-medium text-gray-100 line-clamp-2">{source.title || source.url}</span>
-              <span className="mt-0.5 block truncate text-[10px] text-gray-500">{hostnameOf(source.url)}</span>
-              {source.content && (
+              <span className="block text-xs font-medium text-gray-100 line-clamp-2">{source ? (source.title || source.url) : fileSource!.title}</span>
+              {source && <span className="mt-0.5 block truncate text-[10px] text-gray-500">{hostnameOf(source.url)}</span>}
+              {source?.content && (
                 <span className="mt-1 block text-[11px] leading-snug text-gray-400 line-clamp-4">{source.content}</span>
               )}
             </span>
@@ -215,69 +227,83 @@ function makeMdComponents(highlightedSource: number | null, onCitationClick: (n:
 interface SourceListProps {
   content: string
   sources: Array<{ title: string; url: string }>
-  fileSources?: Array<{ title: string; url: string }>
-  highlightedSource: number | null
-  onSourceClick: (n: number) => void
+  fileSources?: FileSource[]
+  highlighted: string | null
+  onSourceClick: (key: string) => void
 }
 
-function SourceList({ content, sources, fileSources, highlightedSource, onSourceClick }: SourceListProps) {
+/** Cited/uncited split for both web sources ([N]) and resource excerpts ([F1]/[C1]) — a resource
+ *  the model never actually cited is exactly as "unused" as an uncited web source, so both fold
+ *  into the same toggle rather than the resource always showing under its own heading. */
+function SourceList({ content, sources, fileSources = [], highlighted, onSourceClick }: SourceListProps) {
   const t = useT()
   const [showUnused, setShowUnused] = useState(false)
 
-  const cited = new Set(
-    [...content.matchAll(/\[(\d+)\]/g)].map(m => parseInt(m[1]))
-  )
-  const unused = sources.filter((_, j) => !cited.has(j + 1))
+  const cited = new Set([...content.matchAll(CITATION_TOKEN)].map(m => m[1]))
+  const unusedSources = sources.map((s, j) => ({ s, n: j + 1 })).filter(({ n }) => !cited.has(String(n)))
+  const unusedFiles = fileSources.filter(s => !cited.has(s.label))
+  const unusedCount = unusedSources.length + unusedFiles.length
 
   return (
     <div className="flex flex-col gap-1 max-w-2xl">
-      {sources.map((s, j) => cited.has(j + 1) && (
+      {sources.map((s, j) => cited.has(String(j + 1)) && (
         <a
           key={j}
           href={s.url}
           target="_blank"
           rel="noopener noreferrer"
-          onClick={() => onSourceClick(j + 1)}
-          className={`flex items-center gap-1.5 text-xs hover:underline rounded px-1 -mx-1 transition-colors ${highlightedSource === j + 1 ? 'text-yellow-400 bg-yellow-400/10' : 'text-blue-400'}`}
+          onClick={() => onSourceClick(String(j + 1))}
+          className={`flex items-center gap-1.5 text-xs hover:underline rounded px-1 -mx-1 transition-colors ${highlighted === String(j + 1) ? 'text-yellow-400 bg-yellow-400/10' : 'text-blue-400'}`}
         >
           <span className="shrink-0">[{j + 1}]</span>
           <ExternalLink size={10} className="shrink-0" />
           <span className="truncate min-w-0">{s.title || s.url}</span>
         </a>
       ))}
-      {unused.length > 0 && (
+      {fileSources.filter(s => cited.has(s.label)).map(s => (
+        <button
+          key={s.label}
+          onClick={() => onSourceClick(s.label)}
+          className={`flex items-center gap-1.5 text-xs rounded px-1 -mx-1 transition-colors text-left ${highlighted === s.label ? 'text-yellow-400 bg-yellow-400/10' : 'text-gray-400 hover:text-gray-200'}`}
+        >
+          <span className="shrink-0">[{s.label}]</span>
+          <FileText size={10} className="shrink-0" />
+          <span className="truncate min-w-0">{s.title}</span>
+        </button>
+      ))}
+      {unusedCount > 0 && (
         <>
           <button
             onClick={() => setShowUnused(v => !v)}
             className="text-xs text-gray-600 hover:text-gray-400 text-left mt-0.5"
           >
-            {showUnused ? '▾' : '▸'} {t('message.uncitedSources', { count: unused.length })}
+            {showUnused ? '▾' : '▸'} {t('message.uncitedSources', { count: unusedCount })}
           </button>
-          {showUnused && sources.map((s, j) => !cited.has(j + 1) && (
-            <a
-              key={j}
-              href={s.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1.5 text-xs text-gray-600 hover:underline"
-            >
-              <span className="text-gray-700 shrink-0">[{j + 1}]</span>
-              <ExternalLink size={10} className="shrink-0" />
-              <span className="truncate min-w-0">{s.title || s.url}</span>
-            </a>
-          ))}
+          {showUnused && (
+            <>
+              {unusedSources.map(({ s, n }) => (
+                <a
+                  key={n}
+                  href={s.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 text-xs text-gray-600 hover:underline"
+                >
+                  <span className="text-gray-700 shrink-0">[{n}]</span>
+                  <ExternalLink size={10} className="shrink-0" />
+                  <span className="truncate min-w-0">{s.title || s.url}</span>
+                </a>
+              ))}
+              {unusedFiles.map(s => (
+                <span key={s.label} className="flex items-center gap-1.5 text-xs text-gray-600">
+                  <span className="text-gray-700 shrink-0">[{s.label}]</span>
+                  <FileText size={10} className="shrink-0" />
+                  <span className="truncate min-w-0">{s.title}</span>
+                </span>
+              ))}
+            </>
+          )}
         </>
-      )}
-      {fileSources && fileSources.length > 0 && (
-        <div className={`flex flex-col gap-0.5 ${sources.length > 0 ? 'mt-1 pt-1 border-t border-gray-800' : ''}`}>
-          <span className="text-xs text-gray-600">{t('message.documentContext')}</span>
-          {fileSources.map(s => (
-            <span key={s.url} className="flex items-center gap-1.5 text-xs text-gray-500">
-              <FileText size={10} className="shrink-0" />
-              <span className="truncate min-w-0">{s.title}</span>
-            </span>
-          ))}
-        </div>
       )}
     </div>
   )
@@ -311,13 +337,13 @@ function HighlightedText({ text, query }: { text: string; query: string }) {
 
 function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, searchQuery, noteTitle }: { msg: Message; isFirst?: boolean; defaultCollapsed?: boolean; isMatch?: boolean; isActive?: boolean; searchQuery?: string; noteTitle?: string }) {
   const t = useT()
-  const [highlightedSource, setHighlightedSource] = useState<number | null>(null)
+  const [highlighted, setHighlighted] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState(!!defaultCollapsed)
   const [speaking, setSpeaking] = useState(false)
   const [savingNote, setSavingNote] = useState(false)
   const [noteSaved, setNoteSaved] = useState(false)
-  const toggleSource = useCallback((n: number) => setHighlightedSource(v => v === n ? null : n), [])
-  const mdComponents = makeMdComponents(highlightedSource, toggleSource, msg.sources)
+  const toggleSource = useCallback((key: string) => setHighlighted(v => v === key ? null : key), [])
+  const mdComponents = makeMdComponents(highlighted, toggleSource, msg.sources, msg.fileSources)
 
   function handleSpeak() {
     if (speaking) {
@@ -379,7 +405,7 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
           <>
             {msg.thinking && <ThinkingBlock content={msg.thinking} />}
             {msg.content && (() => {
-              const cited = msg.sources?.length ? insertCitationLinks(msg.content, msg.sources) : msg.content
+              const cited = (msg.sources?.length || msg.fileSources?.length) ? insertCitationLinks(msg.content, msg.sources ?? [], msg.fileSources ?? []) : msg.content
               const cleaned = msg.images?.length ? cited.replace(/!\[.*?\]\([^)]+\.png\)/g, '') : cited
               return cleaned.trim() ? <ReactMarkdown components={mdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{wrapSvgBlocks(escapeCurrencyDollars(cleaned))}</ReactMarkdown> : null
             })()}
@@ -421,7 +447,7 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
         ) : <HighlightedText text={msg.content} query={searchQuery ?? ''} />}
       </div>
       {(msg.sources && msg.sources.length > 0 || msg.fileSources && msg.fileSources.length > 0) && (
-        <SourceList content={msg.content} sources={msg.sources ?? []} fileSources={msg.fileSources} highlightedSource={highlightedSource} onSourceClick={toggleSource} />
+        <SourceList content={msg.content} sources={msg.sources ?? []} fileSources={msg.fileSources} highlighted={highlighted} onSourceClick={toggleSource} />
       )}
     </div>
   )

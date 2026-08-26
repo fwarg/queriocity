@@ -6,7 +6,7 @@ import { getSmallModel, getChatModel, getThinkingModelOrFallback, SMALL_MODEL_IN
 import { embedText, embedTexts } from './embeddings.ts'
 import { searchSpaceFiles, searchUploads, spaceHasTaggedFiles, type ChunkResult } from './files/uploads-search.ts'
 import { rerank, rerankEnabled } from './reranker.ts'
-import { ragTopK } from './rag-settings.ts'
+import { ragTopK, ragMinRelevance } from './rag-settings.ts'
 import { searchCollections } from './files/collections.ts'
 
 export interface SpaceMemory {
@@ -54,10 +54,10 @@ function renderFileBlock(
   if (!fileLines.length) return { block: '', fileSources: [] }
 
   const fileSources = Array.from(citedFiles.entries())
-    .map(([fileId, { filename, label }]) => ({ title: `[${label}] ${filename}`, url: `file:${fileId}` }))
+    .map(([fileId, { filename, label }]) => ({ title: `[${label}] ${filename}`, url: `file:${fileId}`, label }))
 
   let block = `## ${heading}\n` + fileLines.map(l => `> ${l}`).join('\n\n')
-  block += `\n\nWhen your answer draws on the excerpts above, cite them inline using their label (e.g. [${labelPrefix}1]). Do not add other citation formats.`
+  block += `\n\nWhen your answer draws on the excerpts above, cite them inline using their label (e.g. [${labelPrefix}1]). This is separate from any [N] web-source citations you are also instructed to use elsewhere — use both where appropriate, and do not invent any other citation format.`
 
   console.log(`  [memory] ${logTag}: ${fileLines.length} chunks, ${fileSources.length} files (~${estimateTokens(block)} tokens)`)
   return { block, fileSources }
@@ -100,7 +100,7 @@ export async function buildCollectionBlock(
     const embedding = await embedText(query)
     rows = await searchCollections(collectionIds, query, embedding)
     if (rerankEnabled && rows.length) {
-      const order = await rerank(query, rows.map(r => r.content), rows.length)
+      const order = await rerank(query, rows.map(r => r.content), rows.length, await ragMinRelevance())
       rows = order.map(i => rows[i])
     }
   } catch (e) {
@@ -299,7 +299,7 @@ export function selectMemories<T extends MemoryCandidate>(
 
 export interface MemoryBlock {
   block: string
-  fileSources: Array<{ title: string; url: string }>
+  fileSources: Array<{ title: string; url: string; label: string }>
 }
 
 /** Build a formatted memory block for system prompt injection, with optional RAG layer. */
@@ -404,7 +404,7 @@ export async function buildMemoryBlock(
           ...chatRows.map(r => ({ content: r.content, source: 'chat' as const, fileId: '', filename: '' })),
           ...fileRows.map(r => ({ content: r.content, source: 'file' as const, fileId: r.fileId, filename: r.filename })),
         ]
-        const indices = await rerank(query, combined.map(r => r.content), combined.length)
+        const indices = await rerank(query, combined.map(r => r.content), combined.length, await ragMinRelevance())
         const chatLines: string[] = []
         const fileLines: string[] = []
         for (const idx of indices) {
@@ -457,9 +457,9 @@ export async function buildMemoryBlock(
   }
 
   const fileSources = Array.from(citedFiles.entries())
-    .map(([fileId, { filename, label }]) => ({ title: `[${label}] ${filename}`, url: `file:${fileId}` }))
+    .map(([fileId, { filename, label }]) => ({ title: `[${label}] ${filename}`, url: `file:${fileId}`, label }))
   if (fileSources.length > 0) {
-    block += '\n\nWhen your answer draws on document excerpts above, cite them inline using their label (e.g. [F1]). Do not add other citation formats.'
+    block += '\n\nWhen your answer draws on document excerpts above, cite them inline using their label (e.g. [F1]). This is separate from any [N] web-source citations you are also instructed to use elsewhere — use both where appropriate, and do not invent any other citation format.'
   }
   console.log(`  [memory] injecting ${lines.length}/${allMemories.length} memories (${ranked === rest ? 'by recency' : 'by relevance'}) + ${ragInjected} RAG + ${fileSources.length} file sources (~${estimateTokens(block)} tokens) for space ${spaceId.slice(0, 8)}`)
   return { block, fileSources }

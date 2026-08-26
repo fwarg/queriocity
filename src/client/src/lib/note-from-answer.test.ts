@@ -40,7 +40,7 @@ describe('answerAsNoteBody', () => {
 
   test('names library documents rather than linking them', () => {
     const body = answerAsNoteBody(
-      answer({ content: 'From the spec.', fileSources: [{ title: 'spec.pdf', url: 'file:1' }] }),
+      answer({ content: 'From the spec.', fileSources: [{ title: 'spec.pdf', url: 'file:1', label: 'F1' }] }),
       'Sources',
     )
     expect(body).toContain('- spec.pdf')

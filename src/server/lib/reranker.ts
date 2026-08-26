@@ -24,7 +24,26 @@ export async function rerankSearchResults<T extends { content: string }>(query: 
   return ranked
 }
 
-export async function rerank(query: string, documents: string[], topN?: number): Promise<number[]> {
+/** Sorts best-first, drops anything below `minScore`, then caps at `topN` — split out from
+ *  `rerank` so the ordering/filtering logic is testable without the `rerankEnabled` gate or a
+ *  network call. `minScore` drops results below a relevance floor before the cap — used by
+ *  document/resource retrieval to keep a barely-related file from being injected just to fill
+ *  top-K. Omitted by callers (web-source and space-memory reranking) that want today's
+ *  slice-only behavior, since it has no model-agnostic equivalent once the reranker is disabled. */
+export function selectRerankedIndices(
+  results: Array<{ index: number; relevance_score: number }>,
+  topN: number,
+  minScore?: number,
+): number[] {
+  return results
+    .slice()
+    .sort((a, b) => b.relevance_score - a.relevance_score)
+    .filter(r => minScore == null || r.relevance_score >= minScore)
+    .slice(0, topN)
+    .map(r => r.index)
+}
+
+export async function rerank(query: string, documents: string[], topN?: number, minScore?: number): Promise<number[]> {
   if (!rerankEnabled || documents.length === 0) return documents.map((_, i) => i)
   const n = topN ?? parseInt(await getAppSetting('rerank_top_n', '15'), 10)
   try {
@@ -36,10 +55,7 @@ export async function rerank(query: string, documents: string[], topN?: number):
     })
     if (!res.ok) throw new Error(`reranker HTTP ${res.status}`)
     const data = await res.json() as { results: Array<{ index: number; relevance_score: number }> }
-    return data.results
-      .sort((a, b) => b.relevance_score - a.relevance_score)
-      .slice(0, n)
-      .map(r => r.index)
+    return selectRerankedIndices(data.results, n, minScore)
   } catch (e) {
     console.warn('  [reranker] failed, using original order:', e)
     return documents.map((_, i) => i)

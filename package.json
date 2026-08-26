@@ -1,6 +1,6 @@
 {
   "name": "queriocity",
-  "version": "0.25.1",
+  "version": "0.25.2",
   "type": "module",
   "packageManager": "bun@1.3.10",
   "//test":"Tests run with --no-env-file so local matches CI, which has no .env. Bun auto-loads .env otherwise, and a test that silently reads the developer's real config (EMBED_DIMENSIONS was the second case) passes here and fails there. What tests do need is set by lib/test-support/test-env.ts.",

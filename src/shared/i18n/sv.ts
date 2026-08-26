@@ -296,7 +296,6 @@ export const sv: Catalog = {
   'message.downloadPng': 'Ladda ner PNG',
   'message.downloadSvg': 'Ladda ner SVG',
   'message.downloadFailed': 'Nedladdningen misslyckades',
-  'message.documentContext': 'Dokumentkontext',
   'message.uncitedSources': { one: '{count} ociterad källa', other: '{count} ociterade källor' },
 
   // --- Godkännande av utgående begäran ---

@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 import { streamChat, stopChat, fetchRelatedQuestions, decideEgress } from '../lib/api.ts'
-import type { Message, Source } from '../lib/api.ts'
+import type { Message, Source, FileSource } from '../lib/api.ts'
 import type { LogStep } from '../components/ProgressLog.tsx'
 import { useT } from '../lib/i18n.tsx'
 
@@ -112,7 +112,7 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
     let accumulated = ''
     let thinkingAccumulated = ''
     const sources: Source[] = []
-    const fileSources: Array<{ title: string; url: string }> = []
+    const fileSources: FileSource[] = []
     const images: Array<{ url: string; alt: string }> = []
     const blockedEngines: Array<{ engine: string; reason: string }> = []
     let wasAborted = false
@@ -148,7 +148,7 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
         } else if (chunk.type === 'sources') {
           sources.push(...(chunk.sources as Source[]))
         } else if (chunk.type === 'file_sources') {
-          fileSources.push(...(chunk.sources as Array<{ title: string; url: string }>))
+          fileSources.push(...(chunk.sources as FileSource[]))
         } else if (chunk.type === 'approval') {
           setApproval({
             id: chunk.id as string,

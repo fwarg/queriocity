@@ -300,7 +300,6 @@ export const en = {
   'message.downloadPng': 'Download PNG',
   'message.downloadSvg': 'Download SVG',
   'message.downloadFailed': 'Download failed',
-  'message.documentContext': 'Document context',
   'message.uncitedSources': { one: '{count} uncited source', other: '{count} uncited sources' },
 
   // --- Egress approval ---
