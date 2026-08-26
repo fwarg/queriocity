@@ -114,6 +114,14 @@ export default function App() {
   const [recreating, setRecreating] = useState(false)
   const [recreateProgress, setRecreateProgress] = useState<string | null>(null)
   const [view, setView] = useState<MainView>('chat')
+  // Which resource's detail panel is open in the Resources view. Lives here rather than inside
+  // ResourcesView so a chat citation's [F1]/[C1] reference can open one directly from outside it.
+  const [openResourceId, setOpenResourceId] = useState<string | null>(null)
+  const openResource = useCallback((id: string) => {
+    setOpenResourceId(id)
+    setView('files')
+    setSidebarOpen(false)
+  }, [])
   const [showSettings, setShowSettings] = useState(false)
   const [showAdmin, setShowAdmin] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -128,6 +136,7 @@ export default function App() {
   useGuideNavigation(useCallback((target: GuideTarget) => {
     if (target === 'settings') { setShowSettings(true); return }
     if (target === 'spaces') setCurrentSpaceId(null)
+    if (target === 'files') setOpenResourceId(null)
     setView(target)
     setSidebarOpen(false)
   }, []))
@@ -729,7 +738,7 @@ export default function App() {
           {t('nav.chats')} ({chatTotal || sessions.length})
         </button>
         <button
-          onClick={() => { setView(v => v === 'files' ? 'chat' : 'files'); setSidebarOpen(false) }}
+          onClick={() => { setView(v => v === 'files' ? 'chat' : 'files'); setOpenResourceId(null); setSidebarOpen(false) }}
           className={`w-full text-left px-3 py-2 rounded text-sm font-medium ${view === 'files' ? 'bg-indigo-700 text-white' : 'text-indigo-400 hover:bg-gray-800'}`}
         >
           {t('nav.resources')} ({files.length})
@@ -1224,7 +1233,7 @@ export default function App() {
             />
           )
         ) : view === 'files' ? (
-          <ResourcesView resources={files} onChanged={reloadFiles} />
+          <ResourcesView resources={files} onChanged={reloadFiles} openId={openResourceId} onOpenIdChange={setOpenResourceId} />
         ) : view === 'monitors' ? (
           <MonitorsView
             spaces={spaces}
@@ -1419,6 +1428,7 @@ export default function App() {
                   searchQuery={chatSearchOpen ? chatSearchQuery : ''}
                   searchActiveIndex={chatSearchOpen && chatMatchIndices.length > 0 ? chatMatchIndices[chatSearchCursor] : -1}
                   searchMatchIndices={chatSearchOpen ? chatMatchIndices : []}
+                  onOpenResource={openResource}
                 />
               </ImageCaptionContext.Provider>
             )}

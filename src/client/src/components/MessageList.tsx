@@ -44,6 +44,8 @@ interface Props {
   searchQuery?: string
   searchMatchIndices?: number[]
   searchActiveIndex?: number
+  /** Opens a resource's detail view by id, given a cited [F1]/[C1] source's `file:${id}` url. */
+  onOpenResource?: (id: string) => void
 }
 
 /** Normalize SVG blocks: unwrap any existing ```svg fences, then rewrap consistently. */
@@ -230,12 +232,19 @@ interface SourceListProps {
   fileSources?: FileSource[]
   highlighted: string | null
   onSourceClick: (key: string) => void
+  onOpenResource?: (id: string) => void
+}
+
+/** A file source's `url` is a synthetic `file:${id}` marker, not a navigable link — this pulls the
+ *  id back out so it can be opened in the Resources view instead. */
+function fileIdOf(url: string): string {
+  return url.replace(/^file:/, '')
 }
 
 /** Cited/uncited split for both web sources ([N]) and resource excerpts ([F1]/[C1]) — a resource
  *  the model never actually cited is exactly as "unused" as an uncited web source, so both fold
  *  into the same toggle rather than the resource always showing under its own heading. */
-function SourceList({ content, sources, fileSources = [], highlighted, onSourceClick }: SourceListProps) {
+function SourceList({ content, sources, fileSources = [], highlighted, onSourceClick, onOpenResource }: SourceListProps) {
   const t = useT()
   const [showUnused, setShowUnused] = useState(false)
 
@@ -263,8 +272,9 @@ function SourceList({ content, sources, fileSources = [], highlighted, onSourceC
       {fileSources.filter(s => cited.has(s.label)).map(s => (
         <button
           key={s.label}
-          onClick={() => onSourceClick(s.label)}
-          className={`flex items-center gap-1.5 text-xs rounded px-1 -mx-1 transition-colors text-left ${highlighted === s.label ? 'text-yellow-400 bg-yellow-400/10' : 'text-gray-400 hover:text-gray-200'}`}
+          onClick={() => { onSourceClick(s.label); onOpenResource?.(fileIdOf(s.url)) }}
+          title={onOpenResource ? undefined : s.title}
+          className={`flex items-center gap-1.5 text-xs rounded px-1 -mx-1 transition-colors text-left ${highlighted === s.label ? 'text-yellow-400 bg-yellow-400/10' : 'text-gray-400 hover:text-gray-200'} ${onOpenResource ? 'hover:underline' : ''}`}
         >
           <span className="shrink-0">[{s.label}]</span>
           <FileText size={10} className="shrink-0" />
@@ -295,11 +305,15 @@ function SourceList({ content, sources, fileSources = [], highlighted, onSourceC
                 </a>
               ))}
               {unusedFiles.map(s => (
-                <span key={s.label} className="flex items-center gap-1.5 text-xs text-gray-600">
+                <button
+                  key={s.label}
+                  onClick={() => onOpenResource?.(fileIdOf(s.url))}
+                  className={`flex items-center gap-1.5 text-xs text-gray-600 text-left ${onOpenResource ? 'hover:underline' : ''}`}
+                >
                   <span className="text-gray-700 shrink-0">[{s.label}]</span>
                   <FileText size={10} className="shrink-0" />
                   <span className="truncate min-w-0">{s.title}</span>
-                </span>
+                </button>
               ))}
             </>
           )}
@@ -335,7 +349,7 @@ function HighlightedText({ text, query }: { text: string; query: string }) {
   )}</>
 }
 
-function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, searchQuery, noteTitle }: { msg: Message; isFirst?: boolean; defaultCollapsed?: boolean; isMatch?: boolean; isActive?: boolean; searchQuery?: string; noteTitle?: string }) {
+function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, searchQuery, noteTitle, onOpenResource }: { msg: Message; isFirst?: boolean; defaultCollapsed?: boolean; isMatch?: boolean; isActive?: boolean; searchQuery?: string; noteTitle?: string; onOpenResource?: (id: string) => void }) {
   const t = useT()
   const [highlighted, setHighlighted] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState(!!defaultCollapsed)
@@ -447,7 +461,7 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
         ) : <HighlightedText text={msg.content} query={searchQuery ?? ''} />}
       </div>
       {(msg.sources && msg.sources.length > 0 || msg.fileSources && msg.fileSources.length > 0) && (
-        <SourceList content={msg.content} sources={msg.sources ?? []} fileSources={msg.fileSources} highlighted={highlighted} onSourceClick={toggleSource} />
+        <SourceList content={msg.content} sources={msg.sources ?? []} fileSources={msg.fileSources} highlighted={highlighted} onSourceClick={toggleSource} onOpenResource={onOpenResource} />
       )}
     </div>
   )
@@ -467,7 +481,7 @@ function noteTitleFor(messages: Message[], index: number): string | undefined {
   return undefined
 }
 
-export const MessageList = memo(function MessageList({ messages, streaming, streamingThinking, collapseFirstQuestion, searchQuery, searchMatchIndices, searchActiveIndex }: Props) {
+export const MessageList = memo(function MessageList({ messages, streaming, streamingThinking, collapseFirstQuestion, searchQuery, searchMatchIndices, searchActiveIndex, onOpenResource }: Props) {
   const msgRefs = useRef<Map<number, HTMLDivElement>>(new Map())
   const matchSet = useMemo(() => new Set(searchMatchIndices ?? []), [searchMatchIndices])
 
@@ -488,6 +502,7 @@ export const MessageList = memo(function MessageList({ messages, streaming, stre
             isActive={i === searchActiveIndex}
             searchQuery={searchQuery}
             noteTitle={noteTitleFor(messages, i)}
+            onOpenResource={onOpenResource}
           />
         </div>
       ))}

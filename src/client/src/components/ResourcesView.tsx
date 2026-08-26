@@ -53,17 +53,21 @@ interface Props {
   resources: Resource[]
   /** Reload the list — the parent owns it, because the space panel tags from the same set. */
   onChanged: () => void
+  /** Which resource's detail panel is open. Controlled by the parent rather than local state, so a
+   *  citation elsewhere in the app (a chat's [F1]/[C1] resource reference) can open one directly by
+   *  switching to this view with an id already set. */
+  openId: string | null
+  onOpenIdChange: (id: string | null) => void
 }
 
 /** The resource library: uploaded files, ingested URLs and notes, in one list.
  *
  *  Lives here rather than inline in App.tsx because it now owns a detail panel and two editors;
  *  the list state stays with the parent, which needs the same resources for space tagging. */
-export function ResourcesView({ resources, onChanged }: Props) {
+export function ResourcesView({ resources, onChanged, openId, onOpenIdChange }: Props) {
   const t = useT()
   const confirm = useConfirm()
   const { lang } = useLang()
-  const [openId, setOpenId] = useState<string | null>(null)
   const [writingNote, setWritingNote] = useState(false)
   const [filter, setFilter] = useState<ResourceFilter>(EMPTY_FILTER)
 
@@ -79,7 +83,7 @@ export function ResourcesView({ resources, onChanged }: Props) {
   const shown = resources.filter(r => matchesFilter(r, filter))
 
   if (openId) {
-    return <ResourceDetail id={openId} onBack={() => setOpenId(null)} onChanged={onChanged} onOpen={setOpenId} />
+    return <ResourceDetail id={openId} onBack={() => onOpenIdChange(null)} onChanged={onChanged} onOpen={onOpenIdChange} />
   }
 
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -201,7 +205,7 @@ export function ResourcesView({ resources, onChanged }: Props) {
           ) : (
             <div className="flex flex-col gap-2">
               {shown.map(r => (
-                <ListRow key={r.id} onClick={() => setOpenId(r.id)}>
+                <ListRow key={r.id} onClick={() => onOpenIdChange(r.id)}>
                   {r.kind === 'note'
                     ? <NotebookPen size={16} className="text-amber-400 shrink-0 mt-0.5" />
                     : <FileText size={16} className="text-gray-500 shrink-0 mt-0.5" />}
