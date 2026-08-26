@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test'
-import { selectRerankedIndices } from './reranker.ts'
+import { selectRerankedIndices, truncateForRerank } from './reranker.ts'
 
 describe('selectRerankedIndices', () => {
   const results = [
@@ -23,5 +23,21 @@ describe('selectRerankedIndices', () => {
 
   test('topN still caps after the floor is applied', () => {
     expect(selectRerankedIndices(results, 1, 0)).toEqual([0])
+  })
+})
+
+describe('truncateForRerank', () => {
+  test('leaves short documents untouched', () => {
+    const { truncated, numTruncated } = truncateForRerank(['short', 'also short'], 100)
+    expect(truncated).toEqual(['short', 'also short'])
+    expect(numTruncated).toBe(0)
+  })
+
+  test('caps documents over the limit and counts them', () => {
+    const long = 'x'.repeat(2000)
+    const { truncated, numTruncated } = truncateForRerank(['short', long], 1200)
+    expect(truncated[0]).toBe('short')
+    expect(truncated[1]).toHaveLength(1200)
+    expect(numTruncated).toBe(1)
   })
 })

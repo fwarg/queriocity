@@ -306,7 +306,8 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       await out.writeSSE({ data: JSON.stringify({ type: 'session', sessionId: sid }) })
       await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: cached.content }) })
       if (cached.sources.length) await out.writeSSE({ data: JSON.stringify({ type: 'sources', sources: cached.sources }) })
-      await finishTurn(out, { sid, userId, msgs, fullContent: cached.content, sources: cached.sources, spaceId, regenerate, ephemeral, t0 })
+      if (cached.fileSources.length) await out.writeSSE({ data: JSON.stringify({ type: 'file_sources', sources: cached.fileSources }) })
+      await finishTurn(out, { sid, userId, msgs, fullContent: cached.content, sources: cached.sources, fileSources: cached.fileSources, spaceId, regenerate, ephemeral, t0 })
     })
   }
 
@@ -362,8 +363,8 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       }
       await emitFlash(flashExtractor.flush().text)
       console.log(`  [flash] done in ${Date.now() - t0}ms, ${fullContent.length} chars`)
-      if (fullContent.length >= 50) setCached(ck, { content: fullContent, sources: [] })
-      await finishTurn(out, { sid, userId, msgs, fullContent, sources: [], spaceId, regenerate, ephemeral, t0 })
+      if (fullContent.length >= 50) setCached(ck, { content: fullContent, sources: [], fileSources: flashSources })
+      await finishTurn(out, { sid, userId, msgs, fullContent, sources: [], fileSources: flashSources, spaceId, regenerate, ephemeral, t0 })
     })
   }
 
@@ -378,7 +379,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         // Through the shared tail like every other mode: calling persistMessage directly ignored
         // `ephemeral`, so a request that asked never to be stored wrote a session, a user message
         // and an empty assistant message anyway — and skipped the rest of the contract besides.
-        await finishTurn(out, { sid, userId, msgs, fullContent: notConfigured, sources: [], spaceId, regenerate, ephemeral, t0 })
+        await finishTurn(out, { sid, userId, msgs, fullContent: notConfigured, sources: [], fileSources: [], spaceId, regenerate, ephemeral, t0 })
       })
     }
     let pendingImageUrl: string | undefined
@@ -559,7 +560,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         clearInterval(keepalive)
       }
       console.log(`  [image] done in ${Date.now() - t0}ms, ${fullContent.length} chars`)
-      await finishTurn(out, { sid, userId, msgs, fullContent, sources: imageSources, spaceId, regenerate, ephemeral, t0 })
+      await finishTurn(out, { sid, userId, msgs, fullContent, sources: imageSources, fileSources: [], spaceId, regenerate, ephemeral, t0 })
     })
   }
 
@@ -871,30 +872,32 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
 
     // Never cache the failure notice — it would be replayed as the answer for every repeat of
     // this question until the entry expires.
-    if (!emptyAnswer && fullContent.length >= 50) setCached(ck, { content: fullContent, sources })
-    await finishTurn(out, { sid, userId, msgs, fullContent, sources, spaceId, regenerate, ephemeral, t0 })
+    if (!emptyAnswer && fullContent.length >= 50) setCached(ck, { content: fullContent, sources, fileSources: allFileSources })
+    await finishTurn(out, { sid, userId, msgs, fullContent, sources, fileSources: allFileSources, spaceId, regenerate, ephemeral, t0 })
   })
 })
 
 /** What a cached answer has to carry. Content alone is not enough: the client resolves `[N]`
  *  positionally against the sources it was sent, so replaying text without them renders every
- *  citation dead. */
+ *  citation dead. Same for `fileSources` and `[F1]`/`[C1]`. */
 interface CachedAnswer {
   content: string
   sources: unknown[]
+  fileSources: unknown[]
 }
 
 /** Common tail for every mode: persist the exchange, close the stream, and kick off the
  *  background memory/index work. Centralised because four branches ran their own copy and the
  *  cached-answer path quietly omitted all of it — losing the turn from the conversation. */
 async function finishTurn(out: SSEStream, {
-  sid, userId, msgs, fullContent, sources, spaceId, regenerate, ephemeral, t0,
+  sid, userId, msgs, fullContent, sources, fileSources, spaceId, regenerate, ephemeral, t0,
 }: {
   sid: string
   userId: string
   msgs: Array<{ role: 'user' | 'assistant'; content: string }>
   fullContent: string
   sources: unknown[]
+  fileSources: unknown[]
   spaceId?: string
   regenerate?: boolean
   ephemeral?: boolean
@@ -905,7 +908,7 @@ async function finishTurn(out: SSEStream, {
     await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, elapsedMs }) })
     return
   }
-  const { title, supersededAnswer } = await persistMessage(sid, userId, msgs, fullContent, sources, spaceId, regenerate)
+  const { title, supersededAnswer } = await persistMessage(sid, userId, msgs, fullContent, sources, fileSources, spaceId, regenerate)
   await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title, elapsedMs }) })
   // Outside the spaceId block below: a regenerate strands its predecessor's image whether or not
   // the chat belongs to a space. Fire-and-forget, as the chat-delete path does — a failed unlink
@@ -1045,6 +1048,7 @@ async function persistMessage(
   msgs: Array<{ role: 'user' | 'assistant'; content: string }>,
   assistantContent: string,
   sources: unknown[],
+  fileSources: unknown[],
   spaceId?: string,
   regenerate = false,
 ): Promise<{ title: string; supersededAnswer?: string }> {
@@ -1071,7 +1075,7 @@ async function persistMessage(
     } else if (lastUser) {
       await tx.insert(messages).values({ id: randomUUID(), sessionId, role: 'user', content: lastUser.content, createdAt: now })
     }
-    await tx.insert(messages).values({ id: randomUUID(), sessionId, role: 'assistant', content: assistantContent, sources: JSON.stringify(sources), createdAt: now })
+    await tx.insert(messages).values({ id: randomUUID(), sessionId, role: 'assistant', content: assistantContent, sources: JSON.stringify(sources), fileSources: JSON.stringify(fileSources), createdAt: now })
   })
 
   return { title, supersededAnswer }

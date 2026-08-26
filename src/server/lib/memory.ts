@@ -73,7 +73,7 @@ export async function buildChatFileBlock(
 
   let fileRows: ChunkResult[] = []
   try {
-    fileRows = await searchUploads(query, userId, await ragTopK())
+    fileRows = await searchUploads(query, userId, await ragTopK(), await ragMinRelevance())
   } catch (e) {
     console.error('  [memory] chat file RAG failed:', e)
     return { block: '', fileSources: [] }

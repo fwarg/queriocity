@@ -120,6 +120,7 @@ export const messages = sqliteTable('messages', {
   role: text('role', { enum: ['user', 'assistant'] }).notNull(),
   content: text('content').notNull(),
   sources: text('sources'),
+  fileSources: text('file_sources'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 
@@ -499,6 +500,7 @@ function initSchema() {
   try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN derived_from TEXT') } catch {}
   try { sqlite.run(`ALTER TABLE spaces ADD COLUMN kind TEXT NOT NULL DEFAULT 'space'`) } catch {}
   try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN origin TEXT') } catch {}
+  try { sqlite.run('ALTER TABLE messages ADD COLUMN file_sources TEXT') } catch {}
   // Migrate: backfill timezone from owner's settings for personal monitors that have none
   try {
     sqlite.run(`

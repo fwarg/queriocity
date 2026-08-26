@@ -5,6 +5,7 @@ import { webSearchMulti, type SearchResult, type EngineError, type SearchApiBudg
 import { isSearchApiEnabled } from './search-api.ts'
 import { searchUploads } from './files/uploads-search.ts'
 import { saveMemories, saveUserMemory, searchSpaceHistory } from './memory.ts'
+import { ragMinRelevance } from './rag-settings.ts'
 import { fetchUrl, processUrlsForContext, MIN_URL_CONTEXT_CHARS, type UrlOutcome } from './fetch-url.ts'
 import { trimMessages, compressMessages, contextCharBudget, CONTEXT_RESERVE_FRACTION } from './trim-messages.ts'
 import { queryTerms, querySimilarity, QUERY_DUPLICATE_THRESHOLD } from './query-terms.ts'
@@ -363,7 +364,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
       // The primary thing worth protecting: everything returned here is local document content,
       // so it is recorded as taint before it can reach a search query or a URL.
       execute: async ({ query }) => {
-        const rows = await searchUploads(query, userId)
+        const rows = await searchUploads(query, userId, undefined, await ragMinRelevance())
         for (const r of rows) noteTaint(egress, r.content)
         return rows
       },

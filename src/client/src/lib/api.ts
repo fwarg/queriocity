@@ -347,13 +347,14 @@ export async function fetchSession(id: string): Promise<Message[]> {
   const res = await fetch(`${BASE}/history/${id}`)
   const { messages } = await res.json()
   const FIRST_PNG_RE = /!\[([^\]]*)\]\(([^)]+\.png)\)/
-  return (messages as Array<{ role: 'user' | 'assistant'; content: string; sources?: string }>).map(m => {
+  return (messages as Array<{ role: 'user' | 'assistant'; content: string; sources?: string; fileSources?: string }>).map(m => {
     const sources = m.sources ? JSON.parse(m.sources) : undefined
+    const fileSources = m.fileSources ? JSON.parse(m.fileSources) : undefined
     if (m.role === 'assistant') {
       const match = FIRST_PNG_RE.exec(m.content)
-      return { role: m.role, content: m.content, sources, images: match ? [{ alt: match[1], url: match[2] }] : undefined }
+      return { role: m.role, content: m.content, sources, fileSources, images: match ? [{ alt: match[1], url: match[2] }] : undefined }
     }
-    return { role: m.role, content: m.content, sources }
+    return { role: m.role, content: m.content, sources, fileSources }
   })
 }
 
