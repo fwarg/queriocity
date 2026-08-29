@@ -7,6 +7,11 @@
  *  payload is often a Python-dict repr rather than JSON, and its string values carry unescaped
  *  apostrophes, so a plain JSON.parse is not enough), and returns the slice of text that held it so
  *  the caller can strip it from the visible reply.
+ *
+ *  It also catches a second shape: a model that writes its own markdown image pointing at an
+ *  external "prompt-to-image" service (`![alt](https://image.pollinations.ai/prompt/…)`) instead of
+ *  calling the tool. That renders — so it looks like it worked — but the picture never came from the
+ *  local stack and the full prompt is shipped to a third party every time the note is displayed.
  */
 
 export interface LeakedToolCall {
@@ -157,6 +162,60 @@ export function stripLeakedToolCall(text: string, source?: string): string {
   // useful prose after leaking a call).
   t = t.replace(/\{\s*["']?(?:action|tool|tool_name|name)["']?\s*:\s*["'][\w-]+["'][\s\S]*\}[\s\S]*$/i, '')
   return t.replace(/\n{3,}/g, '\n\n').trim()
+}
+
+/** A markdown image the model wrote into its own text. In a mode that inserts its images after the
+ *  fact, any `![...](...)` in the model's output is a leak. */
+export interface LeakedImageMarkdown {
+  alt: string
+  url: string
+  /** Best guess at the intended prompt: the decoded prompt segment of the URL, else the alt text. */
+  prompt: string
+  /** The full `![...](...)` substring, for removal from the visible reply. */
+  source: string
+}
+
+const imageMdRe = () => /!\[([^\]]*)\]\(\s*([^\s)]+)\s*\)/g
+
+/** Pull the prompt out of a hallucinated image URL — pollinations.ai puts it in `/prompt/<text>`,
+ *  others in a `?prompt=` / `?text=` query param. Models often append `&width=…` onto the path
+ *  with no `?`, so trim a trailing render-option run. */
+function promptFromImageUrl(url: string): string {
+  try {
+    const u = new URL(url)
+    const seg = u.pathname.match(/\/prompt\/(.+)$/)
+    if (seg) {
+      return decodeURIComponent(seg[1])
+        .replace(/[?&](?:width|height|nologo|seed|model|enhance|private|referrer)=.*$/i, '')
+        .trim()
+    }
+    const q = u.searchParams.get('prompt') ?? u.searchParams.get('text')
+    if (q) return q.trim()
+  } catch { /* not a parseable URL */ }
+  return ''
+}
+
+/** Markdown images the model wrote itself, excluding any whose URL `isLocal` accepts (those are
+ *  ours, or a real earlier render the model is legitimately referencing). */
+export function findLeakedImageMarkdown(
+  text: string,
+  isLocal: (url: string) => boolean,
+): LeakedImageMarkdown[] {
+  const out: LeakedImageMarkdown[] = []
+  for (const m of text.matchAll(imageMdRe())) {
+    const [source, alt, url] = m
+    if (isLocal(url)) continue
+    out.push({ alt, url, prompt: promptFromImageUrl(url) || alt, source })
+  }
+  return out
+}
+
+/** Remove every model-written markdown image whose URL `isLocal` rejects. */
+export function stripLeakedImageMarkdown(text: string, isLocal: (url: string) => boolean): string {
+  return text
+    .replace(imageMdRe(), (full, _alt, url) => (isLocal(url) ? full : ''))
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
 }
 
 /** Coerce string-valued numerics (`"30"`) to numbers for the named keys, leaving everything else

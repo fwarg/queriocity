@@ -19,7 +19,7 @@ import { webSearch, webSearchMulti, type SearchResult, type EngineError, type Se
 import { fetchUrlAllPages, processUrlsForContext, describeOutcome, DEFAULT_MAX_URL_CONTEXT_CHARS, type UrlOutcome, type ProcessedUrl } from '../lib/fetch-url.ts'
 import { getFlashModel, getChatModel, getThinkingModelOrFallback, RESEARCH_MAX_TOKENS } from '../lib/llm.ts'
 import { ThinkExtractor } from '../lib/think-extractor.ts'
-import { findLeakedToolCall, stripLeakedToolCall, coerceNumericArgs } from '../lib/leaked-tool-call.ts'
+import { findLeakedToolCall, stripLeakedToolCall, coerceNumericArgs, findLeakedImageMarkdown, stripLeakedImageMarkdown } from '../lib/leaked-tool-call.ts'
 import { CitationNormalizer } from '../lib/citation-normalizer.ts'
 import { rerankSearchResults } from '../lib/reranker.ts'
 import { buildMemoryBlock, buildChatFileBlock, buildCollectionBlock, extractMemoriesPostHoc, userMemoryBlockIfEnabled, joinMemoryBlocks } from '../lib/memory.ts'
@@ -512,6 +512,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
 - On edit_image, choose strength from how much the user asked to change: altering or removing a small object is 0.3-0.45, recolouring the main subject or changing style or lighting is 0.5-0.65, a full reimagining is 0.8+. Recolouring needs a mid strength even though it sounds small — at 0.35 the original colour bleeds through and you get a half-changed result. Leaving it unset redraws most of the image.
 - Pass seed only when the user names one, or asks to reuse or reproduce a previous image's seed. Never invent one: omitting it makes each render vary.
 - If you used web_search, respond with one sentence summarizing what you learned that shaped the prompt. Otherwise output nothing — do not add any text, URLs, or commentary after the image tool call.
+- Never write a markdown image, an image link, or a URL to any image service yourself. The only way to produce an image is the generate_image / edit_image tool; the server inserts the result. A URL you write is not an image and will be removed.
 - Always respond in the same language the user used.`
     const t0 = Date.now()
     let fullContent = ''
@@ -610,11 +611,29 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
           }
         }
 
-        // Drop <think>/<tool_call> markup and the leaked blob, then send what remains — normally a
-        // single sentence, or nothing — as the visible reply in one write.
+        // The other leak shape: the model writes its own markdown image at an external
+        // prompt-to-image service (pollinations.ai and the like) instead of calling the tool. It
+        // renders, so it passes for success, but no local image exists and the note would ship the
+        // prompt to a third party on every view. Re-run the generation from the prompt in the URL.
+        const isLocalImage = (url: string) => /^\/images\//.test(url)
+        const [leakedImg] = findLeakedImageMarkdown(rawText, isLocalImage)
+        if (leakedImg?.prompt && !sawImageTool && emittedImages.length === 0) {
+          console.warn(`  [image] recovered a prompt from a model-written external image URL: ${leakedImg.url.slice(0, 120)}`)
+          const parsed = generateImageSchema.safeParse({ prompt: leakedImg.prompt })
+          if (parsed.success) {
+            await out.writeSSE({ data: stepEvent({ kind: 'image' }) })
+            const r = await runGenerateImage(parsed.data)
+            if (r.success && pendingImageUrl) { await emitImage(pendingImageUrl, r.prompt ?? ''); pendingImageUrl = undefined }
+            else console.warn(`  [image] recovered external-URL call failed: ${'error' in r ? r.error : 'no image'}`)
+          }
+        }
+
+        // Drop <think>/<tool_call> markup, the leaked tool-call blob and any model-written image
+        // markdown, then send what remains — normally a single sentence, or nothing — in one write.
         const thinkExtractor = new ThinkExtractor()
         let visible = thinkExtractor.process(rawText).text + thinkExtractor.flush().text
         visible = stripLeakedToolCall(visible, leak?.source)
+        visible = stripLeakedImageMarkdown(visible, isLocalImage)
         if (visible) await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: visible }) })
         fullContent = visible
         for (const img of emittedImages) {
