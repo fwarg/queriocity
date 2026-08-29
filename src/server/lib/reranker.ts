@@ -2,6 +2,10 @@ import { getAppSetting } from './db.ts'
 
 const RERANK_URL = process.env.RERANK_BASE_URL ?? process.env.BASE_URL
 const RERANK_MODEL = process.env.RERANK_MODEL
+// Falls back to CHAT_API_KEY, mirroring EMBED/SMALL/THINKING in llm.ts, then to a
+// placeholder for a keyless local server. Needed when the reranker is reached
+// through an authenticated gateway (e.g. LiteLLM with a master key set).
+const RERANK_API_KEY = process.env.RERANK_API_KEY ?? process.env.CHAT_API_KEY ?? 'none'
 
 export const rerankEnabled = !!RERANK_MODEL
 // Reranking is an optimisation, and the caller already falls back to the original order,
@@ -69,7 +73,7 @@ export async function rerank(query: string, documents: string[], topN?: number, 
   try {
     const res = await fetch(`${RERANK_URL}/rerank`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer none' },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${RERANK_API_KEY}` },
       body: JSON.stringify({ model: RERANK_MODEL, query, documents: truncated }),
       signal: AbortSignal.timeout(RERANK_TIMEOUT_MS),
     })

@@ -10,6 +10,7 @@ import { ExternalLink, FileText, Download, Sparkles, Volume2, VolumeX, NotebookP
 import type { Message, Source, FileSource } from '../lib/api.ts'
 import { downloadGeneratedImage } from '../lib/image-download.ts'
 import { markSvg } from '@shared/ai-provenance.ts'
+import { splitGroupedCitations } from '@shared/citations.ts'
 import { useT } from '../lib/i18n.tsx'
 import { NoteEditor } from './NoteEditor.tsx'
 import { answerAsNoteBody } from '../lib/note-from-answer.ts'
@@ -67,7 +68,7 @@ const CITATION_TOKEN = /\[(\d+|[A-Za-z]+\d+)\]/g
  *  `a` override. A token matching neither a source index nor a known file label is left as literal
  *  text — this is the fallback for a stray label the model invented past the real resource count. */
 function insertCitationLinks(content: string, sources: Array<{ url: string }>, fileSources: Array<{ url: string; label: string }> = []) {
-  return content.replace(CITATION_TOKEN, (match, token: string) => {
+  return splitGroupedCitations(content).replace(CITATION_TOKEN, (match, token: string) => {
     if (/^\d+$/.test(token)) {
       const source = sources[parseInt(token) - 1]
       return source ? `[[${token}]](${source.url})` : match
@@ -248,7 +249,7 @@ function SourceList({ content, sources, fileSources = [], highlighted, onSourceC
   const t = useT()
   const [showUnused, setShowUnused] = useState(false)
 
-  const cited = new Set([...content.matchAll(CITATION_TOKEN)].map(m => m[1]))
+  const cited = new Set([...splitGroupedCitations(content).matchAll(CITATION_TOKEN)].map(m => m[1]))
   const unusedSources = sources.map((s, j) => ({ s, n: j + 1 })).filter(({ n }) => !cited.has(String(n)))
   const unusedFiles = fileSources.filter(s => !cited.has(s.label))
   const unusedCount = unusedSources.length + unusedFiles.length
@@ -419,7 +420,7 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
           <>
             {msg.thinking && <ThinkingBlock content={msg.thinking} />}
             {msg.content && (() => {
-              const cited = (msg.sources?.length || msg.fileSources?.length) ? insertCitationLinks(msg.content, msg.sources ?? [], msg.fileSources ?? []) : msg.content
+              const cited = (msg.sources?.length || msg.fileSources?.length) ? insertCitationLinks(msg.content, msg.sources ?? [], msg.fileSources ?? []) : splitGroupedCitations(msg.content)
               const cleaned = msg.images?.length ? cited.replace(/!\[.*?\]\([^)]+\.png\)/g, '') : cited
               return cleaned.trim() ? <ReactMarkdown components={mdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{wrapSvgBlocks(escapeCurrencyDollars(cleaned))}</ReactMarkdown> : null
             })()}
@@ -512,7 +513,7 @@ export const MessageList = memo(function MessageList({ messages, streaming, stre
             {streamingThinking && <ThinkingBlock content={streamingThinking} open />}
             {streaming && (
               <>
-                <ReactMarkdown components={baseMdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{wrapSvgBlocks(escapeCurrencyDollars(streaming.replace(/!\[.*?\]\([^)]+\.png\)/g, '')))}</ReactMarkdown>
+                <ReactMarkdown components={baseMdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{wrapSvgBlocks(escapeCurrencyDollars(splitGroupedCitations(streaming.replace(/!\[.*?\]\([^)]+\.png\)/g, ''))))}</ReactMarkdown>
                 <span className="animate-pulse">▋</span>
               </>
             )}

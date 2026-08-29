@@ -1,3 +1,4 @@
+import { splitGroupedCitations } from '@shared/citations.ts'
 import type { Message } from './api.ts'
 
 /** Turns an assistant answer into markdown that still makes sense once it leaves the chat.
@@ -11,14 +12,15 @@ import type { Message } from './api.ts'
  *  among many, and may be read as a retrieved excerpt with everything around it stripped away. */
 export function answerAsNoteBody(msg: Message, sourcesHeading: string): string {
   const sources = msg.sources ?? []
-  const cited = new Set([...msg.content.matchAll(/\[(\d+)\]/g)].map(m => parseInt(m[1])))
+  const content = splitGroupedCitations(msg.content)
+  const cited = new Set([...content.matchAll(/\[(\d+)\]/g)].map(m => parseInt(m[1])))
 
   const body = sources.length
-    ? msg.content.replace(/\[(\d+)\]/g, (match, num) => {
+    ? content.replace(/\[(\d+)\]/g, (match, num) => {
       const source = sources[parseInt(num) - 1]
       return source ? `[\\[${num}\\]](${source.url})` : match
     })
-    : msg.content
+    : content
 
   // Only the sources the answer actually cites, matching what the message itself lists. A research
   // turn can accumulate dozens of results the writer never used, and a note is not a search log.

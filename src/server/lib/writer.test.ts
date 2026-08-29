@@ -65,7 +65,7 @@ describe('runWriter', () => {
   test('strips stale citations from the researcher notes', async () => {
     const req = await captureRequest(sources(2), QUESTION, 'Source [7] confirms the closure [12].')
     const user = userOf(req)
-    expect(user).toContain('Researcher notes:')
+    expect(user).toContain('Background context')
     expect(user).not.toContain('[7]')
     expect(user).not.toContain('[12]')
     expect(user).toContain('Source  confirms the closure')

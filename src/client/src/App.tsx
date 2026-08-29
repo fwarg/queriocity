@@ -13,6 +13,7 @@ import { ChatRow } from './components/ChatRow.tsx'
 import { useConfirm } from './components/confirm.tsx'
 import { useGuide, useGuideNavigation } from './components/GuideView.tsx'
 import type { GuideTarget } from '@shared/guide/index.ts'
+import { splitGroupedCitations } from '@shared/citations.ts'
 import { EmptyState, PRIMARY_BTN, RowAction } from './components/ui.tsx'
 import { SectionHeader } from './components/SectionHeader.tsx'
 import { SpacesView } from './components/SpacesView.tsx'
@@ -393,7 +394,7 @@ export default function App() {
     const subset = scope === 'last' ? msgs.filter(m => m.role === 'assistant').slice(-1) : msgs
     const body = subset.map((m, msgIdx) => {
       const label = m.role === 'user' ? '**User**' : '**Assistant**'
-      let content = m.content
+      let content = m.role === 'assistant' ? splitGroupedCitations(m.content) : m.content
       if (m.role === 'assistant' && m.sources?.length) {
         content = content.replace(/\[(\d+)\]/g, (_, n) => `[\\[${n}\\]](#ref-${msgIdx}-${n})`)
       }

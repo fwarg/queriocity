@@ -19,6 +19,7 @@ import { webSearch, webSearchMulti, type SearchResult, type EngineError, type Se
 import { fetchUrlAllPages, processUrlsForContext, describeOutcome, DEFAULT_MAX_URL_CONTEXT_CHARS, type UrlOutcome, type ProcessedUrl } from '../lib/fetch-url.ts'
 import { getFlashModel, getChatModel, getThinkingModelOrFallback, RESEARCH_MAX_TOKENS } from '../lib/llm.ts'
 import { ThinkExtractor } from '../lib/think-extractor.ts'
+import { CitationNormalizer } from '../lib/citation-normalizer.ts'
 import { rerankSearchResults } from '../lib/reranker.ts'
 import { buildMemoryBlock, buildChatFileBlock, buildCollectionBlock, extractMemoriesPostHoc, userMemoryBlockIfEnabled, joinMemoryBlocks } from '../lib/memory.ts'
 import { ownedCollectionIds } from '../lib/files/collections.ts'
@@ -762,14 +763,19 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       await emitStep({ kind: 'write' })
       const writerResult = runWriter(finalSources, msgs, researcherNotes.slice(0, RESEARCHER_NOTES_CAP), abortSignal, { customPrompt, memoryBlock })
       const writerExtractor = new ThinkExtractor()
+      const writerCitations = new CitationNormalizer()
+      const emitAnswer = async (raw: string) => {
+        const clean = writerCitations.process(raw)
+        if (clean) {
+          fullContent += clean
+          await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: clean }) })
+        }
+      }
       for await (const part of writerResult.stream) {
         if (part.type === 'text-delta') {
           const { text, thinking } = writerExtractor.process(part.text)
           if (thinking && showThinking) await out.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: thinking }) })
-          if (text) {
-            fullContent += text
-            await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: text }) })
-          }
+          if (text) await emitAnswer(text)
         } else if (part.type === 'reasoning-delta' && showThinking) {
           await out.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: part.text }) })
         } else if (part.type === 'error') {
@@ -778,9 +784,11 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       }
       const { text: wt, thinking: wth } = writerExtractor.flush()
       if (wth && showThinking) await out.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: wth }) })
-      if (wt) {
-        fullContent += wt
-        await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: wt }) })
+      if (wt) await emitAnswer(wt)
+      const writerTail = writerCitations.flush()
+      if (writerTail) {
+        fullContent += writerTail
+        await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: writerTail }) })
       }
       if (!fullContent) {
         console.error('  [writer] produced 0 chars — model may be in a bad state')
@@ -803,6 +811,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       const fullSources: SearchResult[] = []
       const result = await runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, onUrlRead: emitUrlOutcome, apiBudget, requestApproval, locked })
       const extractor = new ThinkExtractor()   // see thoroughExtractor above
+      const citations = new CitationNormalizer()
 
       const keepalive = setInterval(() => {
         out.ping().catch(() => {})
@@ -813,8 +822,11 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
           stream: out, showThinking, emitSearchStatus, maxSteps: maxStepsFor('balanced'),
           extractor,
           onText: async (text) => {
-            fullContent += text
-            await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: text }) })
+            const clean = citations.process(text)
+            if (clean) {
+              fullContent += clean
+              await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: clean }) })
+            }
           },
           onSources: async (results) => {
             fullSources.push(...results)
@@ -824,6 +836,11 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         })
       } finally {
         clearInterval(keepalive)
+      }
+      const citationTail = citations.flush()
+      if (citationTail) {
+        fullContent += citationTail
+        await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: citationTail }) })
       }
 
       // Fallback: synthesise an answer when the researcher ended without producing one.
@@ -844,17 +861,24 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         // Same extraction as the main pass: this call carries no tool schemas either, so a model
         // that emits <think> or <tool_call> markup would otherwise stream it as the answer.
         const fallbackExtractor = new ThinkExtractor()
+        const fallbackCitations = new CitationNormalizer()
         const emitFallback = async ({ text, thinking }: { text: string; thinking: string }) => {
           if (thinking && showThinking) await out.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: thinking }) })
-          if (text) {
-            fullContent += text
-            await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: text }) })
+          const clean = text ? fallbackCitations.process(text) : ''
+          if (clean) {
+            fullContent += clean
+            await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: clean }) })
           }
         }
         for await (const part of fallback.stream) {
           if (part.type === 'text-delta' && part.text) await emitFallback(fallbackExtractor.process(part.text))
         }
         await emitFallback(fallbackExtractor.flush())
+        const fallbackTail = fallbackCitations.flush()
+        if (fallbackTail) {
+          fullContent += fallbackTail
+          await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: fallbackTail }) })
+        }
       }
     }
 
