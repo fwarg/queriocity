@@ -721,8 +721,11 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         await out.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: snippets + '\n\n' }) })
       }
       const researchModel = useThinking ? getThinkingModelOrFallback() : getChatModel()
-      const researcherResult = await runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, onUrlRead: emitUrlOutcome, apiBudget, requestApproval, locked })
       const allSources: SearchResult[] = [...(initialResults ?? [])]
+      // URLs the user pointed at or the model chose to read in full — kept out of the reranker's
+      // prune below so a page that was explicitly fetched always reaches the writer.
+      const fetchedUrls = new Set<string>()
+      const researcherResult = await runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, onUrlRead: emitUrlOutcome, onSource: (s) => { allSources.push(s); fetchedUrls.add(s.url) }, apiBudget, requestApproval, locked })
       let researcherNotes = ''
       // Unconditional: the extractor also drops leaked tool-call markup, which has to be stripped
       // whether or not the user is shown thinking. Displaying thinking is gated separately.
@@ -753,8 +756,11 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       })
 
       // Prunes as well as orders: previously this passed the full length as topN, so the
-      // configured rerank_top_n was bypassed and every source reached the writer.
-      const finalSources = await rerankSearchResults(userQueryOf(msgs), dedupedSources)
+      // configured rerank_top_n was bypassed and every source reached the writer. Fetched pages
+      // skip the prune — they were read deliberately — and lead the list so their numbers are low.
+      const fetchedSources = dedupedSources.filter(s => fetchedUrls.has(s.url))
+      const rerankedSources = await rerankSearchResults(userQueryOf(msgs), dedupedSources.filter(s => !fetchedUrls.has(s.url)))
+      const finalSources = [...fetchedSources, ...rerankedSources]
 
       sources.push(...finalSources.map(toStoredSource))
       await out.writeSSE({ data: JSON.stringify({ type: 'sources', sources: finalSources }) })
@@ -809,7 +815,15 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       }
 
       const fullSources: SearchResult[] = []
-      const result = await runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, onUrlRead: emitUrlOutcome, apiBudget, requestApproval, locked })
+      // A fetched page arrives as its own numbered result (prefetched before the stream, or via the
+      // fetch_url tool mid-stream); surface it to the client the moment it lands so the [N] the
+      // model then writes has a source to resolve against.
+      const emitFetchedSource = async (s: SearchResult & { index: number }) => {
+        fullSources.push(s)
+        sources.push(toStoredSource(s))
+        await out.writeSSE({ data: JSON.stringify({ type: 'sources', sources: [s] }) })
+      }
+      const result = await runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, onUrlRead: emitUrlOutcome, onSource: emitFetchedSource, apiBudget, requestApproval, locked })
       const extractor = new ThinkExtractor()   // see thoroughExtractor above
       const citations = new CitationNormalizer()
 

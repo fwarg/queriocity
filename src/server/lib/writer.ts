@@ -14,7 +14,7 @@ Formatting rules:
 
 Citation rules:
 - Cite every factual claim inline using only bracketed result numbers: [1], or [1][2][3] for several. Write each number in its own brackets — NEVER [1, 2], [1,2] or [1-3].
-- The only thing allowed inside citation brackets is a digit that matches a numbered result. NEVER write [Researcher notes], [notes], [background], [source] or any word — if a fact comes from the background context, cite the numbered result it also appears in, or leave it uncited.
+- The only thing allowed inside citation brackets is a digit that matches a numbered result. NEVER write [Researcher notes], [notes], [background], [source], [fetch_url] or any word — a fetched page is one of the numbered results, so cite it by its number; if a fact comes from the background context, cite the numbered result it also appears in, or leave it uncited.
 - Do NOT use markdown hyperlinks ([text](url)) — only [N] numbers. Only cite sources that directly support the claim; omit the citation if no source does.
 
 Structure:

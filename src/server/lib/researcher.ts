@@ -6,7 +6,7 @@ import { isSearchApiEnabled } from './search-api.ts'
 import { searchUploads } from './files/uploads-search.ts'
 import { saveMemories, saveUserMemory, searchSpaceHistory } from './memory.ts'
 import { ragMinRelevance } from './rag-settings.ts'
-import { fetchUrl, processUrlsForContext, MIN_URL_CONTEXT_CHARS, type UrlOutcome } from './fetch-url.ts'
+import { fetchUrl, processUrlsForContext, urlLabel, MIN_URL_CONTEXT_CHARS, type UrlOutcome } from './fetch-url.ts'
 import { trimMessages, compressMessages, contextCharBudget, CONTEXT_RESERVE_FRACTION } from './trim-messages.ts'
 import { queryTerms, querySimilarity, QUERY_DUPLICATE_THRESHOLD } from './query-terms.ts'
 import {
@@ -19,7 +19,7 @@ export const SYSTEM_PROMPTS = {
   balanced: `You are a research assistant. For each query:
 1. Review the search results you already have.
 2. Before answering, call web_search once more if the current results have gaps or are insufficient to fully answer the question. If the initial results already cover the question well, you may skip this. If the user provides a specific URL, call fetch_url to read its full content instead of or in addition to searching.
-3. After the follow-up search, write your answer with inline [N] citations where N is the exact \`index\` value of that result. Put each number in its own brackets — [1][2], never [1, 2] or [1-2]. Do NOT use markdown hyperlinks. NEVER invent your own numbering — only use index values that appear in the search results.
+3. After the follow-up search, write your answer with inline [N] citations where N is the exact \`index\` value of that result. A page read with fetch_url comes back with its own \`index\` too — cite it the same way, never as [fetch_url] or by any other name. Put each number in its own brackets — [1][2], never [1, 2] or [1-2]. Do NOT use markdown hyperlinks. NEVER invent your own numbering — only use index values that appear in the results.
 4. Only cite [N] when the specific fact is directly supported by that result's content. Skip irrelevant results.
 5. NEVER use [N] citations for information from your training knowledge. If results are irrelevant, answer without any [N] citations.
 Search results are authoritative ground truth. If results describe a product, release, or name you don't recognise, trust the results — your training data has a cutoff and does not know about recent releases. Never deny that something exists based on your training knowledge alone.
@@ -33,7 +33,7 @@ Always respond in the same language the user used.`,
 3. Cross-reference information across sources.
 4. Prefer specific, targeted queries over broad ones after the first iteration.
 5. Only cite [N] when the specific fact is directly supported by that result's content. Skip irrelevant results. Do NOT include a reference list or source list at the end of your notes.
-6. If the user provides a specific URL, call fetch_url to read its full content. For paginated content (forums, articles), you MUST fetch ALL pages before answering — keep calling fetch_url with ?page=2, ?page=3, etc. until you get an error or empty content. Do not stop after one or two pages.
+6. If the user provides a specific URL, call fetch_url to read its full content. A fetched page comes back as a numbered result like a search hit — cite it by its number, never as [fetch_url]. For paginated content (forums, articles), you MUST fetch ALL pages before answering — keep calling fetch_url with ?page=2, ?page=3, etc. until you get an error or empty content. Do not stop after one or two pages.
 Search results are authoritative ground truth. If results describe a product, release, or name you don't recognise, trust the results — your training data has a cutoff and does not know about recent releases. Never deny that something exists based on your training knowledge alone.
 Call web_search as many times as needed. Do NOT write your answer yet — just research.
 When done researching, call the done tool.
@@ -142,6 +142,11 @@ export interface ResearchOptions {
    *  reduced. The tool runs inside `execute`, which has no stream — the callback is how the
    *  activity log learns what the model actually got to read. */
   onUrlRead?: (host: string, outcome: UrlOutcome) => void | Promise<void>
+  /** Called with every fetched page — one the caller prefetched from the user's message, or one
+   *  the fetch_url tool read mid-run — as a numbered result. The caller adds it to the reference
+   *  list the client renders and stores, so the model can cite the page by its `[index]` exactly
+   *  like a search hit. Without a number the model writes `[fetch_url]`, which nothing renders. */
+  onSource?: (source: SearchResult & { index: number }) => void | Promise<void>
   /** Shared per-request allowance for paid keyed-API fallback searches. */
   apiBudget?: SearchApiBudget
   /** Asks the user to approve an outbound request the egress guard found suspicious.
@@ -160,10 +165,13 @@ export interface EgressApprovalRequest {
   reasons: string[]
 }
 
-export async function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, userMemoryEnabled = false, fetchSummarize = false, urlContextChars, compressHistory = false, searchCategory, maxStepsOverride, onEngineErrors, onUrlRead, apiBudget, requestApproval, locked = false }: ResearchOptions) {
+export async function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, userMemoryEnabled = false, fetchSummarize = false, urlContextChars, compressHistory = false, searchCategory, maxStepsOverride, onEngineErrors, onUrlRead, onSource, apiBudget, requestApproval, locked = false }: ResearchOptions) {
   const { maxSteps: defaultMaxSteps, count } = MODE_CONFIG[focusMode]
   const maxSteps = maxStepsOverride ?? defaultMaxSteps
   let nextIndex = 1
+  // url → the result number it was first given this run, so a page the model fetches after seeing
+  // it in a search hit is cited under the number it already has rather than assigned a second one.
+  const sourceIndexByUrl = new Map<string, number>()
   let searchDead = false   // set once web search is confirmed unavailable for this request
   let completedSteps = 0
   // Term sets of every query already run this turn, pre-search included — the model is told the
@@ -232,6 +240,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
     system += `\n\nNote: an initial search has already been performed and the results are in the conversation. Use different, more specific queries for your follow-up search.`
     const args = { queries: initialQueries }
     const indexedInitial = initialResults.map(r => ({ ...r, index: nextIndex++ }))
+    for (const r of indexedInitial) sourceIndexByUrl.set(r.url, r.index)
     augmentedMessages = [
       ...cleanMessages,
       { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'pre-0', toolName: 'web_search', input: args }] },
@@ -241,14 +250,22 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
   }
 
   if (prefetchedUrls?.length) {
-    system += `\n\nNote: the following URL(s) have already been fetched and their content is in the conversation. Use this content to answer the user's question directly.`
+    system += `\n\nNote: the following URL(s) have already been fetched and numbered as results below. Use this content to answer the user's question directly, and cite each page by its result number like any search hit.`
     for (let i = 0; i < prefetchedUrls.length; i++) {
       const { url, content } = prefetchedUrls[i]
       const callId = `pre-fetch-${i}`
+      const seenBefore = sourceIndexByUrl.has(url)
+      const index = sourceIndexByUrl.get(url) ?? nextIndex++
+      if (!seenBefore) {
+        sourceIndexByUrl.set(url, index)
+        await onSource?.({ index, title: urlLabel(url), url, content })
+      }
       augmentedMessages = [
         ...augmentedMessages,
         { role: 'assistant', content: [{ type: 'tool-call', toolCallId: callId, toolName: 'fetch_url', input: { url } }] },
-        { role: 'tool', content: [{ type: 'tool-result', toolCallId: callId, toolName: 'fetch_url', output: { type: 'text', value: content } }] },
+        // 'json' rather than 'text' so the result number rides along with the content — the model
+        // cites the page as [index], not [fetch_url].
+        { role: 'tool', content: [{ type: 'tool-result', toolCallId: callId, toolName: 'fetch_url', output: { type: 'json', value: { index, url, content } } }] },
       ]
     }
   }
@@ -323,6 +340,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
       for (const r of indexed) {
         noteSeenUrl(egress, r.url)
         noteTaint(egress, r.content)
+        if (!sourceIndexByUrl.has(r.url)) sourceIndexByUrl.set(r.url, r.index)
       }
       toolBudgetRemaining -= JSON.stringify(indexed).length
       return indexed
@@ -350,7 +368,15 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
         // The page just read is untrusted: anything in it could be an instruction to leak.
         noteTaint(egress, content)
         toolBudgetRemaining -= content.length
-        return content
+        // Hand the page back as a numbered result (reusing the number it already has if it came
+        // from a search hit) and register it as a source, so the model cites it as [index] rather
+        // than [fetch_url] — a token nothing renders as a link.
+        const index = sourceIndexByUrl.get(url) ?? nextIndex++
+        if (!sourceIndexByUrl.has(url)) {
+          sourceIndexByUrl.set(url, index)
+          await onSource?.({ index, title: urlLabel(url), url, content })
+        }
+        return { index, url, content }
       },
     }),
   }
