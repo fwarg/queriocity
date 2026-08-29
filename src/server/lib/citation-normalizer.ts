@@ -35,7 +35,7 @@ function mightStillBecomeSpecial(partial: string): boolean {
   if (partial.length > MAX_PARTIAL_HOLD) return false
   if (/\[[\d\s,;]*$/.test(partial)) return true                     // unclosed grouped citation
   if (/^\s*[-*]?\s*\[\d[\d\s,;]*\]?\s*$/.test(partial)) return true  // partial bare `[N]` line
-  return /^\s*[#*]*\s*[\p{L}]*\s*$/u.test(partial)                   // markers + one word in progress
+  return /^[#*\s]*[\p{L}]*[#*\s]*$/u.test(partial)                   // heading/bold markers + one word in progress
 }
 
 export class CitationNormalizer {
