@@ -207,7 +207,10 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
       setStreamingThinking('')
       closeLastStep()
       setSteps([...log])
-      if (!accumulated && !wasAborted) setStatus(t('answer.noResponse'))
+      // An image is a response even when the model writes no accompanying text — image mode's
+      // system prompt tells it to stay silent unless it searched, so the common success case
+      // finishes with no text chunk at all.
+      if (!accumulated && !wasAborted && images.length === 0) setStatus(t('answer.noResponse'))
       else if (wasAborted && !accumulated && images.length === 0) {
         // Withdraw the turn only if this run added it. `submit` appends the user's message and
         // then streams, so a stop before any text leaves a question with no answer — worth
