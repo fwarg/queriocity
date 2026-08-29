@@ -76,6 +76,9 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
   const fileRef = useRef<HTMLInputElement>(null)
   const descTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const suggestTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Bumped on every fetch request and on submit, so a debounced or in-flight suggestion fetch
+  // whose turn has passed can't repopulate the list after the user has sent the query.
+  const suggestReqRef = useRef(0)
 
   function handleModeChange(m: FocusMode) {
     onFocusModeChange(m)
@@ -107,6 +110,7 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
 
   function handleSuggestionFetch(text: string) {
     if (suggestTimerRef.current) clearTimeout(suggestTimerRef.current)
+    const reqId = ++suggestReqRef.current
     if (!suggestionsEnabled || focusMode === 'flash' || text.trim().length < 8) {
       setSuggestions([])
       return
@@ -114,8 +118,8 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
     suggestTimerRef.current = setTimeout(async () => {
       try {
         const results = await fetchSuggestions(text.trim())
-        setSuggestions(results)
-      } catch { setSuggestions([]) }
+        if (suggestReqRef.current === reqId) setSuggestions(results)
+      } catch { if (suggestReqRef.current === reqId) setSuggestions([]) }
     }, 500)
   }
 
@@ -132,6 +136,10 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
     onSubmit(fullText)
     setValue('')
     setAttachments([])
+    // The query is sent: any suggestion for how to phrase it is now obsolete. Cancel a pending
+    // debounce and invalidate an in-flight fetch so neither can repopulate the list afterwards.
+    if (suggestTimerRef.current) clearTimeout(suggestTimerRef.current)
+    suggestReqRef.current++
     setSuggestions([])
   }
 
