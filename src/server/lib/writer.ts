@@ -9,14 +9,20 @@ Formatting rules:
 - Use ## for main section headings, ### for subsections if needed.
 - Use bullet points or numbered lists for steps, requirements, or any enumerable content — avoid turning these into prose.
 - Keep paragraphs short: 2–4 sentences maximum. Prefer lists over long paragraphs.
-- Cite every factual claim inline using only [N] notation (e.g. [1], [2][3]). Do NOT use markdown hyperlinks ([text](url)) — only [N] numbers. Only cite sources that directly support the claim. Omit citations if no source is relevant. Do NOT include a reference list or source list at the end.
 - Do not invent information not found in the sources.
 - Always respond in the same language the user used.
+
+Citation rules:
+- Cite every factual claim inline using only bracketed result numbers: [1], or [1][2][3] for several. Write each number in its own brackets — NEVER [1, 2], [1,2] or [1-3].
+- The only thing allowed inside citation brackets is a digit that matches a numbered result. NEVER write [Researcher notes], [notes], [background], [source], [fetch_url] or any word — a fetched page is one of the numbered results, so cite it by its number; if a fact comes from the background context, cite the numbered result it also appears in, or leave it uncited.
+- Do NOT use markdown hyperlinks ([text](url)) — only [N] numbers. Only cite sources that directly support the claim; omit the citation if no source does.
 
 Structure:
 1. One short introductory paragraph (3–5 sentences, no heading).
 2. Several ## sections covering distinct aspects of the topic (background, process, current status, obstacles, outlook, etc. — adapt to the question).
-3. A brief ## Conclusion or ## Summary section.`
+3. A brief ## Conclusion or ## Summary section.
+
+Do NOT include a reference list, source list, "Sources:" section or bare [N] lines at the end — the numbered citations in the text are the only reference the reader needs.`
 
 // Floor on what one source contributes once the block is squeezed to fit. Below roughly this,
 // a snippet is too clipped to support a citation, so it is better to carry fewer sources in full
@@ -64,7 +70,11 @@ export function runWriter(
   // renumbered from 1 below, after dedup and reranking. Left in, the writer copies a stale [7]
   // that now points at a different source — a citation that looks verified and isn't.
   const notes = researcherNotes?.replace(/\[\d+\]/g, '').trim()
-  const notesBlock = notes ? `\n\nResearcher notes:\n${notes}` : ''
+  // Labelled as background, not "notes": a heading the model reads as a named source is a heading
+  // it will cite as [Researcher notes]. The numbered results carry the same facts — point there.
+  const notesBlock = notes
+    ? `\n\nBackground context from the research so far (the numbered results above are the citable sources — never cite this section):\n${notes}`
+    : ''
   const question = `\n\nQuestion: ${lastUser?.content ?? ''}`
 
   // Everything except the sources block is fixed cost; the sources absorb whatever is left.

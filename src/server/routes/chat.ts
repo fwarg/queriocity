@@ -19,6 +19,8 @@ import { webSearch, webSearchMulti, type SearchResult, type EngineError, type Se
 import { fetchUrlAllPages, processUrlsForContext, describeOutcome, DEFAULT_MAX_URL_CONTEXT_CHARS, type UrlOutcome, type ProcessedUrl } from '../lib/fetch-url.ts'
 import { getFlashModel, getChatModel, getThinkingModelOrFallback, RESEARCH_MAX_TOKENS } from '../lib/llm.ts'
 import { ThinkExtractor } from '../lib/think-extractor.ts'
+import { findLeakedToolCall, stripLeakedToolCall, coerceNumericArgs, findLeakedImageMarkdown, stripLeakedImageMarkdown } from '../lib/leaked-tool-call.ts'
+import { CitationNormalizer } from '../lib/citation-normalizer.ts'
 import { rerankSearchResults } from '../lib/reranker.ts'
 import { buildMemoryBlock, buildChatFileBlock, buildCollectionBlock, extractMemoriesPostHoc, userMemoryBlockIfEnabled, joinMemoryBlocks } from '../lib/memory.ts'
 import { ownedCollectionIds } from '../lib/files/collections.ts'
@@ -399,6 +401,78 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     // fallback covered still read as "answered without web results".
     const imageSources: SearchResult[] = []
     const pendingImageSources: SearchResult[] = []
+    // Shared by the tool schema and the leaked-call recovery below, which validates a call the
+    // model wrote as text against the same shape before running it.
+    const generateImageSchema = z.object({
+      prompt: z.string().describe('Detailed visual description for image generation'),
+      size: z.string().optional().describe('Image dimensions e.g. "512x512", "1024x1024", "1024x576"'),
+      negative_prompt: z.string().optional().describe('What to keep out of the image, comma-separated (e.g. "blurry, text, watermark"). Put anything the user says to avoid here rather than in prompt'),
+      quality: z.enum(['draft', 'balanced', 'high']).optional().describe('Quality tier taken from the user\'s wording. Resolved to a step count by the server; prefer this over steps'),
+      steps: z.number().int().optional().describe('Explicit step count. Only when the user names a number outright; otherwise leave unset and use quality'),
+      seed: z.number().int().optional().describe('Random seed. Only set when the user explicitly asks for a specific seed or to reproduce an earlier image; omit otherwise so the result varies'),
+    })
+    const editImageSchema = z.object({
+      image_url: z.string().describe('The /images/... URL of the image to edit (from chat history)'),
+      prompt: z.string().describe('Full description of the desired result, including unchanged aspects'),
+      strength: z.number().min(0).max(1).optional()
+        .describe('How much of the image to redraw. 0.3-0.45 to alter or remove a small object; 0.5-0.65 to recolour the main subject, or to change style or lighting; 0.8+ to reimagine it. Colour survives a low-strength pass — the original hue bleeds through — so recolouring needs more than its size suggests. Always set this: the 0.75 default redraws most of the picture.'),
+      size: z.string().optional().describe('Output dimensions e.g. "512x512". Defaults to source size.'),
+      negative_prompt: z.string().optional().describe('What to keep out of the image, comma-separated (e.g. "blurry, text, watermark"). Put anything the user says to avoid here rather than in prompt'),
+      quality: z.enum(['draft', 'balanced', 'high']).optional().describe('Quality tier taken from the user\'s wording. Resolved to a step count by the server; prefer this over steps'),
+      steps: z.number().int().optional().describe('Explicit step count. Only when the user names a number outright; otherwise leave unset and use quality'),
+      seed: z.number().int().optional().describe('Random seed. Only set when the user explicitly asks for a specific seed or to reproduce an earlier image; omit otherwise so the result varies'),
+    })
+
+    const runGenerateImage = async ({ prompt, size, negative_prompt, quality, steps, seed }: z.infer<typeof generateImageSchema>) => {
+      const usedSeed = seed ?? randomSeed()
+      const usedSteps = resolveSteps(quality, steps)
+      const origin = quality ?? (steps ? 'explicit' : 'default')
+      console.log(`  [image] → ${imageBaseUrl} (${IMAGE_API})  prompt="${prompt}"  negative="${negative_prompt ?? ''}"  size=${size ?? 'default'}  steps=${usedSteps} (${origin})  seed=${usedSeed}${seed === undefined ? ' (random)' : ''}`)
+      try {
+        const bytes = await imageBackend(imageBaseUrl).generate({ prompt, size, negativePrompt: negative_prompt, steps: usedSteps, seed: usedSeed })
+        pendingImageUrl = await saveGeneratedImage(userId, bytes)
+        lastGeneratedImageUrl = pendingImageUrl
+        rememberRender(pendingImageUrl, { negativePrompt: negative_prompt, steps: usedSteps, seed: usedSeed })
+        return { success: true, prompt, seed: usedSeed }
+      } catch (e) {
+        console.error(`  [image] error:`, e)
+        return { success: false, error: e instanceof Error ? e.message : String(e), prompt }
+      }
+    }
+
+    const runEditImage = async ({ image_url, prompt, strength, size, negative_prompt, quality, steps, seed }: z.infer<typeof editImageSchema>) => {
+      const imagePath = imageFilePath(userId, image_url)
+      if (!imagePath) {
+        return { success: false, error: 'Invalid image reference', prompt }
+      }
+      // Explicit wording in this turn wins; otherwise inherit from the image being edited.
+      const source = renderByImage.get(image_url)
+      const askedForQuality = quality !== undefined || steps !== undefined
+      const usedSteps = askedForQuality ? resolveSteps(quality, steps) : source?.steps ?? resolveSteps(undefined, undefined)
+      // Inheriting the seed makes an identical request reproduce the identical image, so a
+      // retry has to break out of it — that is the one case where the user wants a new attempt.
+      const inheritSeed = !regenerate ? source?.seed : undefined
+      const usedSeed = seed ?? inheritSeed ?? randomSeed()
+      const usedNegative = negative_prompt ?? source?.negativePrompt
+      const stepOrigin = askedForQuality ? (quality ?? 'explicit') : source ? 'inherited' : 'default'
+      const seedOrigin = seed !== undefined ? '' : inheritSeed !== undefined ? ' (inherited)' : regenerate ? ' (retry)' : ' (random)'
+      // Steps are scaled by 1/strength inside the backend, so report what is actually sent —
+      // the tier alone reads like the compensation never happened.
+      const sentSteps = IMAGE_API === 'sdapi' ? compensateSteps(usedSteps, strength ?? DEFAULT_EDIT_STRENGTH) : usedSteps
+      console.log(`  [image] edit → ${imageBaseUrl} (${IMAGE_API})  prompt="${prompt}"  negative="${usedNegative ?? ''}"${negative_prompt === undefined && usedNegative ? ' (carried)' : ''}  strength=${strength ?? DEFAULT_EDIT_STRENGTH}${strength === undefined ? ' (default)' : ''}  steps=${usedSteps} (${stepOrigin}) → ${sentSteps} sent  seed=${usedSeed}${seedOrigin}`)
+      try {
+        const image = await readFile(imagePath)
+        const bytes = await imageBackend(imageBaseUrl).edit({ image, prompt, strength, size, negativePrompt: usedNegative, steps: usedSteps, seed: usedSeed })
+        pendingImageUrl = await saveGeneratedImage(userId, bytes)
+        lastGeneratedImageUrl = pendingImageUrl
+        rememberRender(pendingImageUrl, { negativePrompt: usedNegative, steps: usedSteps, seed: usedSeed })
+        return { success: true, prompt, seed: usedSeed }
+      } catch (e) {
+        console.error(`  [image] edit error:`, e)
+        return { success: false, error: e instanceof Error ? e.message : String(e), prompt }
+      }
+    }
+
     const imageTools = {
       web_search: tool({
         description: 'Search the web for context about a specialized or unfamiliar subject before generating an image.',
@@ -420,76 +494,13 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       }),
       generate_image: tool({
         description: 'Generate an image from a text description using a local diffusion model.',
-        inputSchema: z.object({
-          prompt: z.string().describe('Detailed visual description for image generation'),
-          size: z.string().optional().describe('Image dimensions e.g. "512x512", "1024x1024", "1024x576"'),
-          negative_prompt: z.string().optional().describe('What to keep out of the image, comma-separated (e.g. "blurry, text, watermark"). Put anything the user says to avoid here rather than in prompt'),
-          quality: z.enum(['draft', 'balanced', 'high']).optional().describe('Quality tier taken from the user\'s wording. Resolved to a step count by the server; prefer this over steps'),
-          steps: z.number().int().optional().describe('Explicit step count. Only when the user names a number outright; otherwise leave unset and use quality'),
-          seed: z.number().int().optional().describe('Random seed. Only set when the user explicitly asks for a specific seed or to reproduce an earlier image; omit otherwise so the result varies'),
-        }),
-        execute: async ({ prompt, size, negative_prompt, quality, steps, seed }) => {
-          const usedSeed = seed ?? randomSeed()
-          const usedSteps = resolveSteps(quality, steps)
-          const origin = quality ?? (steps ? 'explicit' : 'default')
-          console.log(`  [image] → ${imageBaseUrl} (${IMAGE_API})  prompt="${prompt}"  negative="${negative_prompt ?? ''}"  size=${size ?? 'default'}  steps=${usedSteps} (${origin})  seed=${usedSeed}${seed === undefined ? ' (random)' : ''}`)
-          try {
-            const bytes = await imageBackend(imageBaseUrl).generate({ prompt, size, negativePrompt: negative_prompt, steps: usedSteps, seed: usedSeed })
-            pendingImageUrl = await saveGeneratedImage(userId, bytes)
-            lastGeneratedImageUrl = pendingImageUrl
-            rememberRender(pendingImageUrl, { negativePrompt: negative_prompt, steps: usedSteps, seed: usedSeed })
-            return { success: true, prompt, seed: usedSeed }
-          } catch (e) {
-            console.error(`  [image] error:`, e)
-            return { success: false, error: e instanceof Error ? e.message : String(e), prompt }
-          }
-        },
+        inputSchema: generateImageSchema,
+        execute: runGenerateImage,
       }),
       edit_image: tool({
         description: 'Modify a previously generated image. Use when the user asks to change, edit, or iterate on an image.',
-        inputSchema: z.object({
-          image_url: z.string().describe('The /images/... URL of the image to edit (from chat history)'),
-          prompt: z.string().describe('Full description of the desired result, including unchanged aspects'),
-          strength: z.number().min(0).max(1).optional()
-            .describe('How much of the image to redraw. 0.3-0.45 to alter or remove a small object; 0.5-0.65 to recolour the main subject, or to change style or lighting; 0.8+ to reimagine it. Colour survives a low-strength pass — the original hue bleeds through — so recolouring needs more than its size suggests. Always set this: the 0.75 default redraws most of the picture.'),
-          size: z.string().optional().describe('Output dimensions e.g. "512x512". Defaults to source size.'),
-          negative_prompt: z.string().optional().describe('What to keep out of the image, comma-separated (e.g. "blurry, text, watermark"). Put anything the user says to avoid here rather than in prompt'),
-          quality: z.enum(['draft', 'balanced', 'high']).optional().describe('Quality tier taken from the user\'s wording. Resolved to a step count by the server; prefer this over steps'),
-          steps: z.number().int().optional().describe('Explicit step count. Only when the user names a number outright; otherwise leave unset and use quality'),
-          seed: z.number().int().optional().describe('Random seed. Only set when the user explicitly asks for a specific seed or to reproduce an earlier image; omit otherwise so the result varies'),
-        }),
-        execute: async ({ image_url, prompt, strength, size, negative_prompt, quality, steps, seed }) => {
-          const imagePath = imageFilePath(userId, image_url)
-          if (!imagePath) {
-            return { success: false, error: 'Invalid image reference', prompt }
-          }
-          // Explicit wording in this turn wins; otherwise inherit from the image being edited.
-          const source = renderByImage.get(image_url)
-          const askedForQuality = quality !== undefined || steps !== undefined
-          const usedSteps = askedForQuality ? resolveSteps(quality, steps) : source?.steps ?? resolveSteps(undefined, undefined)
-          // Inheriting the seed makes an identical request reproduce the identical image, so a
-          // retry has to break out of it — that is the one case where the user wants a new attempt.
-          const inheritSeed = !regenerate ? source?.seed : undefined
-          const usedSeed = seed ?? inheritSeed ?? randomSeed()
-          const usedNegative = negative_prompt ?? source?.negativePrompt
-          const stepOrigin = askedForQuality ? (quality ?? 'explicit') : source ? 'inherited' : 'default'
-          const seedOrigin = seed !== undefined ? '' : inheritSeed !== undefined ? ' (inherited)' : regenerate ? ' (retry)' : ' (random)'
-          // Steps are scaled by 1/strength inside the backend, so report what is actually sent —
-          // the tier alone reads like the compensation never happened.
-          const sentSteps = IMAGE_API === 'sdapi' ? compensateSteps(usedSteps, strength ?? DEFAULT_EDIT_STRENGTH) : usedSteps
-          console.log(`  [image] edit → ${imageBaseUrl} (${IMAGE_API})  prompt="${prompt}"  negative="${usedNegative ?? ''}"${negative_prompt === undefined && usedNegative ? ' (carried)' : ''}  strength=${strength ?? DEFAULT_EDIT_STRENGTH}${strength === undefined ? ' (default)' : ''}  steps=${usedSteps} (${stepOrigin}) → ${sentSteps} sent  seed=${usedSeed}${seedOrigin}`)
-          try {
-            const image = await readFile(imagePath)
-            const bytes = await imageBackend(imageBaseUrl).edit({ image, prompt, strength, size, negativePrompt: usedNegative, steps: usedSteps, seed: usedSeed })
-            pendingImageUrl = await saveGeneratedImage(userId, bytes)
-            lastGeneratedImageUrl = pendingImageUrl
-            rememberRender(pendingImageUrl, { negativePrompt: usedNegative, steps: usedSteps, seed: usedSeed })
-            return { success: true, prompt, seed: usedSeed }
-          } catch (e) {
-            console.error(`  [image] edit error:`, e)
-            return { success: false, error: e instanceof Error ? e.message : String(e), prompt }
-          }
-        },
+        inputSchema: editImageSchema,
+        execute: runEditImage,
       }),
     }
     const imageSystem = `You are an image generation assistant.
@@ -501,6 +512,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
 - On edit_image, choose strength from how much the user asked to change: altering or removing a small object is 0.3-0.45, recolouring the main subject or changing style or lighting is 0.5-0.65, a full reimagining is 0.8+. Recolouring needs a mid strength even though it sounds small — at 0.35 the original colour bleeds through and you get a half-changed result. Leaving it unset redraws most of the image.
 - Pass seed only when the user names one, or asks to reuse or reproduce a previous image's seed. Never invent one: omitting it makes each render vary.
 - If you used web_search, respond with one sentence summarizing what you learned that shaped the prompt. Otherwise output nothing — do not add any text, URLs, or commentary after the image tool call.
+- Never write a markdown image, an image link, or a URL to any image service yourself. The only way to produce an image is the generate_image / edit_image tool; the server inserts the result. A URL you write is not an image and will be removed.
 - Always respond in the same language the user used.`
     const t0 = Date.now()
     let fullContent = ''
@@ -523,18 +535,30 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       // without a byte — far longer than the other modes, which are at worst waiting on a
       // search. Without the ping an idle-timeout upstream reaps the connection mid-generation.
       const keepalive = setInterval(() => { out.ping().catch(() => {}) }, KEEPALIVE_INTERVAL_MS)
+      // Image mode's text is buffered rather than streamed delta-by-delta: diffusion blocks the
+      // stream for minutes anyway, and the system prompt permits at most one summary sentence — so
+      // nothing is lost by holding it, and holding it lets a tool call the model wrote as text
+      // (see the recovery below) be scrubbed before the user ever sees it.
+      let rawText = ''
+      let sawImageTool = false
+      const emittedImages: Array<{ url: string; alt: string }> = []
+      const emitImage = async (url: string, alt: string) => {
+        emittedImages.push({ url, alt })
+        await out.writeSSE({ data: JSON.stringify({ type: 'image', url, alt }) })
+      }
       try {
         for await (const part of result.stream) {
           if (part.type === 'text-delta') {
-            fullContent += part.text
-            await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: part.text }) })
+            rawText += part.text
           } else if (part.type === 'tool-call') {
             if (part.toolName === 'web_search') {
               const q = (part.input as { query?: string } | undefined)?.query
               await out.writeSSE({ data: stepEvent({ kind: 'search', queries: q ? [q] : [] }) })
             } else if (part.toolName === 'generate_image') {
+              sawImageTool = true
               await out.writeSSE({ data: stepEvent({ kind: 'image' }) })
             } else if (part.toolName === 'edit_image') {
+              sawImageTool = true
               await out.writeSSE({ data: stepEvent({ kind: 'image', detail: 'Editing image…', detailKey: 'log.imageEdit' }) })
             }
           } else if (part.type === 'tool-result' && part.toolName === 'web_search') {
@@ -550,11 +574,70 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
           } else if (part.type === 'tool-result' && (part.toolName === 'generate_image' || part.toolName === 'edit_image')) {
             const r = part.output as { success?: boolean; prompt?: string; error?: string }
             if (r.success && pendingImageUrl) {
-              await out.writeSSE({ data: JSON.stringify({ type: 'image', url: pendingImageUrl, alt: r.prompt ?? '' }) })
-              fullContent += `\n\n![${r.prompt ?? ''}](${pendingImageUrl})`
+              await emitImage(pendingImageUrl, r.prompt ?? '')
               pendingImageUrl = undefined
             }
           }
+        }
+
+        // gemma-4 behind LiteLLM intermittently answers image mode by writing the tool call into
+        // its text as a LangChain ReAct-JSON blob — `{ "action": "generate_image", "action_input":
+        // "{'prompt': ...}" }` — rather than emitting a real call. The AI SDK never parses that, so
+        // without this the blob is the whole reply and no image is produced. Recover the call from
+        // the text, validate it against the real schema, and run it.
+        const leak = findLeakedToolCall(rawText, ['generate_image', 'edit_image'], 'generate_image')
+        if (leak && !sawImageTool && emittedImages.length === 0) {
+          const args = coerceNumericArgs(leak.input, ['steps', 'seed', 'strength'])
+          if (leak.action === 'edit_image') {
+            const parsed = editImageSchema.safeParse(args)
+            if (parsed.success) {
+              await out.writeSSE({ data: stepEvent({ kind: 'image', detail: 'Editing image…', detailKey: 'log.imageEdit' }) })
+              const r = await runEditImage(parsed.data)
+              if (r.success && pendingImageUrl) { await emitImage(pendingImageUrl, r.prompt ?? ''); pendingImageUrl = undefined }
+              else console.warn(`  [image] recovered edit_image call failed: ${'error' in r ? r.error : 'no image'}`)
+            } else {
+              console.warn(`  [image] recovered edit_image args rejected: ${parsed.error.issues.map(i => i.path.join('.')).join(', ')}`)
+            }
+          } else {
+            const parsed = generateImageSchema.safeParse(args)
+            if (parsed.success) {
+              await out.writeSSE({ data: stepEvent({ kind: 'image' }) })
+              const r = await runGenerateImage(parsed.data)
+              if (r.success && pendingImageUrl) { await emitImage(pendingImageUrl, r.prompt ?? ''); pendingImageUrl = undefined }
+              else console.warn(`  [image] recovered generate_image call failed: ${'error' in r ? r.error : 'no image'}`)
+            } else {
+              console.warn(`  [image] recovered generate_image args rejected: ${parsed.error.issues.map(i => i.path.join('.')).join(', ')}`)
+            }
+          }
+        }
+
+        // The other leak shape: the model writes its own markdown image at an external
+        // prompt-to-image service (pollinations.ai and the like) instead of calling the tool. It
+        // renders, so it passes for success, but no local image exists and the note would ship the
+        // prompt to a third party on every view. Re-run the generation from the prompt in the URL.
+        const isLocalImage = (url: string) => /^\/images\//.test(url)
+        const [leakedImg] = findLeakedImageMarkdown(rawText, isLocalImage)
+        if (leakedImg?.prompt && !sawImageTool && emittedImages.length === 0) {
+          console.warn(`  [image] recovered a prompt from a model-written external image URL: ${leakedImg.url.slice(0, 120)}`)
+          const parsed = generateImageSchema.safeParse({ prompt: leakedImg.prompt })
+          if (parsed.success) {
+            await out.writeSSE({ data: stepEvent({ kind: 'image' }) })
+            const r = await runGenerateImage(parsed.data)
+            if (r.success && pendingImageUrl) { await emitImage(pendingImageUrl, r.prompt ?? ''); pendingImageUrl = undefined }
+            else console.warn(`  [image] recovered external-URL call failed: ${'error' in r ? r.error : 'no image'}`)
+          }
+        }
+
+        // Drop <think>/<tool_call> markup, the leaked tool-call blob and any model-written image
+        // markdown, then send what remains — normally a single sentence, or nothing — in one write.
+        const thinkExtractor = new ThinkExtractor()
+        let visible = thinkExtractor.process(rawText).text + thinkExtractor.flush().text
+        visible = stripLeakedToolCall(visible, leak?.source)
+        visible = stripLeakedImageMarkdown(visible, isLocalImage)
+        if (visible) await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: visible }) })
+        fullContent = visible
+        for (const img of emittedImages) {
+          fullContent += `${fullContent ? '\n\n' : ''}![${img.alt}](${img.url})`
         }
       } finally {
         clearInterval(keepalive)
@@ -720,8 +803,11 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         await out.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: snippets + '\n\n' }) })
       }
       const researchModel = useThinking ? getThinkingModelOrFallback() : getChatModel()
-      const researcherResult = await runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, onUrlRead: emitUrlOutcome, apiBudget, requestApproval, locked })
       const allSources: SearchResult[] = [...(initialResults ?? [])]
+      // URLs the user pointed at or the model chose to read in full — kept out of the reranker's
+      // prune below so a page that was explicitly fetched always reaches the writer.
+      const fetchedUrls = new Set<string>()
+      const researcherResult = await runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, onUrlRead: emitUrlOutcome, onSource: (s) => { allSources.push(s); fetchedUrls.add(s.url) }, apiBudget, requestApproval, locked })
       let researcherNotes = ''
       // Unconditional: the extractor also drops leaked tool-call markup, which has to be stripped
       // whether or not the user is shown thinking. Displaying thinking is gated separately.
@@ -752,8 +838,11 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       })
 
       // Prunes as well as orders: previously this passed the full length as topN, so the
-      // configured rerank_top_n was bypassed and every source reached the writer.
-      const finalSources = await rerankSearchResults(userQueryOf(msgs), dedupedSources)
+      // configured rerank_top_n was bypassed and every source reached the writer. Fetched pages
+      // skip the prune — they were read deliberately — and lead the list so their numbers are low.
+      const fetchedSources = dedupedSources.filter(s => fetchedUrls.has(s.url))
+      const rerankedSources = await rerankSearchResults(userQueryOf(msgs), dedupedSources.filter(s => !fetchedUrls.has(s.url)))
+      const finalSources = [...fetchedSources, ...rerankedSources]
 
       sources.push(...finalSources.map(toStoredSource))
       await out.writeSSE({ data: JSON.stringify({ type: 'sources', sources: finalSources }) })
@@ -762,14 +851,19 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       await emitStep({ kind: 'write' })
       const writerResult = runWriter(finalSources, msgs, researcherNotes.slice(0, RESEARCHER_NOTES_CAP), abortSignal, { customPrompt, memoryBlock })
       const writerExtractor = new ThinkExtractor()
+      const writerCitations = new CitationNormalizer()
+      const emitAnswer = async (raw: string) => {
+        const clean = writerCitations.process(raw)
+        if (clean) {
+          fullContent += clean
+          await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: clean }) })
+        }
+      }
       for await (const part of writerResult.stream) {
         if (part.type === 'text-delta') {
           const { text, thinking } = writerExtractor.process(part.text)
           if (thinking && showThinking) await out.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: thinking }) })
-          if (text) {
-            fullContent += text
-            await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: text }) })
-          }
+          if (text) await emitAnswer(text)
         } else if (part.type === 'reasoning-delta' && showThinking) {
           await out.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: part.text }) })
         } else if (part.type === 'error') {
@@ -778,9 +872,11 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       }
       const { text: wt, thinking: wth } = writerExtractor.flush()
       if (wth && showThinking) await out.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: wth }) })
-      if (wt) {
-        fullContent += wt
-        await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: wt }) })
+      if (wt) await emitAnswer(wt)
+      const writerTail = writerCitations.flush()
+      if (writerTail) {
+        fullContent += writerTail
+        await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: writerTail }) })
       }
       if (!fullContent) {
         console.error('  [writer] produced 0 chars — model may be in a bad state')
@@ -801,8 +897,17 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       }
 
       const fullSources: SearchResult[] = []
-      const result = await runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, onUrlRead: emitUrlOutcome, apiBudget, requestApproval, locked })
+      // A fetched page arrives as its own numbered result (prefetched before the stream, or via the
+      // fetch_url tool mid-stream); surface it to the client the moment it lands so the [N] the
+      // model then writes has a source to resolve against.
+      const emitFetchedSource = async (s: SearchResult & { index: number }) => {
+        fullSources.push(s)
+        sources.push(toStoredSource(s))
+        await out.writeSSE({ data: JSON.stringify({ type: 'sources', sources: [s] }) })
+      }
+      const result = await runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, onUrlRead: emitUrlOutcome, onSource: emitFetchedSource, apiBudget, requestApproval, locked })
       const extractor = new ThinkExtractor()   // see thoroughExtractor above
+      const citations = new CitationNormalizer()
 
       const keepalive = setInterval(() => {
         out.ping().catch(() => {})
@@ -813,8 +918,11 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
           stream: out, showThinking, emitSearchStatus, maxSteps: maxStepsFor('balanced'),
           extractor,
           onText: async (text) => {
-            fullContent += text
-            await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: text }) })
+            const clean = citations.process(text)
+            if (clean) {
+              fullContent += clean
+              await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: clean }) })
+            }
           },
           onSources: async (results) => {
             fullSources.push(...results)
@@ -824,6 +932,11 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         })
       } finally {
         clearInterval(keepalive)
+      }
+      const citationTail = citations.flush()
+      if (citationTail) {
+        fullContent += citationTail
+        await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: citationTail }) })
       }
 
       // Fallback: synthesise an answer when the researcher ended without producing one.
@@ -844,17 +957,24 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         // Same extraction as the main pass: this call carries no tool schemas either, so a model
         // that emits <think> or <tool_call> markup would otherwise stream it as the answer.
         const fallbackExtractor = new ThinkExtractor()
+        const fallbackCitations = new CitationNormalizer()
         const emitFallback = async ({ text, thinking }: { text: string; thinking: string }) => {
           if (thinking && showThinking) await out.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: thinking }) })
-          if (text) {
-            fullContent += text
-            await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: text }) })
+          const clean = text ? fallbackCitations.process(text) : ''
+          if (clean) {
+            fullContent += clean
+            await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: clean }) })
           }
         }
         for await (const part of fallback.stream) {
           if (part.type === 'text-delta' && part.text) await emitFallback(fallbackExtractor.process(part.text))
         }
         await emitFallback(fallbackExtractor.flush())
+        const fallbackTail = fallbackCitations.flush()
+        if (fallbackTail) {
+          fullContent += fallbackTail
+          await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: fallbackTail }) })
+        }
       }
     }
 

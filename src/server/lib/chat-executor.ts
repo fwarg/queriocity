@@ -9,6 +9,7 @@ import { webSearch, webSearchMulti, type SearchResult, type SearchApiBudget } fr
 import { getFlashModel, getChatModel } from './llm.ts'
 import { buildMemoryBlock, extractMemoriesPostHoc, userMemoryBlockIfEnabled, joinMemoryBlocks } from './memory.ts'
 import { ThinkExtractor } from './think-extractor.ts'
+import { CitationNormalizer } from './citation-normalizer.ts'
 import { indexContents } from './chat-indexer.ts'
 import { drainResearcherStream, nullStream, type ResearcherStreamPart } from './researcher-stream.ts'
 import { rerankSearchResults } from './reranker.ts'
@@ -144,6 +145,11 @@ export async function executeChatAndSave({
       }
     }
   }
+
+  // Same clean-up the interactive path applies to its stream: canonicalise grouped citations and
+  // strip any trailing reference list the model added against instructions.
+  const normalizer = new CitationNormalizer()
+  fullContent = normalizer.process(fullContent) + normalizer.flush()
 
   // Nothing survived. Save the failure rather than an empty assistant message, which reads in the
   // monitor UI as a run that succeeded and found nothing to say.
