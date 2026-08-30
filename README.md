@@ -1669,15 +1669,28 @@ All persistent data lives in a single SQLite file. Use SQLite's `.backup` comman
 sqlite3 /path/to/queriocity.db ".backup /path/to/backup/queriocity-$(date +%Y%m%d).db"
 ```
 
-This is safe to run against a live database. A simple daily cron script:
+This is safe to run against a live database. To install a daily backup, drop this
+script at `/etc/cron.daily/queriocity-backup`:
 
 ```bash
 #!/bin/bash
-# /etc/cron.daily/queriocity-backup  (chmod 755, no dot in filename)
 sqlite3 /home/user/queriocity/docker/data/queriocity.db \
   ".backup /home/user/backups/queriocity-$(date +%Y%m%d).db"
 find /home/user/backups -name "queriocity-*.db" -mtime +30 -delete
 ```
+
+```bash
+sudo install -m 755 queriocity-backup /etc/cron.daily/queriocity-backup
+mkdir -p /home/user/backups
+sudo run-parts --test /etc/cron.daily          # confirm it is picked up
+sudo run-parts --report /etc/cron.daily        # run once now to verify output
+```
+
+The filename must have **no extension** (`run-parts` skips names with dots), and
+the file must be executable. `cron.daily` scripts are run by `run-parts` from
+`/etc/crontab` (or anacron), so this job will *not* appear in `crontab -l`; edit
+the file directly to change it. Last-run state is tracked in
+`/var/spool/anacron/cron.daily`.
 
 If you use image generation, also back up the `images/` directory alongside the database file.
 
