@@ -9,7 +9,7 @@
 import './test-support/test-env.ts'
 
 import { describe, test, expect } from 'bun:test'
-import { selectMemories, isSensitiveFact, isDurableUserFact, type MemoryCandidate } from './memory.ts'
+import { selectMemories, isSensitiveFact, isDurableUserFact, mapFactCitations, type MemoryCandidate, type MemorySource } from './memory.ts'
 
 /** ~1 token per 4 chars, matching the estimate selectMemories uses. */
 const mem = (id: string, tokens: number): MemoryCandidate =>
@@ -48,6 +48,55 @@ describe('selectMemories', () => {
     const { chosen } = selectMemories([], [mem('a', 10)], 0)
 
     expect(chosen).toEqual([])
+  })
+})
+
+describe('mapFactCitations', () => {
+  const src: MemorySource[] = [
+    { url: 'https://a.example/1', title: 'A' },
+    { url: 'https://b.example/2', title: 'B' },
+    { url: 'https://c.example/3', title: 'C' },
+  ]
+
+  test('maps a single marker to its source and strips it from the text', () => {
+    const f = mapFactCitations('Postgres 17 is the current stable release [2].', src)
+    expect(f.text).toBe('Postgres 17 is the current stable release.')
+    expect(f.sources).toEqual([src[1]])
+  })
+
+  test('normalises a grouped citation and does not double punctuation', () => {
+    const f = mapFactCitations('The spec was ratified in 2024 [1, 3].', src)
+    expect(f.text).toBe('The spec was ratified in 2024.')
+    expect(f.sources).toEqual([src[0], src[2]])
+  })
+
+  test('a line with no marker gets every turn source', () => {
+    const f = mapFactCitations('The user prefers pnpm over npm.', src)
+    expect(f.text).toBe('The user prefers pnpm over npm.')
+    expect(f.sources).toEqual(src)
+  })
+
+  test('no marker and no turn sources means no provenance', () => {
+    const f = mapFactCitations('A hand-typed style of note.', [])
+    expect(f.text).toBe('A hand-typed style of note.')
+    expect(f.sources).toBeUndefined()
+  })
+
+  test('an out-of-range marker is dropped, text still clean', () => {
+    const f = mapFactCitations('Something cited badly [9].', src.slice(0, 2))
+    expect(f.text).toBe('Something cited badly.')
+    expect(f.sources).toBeUndefined()
+  })
+
+  test('file labels are stripped from text and never mapped', () => {
+    const f = mapFactCitations('Drawn from an uploaded doc [F1] and a page [2].', src)
+    expect(f.text).toBe('Drawn from an uploaded doc and a page.')
+    expect(f.sources).toEqual([src[1]])
+  })
+
+  test('a repeated marker yields one source', () => {
+    const f = mapFactCitations('Backed twice [2][2].', src)
+    expect(f.sources).toEqual([src[1]])
   })
 })
 

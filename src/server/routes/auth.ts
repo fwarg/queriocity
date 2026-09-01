@@ -11,6 +11,7 @@ import {
   validatePassword, AUTH_COOKIE, COOKIE_OPTIONS,
 } from '../lib/auth.ts'
 import { RateLimiter, clientIp, warnIfProxyUntrusted } from '../lib/rate-limit.ts'
+import { DEFAULT_MEMORY_TOKEN_BUDGET } from '../lib/llm.ts'
 import { LANG_CODES } from '../../shared/i18n/index.ts'
 
 export const authRouter = new Hono()
@@ -123,7 +124,7 @@ authRouter.get('/me', async (c) => {
     const { userId, tokenVersion } = await verifyToken(token)
     const [user, memoryTokenBudget, cred] = await Promise.all([
       db.select().from(users).where(eq(users.id, userId)).get(),
-      getAppSetting('memory_token_budget', '1000').then(v => parseInt(v)),
+      getAppSetting('memory_token_budget', DEFAULT_MEMORY_TOKEN_BUDGET).then(v => parseInt(v)),
       db.select({ mustChangePassword: authCredentials.mustChangePassword })
         .from(authCredentials).where(eq(authCredentials.userId, userId)).get(),
     ])

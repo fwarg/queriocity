@@ -40,6 +40,14 @@ type Session = { id: string; title: string; spaceId: string | null; locked?: boo
 
 const MEMORY_HEADER_TOKENS = 30
 
+/** Per-memory content cap, mirrored from the server's zod `.max(600)` on the add/edit routes. */
+const MEMORY_CONTENT_MAXLEN = 600
+
+/** Bare hostname for a source chip; falls back to the raw string. */
+function hostnameOf(url: string): string {
+  try { return new URL(url).hostname.replace(/^www\./, '') } catch { return url }
+}
+
 /** How many memories will not fit the per-request budget. They are no longer *excluded* — the
  *  server picks the most relevant ones per query — so this is a "not all at once" hint, not a
  *  warning that the tail is unreachable. */
@@ -994,7 +1002,7 @@ export default function App() {
                   )}
                 </div>
                 {memorySectionOpen && (() => {
-                  const overflow = countOverflowMemories(spaceMemories, currentUser?.memoryTokenBudget ?? 1000)
+                  const overflow = countOverflowMemories(spaceMemories, currentUser?.memoryTokenBudget ?? 1500)
                   return overflow > 0 ? (
                     <p className="text-xs text-gray-500 mt-1">
                       {t('memory.overflow', { count: overflow })}
@@ -1003,15 +1011,17 @@ export default function App() {
                 })()}
                 {memorySectionOpen && newMemoryOpen && (
                   <div className="mb-2">
-                    <input
+                    <textarea
                       autoFocus
-                      type="text"
+                      rows={2}
+                      maxLength={MEMORY_CONTENT_MAXLEN}
                       value={newMemoryDraft}
                       onChange={e => setNewMemoryDraft(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') handleCreateMemory(); if (e.key === 'Escape') { setNewMemoryOpen(false); setNewMemoryDraft('') } }}
+                      onInput={e => { const el = e.currentTarget; el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px` }}
+                      onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleCreateMemory(); if (e.key === 'Escape') { setNewMemoryOpen(false); setNewMemoryDraft('') } }}
                       onBlur={handleCreateMemory}
                       placeholder={t('memory.addPlaceholder')}
-                      className="w-full px-2 py-1.5 rounded bg-gray-800 border border-gray-700 text-xs text-gray-200 focus:outline-none focus:border-blue-500"
+                      className="w-full px-2 py-1.5 rounded bg-gray-800 border border-gray-700 text-xs text-gray-200 focus:outline-none focus:border-blue-500 resize-none"
                     />
                   </div>
                 )}
@@ -1036,22 +1046,50 @@ export default function App() {
                       {m.alwaysKeep ? '★' : '☆'}
                     </button>
                     {editingMemoryId === m.id ? (
-                      <input
+                      <textarea
                         autoFocus
-                        type="text"
+                        rows={2}
+                        maxLength={MEMORY_CONTENT_MAXLEN}
                         value={memoryDraft}
                         onChange={e => setMemoryDraft(e.target.value)}
-                        onKeyDown={e => { if (e.key === 'Enter') handleMemorySave(m.id); if (e.key === 'Escape') setEditingMemoryId(null) }}
+                        onInput={e => { const el = e.currentTarget; el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px` }}
+                        onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleMemorySave(m.id); if (e.key === 'Escape') setEditingMemoryId(null) }}
                         onBlur={() => handleMemorySave(m.id)}
-                        className="flex-1 px-2 py-0.5 rounded bg-gray-800 border border-gray-700 text-xs text-gray-200 focus:outline-none focus:border-blue-500"
+                        className="flex-1 px-2 py-0.5 rounded bg-gray-800 border border-gray-700 text-xs text-gray-200 focus:outline-none focus:border-blue-500 resize-none"
                       />
                     ) : (
-                      <span
-                        onClick={() => { setMemoryDraft(m.content); setEditingMemoryId(m.id) }}
-                        className="flex-1 text-xs text-gray-300 cursor-pointer hover:text-gray-100"
-                      >
-                        {m.content}
-                      </span>
+                      <div className="flex-1 min-w-0">
+                        <span
+                          onClick={() => { setMemoryDraft(m.content); setEditingMemoryId(m.id) }}
+                          className="block text-xs text-gray-300 cursor-pointer hover:text-gray-100 whitespace-pre-wrap break-words"
+                        >
+                          {m.content}
+                        </span>
+                        {((m.sources && m.sources.length > 0) || m.checkedAt != null) && (
+                          <div className="flex flex-wrap items-center gap-1 mt-0.5" title={m.sources && m.sources.length > 0 ? t('memory.sourcesTitle') : undefined}>
+                            {m.sources?.map(s => (
+                              <a
+                                key={s.url}
+                                href={s.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                title={s.title}
+                                className="max-w-[11rem] truncate rounded bg-gray-800 px-1 py-0.5 text-[10px] text-gray-400 hover:text-gray-200"
+                              >
+                                {hostnameOf(s.url)}
+                              </a>
+                            ))}
+                            {m.checkedAt != null && (
+                              <span
+                                className="text-[10px] text-gray-600"
+                                title={t('memory.checkedTitle', { date: new Date(m.checkedAt * 1000).toLocaleDateString(lang, { year: 'numeric', month: 'long', day: 'numeric' }) })}
+                              >
+                                {t('memory.checked', { date: new Date(m.checkedAt * 1000).toLocaleDateString(lang, { month: 'short', day: 'numeric' }) })}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     )}
                     <span className="text-[10px] text-gray-600 shrink-0 mt-0.5">{t(m.source === 'tool' ? 'memory.sourceAuto' : m.source === 'extraction' ? 'memory.sourceExtracted' : m.source === 'compact' ? 'memory.sourceCompact' : 'memory.sourceManual')}</span>
                     {editingMemoryId !== m.id && (

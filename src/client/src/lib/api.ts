@@ -48,9 +48,15 @@ export interface Space {
   createdAt: number
 }
 
+export interface MemorySource { url: string; title: string }
+
 export interface SpaceMemory {
   id: string; content: string; source: 'tool' | 'extraction' | 'manual' | 'compact'
   sessionId: string | null; createdAt: number; alwaysKeep: boolean
+  /** Web sources this memory was extracted from; null for hand-typed and compacted memories. */
+  sources: MemorySource[] | null
+  /** Unix seconds the sources last confirmed the memory; null when unverified. */
+  checkedAt: number | null
 }
 
 /** `content` is a short snippet, shown as a preview when hovering the [N] citation. */

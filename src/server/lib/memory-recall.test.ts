@@ -179,4 +179,20 @@ describe('buildMemoryBlock relevance recall', () => {
     // Newest-first: the coffee memory was written last.
     expect(block).toContain('coffee')
   })
+
+  test('a memory\'s sources are never injected into the prompt', async () => {
+    const target = (await db.select().from(spaceMemories))
+      .find(m => m.content.includes('Postgres'))!
+    await db.update(spaceMemories)
+      .set({ sources: [{ url: 'https://secret.example/leak', title: 'Leak' }], checkedAt: 1_700_000_000 })
+      .where(eq(spaceMemories.id, target.id))
+
+    const { block } = await buildMemoryBlock(SPACE, 1000, 0, 'which database do I use?')
+
+    expect(block).toContain('Postgres')
+    expect(block).not.toContain('secret.example')
+    expect(block).not.toContain('Leak')
+    await db.update(spaceMemories).set({ sources: null, checkedAt: null })
+      .where(eq(spaceMemories.id, target.id))
+  })
 })

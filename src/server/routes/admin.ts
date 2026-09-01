@@ -5,7 +5,7 @@ import { generateText, embed } from 'ai'
 import { db, users, invites, chatSessions, spaces, spaceMemories, userMemories, uploadedFiles, authCredentials, getAppSetting, setAppSetting, bumpTokenVersion } from '../lib/db.ts'
 import { eq, desc } from 'drizzle-orm'
 import { indexSession, deindexSession } from '../lib/chat-indexer.ts'
-import { EMBED_MAX_INPUT_CHARS, SMALL_MODEL_INPUT_CHARS } from '../lib/llm.ts'
+import { EMBED_MAX_INPUT_CHARS, SMALL_MODEL_INPUT_CHARS, DEFAULT_MEMORY_TOKEN_BUDGET } from '../lib/llm.ts'
 import { DEFAULT_MAX_URL_CONTEXT_CHARS, MIN_URL_CONTEXT_CHARS, SCRAPE_MAX_CHARS } from '../lib/fetch-url.ts'
 import { randomUUID, randomInt } from 'crypto'
 import { hashPassword } from '../lib/auth.ts'
@@ -33,7 +33,7 @@ adminRouter.use('*', adminMiddleware)
 
 adminRouter.get('/settings', async (c) => {
   const [memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, ragMinRelevance, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow, compressHistoryOverflow, resourceSummary] = await Promise.all([
-    getAppSetting('memory_token_budget', '1000').then(Number),
+    getAppSetting('memory_token_budget', DEFAULT_MEMORY_TOKEN_BUDGET).then(Number),
     getAppSetting('user_memory_token_budget', '300').then(Number),
     getAppSetting('dream_hour', '-1').then(Number),
     getAppSetting('dream_threshold', '1500').then(Number),

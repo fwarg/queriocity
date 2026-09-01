@@ -17,12 +17,12 @@ import { readFile } from 'node:fs/promises'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { webSearch, webSearchMulti, type SearchResult, type EngineError, type SearchApiBudget } from '../lib/searxng.ts'
 import { fetchUrlAllPages, processUrlsForContext, describeOutcome, DEFAULT_MAX_URL_CONTEXT_CHARS, type UrlOutcome, type ProcessedUrl } from '../lib/fetch-url.ts'
-import { getFlashModel, getChatModel, getThinkingModelOrFallback, RESEARCH_MAX_TOKENS } from '../lib/llm.ts'
+import { getFlashModel, getChatModel, getThinkingModelOrFallback, RESEARCH_MAX_TOKENS, DEFAULT_MEMORY_TOKEN_BUDGET } from '../lib/llm.ts'
 import { ThinkExtractor } from '../lib/think-extractor.ts'
 import { findLeakedToolCall, stripLeakedToolCall, coerceNumericArgs, findLeakedImageMarkdown, stripLeakedImageMarkdown } from '../lib/leaked-tool-call.ts'
 import { CitationNormalizer } from '../lib/citation-normalizer.ts'
 import { rerankSearchResults } from '../lib/reranker.ts'
-import { buildMemoryBlock, buildChatFileBlock, buildCollectionBlock, extractMemoriesPostHoc, userMemoryBlockIfEnabled, joinMemoryBlocks } from '../lib/memory.ts'
+import { buildMemoryBlock, buildChatFileBlock, buildCollectionBlock, extractMemoriesPostHoc, userMemoryBlockIfEnabled, joinMemoryBlocks, toMemorySources } from '../lib/memory.ts'
 import { ownedCollectionIds } from '../lib/files/collections.ts'
 import { trimMessages, contextCharBudget, CONTEXT_RESERVE_FRACTION } from '../lib/trim-messages.ts'
 import { indexContents, deindexContent } from '../lib/chat-indexer.ts'
@@ -315,7 +315,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
 
   if (focusMode === 'flash') {
     const [memoryBudget, ragBudget] = await Promise.all([
-      spaceId ? getAppSetting('memory_token_budget', '1000').then(Number) : Promise.resolve(1000),
+      spaceId ? getAppSetting('memory_token_budget', DEFAULT_MEMORY_TOKEN_BUDGET).then(Number) : Promise.resolve(Number(DEFAULT_MEMORY_TOKEN_BUDGET)),
       spaceId ? getAppSetting('space_rag_budget', '500').then(Number) : Promise.resolve(0),
     ])
     const userQuery = lastUser?.content ?? ''
@@ -708,7 +708,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       locked
         ? Promise.resolve({ initialQueries: [] as string[], initialResults: [] as SearchResult[], engineErrors: [] as EngineError[] })
         : runReformulateAndPreSearch(msgsForReformulate, focusMode as 'balanced' | 'thorough', hasAttachment, searchCategory, apiBudget, abortSignal),
-      spaceId ? getAppSetting('memory_token_budget', '1000').then(Number) : Promise.resolve(1000),
+      spaceId ? getAppSetting('memory_token_budget', DEFAULT_MEMORY_TOKEN_BUDGET).then(Number) : Promise.resolve(Number(DEFAULT_MEMORY_TOKEN_BUDGET)),
       getAppSetting('space_rag_budget', '500').then(Number),
       locked ? Promise.resolve([]) : prefetchUrlsFromMessage(lastUser?.content ?? '', hasAttachment, fetchMaxPages),
     ])
@@ -1041,7 +1041,10 @@ async function finishTurn(out: SSEStream, {
     // nothing — but the answer that was just thrown away has to be removed explicitly.
     if (supersededAnswer) deindexContent(sid, supersededAnswer)
     const lastUserContent = userQueryOf(msgs)
-    extractMemoriesPostHoc(spaceId, sid, lastUserContent, fullContent).catch(e => console.error('[memory]', e))
+    // `sources` is this turn's reference list, ordered so index N-1 is the page cited as [N] — the
+    // extractor maps a note's [N] markers straight onto it.
+    extractMemoriesPostHoc(spaceId, sid, lastUserContent, fullContent, toMemorySources(sources))
+      .catch(e => console.error('[memory]', e))
     indexContents(sid, [lastUserContent, fullContent].filter(Boolean)).catch(e => console.error('[chat-index]', e))
   }
 }

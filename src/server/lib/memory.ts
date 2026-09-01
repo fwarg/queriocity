@@ -8,15 +8,97 @@ import { searchSpaceFiles, searchUploads, spaceHasTaggedFiles, type ChunkResult 
 import { rerank, rerankEnabled } from './reranker.ts'
 import { ragTopK, ragMinRelevance } from './rag-settings.ts'
 import { searchCollections } from './files/collections.ts'
+import { splitGroupedCitations } from '../../shared/citations.ts'
+
+export interface MemorySource { url: string; title: string }
+
+/** A fact on its way into space memory, optionally with the web sources that back it. */
+export interface MemoryFact { text: string; sources?: MemorySource[] }
 
 export interface SpaceMemory {
   id: string
   spaceId: string
   content: string
-  source: 'tool' | 'extraction' | 'manual'
+  source: 'tool' | 'extraction' | 'manual' | 'compact'
   sessionId: string | null
+  alwaysKeep: boolean
+  /** Web sources the memory came from — panel/verify metadata, never injected into the prompt. */
+  sources: MemorySource[] | null
+  /** Unix seconds the sources last confirmed the memory; null when unverified. */
+  checkedAt: number | null
   createdAt: Date
   updatedAt: Date
+}
+
+/** Concat two source lists, drop entries without a url, dedupe by url. `undefined` when empty so a
+ *  drizzle `.set({ sources })` writes NULL rather than `[]`. */
+function unionSources(...lists: (MemorySource[] | null | undefined)[]): MemorySource[] | undefined {
+  const seen = new Set<string>()
+  const out: MemorySource[] = []
+  for (const list of lists) {
+    for (const s of list ?? []) {
+      if (!s?.url || seen.has(s.url)) continue
+      seen.add(s.url)
+      out.push({ url: s.url, title: s.title || s.url })
+    }
+  }
+  return out.length ? out : undefined
+}
+
+/** Coerce a stored-source array — a turn's reference list, or the `sources` JSON on a persisted
+ *  message — to the `{url,title}` shape, preserving order and dropping anything without a url. */
+export function toMemorySources(raw: unknown): MemorySource[] {
+  if (!Array.isArray(raw)) return []
+  const out: MemorySource[] = []
+  for (const s of raw) {
+    const url = s && typeof s === 'object' ? (s as Record<string, unknown>).url : undefined
+    if (typeof url !== 'string' || !url) continue
+    const title = s && typeof s === 'object' ? (s as Record<string, unknown>).title : undefined
+    out.push({ url, title: typeof title === 'string' && title ? title : url })
+  }
+  return out
+}
+
+/** Inputs for a retroactive extraction over a whole session's stored messages (chat moved into a
+ *  space, or "recreate memories"). Several assistant messages get concatenated and each one's `[N]`
+ *  markers are positional to its own source list, so the numbers collide — strip them, and hand the
+ *  extractor the whole per-session source union (which `mapFactCitations` then attaches to every
+ *  note as the no-marker fallback). */
+export function retroExtractionInputs(
+  msgs: Array<{ role: 'user' | 'assistant'; content: string; sources: string | null }>,
+): { userContent: string; assistantContent: string; sources: MemorySource[] } {
+  const userContent = msgs.filter(m => m.role === 'user').map(m => m.content).join('\n\n')
+  const assistantContent = msgs.filter(m => m.role === 'assistant')
+    .map(m => m.content.replace(/\[\d+\]/g, '')).join('\n\n')
+  const sources: MemorySource[] = []
+  for (const m of msgs) {
+    if (!m.sources) continue
+    try { sources.push(...toMemorySources(JSON.parse(m.sources))) } catch { /* skip unparseable */ }
+  }
+  return { userContent, assistantContent, sources }
+}
+
+/** Map one extracted line's `[N]` citation markers onto the turn's ordered source list, and strip
+ *  the markers (and any `[F1]`/`[C1]` file labels) from the text that gets stored.
+ *
+ *  A line with no numeric marker gets *all* the turn's sources — coarse but honest: the note came
+ *  from this exchange and the exchange cited these pages. Pure, so the mapping is unit-tested. */
+export function mapFactCitations(rawLine: string, turnSources: MemorySource[] = []): MemoryFact {
+  const normalized = splitGroupedCitations(rawLine)
+  const nums = new Set<number>()
+  for (const m of normalized.matchAll(/\[(\d+)\]/g)) nums.add(Number(m[1]))
+
+  const text = normalized
+    .replace(/\[(?:\d+|[FC]\d+)\]/g, '')
+    .replace(/\s+([.,;:!?])/g, '$1')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+
+  const picked = nums.size
+    ? [...nums].sort((a, b) => a - b).map(n => turnSources[n - 1])
+    : turnSources
+  const sources = unionSources(picked)
+  return sources ? { text, sources } : { text }
 }
 
 /** Renders retrieved excerpts into a prompt block, spending a token budget newest-relevance-first.
@@ -305,7 +387,7 @@ export interface MemoryBlock {
 /** Build a formatted memory block for system prompt injection, with optional RAG layer. */
 export async function buildMemoryBlock(
   spaceId: string,
-  tokenBudget = 1000,
+  tokenBudget = 1500,
   ragBudget = 0,
   query?: string,
   includeFileIds?: string[],
@@ -763,6 +845,8 @@ interface MemoryWrite {
   op: 'ADD' | 'UPDATE' | 'NOOP'
   fact: string
   targetId?: string
+  /** For ADD: the new fact's sources. For UPDATE: union of the new fact's and the target's. */
+  sources?: MemorySource[]
 }
 
 /** The existing memories a new fact might duplicate or contradict — its nearest neighbours. */
@@ -786,12 +870,12 @@ async function conflictCandidates(existing: MemoryRow[], facts: string[]): Promi
 
 /** Ask the small model whether each fact is new, an update of an existing memory, or redundant.
  *  On any failure every fact falls back to ADD — a duplicate is recoverable, a lost fact is not. */
-async function planMemoryWrites(facts: string[], candidates: MemoryRow[]): Promise<MemoryWrite[]> {
-  const fallback: MemoryWrite[] = facts.map(fact => ({ op: 'ADD', fact }))
+async function planMemoryWrites(facts: MemoryFact[], candidates: MemoryRow[]): Promise<MemoryWrite[]> {
+  const fallback: MemoryWrite[] = facts.map(f => ({ op: 'ADD', fact: f.text, sources: f.sources }))
   if (!candidates.length) return fallback
 
   const existingList = candidates.map((m, i) => `[${i}] ${m.content}`).join('\n')
-  const newList = facts.map((f, i) => `(${i}) ${f}`).join('\n')
+  const newList = facts.map((f, i) => `(${i}) ${f.text}`).join('\n')
   try {
     const result = await generateText({
       model: getSmallModel(),
@@ -824,7 +908,12 @@ Respond with ONLY a JSON array, one object per new fact, in order:
       const locked = target && (target.source === 'manual' || target.alwaysKeep)
       if (d.op === 'UPDATE' && target && !locked && !claimed.has(target.id)) {
         claimed.add(target.id)
-        writes[d.i] = { op: 'UPDATE', fact: writes[d.i].fact, targetId: target.id }
+        writes[d.i] = {
+          op: 'UPDATE',
+          fact: writes[d.i].fact,
+          targetId: target.id,
+          sources: unionSources(facts[d.i].sources, target.sources),
+        }
       } else if (d.op === 'NOOP' && !locked) {
         writes[d.i] = { op: 'NOOP', fact: writes[d.i].fact }
       }
@@ -839,32 +928,38 @@ Respond with ONLY a JSON array, one object per new fact, in order:
 /** Save several extracted facts in one pass — one planning call for the batch, not one per fact. */
 export async function saveMemories(
   spaceId: string,
-  facts: string[],
+  facts: Array<string | MemoryFact>,
   source: 'tool' | 'extraction' | 'manual',
   sessionId?: string,
 ): Promise<void> {
-  const trimmed = facts.map(f => f.trim()).filter(Boolean)
+  // Sources ride inside the fact object through both filters below — a parallel array would
+  // desync at the trim and the novelty filter and mis-attribute a source to the wrong fact.
+  const trimmed: MemoryFact[] = facts
+    .map(f => (typeof f === 'string' ? { text: f.trim() } : { ...f, text: f.text.trim() }))
+    .filter(f => f.text)
   if (!trimmed.length) return
 
   const existing = await db.select().from(spaceMemories).where(eq(spaceMemories.spaceId, spaceId))
   // Exact containment is settled without troubling the model.
-  const novel = trimmed.filter(f => !existing.some(m => m.content.includes(f)))
+  const novel = trimmed.filter(f => !existing.some(m => m.content.includes(f.text)))
   if (!novel.length) return
 
-  const candidates = await conflictCandidates(existing, novel)
+  const candidates = await conflictCandidates(existing, novel.map(f => f.text))
   const writes = await planMemoryWrites(novel, candidates)
 
   let added = 0, updated = 0, skipped = 0
   for (const w of writes) {
     if (w.op === 'NOOP') { skipped++; continue }
     if (w.op === 'UPDATE' && w.targetId) {
-      await db.update(spaceMemories).set({ content: w.fact, updatedAt: new Date() })
+      // Content changed, so the sources are no longer known to have been re-verified.
+      await db.update(spaceMemories)
+        .set({ content: w.fact, sources: w.sources ?? null, checkedAt: null, updatedAt: new Date() })
         .where(eq(spaceMemories.id, w.targetId))
       await embedMemory(w.targetId, w.fact)
       updated++
       continue
     }
-    await saveMemory(spaceId, w.fact, source, sessionId)
+    await saveMemory(spaceId, w.fact, source, sessionId, w.sources)
     added++
   }
   console.log(`  [memory] saved ${added} added, ${updated} updated, ${skipped} redundant (${candidates.length} candidates considered)`)
@@ -876,6 +971,7 @@ export async function saveMemory(
   content: string,
   source: 'tool' | 'extraction' | 'manual',
   sessionId?: string,
+  sources?: MemorySource[],
 ): Promise<string> {
   const trimmed = content.trim()
   if (!trimmed) return ''
@@ -886,9 +982,10 @@ export async function saveMemory(
   for (const m of existing) {
     if (m.content.includes(trimmed)) return m.id // existing is more detailed
     if (trimmed.includes(m.content)) {
-      // new content is more detailed — replace
+      // new content is more detailed — replace, carrying both sides' provenance forward
       const now = new Date()
-      await db.update(spaceMemories).set({ content: trimmed, updatedAt: now })
+      await db.update(spaceMemories)
+        .set({ content: trimmed, sources: unionSources(sources, m.sources) ?? null, checkedAt: null, updatedAt: now })
         .where(eq(spaceMemories.id, m.id))
       await embedMemory(m.id, trimmed)
       return m.id
@@ -905,6 +1002,10 @@ export async function saveMemory(
     // not exist yet and the insert would fail — silently losing the memory the model chose to
     // keep. Losing the link is acceptable; losing the fact is not.
     sessionId: sessionId && sessionExists(sessionId) ? sessionId : null,
+    // The cited pages were fetched live moments ago, so "last seen good" is now. Memories with no
+    // web sources (manual, tool calls that read nothing) stay unverified.
+    sources: sources?.length ? sources : null,
+    checkedAt: sources?.length ? Math.floor(Date.now() / 1000) : null,
     createdAt: now, updatedAt: now,
   })
   await embedMemory(id, trimmed)
@@ -923,6 +1024,7 @@ export async function extractMemoriesPostHoc(
   sessionId: string,
   userContent: string,
   assistantContent: string,
+  turnSources: MemorySource[] = [],
 ): Promise<void> {
   if (!userContent.trim()) return
   const t0 = performance.now()
@@ -936,19 +1038,21 @@ export async function extractMemoriesPostHoc(
   const combined = `User: ${userContent}\n\nAssistant: ${assistantContent}`
   const result = await generateText({
     model: getSmallModel(),
-    system: `Extract noteworthy facts, preferences, or decisions from this conversation that would be useful to remember for future conversations. Output one fact per line, prefixed with "- ". Only extract genuinely useful long-term facts, not ephemeral details. If there are no noteworthy facts, output "NONE".`,
+    system: `Extract noteworthy facts, preferences, decisions, or research findings from this conversation that would be useful in future conversations in this space. Write each as a single self-contained note of 1-3 sentences — include enough context that it stands on its own later. Preserve any [N] citation markers from the assistant's message that support the note. Output one note per line, prefixed with "- ". Only durable, useful information — skip ephemeral details. If there is nothing worth keeping, output "NONE".`,
     prompt: combined.slice(-maxChars),
-    maxOutputTokens: 300,
+    maxOutputTokens: 600,
   })
 
-  const lines = result.text.split('\n')
+  const facts = result.text.split('\n')
     .map(l => l.replace(/^-\s*/, '').trim())
-    .filter(l => l && l !== 'NONE' && l.length > 5 && l.length < 300)
+    .filter(l => l && l !== 'NONE')
+    .map(l => mapFactCitations(l, turnSources))
+    .filter(f => f.text.length > 5 && f.text.length < 400)
 
   // One planning call for the whole batch: routing each fact through saveMemory individually
   // would cost an extra small-model round-trip per fact on every turn.
-  await saveMemories(spaceId, lines, 'extraction', sessionId)
-  console.log(`  [memory] post-hoc extracted ${lines.length} facts in ${Math.round(performance.now() - t0)}ms (small model)`)
+  await saveMemories(spaceId, facts, 'extraction', sessionId)
+  console.log(`  [memory] post-hoc extracted ${facts.length} facts in ${Math.round(performance.now() - t0)}ms (small model)`)
 }
 
 /**
@@ -980,6 +1084,7 @@ export async function compactSpaceMemories(
 1. Merge near-duplicate or redundant facts into one
 2. Remove facts that are subsets of others
 3. Preserve all unique information
+Keep each fact self-contained and specific (1-3 sentences); never truncate concrete details to save space.
 Output ONLY the final list, one fact per line, prefixed with "- ". No other text. No preamble.
 Target: approximately ${tokensToChars(targetTokens)} characters total.`,
     prompt: input,
@@ -988,7 +1093,7 @@ Target: approximately ${tokensToChars(targetTokens)} characters total.`,
 
   const newFacts = result.text.split('\n')
     .map(l => l.replace(/^-\s*/, '').trim())
-    .filter(l => l.length > 5 && l.length < 500)
+    .filter(l => l.length > 5 && l.length < 700)
 
   if (!newFacts.length) {
     console.log(`  [compact] aborted — LLM returned no facts for space ${spaceId.slice(0, 8)}`)
@@ -1002,6 +1107,8 @@ Target: approximately ${tokensToChars(targetTokens)} characters total.`,
       and(eq(spaceMemories.spaceId, spaceId), eq(spaceMemories.alwaysKeep, false)),
     )
     for (const { id, content } of newMemories) {
+      // A merged fact has no single origin, so it carries no `sources`/`checkedAt` — the same
+      // accepted loss as `sessionId: null` here. Manual and always-keep rows keep their provenance.
       await tx.insert(spaceMemories).values({
         id, spaceId, content, source: 'compact',
         sessionId: null, createdAt: now, updatedAt: now,
@@ -1044,12 +1151,12 @@ export async function deepDreamSpace(
       system: `Extract long-term valuable facts from this conversation. Include both:
 - User context: preferences, decisions, constraints, recurring interests
 - Research findings: key facts, conclusions, standards, tools, or sources surfaced by the assistant that would be useful to recall in future conversations on this topic
-Output one fact per line prefixed with "- ". Be specific — capture the actual finding, not just the topic. Skip ephemeral details. If nothing worth keeping: output "NONE".`,
+Write each fact as 1-3 self-contained sentences. Output one fact per line prefixed with "- ". Be specific — capture the actual finding, not just the topic. Skip ephemeral details. If nothing worth keeping: output "NONE".`,
       prompt: conversation,
     })
     const facts = result.text.split('\n')
       .map(l => l.replace(/^-\s*/, '').trim())
-      .filter(l => l && l !== 'NONE' && l.length > 5 && l.length < 300)
+      .filter(l => l && l !== 'NONE' && l.length > 5 && l.length < 400)
     allExtracted.push(...facts)
   }
 
@@ -1078,6 +1185,7 @@ Tasks:
 3. If the same topic recurs across many facts, synthesize a general preference
 4. Preserve all unique constraints, decisions, and preferences
 
+Each fact may be 1-3 sentences; keep the specifics that make it usable.
 Output ONLY the final fact list, one per line, prefixed with "- ".
 Be ruthless: if in doubt, cut. Total output MUST NOT exceed ${targetChars} characters.`,
     prompt: inputLines,
@@ -1085,7 +1193,7 @@ Be ruthless: if in doubt, cut. Total output MUST NOT exceed ${targetChars} chara
 
   const newFacts = synthesis.text.split('\n')
     .map(l => l.replace(/^-\s*/, '').trim())
-    .filter(l => l.length > 5 && l.length < 500)
+    .filter(l => l.length > 5 && l.length < 700)
 
   if (!newFacts.length) {
     console.log(`  [deep-dream] synthesis returned no facts for space ${spaceId.slice(0, 8)}`)
@@ -1103,6 +1211,8 @@ Be ruthless: if in doubt, cut. Total output MUST NOT exceed ${targetChars} chara
       eq(spaceMemories.alwaysKeep, false),
     ))
     for (const { id, content } of newMemories) {
+      // Synthesised across many conversations with no fact-to-fact mapping, so no `sources`/
+      // `checkedAt` — same accepted loss as `sessionId: null`. Manual/always-keep rows survive.
       await tx.insert(spaceMemories).values({
         id, spaceId, content, source: 'compact',
         sessionId: null, createdAt: now, updatedAt: now,

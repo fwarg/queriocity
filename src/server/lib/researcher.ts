@@ -4,7 +4,7 @@ import type { LanguageModel, ModelMessage } from 'ai'
 import { webSearchMulti, type SearchResult, type EngineError, type SearchApiBudget } from './searxng.ts'
 import { isSearchApiEnabled } from './search-api.ts'
 import { searchUploads } from './files/uploads-search.ts'
-import { saveMemories, saveUserMemory, searchSpaceHistory } from './memory.ts'
+import { saveMemories, saveUserMemory, searchSpaceHistory, type MemorySource } from './memory.ts'
 import { ragMinRelevance } from './rag-settings.ts'
 import { fetchUrl, processUrlsForContext, urlLabel, MIN_URL_CONTEXT_CHARS, type UrlOutcome } from './fetch-url.ts'
 import { trimMessages, compressMessages, contextCharBudget, CONTEXT_RESERVE_FRACTION } from './trim-messages.ts'
@@ -172,6 +172,13 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
   // url → the result number it was first given this run, so a page the model fetches after seeing
   // it in a search hit is cited under the number it already has rather than assigned a second one.
   const sourceIndexByUrl = new Map<string, number>()
+  // url → {url, title} for every web source registered this turn, so a save_to_memory call can
+  // attach the pages the answer drew on. Best-effort: the tool fires mid-generation, so it captures
+  // only sources seen before the call.
+  const turnSourceByUrl = new Map<string, MemorySource>()
+  const noteSource = (url: string, title: string) => {
+    if (url && !turnSourceByUrl.has(url)) turnSourceByUrl.set(url, { url, title: title || url })
+  }
   let searchDead = false   // set once web search is confirmed unavailable for this request
   let completedSteps = 0
   // Term sets of every query already run this turn, pre-search included — the model is told the
@@ -240,7 +247,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
     system += `\n\nNote: an initial search has already been performed and the results are in the conversation. Use different, more specific queries for your follow-up search.`
     const args = { queries: initialQueries }
     const indexedInitial = initialResults.map(r => ({ ...r, index: nextIndex++ }))
-    for (const r of indexedInitial) sourceIndexByUrl.set(r.url, r.index)
+    for (const r of indexedInitial) { sourceIndexByUrl.set(r.url, r.index); noteSource(r.url, r.title) }
     augmentedMessages = [
       ...cleanMessages,
       { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'pre-0', toolName: 'web_search', input: args }] },
@@ -260,6 +267,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
         sourceIndexByUrl.set(url, index)
         await onSource?.({ index, title: urlLabel(url), url, content })
       }
+      noteSource(url, urlLabel(url))
       augmentedMessages = [
         ...augmentedMessages,
         { role: 'assistant', content: [{ type: 'tool-call', toolCallId: callId, toolName: 'fetch_url', input: { url } }] },
@@ -341,6 +349,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
         noteSeenUrl(egress, r.url)
         noteTaint(egress, r.content)
         if (!sourceIndexByUrl.has(r.url)) sourceIndexByUrl.set(r.url, r.index)
+        noteSource(r.url, r.title)
       }
       toolBudgetRemaining -= JSON.stringify(indexed).length
       return indexed
@@ -376,6 +385,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
           sourceIndexByUrl.set(url, index)
           await onSource?.({ index, title: urlLabel(url), url, content })
         }
+        noteSource(url, urlLabel(url))
         return { index, url, content }
       },
     }),
@@ -407,13 +417,13 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
 
   if (spaceId) {
     tools.save_to_memory = tool({
-      description: 'Save a noteworthy fact, preference, or decision to the space memory for future conversations. Keep entries concise (1-2 sentences).',
+      description: 'Save a noteworthy fact, preference, decision, or research finding to the space memory for future conversations. A few sentences with enough context to stand on its own.',
       inputSchema: z.object({ fact: z.string().describe('The fact to remember') }),
       execute: async ({ fact }) => {
         console.log(`  [memory] save_to_memory tool called: "${fact.slice(0, 80)}"`)
         // saveMemories, not saveMemory: a single fact still goes through conflict resolution, so
         // "I moved to SQLite" supersedes "I use Postgres" instead of sitting beside it.
-        await saveMemories(spaceId, [fact], 'tool', sessionId)
+        await saveMemories(spaceId, [{ text: fact, sources: [...turnSourceByUrl.values()] }], 'tool', sessionId)
         return 'Saved.'
       },
     })
