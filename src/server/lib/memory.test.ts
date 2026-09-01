@@ -9,7 +9,7 @@
 import './test-support/test-env.ts'
 
 import { describe, test, expect } from 'bun:test'
-import { selectMemories, isSensitiveFact, isDurableUserFact, mapFactCitations, type MemoryCandidate, type MemorySource } from './memory.ts'
+import { selectMemories, isSensitiveFact, isDurableUserFact, mapFactCitations, pickFallbackSources, MEMORY_MAX_SOURCES, type MemoryCandidate, type MemorySource, type RankableSource } from './memory.ts'
 
 /** ~1 token per 4 chars, matching the estimate selectMemories uses. */
 const mem = (id: string, tokens: number): MemoryCandidate =>
@@ -70,22 +70,22 @@ describe('mapFactCitations', () => {
     expect(f.sources).toEqual([src[0], src[2]])
   })
 
-  test('a line with no marker gets every turn source', () => {
+  test('a line with no marker leaves sources undefined for the caller to fill', () => {
     const f = mapFactCitations('The user prefers pnpm over npm.', src)
     expect(f.text).toBe('The user prefers pnpm over npm.')
-    expect(f.sources).toEqual(src)
-  })
-
-  test('no marker and no turn sources means no provenance', () => {
-    const f = mapFactCitations('A hand-typed style of note.', [])
-    expect(f.text).toBe('A hand-typed style of note.')
     expect(f.sources).toBeUndefined()
   })
 
-  test('an out-of-range marker is dropped, text still clean', () => {
+  test('markers that resolve to nothing give an empty list, not a fallback', () => {
     const f = mapFactCitations('Something cited badly [9].', src.slice(0, 2))
     expect(f.text).toBe('Something cited badly.')
-    expect(f.sources).toBeUndefined()
+    expect(f.sources).toEqual([])
+  })
+
+  test('caps the number of marker sources', () => {
+    const many: MemorySource[] = Array.from({ length: 9 }, (_, i) => ({ url: `https://x${i}.example`, title: `X${i}` }))
+    const f = mapFactCitations('Lots of citations [1][2][3][4][5][6][7][8][9].', many)
+    expect(f.sources).toHaveLength(MEMORY_MAX_SOURCES)
   })
 
   test('file labels are stripped from text and never mapped', () => {
@@ -97,6 +97,35 @@ describe('mapFactCitations', () => {
   test('a repeated marker yields one source', () => {
     const f = mapFactCitations('Backed twice [2][2].', src)
     expect(f.sources).toEqual([src[1]])
+  })
+})
+
+describe('pickFallbackSources (no reranker configured)', () => {
+  test('a short list passes through untouched', async () => {
+    const pool: RankableSource[] = [
+      { url: 'https://a.example', title: 'A' },
+      { url: 'https://b.example', title: 'B' },
+    ]
+    expect(await pickFallbackSources('any note', pool)).toEqual(pool)
+  })
+
+  test('a long list is deduped, sorted by citation index and capped', async () => {
+    const pool: RankableSource[] = [
+      { url: 'https://5.example', title: '5', index: 5 },
+      { url: 'https://1.example', title: '1', index: 1 },
+      { url: 'https://1.example', title: '1 dupe', index: 1 },
+      { url: 'https://9.example', title: '9', index: 9 },
+      { url: 'https://2.example', title: '2', index: 2 },
+      { url: 'https://3.example', title: '3', index: 3 },
+      { url: 'https://4.example', title: '4', index: 4 },
+      { url: 'https://8.example', title: '8', index: 8 },
+    ]
+    const picked = await pickFallbackSources('a note', pool)
+    expect(picked).toHaveLength(MEMORY_MAX_SOURCES)
+    expect(picked.map(s => s.url)).toEqual([
+      'https://1.example', 'https://2.example', 'https://3.example',
+      'https://4.example', 'https://5.example',
+    ])
   })
 })
 

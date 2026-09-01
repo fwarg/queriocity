@@ -12,8 +12,30 @@ import { splitGroupedCitations } from '../../shared/citations.ts'
 
 export interface MemorySource { url: string; title: string }
 
+/** A candidate source before it is trimmed to the stored `{url,title}` shape: keeps the citation
+ *  number and snippet so a memory's sources can be ranked by relevance to its text. */
+export interface RankableSource extends MemorySource { content?: string; index?: number }
+
 /** A fact on its way into space memory, optionally with the web sources that back it. */
 export interface MemoryFact { text: string; sources?: MemorySource[] }
+
+/** Most web sources to keep on one memory. A note backed by more than a handful of pages is worse
+ *  than one backed by none — the list stops being a pointer and becomes noise. Env-overridable
+ *  like the other memory tuning constants. */
+export const MEMORY_MAX_SOURCES = parseInt(process.env.MEMORY_MAX_SOURCES ?? '', 10) || 5
+
+const slimSource = (s: MemorySource): MemorySource => ({ url: s.url, title: s.title || s.url })
+
+function dedupeByUrl<T extends MemorySource>(sources: T[]): T[] {
+  const seen = new Set<string>()
+  const out: T[] = []
+  for (const s of sources) {
+    if (!s?.url || seen.has(s.url)) continue
+    seen.add(s.url)
+    out.push(s)
+  }
+  return out
+}
 
 export interface SpaceMemory {
   id: string
@@ -30,59 +52,84 @@ export interface SpaceMemory {
   updatedAt: Date
 }
 
-/** Concat two source lists, drop entries without a url, dedupe by url. `undefined` when empty so a
- *  drizzle `.set({ sources })` writes NULL rather than `[]`. */
+/** Concat source lists, drop entries without a url, dedupe by url, cap at `MEMORY_MAX_SOURCES`.
+ *  `undefined` when empty so a drizzle `.set({ sources })` writes NULL rather than `[]`. Earlier
+ *  lists win a tie, so on an UPDATE the incoming fact's sources are kept ahead of the old ones. */
 function unionSources(...lists: (MemorySource[] | null | undefined)[]): MemorySource[] | undefined {
-  const seen = new Set<string>()
-  const out: MemorySource[] = []
-  for (const list of lists) {
-    for (const s of list ?? []) {
-      if (!s?.url || seen.has(s.url)) continue
-      seen.add(s.url)
-      out.push({ url: s.url, title: s.title || s.url })
-    }
-  }
+  const out = dedupeByUrl(lists.flatMap(l => l ?? [])).map(slimSource).slice(0, MEMORY_MAX_SOURCES)
   return out.length ? out : undefined
 }
 
 /** Coerce a stored-source array — a turn's reference list, or the `sources` JSON on a persisted
- *  message — to the `{url,title}` shape, preserving order and dropping anything without a url. */
-export function toMemorySources(raw: unknown): MemorySource[] {
+ *  message — preserving order, citation index and snippet, and dropping anything without a url. */
+export function toMemorySources(raw: unknown): RankableSource[] {
   if (!Array.isArray(raw)) return []
-  const out: MemorySource[] = []
+  const out: RankableSource[] = []
   for (const s of raw) {
-    const url = s && typeof s === 'object' ? (s as Record<string, unknown>).url : undefined
-    if (typeof url !== 'string' || !url) continue
-    const title = s && typeof s === 'object' ? (s as Record<string, unknown>).title : undefined
-    out.push({ url, title: typeof title === 'string' && title ? title : url })
+    if (!s || typeof s !== 'object') continue
+    const r = s as Record<string, unknown>
+    if (typeof r.url !== 'string' || !r.url) continue
+    out.push({
+      url: r.url,
+      title: typeof r.title === 'string' && r.title ? r.title : r.url,
+      content: typeof r.content === 'string' ? r.content : undefined,
+      index: typeof r.index === 'number' ? r.index : undefined,
+    })
   }
   return out
+}
+
+/** Choose up to `MEMORY_MAX_SOURCES` of the turn's sources for a note that carried no `[N]` marker
+ *  of its own. The reranker (when configured) scores each source against the note text; otherwise
+ *  citation order — the researcher's own relevance ordering — is the tie-breaker. */
+export async function pickFallbackSources(
+  text: string,
+  turnSources: RankableSource[],
+): Promise<MemorySource[]> {
+  const pool = dedupeByUrl(turnSources)
+  if (pool.length <= MEMORY_MAX_SOURCES) return pool.map(slimSource)
+
+  if (rerankEnabled) {
+    try {
+      const docs = pool.map(s => (s.content ? `${s.title} — ${s.content}` : s.title))
+      const ranked = (await rerank(text, docs, MEMORY_MAX_SOURCES))
+        .map(i => pool[i]).filter((s): s is RankableSource => s != null)
+      if (ranked.length) return ranked.slice(0, MEMORY_MAX_SOURCES).map(slimSource)
+    } catch (e) {
+      console.error('  [memory] source rerank failed, falling back to citation order:', e)
+    }
+  }
+  return [...pool]
+    .sort((a, b) => (a.index ?? Number.MAX_SAFE_INTEGER) - (b.index ?? Number.MAX_SAFE_INTEGER))
+    .slice(0, MEMORY_MAX_SOURCES)
+    .map(slimSource)
 }
 
 /** Inputs for a retroactive extraction over a whole session's stored messages (chat moved into a
  *  space, or "recreate memories"). Several assistant messages get concatenated and each one's `[N]`
  *  markers are positional to its own source list, so the numbers collide — strip them, and hand the
- *  extractor the whole per-session source union (which `mapFactCitations` then attaches to every
- *  note as the no-marker fallback). */
+ *  extractor the per-session source pool, which `pickFallbackSources` then ranks and caps per note. */
 export function retroExtractionInputs(
   msgs: Array<{ role: 'user' | 'assistant'; content: string; sources: string | null }>,
-): { userContent: string; assistantContent: string; sources: MemorySource[] } {
+): { userContent: string; assistantContent: string; sources: RankableSource[] } {
   const userContent = msgs.filter(m => m.role === 'user').map(m => m.content).join('\n\n')
   const assistantContent = msgs.filter(m => m.role === 'assistant')
     .map(m => m.content.replace(/\[\d+\]/g, '')).join('\n\n')
-  const sources: MemorySource[] = []
+  const sources: RankableSource[] = []
   for (const m of msgs) {
     if (!m.sources) continue
     try { sources.push(...toMemorySources(JSON.parse(m.sources))) } catch { /* skip unparseable */ }
   }
-  return { userContent, assistantContent, sources }
+  return { userContent, assistantContent, sources: dedupeByUrl(sources) }
 }
 
-/** Map one extracted line's `[N]` citation markers onto the turn's ordered source list, and strip
- *  the markers (and any `[F1]`/`[C1]` file labels) from the text that gets stored.
+/** Strip a line's `[N]` markers (and any `[F1]`/`[C1]` file labels) from the text that gets stored,
+ *  and resolve the numeric ones against the turn's ordered source list.
  *
- *  A line with no numeric marker gets *all* the turn's sources — coarse but honest: the note came
- *  from this exchange and the exchange cited these pages. Pure, so the mapping is unit-tested. */
+ *  `sources` is set only when the line carried markers: those are the pages that specific note is
+ *  about, capped at `MEMORY_MAX_SOURCES`. `sources: []` means it cited markers that resolved to
+ *  nothing. `sources: undefined` means no marker at all — the caller ranks the whole turn pool with
+ *  `pickFallbackSources`. Pure, so the mapping is unit-tested. */
 export function mapFactCitations(rawLine: string, turnSources: MemorySource[] = []): MemoryFact {
   const normalized = splitGroupedCitations(rawLine)
   const nums = new Set<number>()
@@ -94,11 +141,9 @@ export function mapFactCitations(rawLine: string, turnSources: MemorySource[] = 
     .replace(/\s{2,}/g, ' ')
     .trim()
 
-  const picked = nums.size
-    ? [...nums].sort((a, b) => a - b).map(n => turnSources[n - 1])
-    : turnSources
-  const sources = unionSources(picked)
-  return sources ? { text, sources } : { text }
+  if (!nums.size) return { text }
+  const picked = [...nums].sort((a, b) => a - b).map(n => turnSources[n - 1]).filter(Boolean)
+  return { text, sources: unionSources(picked) ?? [] }
 }
 
 /** Renders retrieved excerpts into a prompt block, spending a token budget newest-relevance-first.
@@ -975,6 +1020,8 @@ export async function saveMemory(
 ): Promise<string> {
   const trimmed = content.trim()
   if (!trimmed) return ''
+  // Storage backstop: whatever the caller passes, a memory never keeps more than the cap.
+  const capped = sources?.length ? dedupeByUrl(sources).map(slimSource).slice(0, MEMORY_MAX_SOURCES) : undefined
 
   const existing = await db.select().from(spaceMemories)
     .where(eq(spaceMemories.spaceId, spaceId))
@@ -985,7 +1032,7 @@ export async function saveMemory(
       // new content is more detailed — replace, carrying both sides' provenance forward
       const now = new Date()
       await db.update(spaceMemories)
-        .set({ content: trimmed, sources: unionSources(sources, m.sources) ?? null, checkedAt: null, updatedAt: now })
+        .set({ content: trimmed, sources: unionSources(capped, m.sources) ?? null, checkedAt: null, updatedAt: now })
         .where(eq(spaceMemories.id, m.id))
       await embedMemory(m.id, trimmed)
       return m.id
@@ -1004,8 +1051,8 @@ export async function saveMemory(
     sessionId: sessionId && sessionExists(sessionId) ? sessionId : null,
     // The cited pages were fetched live moments ago, so "last seen good" is now. Memories with no
     // web sources (manual, tool calls that read nothing) stay unverified.
-    sources: sources?.length ? sources : null,
-    checkedAt: sources?.length ? Math.floor(Date.now() / 1000) : null,
+    sources: capped ?? null,
+    checkedAt: capped ? Math.floor(Date.now() / 1000) : null,
     createdAt: now, updatedAt: now,
   })
   await embedMemory(id, trimmed)
@@ -1024,7 +1071,7 @@ export async function extractMemoriesPostHoc(
   sessionId: string,
   userContent: string,
   assistantContent: string,
-  turnSources: MemorySource[] = [],
+  turnSources: RankableSource[] = [],
 ): Promise<void> {
   if (!userContent.trim()) return
   const t0 = performance.now()
@@ -1043,11 +1090,19 @@ export async function extractMemoriesPostHoc(
     maxOutputTokens: 600,
   })
 
-  const facts = result.text.split('\n')
+  const mapped = result.text.split('\n')
     .map(l => l.replace(/^-\s*/, '').trim())
     .filter(l => l && l !== 'NONE')
     .map(l => mapFactCitations(l, turnSources))
     .filter(f => f.text.length > 5 && f.text.length < 400)
+
+  // A note that named its own `[N]` keeps exactly those; one that named none gets the turn's
+  // sources ranked against its text and capped, rather than the whole (often dozens-long) list.
+  // Serial, not Promise.all: a local reranker is happier with one request at a time.
+  const facts: MemoryFact[] = []
+  for (const f of mapped) {
+    facts.push(f.sources !== undefined ? f : { text: f.text, sources: await pickFallbackSources(f.text, turnSources) })
+  }
 
   // One planning call for the whole batch: routing each fact through saveMemory individually
   // would cost an extra small-model round-trip per fact on every turn.

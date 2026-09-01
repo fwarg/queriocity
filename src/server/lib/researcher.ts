@@ -4,7 +4,7 @@ import type { LanguageModel, ModelMessage } from 'ai'
 import { webSearchMulti, type SearchResult, type EngineError, type SearchApiBudget } from './searxng.ts'
 import { isSearchApiEnabled } from './search-api.ts'
 import { searchUploads } from './files/uploads-search.ts'
-import { saveMemories, saveUserMemory, searchSpaceHistory, type MemorySource } from './memory.ts'
+import { saveMemories, saveUserMemory, searchSpaceHistory, MEMORY_MAX_SOURCES, type MemorySource } from './memory.ts'
 import { ragMinRelevance } from './rag-settings.ts'
 import { fetchUrl, processUrlsForContext, urlLabel, MIN_URL_CONTEXT_CHARS, type UrlOutcome } from './fetch-url.ts'
 import { trimMessages, compressMessages, contextCharBudget, CONTEXT_RESERVE_FRACTION } from './trim-messages.ts'
@@ -423,7 +423,9 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
         console.log(`  [memory] save_to_memory tool called: "${fact.slice(0, 80)}"`)
         // saveMemories, not saveMemory: a single fact still goes through conflict resolution, so
         // "I moved to SQLite" supersedes "I use Postgres" instead of sitting beside it.
-        await saveMemories(spaceId, [{ text: fact, sources: [...turnSourceByUrl.values()] }], 'tool', sessionId)
+        // Cap to the earliest few registered this turn — the pages the answer leaned on most.
+        const factSources = [...turnSourceByUrl.values()].slice(0, MEMORY_MAX_SOURCES)
+        await saveMemories(spaceId, [{ text: fact, sources: factSources }], 'tool', sessionId)
         return 'Saved.'
       },
     })

@@ -5,18 +5,26 @@
 // Must precede the imports below — they reach lib/auth.ts and lib/db.ts, which read env at load.
 import '../lib/test-support/test-env.ts'
 
-import { describe, test, expect, beforeAll, beforeEach } from 'bun:test'
+import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test'
 import { Hono } from 'hono'
-import { db, users, spaces, spaceMemories } from '../lib/db.ts'
+import { db, users, spaces, spaceMemories, EMBED_DIMS } from '../lib/db.ts'
 import { eq } from 'drizzle-orm'
 import { memoriesRouter } from './memories.ts'
 import { signToken, AUTH_COOKIE } from '../lib/auth.ts'
+import { startFakeEmbeddings } from '../lib/test-support/fake-embeddings.ts'
+import { envOverride } from '../lib/test-support/env-override.ts'
 
 const app = new Hono().route('/spaces', memoriesRouter)
 
 let cookie = ''
+let embedServer: ReturnType<typeof startFakeEmbeddings>
+let restoreEnv: () => void
 
 beforeAll(async () => {
+  // saveMemory re-embeds every write; without a stub that call retries a dead port for ~5s a test.
+  embedServer = startFakeEmbeddings(EMBED_DIMS)
+  restoreEnv = envOverride({ EMBED_BASE_URL: embedServer.baseURL, EMBED_API_KEY: 'test', EMBED_MODEL: 'fake-embed' })
+
   const now = new Date()
   await db.insert(users).values({
     id: 'provu', email: 'provu@example.com', name: null, role: 'user',
@@ -24,6 +32,11 @@ beforeAll(async () => {
   })
   await db.insert(spaces).values({ id: 'provs', name: 'provs', userId: 'provu', createdAt: now, updatedAt: now })
   cookie = `${AUTH_COOKIE}=${await signToken({ userId: 'provu', email: 'provu@example.com', role: 'user', tokenVersion: 0 })}`
+})
+
+afterAll(() => {
+  embedServer?.stop()
+  restoreEnv?.()
 })
 
 beforeEach(async () => {
