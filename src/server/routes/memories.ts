@@ -5,7 +5,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { COLLECTION_HOLDS_NO_CHATS } from '../lib/ownership.ts'
-import { getSpaceMemories, saveMemory, compactSpaceMemories, extractMemoriesPostHoc, embedMemory, deleteMemoryEmbeddings } from '../lib/memory.ts'
+import { getSpaceMemories, saveMemory, compactSpaceMemories, extractMemoriesPostHoc, retroExtractionInputs, embedMemory, deleteMemoryEmbeddings } from '../lib/memory.ts'
 import { getAppSetting } from '../lib/db.ts'
 import { indexSession } from '../lib/chat-indexer.ts'
 import { generateText } from 'ai'
@@ -73,7 +73,7 @@ memoriesRouter.post('/:spaceId/rebuild-chat-index', async (c) => {
 })
 
 memoriesRouter.post('/:spaceId/memories', zValidator('json', z.object({
-  content: z.string().min(1).max(500),
+  content: z.string().min(1).max(600),
 })), async (c) => {
   const userId = c.get('userId') as string
   const spaceId = c.req.param('spaceId')
@@ -89,7 +89,7 @@ memoriesRouter.post('/:spaceId/memories', zValidator('json', z.object({
 })
 
 memoriesRouter.patch('/:spaceId/memories/:id', zValidator('json', z.object({
-  content: z.string().min(1).max(500).optional(),
+  content: z.string().min(1).max(600).optional(),
   alwaysKeep: z.boolean().optional(),
 })), async (c) => {
   const userId = c.get('userId') as string
@@ -104,14 +104,17 @@ memoriesRouter.patch('/:spaceId/memories/:id', zValidator('json', z.object({
   const { content, alwaysKeep } = c.req.valid('json')
   if (content == null && alwaysKeep == null) return c.json({ error: 'Nothing to update' }, 400)
 
+  const contentChanged = content != null && content !== memory.content
   await db.update(spaceMemories).set({
     ...(content != null ? { content } : {}),
     ...(alwaysKeep != null ? { alwaysKeep } : {}),
+    // A hand-edit is not a re-verification against the sources — clear the timestamp, keep the links.
+    ...(contentChanged ? { checkedAt: null } : {}),
     updatedAt: new Date(),
   }).where(eq(spaceMemories.id, id))
 
   // Edited text must be re-embedded or relevance ranking keeps scoring the old wording.
-  if (content != null && content !== memory.content) await embedMemory(id, content)
+  if (contentChanged) await embedMemory(id, content)
   return c.json({ ok: true })
 })
 
@@ -185,11 +188,10 @@ memoriesRouter.post('/:spaceId/recreate-memories', async (c) => {
       send({ processing: i + 1, total })
       const session = chats[i]
       const msgs = await db.select().from(messages).where(eq(messages.sessionId, session.id))
-      const userContent = msgs.filter(m => m.role === 'user').map(m => m.content).join('\n\n')
-      const assistantContent = msgs.filter(m => m.role === 'assistant').map(m => m.content).join('\n\n')
+      const { userContent, assistantContent, sources } = retroExtractionInputs(msgs)
       if (userContent.trim()) {
         try {
-          await extractMemoriesPostHoc(spaceId, session.id, userContent, assistantContent)
+          await extractMemoriesPostHoc(spaceId, session.id, userContent, assistantContent, sources)
         } catch (e) {
           console.error(`  [recreate] extraction failed for session ${session.id.slice(0, 8)}:`, e)
           errors++

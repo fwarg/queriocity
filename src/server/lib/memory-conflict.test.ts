@@ -269,3 +269,61 @@ describe('write-time conflict resolution', () => {
     expect(await contents()).toHaveLength(1)
   })
 })
+
+describe('provenance', () => {
+  const rows = async () =>
+    db.select().from(spaceMemories).where(eq(spaceMemories.spaceId, 'cs'))
+
+  test('a fact saved with sources keeps them and gets a checked_at timestamp', async () => {
+    await reset()
+    await saveMemories('cs', [
+      { text: 'Postgres 17 is the current stable release', sources: [{ url: 'https://p.example', title: 'PG' }] },
+    ], 'extraction')
+
+    const [row] = await rows()
+    expect(row.sources).toEqual([{ url: 'https://p.example', title: 'PG' }])
+    expect(row.checkedAt).toBeGreaterThan(0)
+  })
+
+  test('a plain string fact still saves, with no provenance', async () => {
+    await reset()
+    await saveMemories('cs', ['A plain fact with no sources'], 'tool')
+
+    const [row] = await rows()
+    expect(row.sources).toBeNull()
+    expect(row.checkedAt).toBeNull()
+  })
+
+  test('an UPDATE unions old and new sources and clears the stale checked_at', async () => {
+    await reset()
+    const id = await saveMemory('cs', 'The user runs Postgres', 'extraction', undefined,
+      [{ url: 'https://old.example', title: 'old' }])
+    await db.update(spaceMemories).set({ checkedAt: 1_000_000 }).where(eq(spaceMemories.id, id))
+    plannerReply = '[{"i":0,"op":"UPDATE","target":0}]'
+
+    await saveMemories('cs', [
+      { text: 'The user moved to SQLite', sources: [{ url: 'https://new.example', title: 'new' }] },
+    ], 'extraction')
+
+    const all = await rows()
+    expect(all).toHaveLength(1)
+    expect(all[0].content).toBe('The user moved to SQLite')
+    expect(all[0].sources?.map(s => s.url).sort()).toEqual(['https://new.example', 'https://old.example'])
+    expect(all[0].checkedAt).toBeNull()
+  })
+
+  test('a locked target downgrades to ADD but the new fact keeps its sources', async () => {
+    await reset()
+    await saveMemory('cs', 'The user runs Postgres', 'manual')
+    plannerReply = '[{"i":0,"op":"UPDATE","target":0}]'
+
+    await saveMemories('cs', [
+      { text: 'The user moved to SQLite', sources: [{ url: 'https://s.example', title: 's' }] },
+    ], 'extraction')
+
+    const all = await rows()
+    expect(all.find(r => r.content === 'The user moved to SQLite')?.sources)
+      .toEqual([{ url: 'https://s.example', title: 's' }])
+    expect(all.find(r => r.content === 'The user runs Postgres')?.sources).toBeNull()
+  })
+})

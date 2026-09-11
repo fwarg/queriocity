@@ -6,8 +6,8 @@ import { db, chatSessions, messages, users, parseSettings, getAppSetting } from 
 import { eq } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { webSearch, webSearchMulti, type SearchResult, type SearchApiBudget } from './searxng.ts'
-import { getFlashModel, getChatModel } from './llm.ts'
-import { buildMemoryBlock, extractMemoriesPostHoc, userMemoryBlockIfEnabled, joinMemoryBlocks } from './memory.ts'
+import { getFlashModel, getChatModel, DEFAULT_MEMORY_TOKEN_BUDGET } from './llm.ts'
+import { buildMemoryBlock, extractMemoriesPostHoc, userMemoryBlockIfEnabled, joinMemoryBlocks, toMemorySources } from './memory.ts'
 import { ThinkExtractor } from './think-extractor.ts'
 import { CitationNormalizer } from './citation-normalizer.ts'
 import { indexContents } from './chat-indexer.ts'
@@ -48,7 +48,7 @@ export async function executeChatAndSave({
   if (focusMode === 'flash') {
     const [userRow, memoryBudget] = await Promise.all([
       db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get(),
-      spaceId ? getAppSetting('memory_token_budget', '1000').then(Number) : Promise.resolve(0),
+      spaceId ? getAppSetting('memory_token_budget', DEFAULT_MEMORY_TOKEN_BUDGET).then(Number) : Promise.resolve(0),
     ])
     const parsedSettings = parseSettings(userRow?.settings ?? '{}')
     const customPrompt = parsedSettings.customPrompt as string | undefined
@@ -78,7 +78,7 @@ export async function executeChatAndSave({
       : await reformulateAndSearch(promptText, focusMode, undefined, apiBudget)
     const [userRow, memoryBudget, ragBudget, urlContextChars, fetchSummarize, compressHistory] = await Promise.all([
       db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get(),
-      spaceId ? getAppSetting('memory_token_budget', '1000').then(Number) : Promise.resolve(0),
+      spaceId ? getAppSetting('memory_token_budget', DEFAULT_MEMORY_TOKEN_BUDGET).then(Number) : Promise.resolve(0),
       getAppSetting('space_rag_budget', '500').then(Number),
       getAppSetting('fetch_max_url_context_chars', String(DEFAULT_MAX_URL_CONTEXT_CHARS)).then(Number),
       getAppSetting('fetch_summarize_overflow', 'false').then(v => v === 'true'),
@@ -167,7 +167,7 @@ export async function executeChatAndSave({
   await db.update(chatSessions).set({ updatedAt: savedAt }).where(eq(chatSessions.id, sessionId))
 
   if (spaceId && fullContent) {
-    extractMemoriesPostHoc(spaceId, sessionId, promptText, fullContent).catch(e => console.error('[monitor-memory]', e))
+    extractMemoriesPostHoc(spaceId, sessionId, promptText, fullContent, toMemorySources(sources)).catch(e => console.error('[monitor-memory]', e))
     indexContents(sessionId, [promptText, fullContent]).catch(e => console.error('[monitor-index]', e))
   }
 }

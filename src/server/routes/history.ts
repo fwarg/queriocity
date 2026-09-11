@@ -5,7 +5,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { COLLECTION_HOLDS_NO_CHATS } from '../lib/ownership.ts'
-import { extractMemoriesPostHoc } from '../lib/memory.ts'
+import { extractMemoriesPostHoc, retroExtractionInputs } from '../lib/memory.ts'
 import { deleteSessionImages } from '../lib/image-store.ts'
 import { canMoveChat } from '../lib/space-lock.ts'
 import { deindexSession, indexSession } from '../lib/chat-indexer.ts'
@@ -136,10 +136,9 @@ historyRouter.patch('/:id', zValidator('json', z.object({
     } else {
       // Newly assigned to a space — retroactively extract memories and index chat history
       const msgs = await db.select().from(messages).where(eq(messages.sessionId, id))
-      const userContent = msgs.filter(m => m.role === 'user').map(m => m.content).join('\n\n')
-      const assistantContent = msgs.filter(m => m.role === 'assistant').map(m => m.content).join('\n\n')
+      const { userContent, assistantContent, sources } = retroExtractionInputs(msgs)
       if (userContent) {
-        extractMemoriesPostHoc(body.spaceId, id, userContent, assistantContent)
+        extractMemoriesPostHoc(body.spaceId, id, userContent, assistantContent, sources)
           .catch(e => console.error('[memory] retroactive extraction failed:', e))
       }
       indexSession(id).catch(e => console.error('[chat-index] retroactive index failed:', e))
@@ -162,10 +161,9 @@ historyRouter.post('/:id/recreate-memories', async (c) => {
   await db.delete(spaceMemories).where(and(eq(spaceMemories.sessionId, id), ne(spaceMemories.source, 'manual')))
 
   const msgs = await db.select().from(messages).where(eq(messages.sessionId, id))
-  const userContent = msgs.filter(m => m.role === 'user').map(m => m.content).join('\n\n')
-  const assistantContent = msgs.filter(m => m.role === 'assistant').map(m => m.content).join('\n\n')
+  const { userContent, assistantContent, sources } = retroExtractionInputs(msgs)
   if (userContent) {
-    extractMemoriesPostHoc(session.spaceId, id, userContent, assistantContent)
+    extractMemoriesPostHoc(session.spaceId, id, userContent, assistantContent, sources)
       .catch(e => console.error('[memory] recreate extraction failed:', e))
   }
   indexSession(id).catch(e => console.error('[chat-index] reindex failed:', e))

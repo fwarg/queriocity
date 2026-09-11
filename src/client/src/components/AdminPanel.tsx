@@ -17,7 +17,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   const [tab, setTab] = useState<Tab>('settings')
 
   // Settings tab state
-  const [budgetDraft, setBudgetDraft] = useState('1000')
+  const [budgetDraft, setBudgetDraft] = useState('1500')
   const [dreamHourDraft, setDreamHourDraft] = useState('-1')
   const [dreamThresholdDraft, setDreamThresholdDraft] = useState('1500')
   const [dreamTargetDraft, setDreamTargetDraft] = useState('700')

@@ -97,6 +97,12 @@ export const spaceMemories = sqliteTable('space_memories', {
   sessionId: text('session_id').references(() => chatSessions.id, { onDelete: 'set null' }),
   /** User-set: always injected regardless of relevance, and never merged away by compaction. */
   alwaysKeep: integer('always_keep', { mode: 'boolean' }).notNull().default(false),
+  /** Web sources the memory was extracted from, for the panel and a future verify pass. Never
+   *  injected into the prompt. Null for hand-typed, tool-less, and compacted/dreamed memories. */
+  sources: text('sources', { mode: 'json' }).$type<{ url: string; title: string }[]>(),
+  /** Unix seconds when the cited sources were last seen to support the memory. Null = unverified.
+   *  Plain integer, not a timestamp column, to keep the JSON wire value unambiguous. */
+  checkedAt: integer('checked_at'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 })
@@ -322,6 +328,8 @@ function initSchema() {
       source      TEXT NOT NULL DEFAULT 'tool' CHECK(source IN ('tool','extraction','manual','compact')),
       session_id  TEXT REFERENCES chat_sessions(id) ON DELETE SET NULL,
       always_keep INTEGER NOT NULL DEFAULT 0,
+      sources     TEXT,
+      checked_at  INTEGER,
       created_at  INTEGER NOT NULL,
       updated_at  INTEGER NOT NULL
     );
@@ -416,10 +424,17 @@ function initSchema() {
   // Leftover from when the rebuild above ran unconditionally.
   sqlite.run(`DROP TABLE IF EXISTS space_memories_v2`)
 
+  // The rebuild block above copies only the seven original columns; every column added since —
+  // always_keep, sources, checked_at — is (re-)added by the ALTERs below, which no-op once applied.
   // Migration: per-memory "always keep" flag (see spaceMemories schema).
   try {
     sqlite.run(`ALTER TABLE space_memories ADD COLUMN always_keep INTEGER NOT NULL DEFAULT 0`)
   } catch {}
+
+  // Migration: space-memory provenance (see spaceMemories schema). Both nullable and best-effort —
+  // a memory with no cited web sources or no verification timestamp is the normal case.
+  try { sqlite.run(`ALTER TABLE space_memories ADD COLUMN sources TEXT`) } catch {}
+  try { sqlite.run(`ALTER TABLE space_memories ADD COLUMN checked_at INTEGER`) } catch {}
 
   sqlite.run(`CREATE TABLE IF NOT EXISTS user_memories (
     id          TEXT PRIMARY KEY,

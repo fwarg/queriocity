@@ -154,6 +154,9 @@ export const sv: Catalog = {
   'memory.sourceExtracted': 'extraherat',
   'memory.sourceCompact': 'komprimerat',
   'memory.sourceManual': 'manuellt',
+  'memory.sourcesTitle': 'Källor som minnet bygger på',
+  'memory.checked': 'kontrollerat {date}',
+  'memory.checkedTitle': 'De angivna källorna bekräftade senast detta minne {date}',
 
   // --- Resurser ---
   'files.none': 'Inga resurser än. Ladda upp en fil eller lägg till en URL.',

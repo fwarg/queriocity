@@ -158,6 +158,9 @@ export const en = {
   'memory.sourceExtracted': 'extracted',
   'memory.sourceCompact': 'compact',
   'memory.sourceManual': 'manual',
+  'memory.sourcesTitle': 'Sources this memory was drawn from',
+  'memory.checked': 'checked {date}',
+  'memory.checkedTitle': 'The cited sources were last seen to support this memory on {date}',
 
   // --- Resources ---
   'files.none': 'No resources yet. Upload a file or add a URL.',
