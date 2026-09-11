@@ -27,6 +27,7 @@ through a single Bun process.
     - [Searching within a chat](#searching-within-a-chat)
   - [Research modes](#research-modes)
     - [Search category filtering](#search-category-filtering)
+    - [spejaren (small-web index)](#spejaren-small-web-index)
   - [Resources](#resources)
     - [Chat attachment (ephemeral)](#chat-attachment-ephemeral)
     - [Library upload (persistent)](#library-upload-persistent-vector-searchable)
@@ -236,6 +237,18 @@ In **Balanced** and **Thorough** modes, an **All ▾** button appears at the rig
 | **tech** | IT / technology engines |
 
 Categories are multi-select — e.g. "news+science" searches both simultaneously. When no category is selected (the default), all engines are used. The button label shows the active selection (e.g. `news+discussions ▾`).
+
+With [spejaren](#spejaren-small-web-index) configured, **discussions** and **tech** restrict it too (to its `forums` and `docs` filters), while **news** and **science** leave it out, since it has no index for them.
+
+### spejaren (small-web index)
+
+spejaren is a self-hosted search engine over small, hand-picked websites. When `SPEJAREN_URL` is set, every web search also queries it, in parallel with SearXNG:
+
+- Its hits are added on top of SearXNG's (`SPEJAREN_COUNT`, default 4), interleaved with them, and ranked on equal terms by the reranker. Each snippet starts with a `[spejaren · site · language · date]` header and is a passage chosen for the query.
+- Several hits from one site are kept; the one-result-per-domain rule applies to SearXNG's results only.
+- It never delays or breaks a search: a request that fails or takes longer than `SPEJAREN_TIMEOUT_MS` (default 3000 ms) contributes nothing.
+- It does not count toward the keyed-API fallback, whose rules judge SearXNG's results alone.
+- `fetch_url` asks spejaren for its indexed copy of a page first, and fetches the page live only when spejaren does not have it. The copy is labelled with its crawl date.
 
 ---
 
@@ -485,6 +498,12 @@ Everything above is *detection* — it inspects each outbound request and judges
 a *capability* control instead: `web_search` and `fetch_url` are never offered to the model, pasted
 URLs are not fetched, and image generation is refused. There is no request to judge, so there is
 nothing to tune and nothing to get wrong.
+
+**One opt-in exception.** With `SPEJAREN_TRUSTED=true`, `web_search` stays available in locked spaces
+but searches only your own [spejaren](#spejaren-small-web-index) instance — never SearXNG or the
+keyed API — and `fetch_url` stays absent. The queries the model writes, which can be derived from
+your document, then reach spejaren and its search log. Set it only when spejaren runs on
+infrastructure you trust as much as the model server.
 
 Lock a space with the padlock beside its name in the sidebar. Every chat in it shows a lock, and the
 chat itself carries a banner for as long as it is open.
@@ -1059,6 +1078,13 @@ SEARXNG_URL=http://localhost:4000  # url to your searxng instance
 # SEARCH_MAJOR_ENGINES=duckduckgo,brave,startpage,mojeek,bing,google
 # SEARCH_TIMEOUT_MS=20000                     # per-query timeout; on timeout the search yields no results
 #                                              # instead of hanging the whole chat request
+
+# ── spejaren (optional) ───────────────────────────────────────────────────────
+# SPEJAREN_URL=http://spejaren:8000           # a spejaren small-web index; unset = not used
+# SPEJAREN_API_KEY=                           # the API key configured on the spejaren side
+# SPEJAREN_COUNT=4                            # hits spejaren adds to each web search, on top of SearXNG's
+# SPEJAREN_TIMEOUT_MS=3000                    # per request; on timeout spejaren contributes nothing
+# SPEJAREN_TRUSTED=false                      # true = searchable from locked spaces (see Locked spaces)
 
 # Query reformulation runs on the critical path of every balanced/thorough request, before any
 # output reaches the browser, so it is bounded like every other network call here. On timeout

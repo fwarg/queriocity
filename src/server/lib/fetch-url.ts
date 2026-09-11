@@ -4,8 +4,12 @@ import { YoutubeTranscript } from 'youtube-transcript'
 import { generateText } from 'ai'
 import { getSmallModel, SMALL_MODEL_INPUT_CHARS, CHARS_PER_TOKEN } from './llm.ts'
 import { assertFetchableUrl, BlockedUrlError } from './url-guard.ts'
+import { spejarenDocument } from './spejaren.ts'
 
 const MAX_CHARS = parseInt(process.env.FETCH_MAX_CHARS ?? '100000')
+// Shorter text counts as no page: the static fetch falls back to Playwright, pagination stops, and
+// a spejaren copy is passed over for a live fetch.
+const MIN_PAGE_CHARS = 300
 // Hard ceiling on bytes read off the wire, well above MAX_CHARS to leave room for markup:
 // the char cap is applied after stripping, so without this a huge page is fully buffered first.
 const MAX_BODY_BYTES = MAX_CHARS * 5
@@ -226,9 +230,18 @@ export async function fetchUrl(url: string): Promise<string> {
     }
   }
 
+  // spejaren's indexed copy first: already extracted, and no page load. The lookup goes to
+  // SPEJAREN_URL by the original URL, which assertFetchableUrl has already cleared.
+  const indexed = await spejarenDocument(url)
+  if (indexed && indexed.length >= MIN_PAGE_CHARS) {
+    const result = indexed.slice(0, MAX_CHARS)
+    console.log(`  [fetch-url] spejaren ${url} — ${result.length} chars in ${(performance.now() - start).toFixed(0)}ms`)
+    return cache(result)
+  }
+
   try {
     const text = await fetchStatic(url)
-    if (text.length >= 300) {
+    if (text.length >= MIN_PAGE_CHARS) {
       const result = text.slice(0, MAX_CHARS)
       console.log(`  [fetch-url] static ${url} — ${result.length}${text.length > MAX_CHARS ? ` chars (truncated from ${text.length})` : ' chars'} in ${(performance.now() - start).toFixed(0)}ms`)
       return cache(result)
@@ -276,7 +289,7 @@ export async function fetchUrlAllPages(url: string, maxPages = DEFAULT_MAX_PAGES
     const pageUrl = buildPageUrl(url, p)
     console.log(`  [fetch-url] page ${p}: ${pageUrl}`)
     const content = await fetchUrl(pageUrl)
-    if (content.startsWith('Error') || content.length < 300) {
+    if (content.startsWith('Error') || content.length < MIN_PAGE_CHARS) {
       console.log(`  [fetch-url] page ${p} empty/error — stopping at ${p - 1} pages`)
       break
     }

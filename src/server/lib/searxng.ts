@@ -1,4 +1,5 @@
 import { searchApi, isSearchApiEnabled, searchApiProvider } from './search-api.ts'
+import { spejarenSearch, spejarenCount } from './spejaren.ts'
 
 // Read per call, not at module load: a module-level const captures whatever was set when the
 // first importer pulled this in, which makes the value depend on import order (it silently
@@ -89,14 +90,8 @@ function dedupeByDomain(list: SearchResult[]): SearchResult[] {
   })
 }
 
-export async function webSearchMulti(
-  queries: string[],
-  countEach: number,
-  categories?: string,
-  onEngineErrors?: (errors: EngineError[]) => void,
-  apiBudget?: SearchApiBudget,
-): Promise<SearchResult[]> {
-  const batches = await Promise.all(queries.map(q => webSearch(q, countEach, categories, onEngineErrors, apiBudget)))
+/** Concatenate result batches, keeping the first occurrence of each URL. */
+function mergeBatches(batches: SearchResult[][]): SearchResult[] {
   const seen = new Set<string>()
   const results: SearchResult[] = []
   for (const batch of batches) {
@@ -110,6 +105,51 @@ export async function webSearchMulti(
   return results
 }
 
+export async function webSearchMulti(
+  queries: string[],
+  countEach: number,
+  categories?: string,
+  onEngineErrors?: (errors: EngineError[]) => void,
+  apiBudget?: SearchApiBudget,
+): Promise<SearchResult[]> {
+  return mergeBatches(await Promise.all(queries.map(q => webSearch(q, countEach, categories, onEngineErrors, apiBudget))))
+}
+
+/** spejaren alone, over several queries — the only search a locked space may run, and only with
+ *  SPEJAREN_TRUSTED set. Deliberately no fallback to SearXNG or the keyed API. */
+export async function trustedSearchMulti(queries: string[], countEach: number, categories?: string): Promise<SearchResult[]> {
+  return mergeBatches(await Promise.all(queries.map(q => spejarenSearch(q, countEach, categories))))
+}
+
+/** Interleave spejaren's hits with the other results.
+ *
+ *  Its hits have slots of their own (SPEJAREN_COUNT) instead of competing for `count`, so neither
+ *  source is sliced away to make room; the reranker later judges all of them on equal terms. They
+ *  also bypass dedupeByDomain: spejaren already caps hits per site, and two passages from one small
+ *  site are signal, not the duplication that dedup exists for. Where both sources returned the same
+ *  page spejaren's copy is kept, since its passage was chosen for this query. */
+export function mergeSpejaren(results: SearchResult[], spejaren: SearchResult[]): SearchResult[] {
+  if (!spejaren.length) return results
+  const covered = new Set(spejaren.map(r => pageKey(r.url)))
+  const rest = results.filter(r => !covered.has(pageKey(r.url)))
+  const merged: SearchResult[] = []
+  for (let i = 0; i < Math.max(rest.length, spejaren.length); i++) {
+    if (i < rest.length) merged.push(rest[i])
+    if (i < spejaren.length) merged.push(spejaren[i])
+  }
+  return merged
+}
+
+/** Page identity across sources that spell URLs differently: ignores scheme, www., trailing slash and fragment. */
+function pageKey(url: string): string {
+  try {
+    const u = new URL(url)
+    return u.hostname.replace(/^www\./, '') + u.pathname.replace(/\/+$/, '') + u.search
+  } catch {
+    return url
+  }
+}
+
 export async function webSearch(
   query: string,
   count = 10,
@@ -117,6 +157,31 @@ export async function webSearch(
   onEngineErrors?: (errors: EngineError[]) => void,
   apiBudget?: SearchApiBudget,
 ): Promise<SearchResult[]> {
+  // In parallel, so spejaren adds no latency beyond SearXNG's own; it yields [] on any failure.
+  const [searxng, spejaren] = await Promise.all([
+    searxngSearch(query, count, categories, onEngineErrors),
+    spejarenSearch(query, spejarenCount(count), categories),
+  ])
+  // The keyed-API top-up judges SearXNG's contribution alone: spejaren is a niche index, and a
+  // healthy count from it must not hide that the broad engines failed.
+  const results = searxng ? await topUpFromSearchApi(query, count, searxng, apiBudget) : []
+  return mergeSpejaren(results, spejaren)
+}
+
+interface SearxngOutcome {
+  /** Deduplicated by domain (unless site-scoped) and sliced to `count`. */
+  results: SearchResult[]
+  /** Engines that contributed at least one result. */
+  engines: Set<string>
+}
+
+/** Query SearXNG; null when the request itself failed, which also rules out a keyed-API top-up. */
+async function searxngSearch(
+  query: string,
+  count: number,
+  categories?: string,
+  onEngineErrors?: (errors: EngineError[]) => void,
+): Promise<SearxngOutcome | null> {
   const base = searxngUrl()
   const url = new URL('/search', base)
   url.searchParams.set('q', query)
@@ -132,11 +197,11 @@ export async function webSearch(
     res = await fetch(url.toString(), { signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS) })
   } catch (e) {
     console.error(`  [searxng] request failed for "${query}": ${e instanceof Error ? e.message : e}`)
-    return []
+    return null
   }
   if (!res.ok) {
     console.error(`  [searxng] error: ${res.status} for query "${query}"`)
-    return []
+    return null
   }
   const data = await res.json() as {
     results?: Array<{ title: string; url: string; content?: string; engine?: string; engines?: string[] }>
@@ -153,15 +218,23 @@ export async function webSearch(
     url: r.url,
     content: r.content ?? '',
   }))
-  const siteScoped = isSiteScoped(query)
-  const results = (siteScoped ? mapped : dedupeByDomain(mapped)).slice(0, count)
+  const results = (isSiteScoped(query) ? mapped : dedupeByDomain(mapped)).slice(0, count)
   const ms = (performance.now() - start).toFixed(0)
   // Which engines actually contributed (SearXNG tags each result with its source engines).
   const engines = new Set<string>()
   for (const r of data.results ?? []) for (const e of r.engines ?? (r.engine ? [r.engine] : [])) engines.add(e)
   const from = engines.size ? ` from ${[...engines].sort().join(', ')}` : ''
   console.log(`  [searxng] ${base} q="${query}" — ${ms}ms → ${results.length} results${from}`)
+  return { results, engines }
+}
 
+async function topUpFromSearchApi(
+  query: string,
+  count: number,
+  { results, engines }: SearxngOutcome,
+  apiBudget?: SearchApiBudget,
+): Promise<SearchResult[]> {
+  const siteScoped = isSiteScoped(query)
   // Keyed-API top-up, on either of two conditions, while the per-request budget allows:
   //  - too few results at all (blocked engines, or a thin trickle);
   //  - no major engine contributed, however many results came back. A healthy-looking count

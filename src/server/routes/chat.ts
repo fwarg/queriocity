@@ -28,6 +28,7 @@ import { trimMessages, contextCharBudget, CONTEXT_RESERVE_FRACTION } from '../li
 import { indexContents, deindexContent } from '../lib/chat-indexer.ts'
 import { ownsSpace, sessionOwnership } from '../lib/ownership.ts'
 import { isSpaceLocked } from '../lib/space-lock.ts'
+import { isSpejarenTrusted } from '../lib/spejaren.ts'
 import { rateLimitByUser, chatLimiter, suggestLimiter } from '../lib/rate-limit.ts'
 import {
   startRun, getRun, appendEvent, finishRun, waitForEvents,
@@ -264,7 +265,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   if (locked && focusMode === 'image') {
     return c.json({ error: 'Image generation is unavailable in a locked space — it would send the prompt to the diffusion server.' }, 409)
   }
-  if (locked) console.log(`  [space] locked — no web search, URL fetching or image generation`)
+  if (locked) console.log(`  [space] locked — no ${isSpejarenTrusted() ? 'web search beyond spejaren' : 'web search'}, URL fetching or image generation`)
 
   const lastUser = [...msgs].reverse().find(m => m.role === 'user')
   const preview = (lastUser?.content ?? '').slice(0, 100).replace(/\n/g, ' ')
