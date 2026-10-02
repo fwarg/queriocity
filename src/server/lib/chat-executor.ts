@@ -5,7 +5,7 @@ import { reformulateLLM } from './reformulate.ts'
 import { db, chatSessions, messages, users, parseSettings, getAppSetting } from './db.ts'
 import { eq } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
-import { webSearch, webSearchMulti, type SearchResult, type SearchApiBudget } from './searxng.ts'
+import { webSearch, webSearchMulti, newSearchBudget, type SearchResult, type SearchApiBudget } from './search/index.ts'
 import { getFlashModel, getChatModel, DEFAULT_MEMORY_TOKEN_BUDGET } from './llm.ts'
 import { buildMemoryBlock, extractMemoriesPostHoc, userMemoryBlockIfEnabled, joinMemoryBlocks, toMemorySources } from './memory.ts'
 import { ThinkExtractor } from './think-extractor.ts'
@@ -70,7 +70,7 @@ export async function executeChatAndSave({
     fullContent += flashExtractor.flush().text
   } else {
     // Shared per-run allowance for paid keyed-API fallback searches (pre-search + researcher).
-    const apiBudget: SearchApiBudget = { remaining: parseInt(process.env.SEARCH_API_MAX_PER_REQUEST ?? '3', 10) }
+    const apiBudget = await newSearchBudget()
 
     // When RSS feed items are pre-fetched, skip web search and inject them directly
     const { initialQueries, initialResults } = feedItems?.length

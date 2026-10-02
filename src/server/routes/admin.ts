@@ -15,6 +15,9 @@ import { rerank, rerankEnabled } from '../lib/reranker.ts'
 import { runDream, deleteMemoryEmbeddings } from '../lib/memory.ts'
 import { deleteFileChunks } from '../lib/vector-cleanup.ts'
 import { deleteUserImages } from '../lib/image-store.ts'
+import { describeProviders, PROVIDERS } from '../lib/search/index.ts'
+import { loadSearchPolicy, saveSearchPolicy, resetSearchPolicy, hasStoredSearchPolicy, searchPolicySchema } from '../lib/search/policy.ts'
+import { telemetrySnapshot } from '../lib/search/telemetry.ts'
 
 /** Random temporary password that satisfies validatePassword's complexity rules. */
 function generateTempPassword(): string {
@@ -106,6 +109,31 @@ adminRouter.patch('/settings', zValidator('json', z.object({
   if (body.compressHistoryOverflow != null) ops.push(setAppSetting('compress_history_overflow', String(body.compressHistoryOverflow)))
   if (body.resourceSummary != null) ops.push(setAppSetting('resource_summary', String(body.resourceSummary)))
   await Promise.all(ops)
+  return c.json({ ok: true })
+})
+
+adminRouter.get('/search', async (c) => {
+  const [policy, stored] = await Promise.all([loadSearchPolicy(), hasStoredSearchPolicy()])
+  return c.json({ policy, stored, providers: describeProviders(), telemetry: telemetrySnapshot() })
+})
+
+const knownProviders = new Set(PROVIDERS.map(p => p.id))
+
+adminRouter.put('/search', zValidator('json', searchPolicySchema.refine(
+  p => Object.keys(p.providers).every(id => knownProviders.has(id)),
+  { message: 'Unknown search provider' },
+)), async (c) => {
+  const policy = c.req.valid('json')
+  // Logged because trust decides which providers see a locked space's queries.
+  const trusted = Object.entries(policy.providers).filter(([, p]) => p.enabled && p.trustedForLocked).map(([id]) => id)
+  console.log(`  [admin] search policy saved by ${c.get('userId')} — fusion=${policy.fusion}, trusted for locked spaces: ${trusted.join(', ') || 'none'}`)
+  await saveSearchPolicy(policy)
+  return c.json({ ok: true })
+})
+
+adminRouter.delete('/search', async (c) => {
+  console.log(`  [admin] search policy reset to env defaults by ${c.get('userId')}`)
+  await resetSearchPolicy()
   return c.json({ ok: true })
 })
 

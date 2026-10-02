@@ -94,7 +94,7 @@ export const EMBED_MAX_INPUT_CHARS = Math.min(EMBED_QUALITY_CHARS, EMBED_BATCH_C
 
 // Config is resolved per call, not at module load. A module-level const captures whatever the
 // environment held when the first importer pulled this in, which makes the value depend on
-// import order — the same trap searxng.ts documents, and the reason a test could not point the
+// import order — the same trap search/providers/searxng.ts documents, and the reason a test could not point the
 // chat model at a stub server. Providers are memoised per resolved target so the per-call cost
 // stays a Map lookup.
 const chatConfig = (): ProviderConfig => ({

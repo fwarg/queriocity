@@ -2,12 +2,11 @@
  *
  *  Entirely optional: with SPEJAREN_URL unset every function here is a no-op, so queriocity runs
  *  exactly as without it. Env is read per call rather than at module load, for the import-order
- *  reason documented at the top of searxng.ts. */
+ *  reason documented at the top of searxng.ts (same directory). */
 
-import type { SearchResult } from './searxng.ts'
+import { emptyOutcome, type ProviderOutcome, type SearchProvider, type SearchResult } from '../types.ts'
 
 const DEFAULT_TIMEOUT_MS = 3000
-const DEFAULT_COUNT = 4
 // Request limits enforced by the spejaren API; longer values get a 422 instead of results.
 const MAX_QUERY_CHARS = 500
 const MAX_URL_CHARS = 2048
@@ -42,17 +41,6 @@ export function isSpejarenEnabled(): boolean {
   return !!baseUrl()
 }
 
-/** True when spejaren may be searched from a locked space: configured *and* explicitly trusted. */
-export function isSpejarenTrusted(): boolean {
-  return isSpejarenEnabled() && process.env.SPEJAREN_TRUSTED?.trim().toLowerCase() === 'true'
-}
-
-/** Hits spejaren adds to a web search asking for `count`: SPEJAREN_COUNT, capped at `count`. */
-export function spejarenCount(count: number): number {
-  const configured = parseInt(process.env.SPEJAREN_COUNT ?? '', 10)
-  return Math.min(count, Number.isNaN(configured) ? DEFAULT_COUNT : configured, MAX_COUNT)
-}
-
 /** The spejaren filter for a SearXNG category list: '' searches unfiltered, null skips spejaren.
  *  Null for categories it has no index for (news, science) — returning off-topic small-web pages
  *  would override the restriction the user picked. */
@@ -70,22 +58,22 @@ export function toSearchResult(hit: SpejarenHit & { url: string }): SearchResult
   return { title: hit.title ?? '', url: hit.url, content: `[${meta.join(' · ')}]\n${hit.content ?? ''}` }
 }
 
-/** Search spejaren; [] when unconfigured, skipped for the categories, or on any failure. */
-export async function spejarenSearch(query: string, count: number, categories?: string): Promise<SearchResult[]> {
+/** Search spejaren; empty when unconfigured, skipped for the categories, or on any failure. */
+async function spejarenSearch(query: string, count: number, categories?: string): Promise<ProviderOutcome> {
   const filter = spejarenFilter(categories)
-  if (!isSpejarenEnabled() || filter === null || count <= 0) return []
+  if (!isSpejarenEnabled() || filter === null || count <= 0) return emptyOutcome()
   const params: Record<string, string> = { q: query.slice(0, MAX_QUERY_CHARS), count: String(Math.min(count, MAX_COUNT)) }
   if (filter) params.filter = filter
 
   const start = performance.now()
   const data = await apiGet<{ results?: SpejarenHit[]; ranking?: string }>('api/v1/search', params)
-  if (!data) return []
+  if (!data) return emptyOutcome(true)
   const results = (data.results ?? [])
     .filter((h): h is SpejarenHit & { url: string } => !!h.url)
     .map(toSearchResult)
   const ms = (performance.now() - start).toFixed(0)
   console.log(`  [spejaren] q="${query}"${filter ? ` filter=${filter}` : ''} — ${ms}ms → ${results.length} results (${data.ranking ?? 'unknown'})`)
-  return results
+  return { results, engines: new Set(), errors: [], failed: false }
 }
 
 /** A page's text as spejaren indexed it, or null when unconfigured, not indexed, or unreachable.
@@ -123,4 +111,15 @@ async function apiGet<T>(path: string, params: Record<string, string>): Promise<
     console.warn(`  [spejaren] ${path} failed: ${e instanceof Error ? e.message : e}`)
     return null
   }
+}
+
+export const spejarenProvider: SearchProvider = {
+  id: 'spejaren',
+  label: 'spejaren',
+  kind: 'index',
+  passageHits: true,
+  envVars: ['SPEJAREN_URL', 'SPEJAREN_API_KEY', 'SPEJAREN_TIMEOUT_MS'],
+  isConfigured: isSpejarenEnabled,
+  search: spejarenSearch,
+  fetchDocument: spejarenDocument,
 }

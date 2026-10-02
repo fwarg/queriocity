@@ -516,6 +516,60 @@ export async function updateAdminSettings(s: { memoryTokenBudget?: number; userM
   })
 }
 
+export interface SearchProviderPolicy {
+  enabled: boolean
+  role: 'primary' | 'supplement' | 'fallback'
+  weight: number
+  minSlots: number
+  trustedForLocked: boolean
+  engineWeights: Record<string, number>
+  defaultEngineWeight: number
+}
+
+export interface SearchPolicy {
+  fusion: 'legacy' | 'rrf'
+  rrfK: number
+  fallbackBudgetPerRequest: number
+  fallbackMinResults: number
+  fallbackWhenNoMajorEngine: boolean
+  providers: Record<string, SearchProviderPolicy>
+}
+
+export interface SearchProviderInfo {
+  id: string
+  label: string
+  kind: 'meta' | 'api' | 'index'
+  passageHits: boolean
+  envVars: string[]
+  configured: boolean
+}
+
+export interface SearchProviderStats {
+  calls: number
+  failures: number
+  results: number
+  kept: number
+  totalMs: number
+  engines: Record<string, number>
+}
+
+export async function fetchSearchPolicy(): Promise<{ policy: SearchPolicy; stored: boolean; providers: SearchProviderInfo[]; telemetry: Record<string, SearchProviderStats> }> {
+  return fetch(`${BASE}/admin/search`).then(r => r.json())
+}
+
+export async function saveSearchPolicy(policy: SearchPolicy): Promise<void> {
+  const res = await fetch(`${BASE}/admin/search`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(policy),
+  })
+  if (!res.ok) throw new Error('Search settings were rejected — check the values')
+}
+
+export async function resetSearchPolicy(): Promise<void> {
+  await fetch(`${BASE}/admin/search`, { method: 'DELETE' })
+}
+
 export async function triggerDream(): Promise<void> {
   await fetch(`${BASE}/admin/dream/run`, { method: 'POST' })
 }

@@ -1,5 +1,5 @@
 import type { TextStreamPart, ToolSet } from 'ai'
-import type { SearchResult } from './searxng.ts'
+import type { SearchResult } from './search/index.ts'
 import type { ThinkExtractor } from './think-extractor.ts'
 import { stepEvent } from './progress.ts'
 

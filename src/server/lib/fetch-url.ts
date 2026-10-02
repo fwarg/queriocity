@@ -4,11 +4,11 @@ import { YoutubeTranscript } from 'youtube-transcript'
 import { generateText } from 'ai'
 import { getSmallModel, SMALL_MODEL_INPUT_CHARS, CHARS_PER_TOKEN } from './llm.ts'
 import { assertFetchableUrl, BlockedUrlError } from './url-guard.ts'
-import { spejarenDocument } from './spejaren.ts'
+import { fetchIndexedDocument } from './search/index.ts'
 
 const MAX_CHARS = parseInt(process.env.FETCH_MAX_CHARS ?? '100000')
 // Shorter text counts as no page: the static fetch falls back to Playwright, pagination stops, and
-// a spejaren copy is passed over for a live fetch.
+// a search provider's indexed copy is passed over for a live fetch.
 const MIN_PAGE_CHARS = 300
 // Hard ceiling on bytes read off the wire, well above MAX_CHARS to leave room for markup:
 // the char cap is applied after stripping, so without this a huge page is fully buffered first.
@@ -230,12 +230,12 @@ export async function fetchUrl(url: string): Promise<string> {
     }
   }
 
-  // spejaren's indexed copy first: already extracted, and no page load. The lookup goes to
-  // SPEJAREN_URL by the original URL, which assertFetchableUrl has already cleared.
-  const indexed = await spejarenDocument(url)
-  if (indexed && indexed.length >= MIN_PAGE_CHARS) {
-    const result = indexed.slice(0, MAX_CHARS)
-    console.log(`  [fetch-url] spejaren ${url} — ${result.length} chars in ${(performance.now() - start).toFixed(0)}ms`)
+  // A search provider's indexed copy (spejaren's) first: already extracted, and no page load. The
+  // lookup goes to the provider by the original URL, which assertFetchableUrl has already cleared.
+  const indexed = await fetchIndexedDocument(url)
+  if (indexed && indexed.text.length >= MIN_PAGE_CHARS) {
+    const result = indexed.text.slice(0, MAX_CHARS)
+    console.log(`  [fetch-url] ${indexed.provider} ${url} — ${result.length} chars in ${(performance.now() - start).toFixed(0)}ms`)
     return cache(result)
   }
 

@@ -15,7 +15,7 @@ import { eq, and, desc, sql } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { readFile } from 'node:fs/promises'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
-import { webSearch, webSearchMulti, type SearchResult, type EngineError, type SearchApiBudget } from '../lib/searxng.ts'
+import { webSearch, webSearchMulti, hasTrustedSearch, newSearchBudget, type SearchResult, type EngineError, type SearchApiBudget } from '../lib/search/index.ts'
 import { fetchUrlAllPages, processUrlsForContext, describeOutcome, DEFAULT_MAX_URL_CONTEXT_CHARS, type UrlOutcome, type ProcessedUrl } from '../lib/fetch-url.ts'
 import { getFlashModel, getChatModel, getThinkingModelOrFallback, RESEARCH_MAX_TOKENS, DEFAULT_MEMORY_TOKEN_BUDGET } from '../lib/llm.ts'
 import { ThinkExtractor } from '../lib/think-extractor.ts'
@@ -28,7 +28,6 @@ import { trimMessages, contextCharBudget, CONTEXT_RESERVE_FRACTION } from '../li
 import { indexContents, deindexContent } from '../lib/chat-indexer.ts'
 import { ownsSpace, sessionOwnership } from '../lib/ownership.ts'
 import { isSpaceLocked } from '../lib/space-lock.ts'
-import { isSpejarenTrusted } from '../lib/spejaren.ts'
 import { rateLimitByUser, chatLimiter, suggestLimiter } from '../lib/rate-limit.ts'
 import {
   startRun, getRun, appendEvent, finishRun, waitForEvents,
@@ -265,7 +264,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   if (locked && focusMode === 'image') {
     return c.json({ error: 'Image generation is unavailable in a locked space — it would send the prompt to the diffusion server.' }, 409)
   }
-  if (locked) console.log(`  [space] locked — no ${isSpejarenTrusted() ? 'web search beyond spejaren' : 'web search'}, URL fetching or image generation`)
+  if (locked) console.log(`  [space] locked — no ${await hasTrustedSearch() ? 'web search beyond trusted providers' : 'web search'}, URL fetching or image generation`)
 
   const lastUser = [...msgs].reverse().find(m => m.role === 'user')
   const preview = (lastUser?.content ?? '').slice(0, 100).replace(/\n/g, ' ')
@@ -394,7 +393,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     // Image's search runs through the same plumbing as the other modes: blocked engines reach the
     // user instead of vanishing, and the paid-fallback cap covers this path too. Errors are
     // buffered rather than emitted directly — the tool closure is built before the SSE stream is.
-    const imageApiBudget: SearchApiBudget = { remaining: parseInt(process.env.SEARCH_API_MAX_PER_REQUEST ?? '3', 10) }
+    const imageApiBudget = await newSearchBudget()
     const imageEngineErrors = new Map<string, EngineError>()
     const warnImageEngineErrors = (errors: EngineError[]) => errors.forEach(e => imageEngineErrors.set(e.engine, e))
     // Same buffering as the engine errors, and for the same reason. Without these the client
@@ -698,7 +697,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     ])
 
     // Shared per-request allowance for paid keyed-API fallback searches (pre-search + researcher).
-    const apiBudget: SearchApiBudget = { remaining: parseInt(process.env.SEARCH_API_MAX_PER_REQUEST ?? '3', 10) }
+    const apiBudget = await newSearchBudget()
 
     // Fetch user settings + file count + reformulate/pre-search + memory + URL prefetch in parallel.
     // In a locked space the two network legs are skipped outright rather than filtered later: the

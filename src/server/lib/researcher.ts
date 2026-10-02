@@ -1,9 +1,7 @@
 import { streamText, tool, type ToolSet, stepCountIs, hasToolCall } from 'ai'
 import { z } from 'zod'
 import type { LanguageModel, ModelMessage } from 'ai'
-import { webSearchMulti, trustedSearchMulti, type SearchResult, type EngineError, type SearchApiBudget } from './searxng.ts'
-import { isSpejarenTrusted } from './spejaren.ts'
-import { isSearchApiEnabled } from './search-api.ts'
+import { webSearchMulti, trustedSearchMulti, hasTrustedSearch, hasFallbackSearch, type SearchResult, type EngineError, type SearchApiBudget } from './search/index.ts'
 import { searchUploads } from './files/uploads-search.ts'
 import { saveMemories, saveUserMemory, searchSpaceHistory, MEMORY_MAX_SOURCES, type MemorySource } from './memory.ts'
 import { ragMinRelevance } from './rag-settings.ts'
@@ -104,12 +102,12 @@ This space is locked: there is no web search and no URL fetching, and no way to 
 Answer from the documents in this conversation and your own knowledge. Never emit a tool call in any syntax; there is nothing to parse it, so it would be shown to the user as your answer.
 Do not offer to look something up, and do not ask the user to enable search. If something cannot be answered from what you have, say so plainly in one line and answer what you can.`
 
-/** Replaces LOCKED_SPACE_INSTRUCTION when SPEJAREN_TRUSTED keeps web_search in a locked space,
- *  backed by spejaren alone. It still has to override the mode prompts' URL-reading instructions,
+/** Replaces LOCKED_SPACE_INSTRUCTION when a provider trusted for locked spaces (spejaren, by
+ *  default only with SPEJAREN_TRUSTED) keeps web_search there, backed by the trusted ones alone. It still has to override the mode prompts' URL-reading instructions,
  *  because fetch_url remains absent. */
 const LOCKED_SPACE_TRUSTED_SEARCH_INSTRUCTION = `
 
-This space is locked: web_search searches only a trusted, self-hosted index of small websites, not the open web, and there is no URL fetching. Ignore any instruction above to read a URL — that tool does not exist here.
+This space is locked: web_search searches only a trusted, self-hosted index, not the open web, and there is no URL fetching. Ignore any instruction above to read a URL — that tool does not exist here.
 The index is limited, so when its results do not cover the question, answer from the documents in this conversation and your own knowledge. Never emit a tool call in any syntax other than the tools you have; nothing would parse it, so it would be shown to the user as your answer.
 Do not ask the user to enable web access. If something cannot be answered from what you have, say so plainly in one line and answer what you can.`
 
@@ -164,7 +162,7 @@ export interface ResearchOptions {
    *  Absent means nobody is watching — the monitor runner has no client attached — so a request
    *  that would have prompted is refused instead of hanging until the timeout. */
   requestApproval?: (req: EgressApprovalRequest) => Promise<boolean>
-  /** The chat's space is locked: no fetch_url, and no web_search unless SPEJAREN_TRUSTED backs it with spejaren alone. Resolved from the database by the
+  /** The chat's space is locked: no fetch_url, and no web_search unless a provider trusted for locked spaces backs it. Resolved from the database by the
    *  caller, never from the client. */
   locked?: boolean
 }
@@ -178,7 +176,7 @@ export interface EgressApprovalRequest {
 export async function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, userMemoryEnabled = false, fetchSummarize = false, urlContextChars, compressHistory = false, searchCategory, maxStepsOverride, onEngineErrors, onUrlRead, onSource, apiBudget, requestApproval, locked = false }: ResearchOptions) {
   const { maxSteps: defaultMaxSteps, count } = MODE_CONFIG[focusMode]
   // Read once per run, so the tools, the tool description and the system prompt agree.
-  const trustedSearch = locked && isSpejarenTrusted()
+  const trustedSearch = locked && await hasTrustedSearch()
   const maxSteps = maxStepsOverride ?? defaultMaxSteps
   let nextIndex = 1
   // url → the result number it was first given this run, so a page the model fetches after seeing
@@ -315,7 +313,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
   console.log(`  [researcher] tool budget: ${toolBudgetRemaining}c remaining (ctxLimit=${ctxLimit}tok, historyBudget=${historyBudgetTokens}tok, system+history=${usedChars}c)`)
 
   const webSearchTool = tool({
-    description: `${trustedSearch ? 'Search a self-hosted index of small websites.' : 'Search the web.'} Provide up to ${focusMode === 'thorough' ? 3 : 2} queries covering different angles.`,
+    description: `${trustedSearch ? 'Search a trusted, self-hosted index.' : 'Search the web.'} Provide up to ${focusMode === 'thorough' ? 3 : 2} queries covering different angles.`,
     inputSchema: z.object({
       queries: z.array(z.string()).describe('Search queries'),
     }),
@@ -351,7 +349,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
         await onEngineErrors?.(errs)
         // Engines are blocked and the paid fallback can't help (disabled or budget spent) →
         // every further search will also be empty. Stop the model from spinning on them.
-        if (!isSearchApiEnabled() || (apiBudget?.remaining ?? 0) <= 0) {
+        if (!(await hasFallbackSearch()) || (apiBudget?.remaining ?? 0) <= 0) {
           searchDead = true
           console.log('  [researcher] search exhausted — instructing model to stop searching')
           return SEARCH_DEAD_MSG
@@ -376,7 +374,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
   // In a locked space the networked tools are *absent*, not refused. A tool that exists and says no
   // still costs a step, still tells the model the capability is there, and still leaves the refusal
   // up to logic that could be wrong — whereas a tool that was never offered cannot be called.
-  // The one opt-in exception: with SPEJAREN_TRUSTED, web_search stays, backed by spejaren alone.
+  // The one opt-in exception: with a provider trusted for locked spaces, web_search stays, backed by those alone.
   const tools: ToolSet = locked ? (trustedSearch ? { web_search: webSearchTool } : {}) : {
     web_search: webSearchTool,
     fetch_url: tool({

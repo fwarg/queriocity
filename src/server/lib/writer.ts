@@ -1,7 +1,7 @@
 import { streamText } from 'ai'
 import { getChatModel, RESEARCH_MAX_TOKENS } from './llm.ts'
 import { contextCharBudget } from './trim-messages.ts'
-import type { SearchResult } from './searxng.ts'
+import type { SearchResult } from './search/index.ts'
 
 const WRITER_SYSTEM = `You are a research writer. Given the research results, write a well-structured report.
 

@@ -1,6 +1,6 @@
 import { streamText } from 'ai'
 import { getChatModel, RESEARCH_MAX_TOKENS } from './llm.ts'
-import type { SearchResult } from './searxng.ts'
+import type { SearchResult } from './search/index.ts'
 
 /** Pieces shared by every path that produces an answer — the interactive chat route and the
  *  non-interactive monitor/RSS executor. They ran private copies of all of this, and the copies

@@ -19,7 +19,7 @@ import { drainResearcherStream } from '../lib/researcher-stream.ts'
 import { recordingStream, flushPreamble } from './chat.ts'
 import { startRun } from '../lib/stream-buffer.ts'
 import { ThinkExtractor } from '../lib/think-extractor.ts'
-import type { SearchResult } from '../lib/searxng.ts'
+import type { SearchResult } from '../lib/search/index.ts'
 
 let fake: ReturnType<typeof startFakeOpenAI> | null = null
 afterEach(() => { fake?.stop(); fake = null })

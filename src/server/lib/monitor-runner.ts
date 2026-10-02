@@ -4,7 +4,7 @@ import { randomUUID } from 'crypto'
 import { executeChatAndSave } from './chat-executor.ts'
 import { fetchSelectedFeeds } from './rss.ts'
 import { isSpaceLocked } from './space-lock.ts'
-import type { SearchResult } from './searxng.ts'
+import type { SearchResult } from './search/index.ts'
 
 /** Convert a preferred hour in a given IANA timezone on the same calendar day as `near` to UTC. */
 function localHourToUTC(hour: number, tz: string, near: Date): Date {

@@ -28,6 +28,7 @@ through a single Bun process.
   - [Research modes](#research-modes)
     - [Search category filtering](#search-category-filtering)
     - [spejaren (small-web index)](#spejaren-small-web-index)
+    - [Search providers](#search-providers)
   - [Resources](#resources)
     - [Chat attachment (ephemeral)](#chat-attachment-ephemeral)
     - [Library upload (persistent)](#library-upload-persistent-vector-searchable)
@@ -249,6 +250,21 @@ spejaren is a self-hosted search engine over small, hand-picked websites. When `
 - It never delays or breaks a search: a request that fails or takes longer than `SPEJAREN_TIMEOUT_MS` (default 3000 ms) contributes nothing.
 - It does not count toward the keyed-API fallback, whose rules judge SearXNG's results alone.
 - `fetch_url` asks spejaren for its indexed copy of a page first, and fetches the page live only when spejaren does not have it. The copy is labelled with its crawl date.
+
+### Search providers
+
+SearXNG, spejaren and the keyed API (Mojeek) are search *providers*, each with a role:
+
+- **Primary** — always queried; its results are the base list (SearXNG by default).
+- **Supplement** — queried in parallel, with reserved slots of its own on top of the primaries' (spejaren by default, `SPEJAREN_COUNT` slots).
+- **Fallback** — queried only when the primaries come back thin (fewer than `SEARCH_API_MIN_RESULTS`, or no major engine contributed), within `SEARCH_API_MAX_PER_REQUEST` calls per request (Mojeek by default).
+
+The env vars above set the defaults. Admins can override them under **Admin → Search** without a restart: enable or disable providers, change roles, weights and reserved slots, set per-engine weights for SearXNG (an engine at weight ≥ 1 is *major*, replacing `SEARCH_MAJOR_ENGINES`), choose which providers are trusted for [locked spaces](#locked-spaces), and switch the merge method:
+
+- **Legacy** (default) — primaries in order, deduplicated by domain; a fallback's results appended (or put first when only niche engines answered); supplements interleaved.
+- **Rank fusion** — weighted Reciprocal Rank Fusion: each page scores `weight × engine weight / (k + rank)` summed over every provider that returned it, so pages several providers agree on rise. Reserved slots still apply.
+
+The panel also shows per-provider counters since server start — calls, failures, latency, hits, and how many survived merging — to tune weights against. API keys always stay in env. **Reset to env defaults** discards the saved settings.
 
 ---
 
@@ -501,7 +517,8 @@ nothing to tune and nothing to get wrong.
 
 **One opt-in exception.** With `SPEJAREN_TRUSTED=true`, `web_search` stays available in locked spaces
 but searches only your own [spejaren](#spejaren-small-web-index) instance — never SearXNG or the
-keyed API — and `fetch_url` stays absent. The queries the model writes, which can be derived from
+keyed API — and `fetch_url` stays absent. Admins can change which providers are trusted under
+**Admin → Search**; only the trusted ones are ever queried from a locked space. The queries the model writes, which can be derived from
 your document, then reach spejaren and its search log. Set it only when spejaren runs on
 infrastructure you trust as much as the model server.
 
