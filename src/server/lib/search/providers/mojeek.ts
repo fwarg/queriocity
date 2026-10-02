@@ -20,15 +20,17 @@ async function search(query: string, count: number): Promise<ProviderOutcome> {
     const res = await fetch(url.toString(), { signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS()) })
     if (!res.ok) {
       console.error(`  [mojeek] HTTP ${res.status} for "${query}"`)
-      return emptyOutcome(true)
+      return emptyOutcome(true, `HTTP ${res.status}`)
     }
     const data = await res.json() as {
       response?: { status?: string; results?: Array<{ url?: string; title?: string; desc?: string }> }
     }
     const r = data.response
     if (r?.status && r.status !== 'OK') {
+      // Documented example: "ERROR: Daily Limit Reached". How an exhausted balance or a bad key is
+      // reported is undocumented; assumed to arrive here too, and kept verbatim for the admin panel.
       console.error(`  [mojeek] status=${r.status} for "${query}"`)
-      return emptyOutcome(true)
+      return emptyOutcome(true, r.status)
     }
     const results = (r?.results ?? [])
       .filter(x => x.url)
@@ -37,8 +39,9 @@ async function search(query: string, count: number): Promise<ProviderOutcome> {
     console.log(`  [mojeek] q="${query}" — ${(performance.now() - start).toFixed(0)}ms → ${results.length} results`)
     return { results, engines: new Set(), errors: [], failed: false }
   } catch (e) {
-    console.error(`  [mojeek] failed for "${query}": ${e instanceof Error ? e.message : e}`)
-    return emptyOutcome(true)
+    const reason = e instanceof Error ? e.message : String(e)
+    console.error(`  [mojeek] failed for "${query}": ${reason}`)
+    return emptyOutcome(true, reason)
   }
 }
 

@@ -11,6 +11,10 @@ export interface ProviderStats {
   totalMs: number
   /** Calls not made because the monthly quota was used up. */
   quotaSkips: number
+  /** Failed calls in a row, reset by the next success; non-zero means the provider is failing now. */
+  consecutiveFailures: number
+  /** The most recent failure, kept after recovery so a past outage stays visible. */
+  lastError: { reason: string; at: number } | null
   /** Hits per sub-engine, for a meta-engine. */
   engines: Record<string, number>
 }
@@ -19,15 +23,21 @@ const stats = new Map<string, ProviderStats>()
 
 function entry(id: string): ProviderStats {
   let s = stats.get(id)
-  if (!s) stats.set(id, s = { calls: 0, failures: 0, results: 0, kept: 0, totalMs: 0, quotaSkips: 0, engines: {} })
+  if (!s) stats.set(id, s = { calls: 0, failures: 0, results: 0, kept: 0, totalMs: 0, quotaSkips: 0, consecutiveFailures: 0, lastError: null, engines: {} })
   return s
 }
 
-export function recordCall(id: string, ms: number, failed: boolean, results: Array<{ engines?: string[] }>): void {
+export function recordCall(id: string, ms: number, { failed, reason, results }: { failed: boolean; reason?: string; results: Array<{ engines?: string[] }> }): void {
   const s = entry(id)
   s.calls++
   s.totalMs += ms
-  if (failed) s.failures++
+  if (failed) {
+    s.failures++
+    s.consecutiveFailures++
+    s.lastError = { reason: reason ?? 'request failed', at: Date.now() }
+  } else {
+    s.consecutiveFailures = 0
+  }
   s.results += results.length
   for (const r of results) for (const e of r.engines ?? []) s.engines[e] = (s.engines[e] ?? 0) + 1
 }

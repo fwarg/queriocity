@@ -7,6 +7,7 @@ import { webSearch, webSearchMulti, newSearchBudget } from './index.ts'
 import { envPolicy, mergePolicy, saveSearchPolicy, resetSearchPolicy } from './policy.ts'
 import { takeQuota, hasQuota, monthlyUsage } from './usage.ts'
 import { infoboxResults } from './providers/searxng.ts'
+import { telemetrySnapshot } from './telemetry.ts'
 
 const cleanups: Array<() => void> = []
 afterEach(() => { for (const undo of cleanups.splice(0).reverse()) undo() })
@@ -63,6 +64,24 @@ describe('queries per request', () => {
 
   test('is unlimited by default', async () => {
     expect((await newSearchBudget()).queriesRemaining).toBe(Infinity)
+  })
+})
+
+describe('provider failures', () => {
+  test('are kept with their reason, and a success clears the failing state', async () => {
+    let fail = true
+    const server = Bun.serve({ port: 0, fetch: () => fail ? new Response('down', { status: 502 }) : Response.json({ results: [] }) })
+    cleanups.push(() => server.stop(true))
+    cleanups.push(envOverride({ SEARXNG_URL: `http://localhost:${server.port}`, SPEJAREN_URL: '', SEARCH_API_PROVIDER: '' }))
+
+    await webSearch('down')
+    expect(telemetrySnapshot().searxng.consecutiveFailures).toBeGreaterThan(0)
+    expect(telemetrySnapshot().searxng.lastError?.reason).toBe('HTTP 502')
+
+    fail = false
+    await webSearch('up')
+    expect(telemetrySnapshot().searxng.consecutiveFailures).toBe(0)
+    expect(telemetrySnapshot().searxng.lastError?.reason).toBe('HTTP 502')
   })
 })
 

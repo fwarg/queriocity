@@ -20,7 +20,7 @@ function parseWeights(text: string): Record<string, number> {
   return out
 }
 
-function StatsLine({ stats }: { stats?: SearchProviderStats }) {
+function StatsLine({ stats, info }: { stats?: SearchProviderStats; info: SearchProviderInfo }) {
   if (!stats?.calls) return <p className="text-xs text-gray-600">No searches since server start.</p>
   const topEngines = Object.entries(stats.engines).sort((a, b) => b[1] - a[1]).slice(0, 8)
   return (
@@ -31,6 +31,13 @@ function StatsLine({ stats }: { stats?: SearchProviderStats }) {
         {stats.quotaSkips > 0 && <> · <span className="text-amber-400">{stats.quotaSkips} skipped over quota</span></>}
       </p>
       {topEngines.length > 0 && <p>Engines: {topEngines.map(([e, n]) => `${e} ${n}`).join(' · ')}</p>}
+      {stats.lastError && (
+        <p className={stats.consecutiveFailures > 0 ? 'text-red-400' : 'text-gray-500'}>
+          {stats.consecutiveFailures > 0 ? `Failing — last ${stats.consecutiveFailures} call(s): ` : 'Last error: '}
+          {stats.lastError.reason} ({new Date(stats.lastError.at).toLocaleString()})
+          {stats.consecutiveFailures > 0 && info.kind === 'api' && ' — check the account balance and API key.'}
+        </p>
+      )}
     </div>
   )
 }
@@ -99,7 +106,7 @@ function ProviderCard({ info, policy, stats, used, engineDraft, onChange, onEngi
           {policy.trustedForLocked && <span className="text-amber-400"> — this provider receives locked-space queries. Only for services you host yourself.</span>}
         </span>
       </label>
-      <StatsLine stats={stats} />
+      <StatsLine stats={stats} info={info} />
     </div>
   )
 }

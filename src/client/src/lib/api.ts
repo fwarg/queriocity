@@ -553,6 +553,8 @@ export interface SearchProviderStats {
   kept: number
   totalMs: number
   quotaSkips: number
+  consecutiveFailures: number
+  lastError: { reason: string; at: number } | null
   engines: Record<string, number>
 }
 

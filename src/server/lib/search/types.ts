@@ -31,6 +31,8 @@ export interface ProviderOutcome {
   errors: EngineError[]
   /** The request itself failed — distinct from "answered with nothing", which can still be topped up. */
   failed: boolean
+  /** Why it failed, as the provider reported it (e.g. Mojeek's "ERROR: …" status), for admins. */
+  reason?: string
 }
 
 export interface SearchProvider {
@@ -49,5 +51,5 @@ export interface SearchProvider {
 }
 
 /** An outcome with nothing in it, for a provider skipped or failed before it could answer. */
-export const emptyOutcome = (failed = false): ProviderOutcome =>
-  ({ results: [], engines: new Set(), errors: [], failed })
+export const emptyOutcome = (failed = false, reason?: string): ProviderOutcome =>
+  ({ results: [], engines: new Set(), errors: [], failed, reason })

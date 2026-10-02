@@ -271,7 +271,7 @@ Two limits, both off (0) by default:
 
 SearXNG *infoboxes* are used as results, ahead of the list. This matters for Wikipedia, whose SearXNG engine by default (`display_type: ["infobox"]`) emits nothing else — the infobox carries the article's lead extract.
 
-The panel also shows per-provider counters since server start — calls, failures, latency, hits, and how many survived merging — to tune weights against. API keys always stay in env. **Reset to env defaults** discards the saved settings.
+A provider that keeps failing is flagged in red with the reason it gave — for a keyed API this is where an exhausted prepaid balance or a revoked key shows up (Mojeek reports these in its response `status`). The panel also shows per-provider counters since server start — calls, failures, latency, hits, and how many survived merging — to tune weights against. API keys always stay in env. **Reset to env defaults** discards the saved settings.
 
 ---
 

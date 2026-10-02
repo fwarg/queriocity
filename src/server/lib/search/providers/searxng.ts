@@ -49,12 +49,13 @@ async function search(query: string, _count: number, categories?: string): Promi
   try {
     res = await fetch(url.toString(), { signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS()) })
   } catch (e) {
-    console.error(`  [searxng] request failed for "${query}": ${e instanceof Error ? e.message : e}`)
-    return emptyOutcome(true)
+    const reason = e instanceof Error ? e.message : String(e)
+    console.error(`  [searxng] request failed for "${query}": ${reason}`)
+    return emptyOutcome(true, reason)
   }
   if (!res.ok) {
     console.error(`  [searxng] error: ${res.status} for query "${query}"`)
-    return emptyOutcome(true)
+    return emptyOutcome(true, `HTTP ${res.status}`)
   }
   const data = await res.json() as {
     results?: Array<{ title: string; url: string; content?: string; engine?: string; engines?: string[] }>

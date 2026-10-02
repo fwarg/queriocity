@@ -39,7 +39,7 @@ async function runProvider(a: Active, query: string, count: number, categories?:
   }
   const start = performance.now()
   const outcome = await a.provider.search(query, count, categories)
-  recordCall(a.provider.id, performance.now() - start, outcome.failed, outcome.results)
+  recordCall(a.provider.id, performance.now() - start, outcome)
   return { ...a, results: outcome.results, outcome }
 }
 
