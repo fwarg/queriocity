@@ -110,6 +110,9 @@ export async function webSearch(
       return []
     }
     searchBudget.queriesRemaining--
+    if (Number.isFinite(searchBudget.queriesRemaining)) {
+      console.log(`  [search] "${query}" — ${searchBudget.queriesRemaining} quer${searchBudget.queriesRemaining === 1 ? 'y' : 'ies'} left for this question`)
+    }
   }
   const policy = await loadSearchPolicy()
   // In parallel, so supplements add no latency beyond the primaries' own; each yields nothing on failure.

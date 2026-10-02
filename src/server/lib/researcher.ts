@@ -267,7 +267,10 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
   // A limited budget is stated up front, so the model plans its searches instead of being cut off
   // mid-plan by SEARCH_LIMIT_MSG. Trusted (locked-space) search does not draw on it.
   const searchLimited = !trustedSearch && !!searchBudget && Number.isFinite(searchBudget.queriesRemaining)
-  if (searchLimited) system += searchBudgetInstruction(searchBudget!.queriesRemaining)
+  if (searchLimited) {
+    system += searchBudgetInstruction(searchBudget!.queriesRemaining)
+    console.log(`  [researcher] search budget: ${searchBudget!.queriesRemaining} quer${searchBudget!.queriesRemaining === 1 ? 'y' : 'ies'} left (stated in the prompt)`)
+  }
 
   // Inject pre-executed search results as a fake tool exchange so the model
   // sees them as already done and continues from there. Also note in the system
