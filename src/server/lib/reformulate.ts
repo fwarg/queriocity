@@ -73,17 +73,24 @@ function looksLikeSentence(s: string): boolean {
 // reformulation exists — so the raw-query safety net below only applies to short ones.
 const RAW_QUERY_MAX_WORDS = 12
 
+/** Queries the pre-search should leave for the researcher's follow-up before spending one on the
+ *  raw-query safety net. */
+const FOLLOW_UP_RESERVE = 2
+
 /** Balanced/thorough mode: small LLM rewrites query as optimized search queries.
- *  Owns the query cap for the mode; callers should not slice the result further. */
+ *  Owns the query cap for the mode; callers should not slice the result further.
+ *  `queryLimit` is what the question's search budget still allows, so a tight one is not spent
+ *  entirely here. */
 export async function reformulateLLM(
   messages: Array<{ role: string; content: string }>,
   mode: 'balanced' | 'thorough',
   abortSignal?: AbortSignal,
+  queryLimit = Infinity,
 ): Promise<string[]> {
   const lastUser = [...messages].reverse().find(m => m.role === 'user')
   if (!lastUser) return []
 
-  const count = mode === 'thorough' ? 3 : 2
+  const count = Math.min(mode === 'thorough' ? 3 : 2, Math.max(1, queryLimit))
 
   // Only pass the immediately preceding turn — enough to resolve pronouns and
   // judge what's already in context, without overflowing the small model's window.
@@ -146,7 +153,10 @@ export async function reformulateLLM(
   const rawTerms = queryTerms(raw)
   const rawIsUsable = raw.split(/\s+/).length <= RAW_QUERY_MAX_WORDS && rawTerms.size > 0
   const alreadyCovered = usable.some(q => querySimilarity(queryTerms(q), rawTerms) >= QUERY_DUPLICATE_THRESHOLD)
-  if (rawIsUsable && !alreadyCovered) {
+  const roomForNet = queryLimit - (usable.length + 1) >= FOLLOW_UP_RESERVE
+  if (rawIsUsable && !alreadyCovered && !roomForNet) {
+    console.log(`  [reformulate] search limit is tight — skipping raw-query safety net`)
+  } else if (rawIsUsable && !alreadyCovered) {
     console.log(`  [reformulate] adding raw query as safety net: ${JSON.stringify(raw)}`)
     usable.push(raw)
   }

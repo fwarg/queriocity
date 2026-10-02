@@ -39,7 +39,7 @@ describe('admin search policy', () => {
     expect(res.policy.fusion).toBe('legacy')
     expect(res.providers.map((p: { id: string }) => p.id)).toEqual(['searxng', 'spejaren', 'mojeek'])
     expect(typeof res.usage).toBe('object')
-    expect(res.policy.maxQueriesPerRequest).toBe(0)
+    expect(res.policy.maxQueries).toEqual({ balanced: 0, thorough: 0, image: 0, monitor: 0 })
     expect(res.policy.providers.mojeek.monthlyQuota).toBe(0)
   })
 
@@ -48,7 +48,7 @@ describe('admin search policy', () => {
     policy.fusion = 'rrf'
     policy.providers.spejaren.weight = 2
     policy.providers.mojeek.monthlyQuota = 3000
-    policy.maxQueriesPerRequest = 6
+    policy.maxQueries.thorough = 14
     expect((await put(policy)).status).toBe(200)
 
     const saved = await get()
@@ -56,7 +56,7 @@ describe('admin search policy', () => {
     expect(saved.policy.fusion).toBe('rrf')
     expect(saved.policy.providers.spejaren.weight).toBe(2)
     expect(saved.policy.providers.mojeek.monthlyQuota).toBe(3000)
-    expect(saved.policy.maxQueriesPerRequest).toBe(6)
+    expect(saved.policy.maxQueries.thorough).toBe(14)
 
     await app.request('/admin/search', { method: 'DELETE', headers: { Cookie: cookie } })
     expect((await get()).stored).toBe(false)

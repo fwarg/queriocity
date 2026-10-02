@@ -83,6 +83,22 @@ const SEARCH_LIMIT_MSG = {
   error: 'The search limit for this question is reached. Do NOT call web_search again — write your answer using the results already gathered.',
 }
 
+/** System-prompt note stating the question's remaining search budget. */
+function searchBudgetInstruction(left: number): string {
+  return left > 0
+    ? `\n\nSearch budget: you can run ${left} more search ${left === 1 ? 'query' : 'queries'} for this question — every query in a web_search call counts. Spend them on the most important gaps; when they run out, answer from what you have.`
+    : '\n\nSearch budget: no web searches remain for this question. Do not call web_search — answer from the results already gathered.'
+}
+
+/** A web_search result under a limited budget: the hits, plus how many queries remain and any that were not run. */
+function withSearchesLeft<T>(results: T[], left: number, dropped: number) {
+  return {
+    results,
+    searchesLeft: left,
+    ...(dropped > 0 && { note: `${dropped} of your queries were not run: the search limit for this question was reached.` }),
+  }
+}
+
 // Returned when every query in a web_search call repeats one already run. Names the constraint
 // rather than returning an empty array, which the model reads as "nothing exists on this topic".
 const DUPLICATE_QUERY_MSG = {
@@ -248,6 +264,10 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
   // writes the tool call as prose instead, which nothing parses and the user sees as the answer —
   // the same failure the final-step instruction exists to prevent.
   if (locked) system += trustedSearch ? LOCKED_SPACE_TRUSTED_SEARCH_INSTRUCTION : LOCKED_SPACE_INSTRUCTION
+  // A limited budget is stated up front, so the model plans its searches instead of being cut off
+  // mid-plan by SEARCH_LIMIT_MSG. Trusted (locked-space) search does not draw on it.
+  const searchLimited = !trustedSearch && !!searchBudget && Number.isFinite(searchBudget.queriesRemaining)
+  if (searchLimited) system += searchBudgetInstruction(searchBudget!.queriesRemaining)
 
   // Inject pre-executed search results as a fake tool exchange so the model
   // sees them as already done and continues from there. Also note in the system
@@ -347,9 +367,10 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
       for (const q of fresh) if (await permitEgress('search', q)) permitted.push(q)
       if (!permitted.length) return EGRESS_REFUSED_MSG
       const errs: EngineError[] = []
+      const allowed = searchLimited ? permitted.slice(0, searchBudget!.queriesRemaining) : permitted
       const results = trustedSearch
-        ? await trustedSearchMulti(permitted, count, searchCategory)
-        : await webSearchMulti(permitted, count, searchCategory, e => errs.push(...e), searchBudget)
+        ? await trustedSearchMulti(allowed, count, searchCategory)
+        : await webSearchMulti(allowed, count, searchCategory, e => errs.push(...e), searchBudget)
       // Surface only when blocked engines left this search empty (matches pre-search semantics).
       if (results.length === 0 && errs.length) {
         await onEngineErrors?.(errs)
@@ -369,8 +390,9 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
         if (!sourceIndexByUrl.has(r.url)) sourceIndexByUrl.set(r.url, r.index)
         noteSource(r.url, r.title)
       }
-      toolBudgetRemaining -= JSON.stringify(indexed).length
-      return indexed
+      const output = searchLimited ? withSearchesLeft(indexed, searchBudget!.queriesRemaining, permitted.length - allowed.length) : indexed
+      toolBudgetRemaining -= JSON.stringify(output).length
+      return output
     },
   })
 

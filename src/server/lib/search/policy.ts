@@ -16,6 +16,7 @@ export const POLICY_SETTING = 'search_policy'
 export const MAJOR_ENGINE_WEIGHT = 1
 
 const weight = z.number().min(0).max(10)
+const queryLimit = z.number().int().min(0).max(1000)
 
 export const providerPolicySchema = z.object({
   enabled: z.boolean(),
@@ -45,13 +46,16 @@ export const searchPolicySchema = z.object({
   fallbackMinResults: z.number().int().min(0).max(50),
   /** Also call one when no major engine contributed, however many results came back. */
   fallbackWhenNoMajorEngine: z.boolean(),
-  /** Search queries per chat request or monitor run, across every provider; 0 = unlimited. */
-  maxQueriesPerRequest: z.number().int().min(0).max(1000),
+  /** Search queries one question (or monitor run) may make, per kind, across every provider and
+   *  pre-search included; 0 = unlimited. Per kind because thorough naturally searches ~2× balanced. */
+  maxQueries: z.object({ balanced: queryLimit, thorough: queryLimit, image: queryLimit, monitor: queryLimit }),
   providers: z.record(z.string(), providerPolicySchema),
 })
 
 export type ProviderPolicy = z.infer<typeof providerPolicySchema>
 export type SearchPolicy = z.infer<typeof searchPolicySchema>
+/** What a search budget is issued for: a chat mode that searches, or a monitor run. */
+export type SearchKind = keyof SearchPolicy['maxQueries']
 
 /** What an admin may store: any subset, merged over the env defaults. */
 export const storedPolicySchema = searchPolicySchema.partial().extend({
@@ -78,7 +82,7 @@ export function envPolicy(): SearchPolicy {
     fallbackBudgetPerRequest: intEnv('SEARCH_API_MAX_PER_REQUEST', 3),
     fallbackMinResults: intEnv('SEARCH_API_MIN_RESULTS', 3),
     fallbackWhenNoMajorEngine: true,
-    maxQueriesPerRequest: 0,
+    maxQueries: { balanced: 0, thorough: 0, image: 0, monitor: 0 },
     providers: {
       // Without a major-engine list every engine weighs 1, so none is "niche" and the
       // no-major-engine rule never fires — which is what an unset SEARCH_MAJOR_ENGINES meant.
@@ -112,12 +116,24 @@ export async function loadSearchPolicy(): Promise<SearchPolicy> {
   if (!raw) return base
   let json: unknown
   try { json = JSON.parse(raw) } catch { json = null }
+  upgradeStored(json)
   const parsed = storedPolicySchema.safeParse(json)
   if (!parsed.success) {
     console.warn(`  [search] stored ${POLICY_SETTING} is invalid — using env defaults`)
     return base
   }
   return mergePolicy(base, parsed.data)
+}
+
+/** A policy saved while there was one limit for every kind (`maxQueriesPerRequest`) keeps it,
+ *  applied to each kind — zod would otherwise drop the unknown key and silently lift the limit. */
+function upgradeStored(json: unknown): void {
+  if (!json || typeof json !== 'object') return
+  const p = json as Record<string, unknown>
+  const n = p.maxQueriesPerRequest
+  if (typeof n === 'number' && p.maxQueries === undefined) {
+    p.maxQueries = { balanced: n, thorough: n, image: n, monitor: n }
+  }
 }
 
 export async function saveSearchPolicy(policy: SearchPolicy): Promise<void> {

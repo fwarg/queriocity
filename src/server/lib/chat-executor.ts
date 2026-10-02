@@ -70,7 +70,7 @@ export async function executeChatAndSave({
     fullContent += flashExtractor.flush().text
   } else {
     // Shared per-run allowance for paid keyed-API fallback searches (pre-search + researcher).
-    const searchBudget = await newSearchBudget()
+    const searchBudget = await newSearchBudget('monitor')
 
     // When RSS feed items are pre-fetched, skip web search and inject them directly
     const { initialQueries, initialResults } = feedItems?.length
@@ -188,7 +188,7 @@ async function reformulateAndSearch(
     const countEach = focusMode === 'thorough' ? 10 : 6
     // reformulateLLM caps the list for the mode (and may add the raw query as a safety net), so
     // it is used as returned — slicing here again would drop that safety net.
-    const queries = await reformulateLLM(msgs, focusMode)
+    const queries = await reformulateLLM(msgs, focusMode, undefined, searchBudget?.queriesRemaining)
     if (queries.length === 0) return {}
     const results = await webSearchMulti(queries, countEach, categories, undefined, searchBudget)
     return { initialQueries: queries, initialResults: await rerankSearchResults(query, results) }

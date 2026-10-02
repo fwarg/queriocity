@@ -267,7 +267,7 @@ The env vars above set the defaults. Admins can override them under **Admin → 
 Two limits, both off (0) by default:
 
 - **Monthly quota** per provider — calls allowed per UTC calendar month, counting every attempted call (APIs bill per request). Once used up the provider is skipped until the next month and the others carry on; the panel shows "used this month" against it. Use it on any paid provider, especially one without a spending cap.
-- **Web searches per question** — search queries one chat question or monitor run may make in total, pre-search and researcher steps included. When it runs out the model is told to answer from what it has. Fewer queries also means fewer blocks from SearXNG's upstream engines. It does not apply to the trusted search of a locked space.
+- **Web searches per question**, set separately for balanced, thorough, image and monitor runs — search queries one question may make in total, pre-search and researcher steps included. Unlimited, balanced uses about 5 (at most ~9) and thorough about 10 (at most ~19). With a limit set the model is told its remaining budget in the system prompt and in every search result, queries beyond it are not run (and the model is told so), and the pre-search skips its raw-question safety net when that would leave fewer than two queries for follow-up. Fewer queries also means fewer blocks from SearXNG's upstream engines. It does not apply to the trusted search of a locked space. A policy saved with the earlier single limit keeps that value for every kind.
 
 SearXNG *infoboxes* are used as results, ahead of the list. This matters for Wikipedia, whose SearXNG engine by default (`display_type: ["infobox"]`) emits nothing else — the infobox carries the article's lead extract.
 

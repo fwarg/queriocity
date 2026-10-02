@@ -393,7 +393,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     // Image's search runs through the same plumbing as the other modes: blocked engines reach the
     // user instead of vanishing, and the paid-fallback cap covers this path too. Errors are
     // buffered rather than emitted directly — the tool closure is built before the SSE stream is.
-    const imageSearchBudget = await newSearchBudget()
+    const imageSearchBudget = await newSearchBudget('image')
     const imageEngineErrors = new Map<string, EngineError>()
     const warnImageEngineErrors = (errors: EngineError[]) => errors.forEach(e => imageEngineErrors.set(e.engine, e))
     // Same buffering as the engine errors, and for the same reason. Without these the client
@@ -481,6 +481,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         }),
         execute: async ({ query }) => {
           console.log(`  [image] web_search "${query}"`)
+          if (imageSearchBudget.queriesRemaining <= 0) return 'The search limit for this request is reached — continue with what you already know.'
           const results = await webSearch(query, 10, undefined, warnImageEngineErrors, imageSearchBudget)
           const seen = new Set(imageSources.map(s => s.url))
           for (const r of results) {
@@ -697,7 +698,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     ])
 
     // Shared per-request allowance for paid keyed-API fallback searches (pre-search + researcher).
-    const searchBudget = await newSearchBudget()
+    const searchBudget = await newSearchBudget(focusMode === 'thorough' ? 'thorough' : 'balanced')
 
     // Fetch user settings + file count + reformulate/pre-search + memory + URL prefetch in parallel.
     // In a locked space the two network legs are skipped outright rather than filtered later: the
@@ -1154,7 +1155,7 @@ async function runReformulateAndPreSearch(
     const countEach = focusMode === 'thorough' ? 10 : 6
     // reformulateLLM caps the list for the mode (and may add the raw query as a safety net), so
     // it is used as returned — slicing here again would drop that safety net.
-    const queries = await reformulateLLM(msgsForReformulate, focusMode, abortSignal)
+    const queries = await reformulateLLM(msgsForReformulate, focusMode, abortSignal, searchBudget?.queriesRemaining)
     if (queries.length === 0) return {}
 
     const found = await webSearchMulti(queries, countEach, categories, collect, searchBudget)

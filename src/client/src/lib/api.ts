@@ -533,7 +533,7 @@ export interface SearchPolicy {
   fallbackBudgetPerRequest: number
   fallbackMinResults: number
   fallbackWhenNoMajorEngine: boolean
-  maxQueriesPerRequest: number
+  maxQueries: { balanced: number; thorough: number; image: number; monitor: number }
   providers: Record<string, SearchProviderPolicy>
 }
 

@@ -111,6 +111,29 @@ function ProviderCard({ info, policy, stats, used, engineDraft, onChange, onEngi
   )
 }
 
+const QUERY_LIMIT_LABELS: Array<[keyof SearchPolicy['maxQueries'], string]> = [
+  ['balanced', 'Balanced'], ['thorough', 'Thorough'], ['image', 'Image'], ['monitor', 'Monitor run'],
+]
+
+function QueryLimits({ limits, onChange }: { limits: SearchPolicy['maxQueries']; onChange: (v: SearchPolicy['maxQueries']) => void }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <p className="text-xs text-gray-400 font-medium">Web searches per question (0 = unlimited)</p>
+      <p className="text-xs text-gray-500">
+        Counts every query, pre-search included. The model is told how many it has left, and the raw-question safety net is skipped when fewer than two would remain for follow-up.
+        Typical use is about 5 (balanced) and 10 (thorough).
+      </p>
+      <div className="flex flex-wrap gap-4">
+        {QUERY_LIMIT_LABELS.map(([k, label]) => (
+          <label key={k} className={LABEL}>{label}
+            <input type="number" min={0} max={1000} value={limits[k]} onChange={e => onChange({ ...limits, [k]: Number(e.target.value) })} className={`${INPUT} w-20`} />
+          </label>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function FusionSettings({ policy, onChange }: { policy: SearchPolicy; onChange: (p: SearchPolicy) => void }) {
   const set = <K extends keyof SearchPolicy>(k: K, v: SearchPolicy[K]) => onChange({ ...policy, [k]: v })
   return (
@@ -135,13 +158,11 @@ function FusionSettings({ policy, onChange }: { policy: SearchPolicy; onChange: 
         <label className={LABEL}>Fallback calls per request
           <input type="number" min={0} max={100} value={policy.fallbackBudgetPerRequest} onChange={e => set('fallbackBudgetPerRequest', Number(e.target.value))} className={`${INPUT} w-20`} />
         </label>
-        <label className={LABEL}>Web searches per question (0 = unlimited)
-          <input type="number" min={0} max={1000} value={policy.maxQueriesPerRequest} onChange={e => set('maxQueriesPerRequest', Number(e.target.value))} className={`${INPUT} w-20`} />
-        </label>
         <label className={LABEL}>Fallback below N results
           <input type="number" min={0} max={50} value={policy.fallbackMinResults} onChange={e => set('fallbackMinResults', Number(e.target.value))} className={`${INPUT} w-20`} />
         </label>
       </div>
+      <QueryLimits limits={policy.maxQueries} onChange={v => set('maxQueries', v)} />
       <label className="flex items-center gap-2 cursor-pointer w-fit">
         <input type="checkbox" checked={policy.fallbackWhenNoMajorEngine} onChange={e => set('fallbackWhenNoMajorEngine', e.target.checked)} className="accent-blue-500 w-3.5 h-3.5" />
         <span className="text-xs text-gray-400">Also use a fallback when no major engine contributed</span>

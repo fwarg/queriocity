@@ -4,7 +4,7 @@
  *  default in policy.ts envPolicy(). Nothing outside this directory needs to change. */
 
 import { interleaveSupplements, mergeBatches, mergeFallback, mergePrimaries, pageKey, plain, rrfFuse, type ProviderRun } from './fusion.ts'
-import { hasMajorEngineList, isMajorEngine, loadSearchPolicy, type ProviderPolicy, type SearchPolicy } from './policy.ts'
+import { hasMajorEngineList, isMajorEngine, loadSearchPolicy, type ProviderPolicy, type SearchKind, type SearchPolicy } from './policy.ts'
 import { mojeekProvider } from './providers/mojeek.ts'
 import { searxngProvider } from './providers/searxng.ts'
 import { spejarenProvider } from './providers/spejaren.ts'
@@ -14,6 +14,7 @@ import type { EngineError, ProviderOutcome, SearchBudget, SearchProvider, Search
 import { emptyOutcome } from './types.ts'
 
 export type { SearchResult, EngineError, SearchBudget } from './types.ts'
+export type { SearchKind } from './policy.ts'
 export { isSiteScoped } from './fusion.ts'
 
 /** Every provider, in priority order: an earlier primary's results come first in the legacy merge. */
@@ -174,12 +175,13 @@ export async function hasFallbackSearch(): Promise<boolean> {
   return activeProviders(await loadSearchPolicy(), 'fallback').some(a => hasQuota(a.provider.id, a.policy.monthlyQuota))
 }
 
-/** A fresh per-request (or per-monitor-run) allowance for fallback calls and queries. */
-export async function newSearchBudget(): Promise<SearchBudget> {
+/** A fresh per-question (or per-monitor-run) allowance for fallback calls and queries. */
+export async function newSearchBudget(kind: SearchKind): Promise<SearchBudget> {
   const policy = await loadSearchPolicy()
+  const limit = policy.maxQueries[kind]
   return {
     fallbackRemaining: policy.fallbackBudgetPerRequest,
-    queriesRemaining: policy.maxQueriesPerRequest > 0 ? policy.maxQueriesPerRequest : Infinity,
+    queriesRemaining: limit > 0 ? limit : Infinity,
   }
 }
 

@@ -4,7 +4,8 @@
 import { describe, test, expect, afterEach, afterAll } from 'bun:test'
 import { envOverride } from '../test-support/env-override.ts'
 import { webSearch, webSearchMulti, newSearchBudget } from './index.ts'
-import { envPolicy, mergePolicy, saveSearchPolicy, resetSearchPolicy } from './policy.ts'
+import { envPolicy, mergePolicy, saveSearchPolicy, resetSearchPolicy, loadSearchPolicy, POLICY_SETTING } from './policy.ts'
+import { setAppSetting } from '../db.ts'
 import { takeQuota, hasQuota, monthlyUsage } from './usage.ts'
 import { infoboxResults } from './providers/searxng.ts'
 import { telemetrySnapshot } from './telemetry.ts'
@@ -53,8 +54,9 @@ describe('monthly quota', () => {
 describe('queries per request', () => {
   test('caps the queries a request may run, across calls', async () => {
     const hits = searxngStub()
-    await saveSearchPolicy(mergePolicy(envPolicy(), { maxQueriesPerRequest: 2 }))
-    const budget = await newSearchBudget()
+    await saveSearchPolicy(mergePolicy(envPolicy(), { maxQueries: { balanced: 2, thorough: 0, image: 0, monitor: 0 } }))
+    const budget = await newSearchBudget('balanced')
+    expect((await newSearchBudget('thorough')).queriesRemaining).toBe(Infinity)
 
     await webSearchMulti(['one', 'two', 'three'], 5, undefined, undefined, budget)
     expect(await webSearch('four', 5, undefined, undefined, budget)).toEqual([])
@@ -63,7 +65,13 @@ describe('queries per request', () => {
   })
 
   test('is unlimited by default', async () => {
-    expect((await newSearchBudget()).queriesRemaining).toBe(Infinity)
+    expect((await newSearchBudget('balanced')).queriesRemaining).toBe(Infinity)
+  })
+
+  test('a policy saved with the single per-request limit keeps it for every kind', async () => {
+    await setAppSetting(POLICY_SETTING, JSON.stringify({ maxQueriesPerRequest: 7 }))
+    expect((await loadSearchPolicy()).maxQueries).toEqual({ balanced: 7, thorough: 7, image: 7, monitor: 7 })
+    await resetSearchPolicy()
   })
 })
 
