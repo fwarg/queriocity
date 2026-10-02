@@ -2,10 +2,10 @@
  *  SearXNG, exempt from per-domain dedup, and a no-op when slow, failing or unconfigured. */
 
 import { describe, test, expect, afterEach } from 'bun:test'
-import { envOverride } from './test-support/env-override.ts'
-import { webSearch, trustedSearchMulti } from './searxng.ts'
-import { spejarenFilter, spejarenDocument } from './spejaren.ts'
-import { fetchUrl } from './fetch-url.ts'
+import { envOverride } from '../test-support/env-override.ts'
+import { webSearch, trustedSearchMulti } from './index.ts'
+import { spejarenFilter, spejarenDocument } from './providers/spejaren.ts'
+import { fetchUrl } from '../fetch-url.ts'
 
 interface Stub { url: string; hits: URL[]; auth: Array<string | null>; stop: () => void }
 
@@ -182,13 +182,23 @@ describe('trustedSearchMulti', () => {
   test('searches spejaren alone, with the full count per query', async () => {
     const searxng = searxngStub(['https://a.com/1'])
     const spejaren = spejarenStub(['https://x.se/1'])
-    configure(searxng, spejaren)
+    configure(searxng, spejaren, { SPEJAREN_TRUSTED: 'true' })
 
     const results = await trustedSearchMulti(['bin', 'honung'], 8)
 
     expect(results.map(r => r.url)).toEqual(['https://x.se/1'])
     expect(searxng.hits).toHaveLength(0)
     expect(spejaren.hits.map(h => h.searchParams.get('count'))).toEqual(['8', '8'])
+  })
+
+  test('searches nothing unless spejaren is trusted for locked spaces', async () => {
+    const searxng = searxngStub(['https://a.com/1'])
+    const spejaren = spejarenStub(['https://x.se/1'])
+    configure(searxng, spejaren)
+
+    expect(await trustedSearchMulti(['bin'], 8)).toEqual([])
+    expect(searxng.hits).toHaveLength(0)
+    expect(spejaren.hits).toHaveLength(0)
   })
 
   test('returns nothing when spejaren is not configured', async () => {

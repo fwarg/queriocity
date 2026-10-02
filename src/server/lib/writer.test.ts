@@ -7,7 +7,7 @@ import '../lib/test-support/test-env.ts'
 import { describe, test, expect, afterEach } from 'bun:test'
 import { startFakeOpenAI } from './test-support/fake-openai.ts'
 import { runWriter } from './writer.ts'
-import type { SearchResult } from './searxng.ts'
+import type { SearchResult } from './search/index.ts'
 
 let fake: ReturnType<typeof startFakeOpenAI> | null = null
 const originalBaseUrl = process.env.CHAT_BASE_URL

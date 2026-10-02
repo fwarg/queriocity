@@ -1,4 +1,4 @@
-import type { SearchResult } from './searxng.ts'
+import type { SearchResult } from './search/index.ts'
 import feedsJson from '../data/news_feeds.json'
 
 const MAX_CONTENT_CHARS = 800

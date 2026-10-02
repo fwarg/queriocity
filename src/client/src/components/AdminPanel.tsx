@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useConfirm } from './confirm.tsx'
 import { listUsers, setUserRole, deleteUser, createInvite, listInvites, revokeInvite, resetUserPassword, testModels, fetchAdminSettings, updateAdminSettings, triggerDream, reindexChats, type ModelTestResult, type Invite } from '../lib/api.ts'
 import { Modal } from './Modal.tsx'
+import { AdminSearchPanel } from './AdminSearchPanel.tsx'
 
 interface Props {
   currentUserId: string
@@ -10,7 +11,7 @@ interface Props {
 }
 
 type UserRow = { id: string; email: string; name: string | null; role: string; createdAt: number }
-type Tab = 'settings' | 'users'
+type Tab = 'settings' | 'search' | 'users'
 
 export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   const confirm = useConfirm()
@@ -252,8 +253,11 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
         {/* Tabs */}
         <div className="flex border-b border-gray-800 mb-5 -mt-2">
           <button className={tabBtn('settings', 'System settings')} onClick={() => setTab('settings')}>System settings</button>
+          <button className={tabBtn('search', 'Search')} onClick={() => setTab('search')}>Search</button>
           <button className={tabBtn('users', 'Users')} onClick={() => setTab('users')}>Users</button>
         </div>
+
+        {tab === 'search' && <AdminSearchPanel />}
 
         {tab === 'settings' && (
           <div className="flex flex-col gap-6">

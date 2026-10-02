@@ -37,6 +37,9 @@ export function validateConfig(): void {
   if (process.env.SEARCH_API_PROVIDER && process.env.SEARCH_API_KEY && !process.env.SEARCH_MAJOR_ENGINES) {
     warn('SEARCH_MAJOR_ENGINES is unset, so the keyed search API only tops up on a low result count — not when a niche engine alone returns a full page of unrelated hits. List your broad engines (e.g. duckduckgo,brave,startpage) to enable that.')
   }
+  if (process.env.SEARCH_API_PROVIDER && process.env.SEARCH_API_PROVIDER !== 'mojeek') {
+    warn(`SEARCH_API_PROVIDER="${process.env.SEARCH_API_PROVIDER}" is not recognised, so no keyed fallback search runs. Valid values: mojeek.`)
+  }
   if (process.env.IMAGE_BASE_URL && IMAGE_API === 'openai') {
     warn('IMAGE_API is openai — the OpenAI image schema has no step-count or seed field, so servers drop both and the quality tiers do nothing. Set IMAGE_API=sdapi if your server exposes /sdapi/v1/txt2img.')
   }

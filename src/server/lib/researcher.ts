@@ -1,9 +1,7 @@
 import { streamText, tool, type ToolSet, stepCountIs, hasToolCall } from 'ai'
 import { z } from 'zod'
 import type { LanguageModel, ModelMessage } from 'ai'
-import { webSearchMulti, trustedSearchMulti, type SearchResult, type EngineError, type SearchApiBudget } from './searxng.ts'
-import { isSpejarenTrusted } from './spejaren.ts'
-import { isSearchApiEnabled } from './search-api.ts'
+import { webSearchMulti, trustedSearchMulti, hasTrustedSearch, hasFallbackSearch, type SearchResult, type EngineError, type SearchBudget } from './search/index.ts'
 import { searchUploads } from './files/uploads-search.ts'
 import { saveMemories, saveUserMemory, searchSpaceHistory, MEMORY_MAX_SOURCES, type MemorySource } from './memory.ts'
 import { ragMinRelevance } from './rag-settings.ts'
@@ -80,6 +78,27 @@ const SEARCH_DEAD_MSG = {
   error: 'Web search is unavailable right now (search engines are blocked and the fallback search quota for this request is used up). Do NOT call web_search again — write your answer using the results already gathered.',
 }
 
+// Returned once the per-request query limit (Admin → Search) is spent, for the same reason.
+const SEARCH_LIMIT_MSG = {
+  error: 'The search limit for this question is reached. Do NOT call web_search again — write your answer using the results already gathered.',
+}
+
+/** System-prompt note stating the question's remaining search budget. */
+function searchBudgetInstruction(left: number): string {
+  return left > 0
+    ? `\n\nSearch budget: you can run ${left} more search ${left === 1 ? 'query' : 'queries'} for this question — every query in a web_search call counts. Spend them on the most important gaps; when they run out, answer from what you have.`
+    : '\n\nSearch budget: no web searches remain for this question. Do not call web_search — answer from the results already gathered.'
+}
+
+/** A web_search result under a limited budget: the hits, plus how many queries remain and any that were not run. */
+function withSearchesLeft<T>(results: T[], left: number, dropped: number) {
+  return {
+    results,
+    searchesLeft: left,
+    ...(dropped > 0 && { note: `${dropped} of your queries were not run: the search limit for this question was reached.` }),
+  }
+}
+
 // Returned when every query in a web_search call repeats one already run. Names the constraint
 // rather than returning an empty array, which the model reads as "nothing exists on this topic".
 const DUPLICATE_QUERY_MSG = {
@@ -104,12 +123,12 @@ This space is locked: there is no web search and no URL fetching, and no way to 
 Answer from the documents in this conversation and your own knowledge. Never emit a tool call in any syntax; there is nothing to parse it, so it would be shown to the user as your answer.
 Do not offer to look something up, and do not ask the user to enable search. If something cannot be answered from what you have, say so plainly in one line and answer what you can.`
 
-/** Replaces LOCKED_SPACE_INSTRUCTION when SPEJAREN_TRUSTED keeps web_search in a locked space,
- *  backed by spejaren alone. It still has to override the mode prompts' URL-reading instructions,
+/** Replaces LOCKED_SPACE_INSTRUCTION when a provider trusted for locked spaces (spejaren, by
+ *  default only with SPEJAREN_TRUSTED) keeps web_search there, backed by the trusted ones alone. It still has to override the mode prompts' URL-reading instructions,
  *  because fetch_url remains absent. */
 const LOCKED_SPACE_TRUSTED_SEARCH_INSTRUCTION = `
 
-This space is locked: web_search searches only a trusted, self-hosted index of small websites, not the open web, and there is no URL fetching. Ignore any instruction above to read a URL — that tool does not exist here.
+This space is locked: web_search searches only a trusted, self-hosted index, not the open web, and there is no URL fetching. Ignore any instruction above to read a URL — that tool does not exist here.
 The index is limited, so when its results do not cover the question, answer from the documents in this conversation and your own knowledge. Never emit a tool call in any syntax other than the tools you have; nothing would parse it, so it would be shown to the user as your answer.
 Do not ask the user to enable web access. If something cannot be answered from what you have, say so plainly in one line and answer what you can.`
 
@@ -158,13 +177,13 @@ export interface ResearchOptions {
    *  like a search hit. Without a number the model writes `[fetch_url]`, which nothing renders. */
   onSource?: (source: SearchResult & { index: number }) => void | Promise<void>
   /** Shared per-request allowance for paid keyed-API fallback searches. */
-  apiBudget?: SearchApiBudget
+  searchBudget?: SearchBudget
   /** Asks the user to approve an outbound request the egress guard found suspicious.
    *
    *  Absent means nobody is watching — the monitor runner has no client attached — so a request
    *  that would have prompted is refused instead of hanging until the timeout. */
   requestApproval?: (req: EgressApprovalRequest) => Promise<boolean>
-  /** The chat's space is locked: no fetch_url, and no web_search unless SPEJAREN_TRUSTED backs it with spejaren alone. Resolved from the database by the
+  /** The chat's space is locked: no fetch_url, and no web_search unless a provider trusted for locked spaces backs it. Resolved from the database by the
    *  caller, never from the client. */
   locked?: boolean
 }
@@ -175,10 +194,10 @@ export interface EgressApprovalRequest {
   reasons: string[]
 }
 
-export async function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, userMemoryEnabled = false, fetchSummarize = false, urlContextChars, compressHistory = false, searchCategory, maxStepsOverride, onEngineErrors, onUrlRead, onSource, apiBudget, requestApproval, locked = false }: ResearchOptions) {
+export async function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, userMemoryEnabled = false, fetchSummarize = false, urlContextChars, compressHistory = false, searchCategory, maxStepsOverride, onEngineErrors, onUrlRead, onSource, searchBudget, requestApproval, locked = false }: ResearchOptions) {
   const { maxSteps: defaultMaxSteps, count } = MODE_CONFIG[focusMode]
   // Read once per run, so the tools, the tool description and the system prompt agree.
-  const trustedSearch = locked && isSpejarenTrusted()
+  const trustedSearch = locked && await hasTrustedSearch()
   const maxSteps = maxStepsOverride ?? defaultMaxSteps
   let nextIndex = 1
   // url → the result number it was first given this run, so a page the model fetches after seeing
@@ -245,6 +264,13 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
   // writes the tool call as prose instead, which nothing parses and the user sees as the answer —
   // the same failure the final-step instruction exists to prevent.
   if (locked) system += trustedSearch ? LOCKED_SPACE_TRUSTED_SEARCH_INSTRUCTION : LOCKED_SPACE_INSTRUCTION
+  // A limited budget is stated up front, so the model plans its searches instead of being cut off
+  // mid-plan by SEARCH_LIMIT_MSG. Trusted (locked-space) search does not draw on it.
+  const searchLimited = !trustedSearch && !!searchBudget && Number.isFinite(searchBudget.queriesRemaining)
+  if (searchLimited) {
+    system += searchBudgetInstruction(searchBudget!.queriesRemaining)
+    console.log(`  [researcher] search budget: ${searchBudget!.queriesRemaining} quer${searchBudget!.queriesRemaining === 1 ? 'y' : 'ies'} left (stated in the prompt)`)
+  }
 
   // Inject pre-executed search results as a fake tool exchange so the model
   // sees them as already done and continues from there. Also note in the system
@@ -315,12 +341,13 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
   console.log(`  [researcher] tool budget: ${toolBudgetRemaining}c remaining (ctxLimit=${ctxLimit}tok, historyBudget=${historyBudgetTokens}tok, system+history=${usedChars}c)`)
 
   const webSearchTool = tool({
-    description: `${trustedSearch ? 'Search a self-hosted index of small websites.' : 'Search the web.'} Provide up to ${focusMode === 'thorough' ? 3 : 2} queries covering different angles.`,
+    description: `${trustedSearch ? 'Search a trusted, self-hosted index.' : 'Search the web.'} Provide up to ${focusMode === 'thorough' ? 3 : 2} queries covering different angles.`,
     inputSchema: z.object({
       queries: z.array(z.string()).describe('Search queries'),
     }),
     execute: async ({ queries }) => {
       if (searchDead) return SEARCH_DEAD_MSG
+      if (searchBudget && searchBudget.queriesRemaining <= 0) return SEARCH_LIMIT_MSG
       if (toolBudgetRemaining <= MIN_URL_CONTEXT_CHARS) return CONTEXT_BUDGET_DEAD_MSG
       const requested = queries.slice(0, focusMode === 'thorough' ? 3 : 2)
       // Drop queries that merely rephrase one already run — including within this same call,
@@ -343,15 +370,16 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
       for (const q of fresh) if (await permitEgress('search', q)) permitted.push(q)
       if (!permitted.length) return EGRESS_REFUSED_MSG
       const errs: EngineError[] = []
+      const allowed = searchLimited ? permitted.slice(0, searchBudget!.queriesRemaining) : permitted
       const results = trustedSearch
-        ? await trustedSearchMulti(permitted, count, searchCategory)
-        : await webSearchMulti(permitted, count, searchCategory, e => errs.push(...e), apiBudget)
+        ? await trustedSearchMulti(allowed, count, searchCategory)
+        : await webSearchMulti(allowed, count, searchCategory, e => errs.push(...e), searchBudget)
       // Surface only when blocked engines left this search empty (matches pre-search semantics).
       if (results.length === 0 && errs.length) {
         await onEngineErrors?.(errs)
         // Engines are blocked and the paid fallback can't help (disabled or budget spent) →
         // every further search will also be empty. Stop the model from spinning on them.
-        if (!isSearchApiEnabled() || (apiBudget?.remaining ?? 0) <= 0) {
+        if (!(await hasFallbackSearch()) || (searchBudget?.fallbackRemaining ?? 0) <= 0) {
           searchDead = true
           console.log('  [researcher] search exhausted — instructing model to stop searching')
           return SEARCH_DEAD_MSG
@@ -365,8 +393,9 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
         if (!sourceIndexByUrl.has(r.url)) sourceIndexByUrl.set(r.url, r.index)
         noteSource(r.url, r.title)
       }
-      toolBudgetRemaining -= JSON.stringify(indexed).length
-      return indexed
+      const output = searchLimited ? withSearchesLeft(indexed, searchBudget!.queriesRemaining, permitted.length - allowed.length) : indexed
+      toolBudgetRemaining -= JSON.stringify(output).length
+      return output
     },
   })
 
@@ -376,7 +405,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
   // In a locked space the networked tools are *absent*, not refused. A tool that exists and says no
   // still costs a step, still tells the model the capability is there, and still leaves the refusal
   // up to logic that could be wrong — whereas a tool that was never offered cannot be called.
-  // The one opt-in exception: with SPEJAREN_TRUSTED, web_search stays, backed by spejaren alone.
+  // The one opt-in exception: with a provider trusted for locked spaces, web_search stays, backed by those alone.
   const tools: ToolSet = locked ? (trustedSearch ? { web_search: webSearchTool } : {}) : {
     web_search: webSearchTool,
     fetch_url: tool({

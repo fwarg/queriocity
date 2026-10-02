@@ -15,7 +15,7 @@ import { eq, and, desc, sql } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { readFile } from 'node:fs/promises'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
-import { webSearch, webSearchMulti, type SearchResult, type EngineError, type SearchApiBudget } from '../lib/searxng.ts'
+import { webSearch, webSearchMulti, hasTrustedSearch, newSearchBudget, type SearchResult, type EngineError, type SearchBudget } from '../lib/search/index.ts'
 import { fetchUrlAllPages, processUrlsForContext, describeOutcome, DEFAULT_MAX_URL_CONTEXT_CHARS, type UrlOutcome, type ProcessedUrl } from '../lib/fetch-url.ts'
 import { getFlashModel, getChatModel, getThinkingModelOrFallback, RESEARCH_MAX_TOKENS, DEFAULT_MEMORY_TOKEN_BUDGET } from '../lib/llm.ts'
 import { ThinkExtractor } from '../lib/think-extractor.ts'
@@ -28,7 +28,6 @@ import { trimMessages, contextCharBudget, CONTEXT_RESERVE_FRACTION } from '../li
 import { indexContents, deindexContent } from '../lib/chat-indexer.ts'
 import { ownsSpace, sessionOwnership } from '../lib/ownership.ts'
 import { isSpaceLocked } from '../lib/space-lock.ts'
-import { isSpejarenTrusted } from '../lib/spejaren.ts'
 import { rateLimitByUser, chatLimiter, suggestLimiter } from '../lib/rate-limit.ts'
 import {
   startRun, getRun, appendEvent, finishRun, waitForEvents,
@@ -265,7 +264,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   if (locked && focusMode === 'image') {
     return c.json({ error: 'Image generation is unavailable in a locked space — it would send the prompt to the diffusion server.' }, 409)
   }
-  if (locked) console.log(`  [space] locked — no ${isSpejarenTrusted() ? 'web search beyond spejaren' : 'web search'}, URL fetching or image generation`)
+  if (locked) console.log(`  [space] locked — no ${await hasTrustedSearch() ? 'web search beyond trusted providers' : 'web search'}, URL fetching or image generation`)
 
   const lastUser = [...msgs].reverse().find(m => m.role === 'user')
   const preview = (lastUser?.content ?? '').slice(0, 100).replace(/\n/g, ' ')
@@ -394,7 +393,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     // Image's search runs through the same plumbing as the other modes: blocked engines reach the
     // user instead of vanishing, and the paid-fallback cap covers this path too. Errors are
     // buffered rather than emitted directly — the tool closure is built before the SSE stream is.
-    const imageApiBudget: SearchApiBudget = { remaining: parseInt(process.env.SEARCH_API_MAX_PER_REQUEST ?? '3', 10) }
+    const imageSearchBudget = await newSearchBudget('image')
     const imageEngineErrors = new Map<string, EngineError>()
     const warnImageEngineErrors = (errors: EngineError[]) => errors.forEach(e => imageEngineErrors.set(e.engine, e))
     // Same buffering as the engine errors, and for the same reason. Without these the client
@@ -482,7 +481,8 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         }),
         execute: async ({ query }) => {
           console.log(`  [image] web_search "${query}"`)
-          const results = await webSearch(query, 10, undefined, warnImageEngineErrors, imageApiBudget)
+          if (imageSearchBudget.queriesRemaining <= 0) return 'The search limit for this request is reached — continue with what you already know.'
+          const results = await webSearch(query, 10, undefined, warnImageEngineErrors, imageSearchBudget)
           const seen = new Set(imageSources.map(s => s.url))
           for (const r of results) {
             if (seen.has(r.url)) continue
@@ -698,7 +698,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     ])
 
     // Shared per-request allowance for paid keyed-API fallback searches (pre-search + researcher).
-    const apiBudget: SearchApiBudget = { remaining: parseInt(process.env.SEARCH_API_MAX_PER_REQUEST ?? '3', 10) }
+    const searchBudget = await newSearchBudget(focusMode === 'thorough' ? 'thorough' : 'balanced')
 
     // Fetch user settings + file count + reformulate/pre-search + memory + URL prefetch in parallel.
     // In a locked space the two network legs are skipped outright rather than filtered later: the
@@ -708,7 +708,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       db.select({ count: sql<number>`count(*)` }).from(uploadedFiles).where(eq(uploadedFiles.userId, userId)).get(),
       locked
         ? Promise.resolve({ initialQueries: [] as string[], initialResults: [] as SearchResult[], engineErrors: [] as EngineError[] })
-        : runReformulateAndPreSearch(msgsForReformulate, focusMode as 'balanced' | 'thorough', hasAttachment, searchCategory, apiBudget, abortSignal),
+        : runReformulateAndPreSearch(msgsForReformulate, focusMode as 'balanced' | 'thorough', hasAttachment, searchCategory, searchBudget, abortSignal),
       spaceId ? getAppSetting('memory_token_budget', DEFAULT_MEMORY_TOKEN_BUDGET).then(Number) : Promise.resolve(Number(DEFAULT_MEMORY_TOKEN_BUDGET)),
       getAppSetting('space_rag_budget', '500').then(Number),
       locked ? Promise.resolve([]) : prefetchUrlsFromMessage(lastUser?.content ?? '', hasAttachment, fetchMaxPages),
@@ -808,7 +808,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       // URLs the user pointed at or the model chose to read in full — kept out of the reranker's
       // prune below so a page that was explicitly fetched always reaches the writer.
       const fetchedUrls = new Set<string>()
-      const researcherResult = await runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, onUrlRead: emitUrlOutcome, onSource: (s) => { allSources.push(s); fetchedUrls.add(s.url) }, apiBudget, requestApproval, locked })
+      const researcherResult = await runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, onUrlRead: emitUrlOutcome, onSource: (s) => { allSources.push(s); fetchedUrls.add(s.url) }, searchBudget, requestApproval, locked })
       let researcherNotes = ''
       // Unconditional: the extractor also drops leaked tool-call markup, which has to be stripped
       // whether or not the user is shown thinking. Displaying thinking is gated separately.
@@ -906,7 +906,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         sources.push(toStoredSource(s))
         await out.writeSSE({ data: JSON.stringify({ type: 'sources', sources: [s] }) })
       }
-      const result = await runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, onUrlRead: emitUrlOutcome, onSource: emitFetchedSource, apiBudget, requestApproval, locked })
+      const result = await runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, onUrlRead: emitUrlOutcome, onSource: emitFetchedSource, searchBudget, requestApproval, locked })
       const extractor = new ThinkExtractor()   // see thoroughExtractor above
       const citations = new CitationNormalizer()
 
@@ -1130,7 +1130,7 @@ async function runReformulateAndPreSearch(
   focusMode: 'balanced' | 'thorough',
   hasAttachment: boolean,
   categories?: string,
-  apiBudget?: SearchApiBudget,
+  searchBudget?: SearchBudget,
   abortSignal?: AbortSignal,
 ): Promise<{ initialQueries?: string[]; initialResults?: SearchResult[]; engineErrors?: EngineError[] }> {
   // Dedup engine errors by name across the (possibly multiple) pre-search queries.
@@ -1148,17 +1148,17 @@ async function runReformulateAndPreSearch(
       const q = lastUser?.content ?? ''
       if (!q) return {}
       console.log(`  [reformulate] disabled — using raw query: ${JSON.stringify(q.slice(0, 80))}`)
-      const initialResults = await webSearch(q, 6, categories, collect, apiBudget)
+      const initialResults = await webSearch(q, 6, categories, collect, searchBudget)
       return { initialQueries: [q], initialResults, engineErrors: engineErrors() }
     }
 
     const countEach = focusMode === 'thorough' ? 10 : 6
     // reformulateLLM caps the list for the mode (and may add the raw query as a safety net), so
     // it is used as returned — slicing here again would drop that safety net.
-    const queries = await reformulateLLM(msgsForReformulate, focusMode, abortSignal)
+    const queries = await reformulateLLM(msgsForReformulate, focusMode, abortSignal, searchBudget?.queriesRemaining)
     if (queries.length === 0) return {}
 
-    const found = await webSearchMulti(queries, countEach, categories, collect, apiBudget)
+    const found = await webSearchMulti(queries, countEach, categories, collect, searchBudget)
     return { initialQueries: queries, initialResults: await rerankSearchResults(userQueryOf(msgsForReformulate), found), engineErrors: engineErrors() }
   } catch (e) {
     console.error('[reformulate] error:', e)

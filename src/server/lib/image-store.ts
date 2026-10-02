@@ -14,7 +14,7 @@ export const IMAGE_TIMEOUT_MS = parseInt(process.env.IMAGE_TIMEOUT_MS ?? '300000
 /** Read per call, not captured at module load.
  *
  *  A module-level const takes whatever the environment held when the first importer pulled this in,
- *  which makes the value depend on import order — the trap searxng.ts and llm.ts both document, and
+ *  which makes the value depend on import order — the trap search/providers/searxng.ts and llm.ts both document, and
  *  which broke a test here the moment another file imported this module first. */
 export const imageStorageDir = (): string => process.env.IMAGE_STORAGE_DIR ?? '/tmp/queriocity/images'
 

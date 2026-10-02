@@ -3,7 +3,8 @@ import { describe, test, expect } from 'bun:test'
 // Set before first use: the engine list is memoised on first read, and Bun auto-loads the local
 // .env — without this the test would assert against whatever the developer has configured.
 process.env.SEARCH_MAJOR_ENGINES = 'google,bing,brave,duckduckgo,startpage,mojeek,reuters'
-const { isMajorEngine, isSiteScoped, hasMajorEngineList } = await import('./searxng.ts')
+const { isMajorEngine, hasMajorEngineList } = await import('./policy.ts')
+const { isSiteScoped } = await import('./fusion.ts')
 
 describe('isMajorEngine', () => {
   test('matches configured engines by exact name', () => {

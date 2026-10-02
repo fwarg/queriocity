@@ -25,6 +25,7 @@ const CLIENT_SRC = join(import.meta.dir)
 const SKIPPED_FILES = new Set([
   // Admin-only, left English by decision — see the Languages section in README.md.
   'AdminPanel.tsx',
+  'AdminSearchPanel.tsx',
 ])
 
 /** Strings that are correct as literals. Keep this list short: every entry is a place the check

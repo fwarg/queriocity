@@ -1,5 +1,5 @@
 import type { TextStreamPart, ToolSet } from 'ai'
-import type { SearchResult } from './searxng.ts'
+import type { SearchResult } from './search/index.ts'
 import type { ThinkExtractor } from './think-extractor.ts'
 import { stepEvent } from './progress.ts'
 
@@ -89,8 +89,12 @@ export async function drainResearcherStream<TOOLS extends ToolSet>(
     } else if (part.type === 'tool-call' && part.toolName === 'save_to_memory') {
       await stream.writeSSE({ data: stepEvent({ kind: 'memory' }) })
     } else if (part.type === 'tool-result' && part.toolName === 'web_search') {
-      // result may be a non-array "search unavailable" message when search is exhausted.
-      const results = (Array.isArray(part.output) ? part.output : []) as SearchResult[]
+      // An array, `{ results, searchesLeft }` under a limited search budget, or a non-array
+      // "search unavailable" message when search is exhausted.
+      const out = part.output as unknown
+      const results = (Array.isArray(out) ? out
+        : out && typeof out === 'object' && Array.isArray((out as { results?: unknown }).results) ? (out as { results: unknown[] }).results
+        : []) as SearchResult[]
       await stream.writeSSE({ data: stepEvent({ kind: 'results', count: results.length }) })
       await onSources(results)
       if (showThinking) {
