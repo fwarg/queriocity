@@ -1,7 +1,7 @@
 import { streamText, tool, type ToolSet, stepCountIs, hasToolCall } from 'ai'
 import { z } from 'zod'
 import type { LanguageModel, ModelMessage } from 'ai'
-import { webSearchMulti, trustedSearchMulti, hasTrustedSearch, hasFallbackSearch, type SearchResult, type EngineError, type SearchApiBudget } from './search/index.ts'
+import { webSearchMulti, trustedSearchMulti, hasTrustedSearch, hasFallbackSearch, type SearchResult, type EngineError, type SearchBudget } from './search/index.ts'
 import { searchUploads } from './files/uploads-search.ts'
 import { saveMemories, saveUserMemory, searchSpaceHistory, MEMORY_MAX_SOURCES, type MemorySource } from './memory.ts'
 import { ragMinRelevance } from './rag-settings.ts'
@@ -76,6 +76,11 @@ const COMPRESS_SUMMARY_FRACTION = 0.12
 // burning its remaining steps on futile searches and answers with what it already has.
 const SEARCH_DEAD_MSG = {
   error: 'Web search is unavailable right now (search engines are blocked and the fallback search quota for this request is used up). Do NOT call web_search again — write your answer using the results already gathered.',
+}
+
+// Returned once the per-request query limit (Admin → Search) is spent, for the same reason.
+const SEARCH_LIMIT_MSG = {
+  error: 'The search limit for this question is reached. Do NOT call web_search again — write your answer using the results already gathered.',
 }
 
 // Returned when every query in a web_search call repeats one already run. Names the constraint
@@ -156,7 +161,7 @@ export interface ResearchOptions {
    *  like a search hit. Without a number the model writes `[fetch_url]`, which nothing renders. */
   onSource?: (source: SearchResult & { index: number }) => void | Promise<void>
   /** Shared per-request allowance for paid keyed-API fallback searches. */
-  apiBudget?: SearchApiBudget
+  searchBudget?: SearchBudget
   /** Asks the user to approve an outbound request the egress guard found suspicious.
    *
    *  Absent means nobody is watching — the monitor runner has no client attached — so a request
@@ -173,7 +178,7 @@ export interface EgressApprovalRequest {
   reasons: string[]
 }
 
-export async function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, userMemoryEnabled = false, fetchSummarize = false, urlContextChars, compressHistory = false, searchCategory, maxStepsOverride, onEngineErrors, onUrlRead, onSource, apiBudget, requestApproval, locked = false }: ResearchOptions) {
+export async function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, userMemoryEnabled = false, fetchSummarize = false, urlContextChars, compressHistory = false, searchCategory, maxStepsOverride, onEngineErrors, onUrlRead, onSource, searchBudget, requestApproval, locked = false }: ResearchOptions) {
   const { maxSteps: defaultMaxSteps, count } = MODE_CONFIG[focusMode]
   // Read once per run, so the tools, the tool description and the system prompt agree.
   const trustedSearch = locked && await hasTrustedSearch()
@@ -319,6 +324,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
     }),
     execute: async ({ queries }) => {
       if (searchDead) return SEARCH_DEAD_MSG
+      if (searchBudget && searchBudget.queriesRemaining <= 0) return SEARCH_LIMIT_MSG
       if (toolBudgetRemaining <= MIN_URL_CONTEXT_CHARS) return CONTEXT_BUDGET_DEAD_MSG
       const requested = queries.slice(0, focusMode === 'thorough' ? 3 : 2)
       // Drop queries that merely rephrase one already run — including within this same call,
@@ -343,13 +349,13 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
       const errs: EngineError[] = []
       const results = trustedSearch
         ? await trustedSearchMulti(permitted, count, searchCategory)
-        : await webSearchMulti(permitted, count, searchCategory, e => errs.push(...e), apiBudget)
+        : await webSearchMulti(permitted, count, searchCategory, e => errs.push(...e), searchBudget)
       // Surface only when blocked engines left this search empty (matches pre-search semantics).
       if (results.length === 0 && errs.length) {
         await onEngineErrors?.(errs)
         // Engines are blocked and the paid fallback can't help (disabled or budget spent) →
         // every further search will also be empty. Stop the model from spinning on them.
-        if (!(await hasFallbackSearch()) || (apiBudget?.remaining ?? 0) <= 0) {
+        if (!(await hasFallbackSearch()) || (searchBudget?.fallbackRemaining ?? 0) <= 0) {
           searchDead = true
           console.log('  [researcher] search exhausted — instructing model to stop searching')
           return SEARCH_DEAD_MSG

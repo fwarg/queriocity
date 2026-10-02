@@ -5,7 +5,7 @@ import { reformulateLLM } from './reformulate.ts'
 import { db, chatSessions, messages, users, parseSettings, getAppSetting } from './db.ts'
 import { eq } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
-import { webSearch, webSearchMulti, newSearchBudget, type SearchResult, type SearchApiBudget } from './search/index.ts'
+import { webSearch, webSearchMulti, newSearchBudget, type SearchResult, type SearchBudget } from './search/index.ts'
 import { getFlashModel, getChatModel, DEFAULT_MEMORY_TOKEN_BUDGET } from './llm.ts'
 import { buildMemoryBlock, extractMemoriesPostHoc, userMemoryBlockIfEnabled, joinMemoryBlocks, toMemorySources } from './memory.ts'
 import { ThinkExtractor } from './think-extractor.ts'
@@ -70,12 +70,12 @@ export async function executeChatAndSave({
     fullContent += flashExtractor.flush().text
   } else {
     // Shared per-run allowance for paid keyed-API fallback searches (pre-search + researcher).
-    const apiBudget = await newSearchBudget()
+    const searchBudget = await newSearchBudget()
 
     // When RSS feed items are pre-fetched, skip web search and inject them directly
     const { initialQueries, initialResults } = feedItems?.length
       ? { initialQueries: ['latest news from selected RSS feeds'], initialResults: feedItems }
-      : await reformulateAndSearch(promptText, focusMode, undefined, apiBudget)
+      : await reformulateAndSearch(promptText, focusMode, undefined, searchBudget)
     const [userRow, memoryBudget, ragBudget, urlContextChars, fetchSummarize, compressHistory] = await Promise.all([
       db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get(),
       spaceId ? getAppSetting('memory_token_budget', DEFAULT_MEMORY_TOKEN_BUDGET).then(Number) : Promise.resolve(0),
@@ -98,7 +98,7 @@ export async function executeChatAndSave({
     if (focusMode === 'thorough') {
       const researcherResult = await runResearcher({
         messages: msgs, focusMode, userId, model: getChatModel(), abortSignal: AbortSignal.timeout(300_000),
-        initialQueries, initialResults, customPrompt, hasFiles: false, spaceId, sessionId, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory, apiBudget,
+        initialQueries, initialResults, customPrompt, hasFiles: false, spaceId, sessionId, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory, searchBudget,
       })
       let researcherNotes = ''
       const { sources: rs } = await collectStream(researcherResult, s => { researcherNotes += s })
@@ -119,7 +119,7 @@ export async function executeChatAndSave({
       const researcherResult = await runResearcher({
         messages: msgs, focusMode, userId, model: getChatModel(), abortSignal: AbortSignal.timeout(300_000),
         initialQueries, initialResults, customPrompt, hasFiles: false, spaceId, sessionId, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory,
-        maxStepsOverride: 6, apiBudget,
+        maxStepsOverride: 6, searchBudget,
       })
       const { text, sources: rs, finishReason } = await collectStream(researcherResult, () => {})
       fullContent = text
@@ -176,12 +176,12 @@ async function reformulateAndSearch(
   query: string,
   focusMode: 'balanced' | 'thorough',
   categories?: string,
-  apiBudget?: SearchApiBudget,
+  searchBudget?: SearchBudget,
 ): Promise<{ initialQueries?: string[]; initialResults?: SearchResult[] }> {
   try {
     const queryReformulation = await getAppSetting('query_reformulation', 'true').then(v => v === 'true')
     if (!queryReformulation) {
-      const results = await webSearch(query, 6, categories, undefined, apiBudget)
+      const results = await webSearch(query, 6, categories, undefined, searchBudget)
       return { initialQueries: [query], initialResults: results }
     }
     const msgs = [{ role: 'user' as const, content: query }]
@@ -190,7 +190,7 @@ async function reformulateAndSearch(
     // it is used as returned — slicing here again would drop that safety net.
     const queries = await reformulateLLM(msgs, focusMode)
     if (queries.length === 0) return {}
-    const results = await webSearchMulti(queries, countEach, categories, undefined, apiBudget)
+    const results = await webSearchMulti(queries, countEach, categories, undefined, searchBudget)
     return { initialQueries: queries, initialResults: await rerankSearchResults(query, results) }
   } catch (e) {
     console.error('[monitor-reformulate]', e)

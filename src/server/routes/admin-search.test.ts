@@ -38,18 +38,25 @@ describe('admin search policy', () => {
     expect(res.stored).toBe(false)
     expect(res.policy.fusion).toBe('legacy')
     expect(res.providers.map((p: { id: string }) => p.id)).toEqual(['searxng', 'spejaren', 'mojeek'])
+    expect(typeof res.usage).toBe('object')
+    expect(res.policy.maxQueriesPerRequest).toBe(0)
+    expect(res.policy.providers.mojeek.monthlyQuota).toBe(0)
   })
 
   test('saves, reads back, and resets', async () => {
     const { policy } = await get()
     policy.fusion = 'rrf'
     policy.providers.spejaren.weight = 2
+    policy.providers.mojeek.monthlyQuota = 3000
+    policy.maxQueriesPerRequest = 6
     expect((await put(policy)).status).toBe(200)
 
     const saved = await get()
     expect(saved.stored).toBe(true)
     expect(saved.policy.fusion).toBe('rrf')
     expect(saved.policy.providers.spejaren.weight).toBe(2)
+    expect(saved.policy.providers.mojeek.monthlyQuota).toBe(3000)
+    expect(saved.policy.maxQueriesPerRequest).toBe(6)
 
     await app.request('/admin/search', { method: 'DELETE', headers: { Cookie: cookie } })
     expect((await get()).stored).toBe(false)

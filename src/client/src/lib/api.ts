@@ -522,6 +522,7 @@ export interface SearchProviderPolicy {
   weight: number
   minSlots: number
   trustedForLocked: boolean
+  monthlyQuota: number
   engineWeights: Record<string, number>
   defaultEngineWeight: number
 }
@@ -532,6 +533,7 @@ export interface SearchPolicy {
   fallbackBudgetPerRequest: number
   fallbackMinResults: number
   fallbackWhenNoMajorEngine: boolean
+  maxQueriesPerRequest: number
   providers: Record<string, SearchProviderPolicy>
 }
 
@@ -550,10 +552,11 @@ export interface SearchProviderStats {
   results: number
   kept: number
   totalMs: number
+  quotaSkips: number
   engines: Record<string, number>
 }
 
-export async function fetchSearchPolicy(): Promise<{ policy: SearchPolicy; stored: boolean; providers: SearchProviderInfo[]; telemetry: Record<string, SearchProviderStats> }> {
+export async function fetchSearchPolicy(): Promise<{ policy: SearchPolicy; stored: boolean; providers: SearchProviderInfo[]; telemetry: Record<string, SearchProviderStats>; usage: Record<string, number> }> {
   return fetch(`${BASE}/admin/search`).then(r => r.json())
 }
 

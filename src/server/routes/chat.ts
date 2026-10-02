@@ -15,7 +15,7 @@ import { eq, and, desc, sql } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { readFile } from 'node:fs/promises'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
-import { webSearch, webSearchMulti, hasTrustedSearch, newSearchBudget, type SearchResult, type EngineError, type SearchApiBudget } from '../lib/search/index.ts'
+import { webSearch, webSearchMulti, hasTrustedSearch, newSearchBudget, type SearchResult, type EngineError, type SearchBudget } from '../lib/search/index.ts'
 import { fetchUrlAllPages, processUrlsForContext, describeOutcome, DEFAULT_MAX_URL_CONTEXT_CHARS, type UrlOutcome, type ProcessedUrl } from '../lib/fetch-url.ts'
 import { getFlashModel, getChatModel, getThinkingModelOrFallback, RESEARCH_MAX_TOKENS, DEFAULT_MEMORY_TOKEN_BUDGET } from '../lib/llm.ts'
 import { ThinkExtractor } from '../lib/think-extractor.ts'
@@ -393,7 +393,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     // Image's search runs through the same plumbing as the other modes: blocked engines reach the
     // user instead of vanishing, and the paid-fallback cap covers this path too. Errors are
     // buffered rather than emitted directly — the tool closure is built before the SSE stream is.
-    const imageApiBudget = await newSearchBudget()
+    const imageSearchBudget = await newSearchBudget()
     const imageEngineErrors = new Map<string, EngineError>()
     const warnImageEngineErrors = (errors: EngineError[]) => errors.forEach(e => imageEngineErrors.set(e.engine, e))
     // Same buffering as the engine errors, and for the same reason. Without these the client
@@ -481,7 +481,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         }),
         execute: async ({ query }) => {
           console.log(`  [image] web_search "${query}"`)
-          const results = await webSearch(query, 10, undefined, warnImageEngineErrors, imageApiBudget)
+          const results = await webSearch(query, 10, undefined, warnImageEngineErrors, imageSearchBudget)
           const seen = new Set(imageSources.map(s => s.url))
           for (const r of results) {
             if (seen.has(r.url)) continue
@@ -697,7 +697,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     ])
 
     // Shared per-request allowance for paid keyed-API fallback searches (pre-search + researcher).
-    const apiBudget = await newSearchBudget()
+    const searchBudget = await newSearchBudget()
 
     // Fetch user settings + file count + reformulate/pre-search + memory + URL prefetch in parallel.
     // In a locked space the two network legs are skipped outright rather than filtered later: the
@@ -707,7 +707,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       db.select({ count: sql<number>`count(*)` }).from(uploadedFiles).where(eq(uploadedFiles.userId, userId)).get(),
       locked
         ? Promise.resolve({ initialQueries: [] as string[], initialResults: [] as SearchResult[], engineErrors: [] as EngineError[] })
-        : runReformulateAndPreSearch(msgsForReformulate, focusMode as 'balanced' | 'thorough', hasAttachment, searchCategory, apiBudget, abortSignal),
+        : runReformulateAndPreSearch(msgsForReformulate, focusMode as 'balanced' | 'thorough', hasAttachment, searchCategory, searchBudget, abortSignal),
       spaceId ? getAppSetting('memory_token_budget', DEFAULT_MEMORY_TOKEN_BUDGET).then(Number) : Promise.resolve(Number(DEFAULT_MEMORY_TOKEN_BUDGET)),
       getAppSetting('space_rag_budget', '500').then(Number),
       locked ? Promise.resolve([]) : prefetchUrlsFromMessage(lastUser?.content ?? '', hasAttachment, fetchMaxPages),
@@ -807,7 +807,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       // URLs the user pointed at or the model chose to read in full — kept out of the reranker's
       // prune below so a page that was explicitly fetched always reaches the writer.
       const fetchedUrls = new Set<string>()
-      const researcherResult = await runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, onUrlRead: emitUrlOutcome, onSource: (s) => { allSources.push(s); fetchedUrls.add(s.url) }, apiBudget, requestApproval, locked })
+      const researcherResult = await runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, onUrlRead: emitUrlOutcome, onSource: (s) => { allSources.push(s); fetchedUrls.add(s.url) }, searchBudget, requestApproval, locked })
       let researcherNotes = ''
       // Unconditional: the extractor also drops leaked tool-call markup, which has to be stripped
       // whether or not the user is shown thinking. Displaying thinking is gated separately.
@@ -905,7 +905,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         sources.push(toStoredSource(s))
         await out.writeSSE({ data: JSON.stringify({ type: 'sources', sources: [s] }) })
       }
-      const result = await runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, onUrlRead: emitUrlOutcome, onSource: emitFetchedSource, apiBudget, requestApproval, locked })
+      const result = await runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, onUrlRead: emitUrlOutcome, onSource: emitFetchedSource, searchBudget, requestApproval, locked })
       const extractor = new ThinkExtractor()   // see thoroughExtractor above
       const citations = new CitationNormalizer()
 
@@ -1129,7 +1129,7 @@ async function runReformulateAndPreSearch(
   focusMode: 'balanced' | 'thorough',
   hasAttachment: boolean,
   categories?: string,
-  apiBudget?: SearchApiBudget,
+  searchBudget?: SearchBudget,
   abortSignal?: AbortSignal,
 ): Promise<{ initialQueries?: string[]; initialResults?: SearchResult[]; engineErrors?: EngineError[] }> {
   // Dedup engine errors by name across the (possibly multiple) pre-search queries.
@@ -1147,7 +1147,7 @@ async function runReformulateAndPreSearch(
       const q = lastUser?.content ?? ''
       if (!q) return {}
       console.log(`  [reformulate] disabled — using raw query: ${JSON.stringify(q.slice(0, 80))}`)
-      const initialResults = await webSearch(q, 6, categories, collect, apiBudget)
+      const initialResults = await webSearch(q, 6, categories, collect, searchBudget)
       return { initialQueries: [q], initialResults, engineErrors: engineErrors() }
     }
 
@@ -1157,7 +1157,7 @@ async function runReformulateAndPreSearch(
     const queries = await reformulateLLM(msgsForReformulate, focusMode, abortSignal)
     if (queries.length === 0) return {}
 
-    const found = await webSearchMulti(queries, countEach, categories, collect, apiBudget)
+    const found = await webSearchMulti(queries, countEach, categories, collect, searchBudget)
     return { initialQueries: queries, initialResults: await rerankSearchResults(userQueryOf(msgsForReformulate), found), engineErrors: engineErrors() }
   } catch (e) {
     console.error('[reformulate] error:', e)

@@ -18,6 +18,7 @@ import { deleteUserImages } from '../lib/image-store.ts'
 import { describeProviders, PROVIDERS } from '../lib/search/index.ts'
 import { loadSearchPolicy, saveSearchPolicy, resetSearchPolicy, hasStoredSearchPolicy, searchPolicySchema } from '../lib/search/policy.ts'
 import { telemetrySnapshot } from '../lib/search/telemetry.ts'
+import { monthlyUsage } from '../lib/search/usage.ts'
 
 /** Random temporary password that satisfies validatePassword's complexity rules. */
 function generateTempPassword(): string {
@@ -114,7 +115,7 @@ adminRouter.patch('/settings', zValidator('json', z.object({
 
 adminRouter.get('/search', async (c) => {
   const [policy, stored] = await Promise.all([loadSearchPolicy(), hasStoredSearchPolicy()])
-  return c.json({ policy, stored, providers: describeProviders(), telemetry: telemetrySnapshot() })
+  return c.json({ policy, stored, providers: describeProviders(), telemetry: telemetrySnapshot(), usage: monthlyUsage() })
 })
 
 const knownProviders = new Set(PROVIDERS.map(p => p.id))

@@ -9,6 +9,8 @@ export interface ProviderStats {
   /** Hits that made it into the fused list handed to the caller. */
   kept: number
   totalMs: number
+  /** Calls not made because the monthly quota was used up. */
+  quotaSkips: number
   /** Hits per sub-engine, for a meta-engine. */
   engines: Record<string, number>
 }
@@ -17,7 +19,7 @@ const stats = new Map<string, ProviderStats>()
 
 function entry(id: string): ProviderStats {
   let s = stats.get(id)
-  if (!s) stats.set(id, s = { calls: 0, failures: 0, results: 0, kept: 0, totalMs: 0, engines: {} })
+  if (!s) stats.set(id, s = { calls: 0, failures: 0, results: 0, kept: 0, totalMs: 0, quotaSkips: 0, engines: {} })
   return s
 }
 
@@ -28,6 +30,10 @@ export function recordCall(id: string, ms: number, failed: boolean, results: Arr
   if (failed) s.failures++
   s.results += results.length
   for (const r of results) for (const e of r.engines ?? []) s.engines[e] = (s.engines[e] ?? 0) + 1
+}
+
+export function recordQuotaSkip(id: string): void {
+  entry(id).quotaSkips++
 }
 
 export function recordKept(id: string, n: number): void {

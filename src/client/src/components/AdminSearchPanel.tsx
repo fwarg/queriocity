@@ -28,6 +28,7 @@ function StatsLine({ stats }: { stats?: SearchProviderStats }) {
       <p>
         {stats.calls} calls · {stats.failures} failed · avg {Math.round(stats.totalMs / stats.calls)} ms ·{' '}
         {stats.results} hits, {stats.kept} kept after fusion ({stats.results ? Math.round(100 * stats.kept / stats.results) : 0}%)
+        {stats.quotaSkips > 0 && <> · <span className="text-amber-400">{stats.quotaSkips} skipped over quota</span></>}
       </p>
       {topEngines.length > 0 && <p>Engines: {topEngines.map(([e, n]) => `${e} ${n}`).join(' · ')}</p>}
     </div>
@@ -38,12 +39,15 @@ interface CardProps {
   info: SearchProviderInfo
   policy: SearchProviderPolicy
   stats?: SearchProviderStats
+  /** Calls this UTC month. */
+  used: number
   engineDraft: string
   onChange: (p: SearchProviderPolicy) => void
   onEngineDraft: (text: string) => void
 }
 
-function ProviderCard({ info, policy, stats, engineDraft, onChange, onEngineDraft }: CardProps) {
+function ProviderCard({ info, policy, stats, used, engineDraft, onChange, onEngineDraft }: CardProps) {
+  const nearQuota = policy.monthlyQuota > 0 && used >= 0.8 * policy.monthlyQuota
   const set = <K extends keyof SearchProviderPolicy>(k: K, v: SearchProviderPolicy[K]) => onChange({ ...policy, [k]: v })
   return (
     <div className="flex flex-col gap-3 border border-gray-800 rounded p-3">
@@ -70,6 +74,12 @@ function ProviderCard({ info, policy, stats, engineDraft, onChange, onEngineDraf
         </label>
         <label className={LABEL}>Reserved slots
           <input type="number" min={0} max={50} value={policy.minSlots} onChange={e => set('minSlots', Number(e.target.value))} className={`${INPUT} w-20`} />
+        </label>
+        <label className={LABEL}>Monthly quota (0 = unlimited)
+          <input type="number" min={0} step={100} value={policy.monthlyQuota} onChange={e => set('monthlyQuota', Number(e.target.value))} className={`${INPUT} w-24`} />
+          <span className={nearQuota ? 'text-amber-400' : 'text-gray-500'}>
+            used this month: {used}{policy.monthlyQuota > 0 ? ` / ${policy.monthlyQuota}` : ''}
+          </span>
         </label>
       </div>
       {info.kind === 'meta' && (
@@ -98,7 +108,7 @@ function FusionSettings({ policy, onChange }: { policy: SearchPolicy; onChange: 
   const set = <K extends keyof SearchPolicy>(k: K, v: SearchPolicy[K]) => onChange({ ...policy, [k]: v })
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-xs font-semibold text-gray-300 uppercase tracking-wider">Merging</p>
+      <p className="text-xs font-semibold text-gray-300 uppercase tracking-wider">Merging & limits</p>
       <p className="text-xs text-gray-500">
         Legacy: primaries in order, a fallback when they come back thin, supplements interleaved in their reserved slots.
         Rank fusion: every provider's ranking is combined by weight (Reciprocal Rank Fusion), so pages several providers return rise; reserved slots still apply.
@@ -117,6 +127,9 @@ function FusionSettings({ policy, onChange }: { policy: SearchPolicy; onChange: 
         )}
         <label className={LABEL}>Fallback calls per request
           <input type="number" min={0} max={100} value={policy.fallbackBudgetPerRequest} onChange={e => set('fallbackBudgetPerRequest', Number(e.target.value))} className={`${INPUT} w-20`} />
+        </label>
+        <label className={LABEL}>Web searches per question (0 = unlimited)
+          <input type="number" min={0} max={1000} value={policy.maxQueriesPerRequest} onChange={e => set('maxQueriesPerRequest', Number(e.target.value))} className={`${INPUT} w-20`} />
         </label>
         <label className={LABEL}>Fallback below N results
           <input type="number" min={0} max={50} value={policy.fallbackMinResults} onChange={e => set('fallbackMinResults', Number(e.target.value))} className={`${INPUT} w-20`} />
@@ -171,13 +184,13 @@ export function AdminSearchPanel() {
     <div className="flex flex-col gap-6">
       <p className="text-xs text-gray-500">
         {data.stored ? 'Saved settings override the env defaults.' : 'Showing env defaults — nothing saved yet.'}{' '}
-        API keys stay in env. Counters are since server start.
+        API keys stay in env. Counters are since server start; monthly usage is per UTC month.
       </p>
       <FusionSettings policy={policy} onChange={setPolicy} />
       <div className="flex flex-col gap-3 border-t border-gray-800 pt-5">
         <p className="text-xs font-semibold text-gray-300 uppercase tracking-wider">Providers</p>
         {data.providers.map(info => (
-          <ProviderCard key={info.id} info={info} policy={policy.providers[info.id]} stats={data.telemetry[info.id]}
+          <ProviderCard key={info.id} info={info} policy={policy.providers[info.id]} stats={data.telemetry[info.id]} used={data.usage[info.id] ?? 0}
             engineDraft={engineDrafts[info.id] ?? ''}
             onChange={p => setPolicy({ ...policy, providers: { ...policy.providers, [info.id]: p } })}
             onEngineDraft={text => setEngineDrafts({ ...engineDrafts, [info.id]: text })} />

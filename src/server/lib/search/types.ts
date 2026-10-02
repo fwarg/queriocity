@@ -10,9 +10,12 @@ export interface EngineError {
   reason: string
 }
 
-/** Mutable per-request/run allowance for calls to fallback (typically paid) providers. */
-export interface SearchApiBudget {
-  remaining: number
+/** Mutable per-request/run allowances, shared by the pre-search and every researcher step. */
+export interface SearchBudget {
+  /** Calls to fallback (typically paid) providers. */
+  fallbackRemaining: number
+  /** Search queries of any kind; Infinity when unlimited. */
+  queriesRemaining: number
 }
 
 /** A hit as a provider returns it, before fusion strips the attribution. */

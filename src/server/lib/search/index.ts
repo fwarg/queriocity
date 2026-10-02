@@ -8,11 +8,12 @@ import { hasMajorEngineList, isMajorEngine, loadSearchPolicy, type ProviderPolic
 import { mojeekProvider } from './providers/mojeek.ts'
 import { searxngProvider } from './providers/searxng.ts'
 import { spejarenProvider } from './providers/spejaren.ts'
-import { recordCall, recordKept } from './telemetry.ts'
-import type { EngineError, ProviderOutcome, SearchApiBudget, SearchProvider, SearchResult } from './types.ts'
+import { recordCall, recordKept, recordQuotaSkip } from './telemetry.ts'
+import { hasQuota, takeQuota } from './usage.ts'
+import type { EngineError, ProviderOutcome, SearchBudget, SearchProvider, SearchResult } from './types.ts'
 import { emptyOutcome } from './types.ts'
 
-export type { SearchResult, EngineError, SearchApiBudget } from './types.ts'
+export type { SearchResult, EngineError, SearchBudget } from './types.ts'
 export { isSiteScoped } from './fusion.ts'
 
 /** Every provider, in priority order: an earlier primary's results come first in the legacy merge. */
@@ -31,6 +32,11 @@ function activeProviders(policy: SearchPolicy, role?: Role): Active[] {
 
 async function runProvider(a: Active, query: string, count: number, categories?: string): Promise<Run> {
   if (count <= 0) return { ...a, results: [], outcome: emptyOutcome() }
+  if (!takeQuota(a.provider.id, a.policy.monthlyQuota)) {
+    console.log(`  [search] ${a.provider.id} monthly quota (${a.policy.monthlyQuota}) reached — skipped`)
+    recordQuotaSkip(a.provider.id)
+    return { ...a, results: [], outcome: emptyOutcome() }
+  }
   const start = performance.now()
   const outcome = await a.provider.search(query, count, categories)
   recordCall(a.provider.id, performance.now() - start, outcome.failed, outcome.results)
@@ -59,7 +65,7 @@ function nicheOnlyEngines(runs: Run[], policy: SearchPolicy): string[] | null {
  *   - no major engine contributed, however many results came back. A healthy-looking count from a
  *     niche index alone is worse than it looks: plenty to read and none of it answers the question. */
 async function runFallback(
-  query: string, count: number, base: SearchResult[], primaries: Run[], policy: SearchPolicy, budget?: SearchApiBudget,
+  query: string, count: number, base: SearchResult[], primaries: Run[], policy: SearchPolicy, budget?: SearchBudget,
 ): Promise<{ run: Run; first: boolean } | null> {
   const fallbacks = activeProviders(policy, 'fallback')
   if (!fallbacks.length) return null
@@ -71,13 +77,13 @@ async function runFallback(
   for (const a of fallbacks) {
     // Check + decrement are synchronous (no await between), so parallel queries in
     // webSearchMulti cannot collectively exceed the cap.
-    if (!budget || budget.remaining <= 0) {
+    if (!budget || budget.fallbackRemaining <= 0) {
       console.log(`  [search] fallback budget exhausted — skipping ${a.provider.id} for "${query}"`)
       return null
     }
     console.log(`  [search] ${a.provider.id} topping up "${query}": ${reason}`)
-    budget.remaining--
-    const left = budget.remaining   // captured before await; parallel calls decrement concurrently
+    budget.fallbackRemaining--
+    const left = budget.fallbackRemaining   // captured before await; parallel calls decrement concurrently
     const run = await runProvider(a, query, count)
     const first = !!niche && base.length >= count
     if (run.results.length) {
@@ -94,8 +100,16 @@ export async function webSearch(
   count = 10,
   categories?: string,
   onEngineErrors?: (errors: EngineError[]) => void,
-  apiBudget?: SearchApiBudget,
+  searchBudget?: SearchBudget,
 ): Promise<SearchResult[]> {
+  // Check + decrement before the first await, so parallel queries cannot together exceed the cap.
+  if (searchBudget) {
+    if (searchBudget.queriesRemaining <= 0) {
+      console.log(`  [search] query limit for this request reached — skipping "${query}"`)
+      return []
+    }
+    searchBudget.queriesRemaining--
+  }
   const policy = await loadSearchPolicy()
   // In parallel, so supplements add no latency beyond the primaries' own; each yields nothing on failure.
   const [primaries, supplements] = await Promise.all([
@@ -109,7 +123,7 @@ export async function webSearch(
   // The fallback judges the primaries alone: a supplement is a niche index, and a healthy count
   // from it must not hide that the broad engines failed. A failed request rules a top-up out.
   const fallback = primaries.some(r => !r.outcome.failed)
-    ? await runFallback(query, count, base, primaries, policy, apiBudget)
+    ? await runFallback(query, count, base, primaries, policy, searchBudget)
     : null
 
   const fused = policy.fusion === 'rrf'
@@ -135,9 +149,11 @@ export async function webSearchMulti(
   countEach: number,
   categories?: string,
   onEngineErrors?: (errors: EngineError[]) => void,
-  apiBudget?: SearchApiBudget,
+  searchBudget?: SearchBudget,
 ): Promise<SearchResult[]> {
-  return mergeBatches(await Promise.all(queries.map(q => webSearch(q, countEach, categories, onEngineErrors, apiBudget))))
+  const allowed = searchBudget ? queries.slice(0, Math.max(0, searchBudget.queriesRemaining)) : queries
+  if (allowed.length < queries.length) console.log(`  [search] query limit for this request — running ${allowed.length} of ${queries.length} queries`)
+  return mergeBatches(await Promise.all(allowed.map(q => webSearch(q, countEach, categories, onEngineErrors, searchBudget))))
 }
 
 /** The providers trusted for locked spaces, alone, over several queries — the only search a locked
@@ -155,12 +171,16 @@ export async function hasTrustedSearch(): Promise<boolean> {
 
 /** True when some fallback provider could still rescue a search the primaries left empty. */
 export async function hasFallbackSearch(): Promise<boolean> {
-  return activeProviders(await loadSearchPolicy(), 'fallback').length > 0
+  return activeProviders(await loadSearchPolicy(), 'fallback').some(a => hasQuota(a.provider.id, a.policy.monthlyQuota))
 }
 
-/** A fresh per-request (or per-monitor-run) allowance for fallback calls. */
-export async function newSearchBudget(): Promise<SearchApiBudget> {
-  return { remaining: (await loadSearchPolicy()).fallbackBudgetPerRequest }
+/** A fresh per-request (or per-monitor-run) allowance for fallback calls and queries. */
+export async function newSearchBudget(): Promise<SearchBudget> {
+  const policy = await loadSearchPolicy()
+  return {
+    fallbackRemaining: policy.fallbackBudgetPerRequest,
+    queriesRemaining: policy.maxQueriesPerRequest > 0 ? policy.maxQueriesPerRequest : Infinity,
+  }
 }
 
 /** A provider's stored copy of a page (already extracted, no page load), or null. */

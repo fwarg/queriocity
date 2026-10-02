@@ -264,6 +264,13 @@ The env vars above set the defaults. Admins can override them under **Admin → 
 - **Legacy** (default) — primaries in order, deduplicated by domain; a fallback's results appended (or put first when only niche engines answered); supplements interleaved.
 - **Rank fusion** — weighted Reciprocal Rank Fusion: each page scores `weight × engine weight / (k + rank)` summed over every provider that returned it, so pages several providers agree on rise. Reserved slots still apply.
 
+Two limits, both off (0) by default:
+
+- **Monthly quota** per provider — calls allowed per UTC calendar month, counting every attempted call (APIs bill per request). Once used up the provider is skipped until the next month and the others carry on; the panel shows "used this month" against it. Use it on any paid provider, especially one without a spending cap.
+- **Web searches per question** — search queries one chat question or monitor run may make in total, pre-search and researcher steps included. When it runs out the model is told to answer from what it has. Fewer queries also means fewer blocks from SearXNG's upstream engines. It does not apply to the trusted search of a locked space.
+
+SearXNG *infoboxes* are used as results, ahead of the list. This matters for Wikipedia, whose SearXNG engine by default (`display_type: ["infobox"]`) emits nothing else — the infobox carries the article's lead extract.
+
 The panel also shows per-provider counters since server start — calls, failures, latency, hits, and how many survived merging — to tune weights against. API keys always stay in env. **Reset to env defaults** discards the saved settings.
 
 ---

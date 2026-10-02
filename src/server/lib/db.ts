@@ -495,6 +495,13 @@ function initSchema() {
     session_id TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
     run_at     INTEGER NOT NULL
   )`)
+  // Calls per search provider per UTC month, for the monthly quotas in search/policy.ts.
+  sqlite.run(`CREATE TABLE IF NOT EXISTS search_usage (
+    provider TEXT NOT NULL,
+    month    TEXT NOT NULL,
+    count    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (provider, month)
+  )`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_monitors_user_id ON monitors(user_id)`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_monitors_next_run ON monitors(next_run_at)`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_monitor_runs_monitor_user ON monitor_runs(monitor_id, user_id)`)

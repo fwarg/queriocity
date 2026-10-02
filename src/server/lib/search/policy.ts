@@ -27,6 +27,8 @@ export const providerPolicySchema = z.object({
   minSlots: z.number().int().min(0).max(50),
   /** May serve web_search in a locked space — i.e. may see that space's queries. */
   trustedForLocked: z.boolean(),
+  /** Calls allowed per UTC calendar month, attempted calls counted (APIs bill per request); 0 = unlimited. */
+  monthlyQuota: z.number().int().min(0),
   /** Per sub-engine weights for a meta-engine; unlisted engines get `defaultEngineWeight`. */
   engineWeights: z.record(z.string(), weight),
   defaultEngineWeight: weight,
@@ -43,6 +45,8 @@ export const searchPolicySchema = z.object({
   fallbackMinResults: z.number().int().min(0).max(50),
   /** Also call one when no major engine contributed, however many results came back. */
   fallbackWhenNoMajorEngine: z.boolean(),
+  /** Search queries per chat request or monitor run, across every provider; 0 = unlimited. */
+  maxQueriesPerRequest: z.number().int().min(0).max(1000),
   providers: z.record(z.string(), providerPolicySchema),
 })
 
@@ -61,7 +65,7 @@ const intEnv = (name: string, fallback: number) => {
 }
 
 const PROVIDER_DEFAULTS: ProviderPolicy = {
-  enabled: true, role: 'primary', weight: 1, minSlots: 0, trustedForLocked: false,
+  enabled: true, role: 'primary', weight: 1, minSlots: 0, trustedForLocked: false, monthlyQuota: 0,
   engineWeights: {}, defaultEngineWeight: 1,
 }
 
@@ -74,6 +78,7 @@ export function envPolicy(): SearchPolicy {
     fallbackBudgetPerRequest: intEnv('SEARCH_API_MAX_PER_REQUEST', 3),
     fallbackMinResults: intEnv('SEARCH_API_MIN_RESULTS', 3),
     fallbackWhenNoMajorEngine: true,
+    maxQueriesPerRequest: 0,
     providers: {
       // Without a major-engine list every engine weighs 1, so none is "niche" and the
       // no-major-engine rule never fires — which is what an unset SEARCH_MAJOR_ENGINES meant.

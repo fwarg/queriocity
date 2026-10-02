@@ -4,7 +4,7 @@ import { envPolicy, mergePolicy, engineWeight, hasMajorEngineList, type Provider
 import type { SearchProvider } from './types.ts'
 
 const policy = (over: Partial<ProviderPolicy> = {}): ProviderPolicy => ({
-  enabled: true, role: 'primary', weight: 1, minSlots: 0, trustedForLocked: false,
+  enabled: true, role: 'primary', weight: 1, minSlots: 0, trustedForLocked: false, monthlyQuota: 0,
   engineWeights: {}, defaultEngineWeight: 1, ...over,
 })
 
