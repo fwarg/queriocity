@@ -379,6 +379,16 @@ Notes can link to each other, Zettelkasten-style, and any resource can carry tag
   adopt — they are no longer applied automatically, and your tags are never overwritten when a note
   is re-summarised. A tag disappears once nothing carries it.
 
+- **Connections.** A small diagram in the detail view of the resource's explicit neighbourhood, one
+  or two steps out: links both ways (solid), notes made from it (dashed) and the chat a note was saved
+  from (dotted) — a chat ties together every note saved from it. Tap a node to open it. Laid out once,
+  not animated, so it stays light on a phone; capped at 40 nodes.
+- **Similar content.** Up to six resources closest in content, found from the vectors already stored
+  for retrieval — no extra model call. They are suggestions: **Link** adds `- [[Title]]` under a
+  **See also** heading in the note (from a file, **Link from it** adds the link in the similar note
+  instead), and tags that two or more similar resources share can be adopted with a tap. Already
+  connected ones say **Linked**.
+
 Tags organise and filter; they deliberately have **no effect on retrieval**, so you can tag freely
 without changing what the model sees. That keeps the three groupings distinct: a **space** is where
 you work (chats, memory, lock), a **collection** is a shelf you attach to a chat as context, and a

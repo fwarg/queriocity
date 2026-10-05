@@ -119,7 +119,9 @@ den anteckningen. Varje resurs visar vad den länkar till och vad som länkar ti
 anteckning sparad från ett svar länkar tillbaka till sin chatt. **Taggar** som \`#ml/rag\` sätter
 du själv på vilken resurs som helst; förslagen kommer från den automatiska sammanfattningen, och
 väljer du \`#ml\` i filtret visas även \`#ml/rag\`. Taggar ordnar bara — de ändrar aldrig vad
-assistenten ser.
+assistenten ser. **Kopplingar** ritar en resurs länkar, anteckningarna gjorda av den och chatten en
+anteckning kom från; **Liknande innehåll** föreslår resurser om samma sak, var och en ett tryck från
+en *Se även*-länk.
 
 Använd en anteckning för det du vill ha bevarat ord för ord: en beställning, en kravlista, ett
 beslut och skälet till det.`,

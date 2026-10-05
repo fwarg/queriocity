@@ -873,6 +873,39 @@ export async function setResourceTags(id: string, tags: string[]): Promise<strin
   return (await res.json()).tags
 }
 
+export interface RelatedResource extends ResourceRef {
+  /** Already linked either way, or one made from the other. */
+  linked: boolean
+  tags: string[]
+}
+
+/** Resources similar in content, and tags several of them share that this one lacks. */
+export async function fetchRelated(id: string): Promise<{ related: RelatedResource[]; tags: Array<{ path: string; count: number }> }> {
+  const res = await fetch(`${BASE}/files/${id}/related`)
+  if (!res.ok) throw await apiError(res, 'Could not load similar resources')
+  return res.json()
+}
+
+export interface GraphNode { id: string; label: string; kind: 'note' | 'file' | 'chat'; depth: number }
+export interface GraphEdge { source: string; target: string; kind: 'link' | 'derived' | 'chat' }
+
+/** A resource's explicit neighbourhood. Chat nodes have ids `chat:<sessionId>`. */
+export async function fetchGraph(id: string, depth: 1 | 2): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> {
+  const res = await fetch(`${BASE}/files/${id}/graph?depth=${depth}`)
+  if (!res.ok) throw await apiError(res, 'Could not load connections')
+  return res.json()
+}
+
+/** Adds `- [[target]]` under the note's "See also" heading (`heading`, in the reader's language). */
+export async function addSeeAlso(noteId: string, targetId: string, heading: string): Promise<void> {
+  const res = await fetch(`${BASE}/files/${noteId}/see-also`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ targetId, heading }),
+  })
+  if (!res.ok) throw await apiError(res, 'Could not add the link')
+}
+
 /** The user's tags with how many resources carry each directly. */
 export async function fetchTags(): Promise<Array<{ path: string; count: number }>> {
   const res = await fetch(`${BASE}/files/tags`)

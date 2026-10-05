@@ -2,7 +2,8 @@ import { randomUUID } from 'crypto'
 import { and, eq, sql } from 'drizzle-orm'
 import { chatSessions, db, uploadedFiles } from '../db.ts'
 import { indexResourceText } from './ingest.ts'
-import { bodiesRelinkedTo, resolveDangling, syncLinks } from './links.ts'
+import { addUnderHeading, bodiesRelinkedTo, parseWikilinks, resolveDangling, syncLinks } from './links.ts'
+import { wikilinkFor } from '../../../shared/wikilinks.ts'
 import { describeResource } from './summarise.ts'
 import { setResourceTags } from './tags.ts'
 import { plainCitations } from '../../../shared/note-citations.ts'
@@ -88,6 +89,19 @@ async function ownedProvenance(userId: string, note: NoteInput) {
     originSessionId: session?.id ?? null,
     originMessageId: session ? note.originMessageId ?? null : null,
   }
+}
+
+/** Link a note to another resource by adding `- [[Title]]` under its `## heading` ("See also" in
+ *  the user's language). A no-op when the note already links there. Not re-described: one link
+ *  does not change what the note is about. */
+export async function addSeeAlso(userId: string, noteId: string, targetId: string, heading: string): Promise<void> {
+  const owned = (id: string) => db.select().from(uploadedFiles)
+    .where(and(eq(uploadedFiles.id, id), eq(uploadedFiles.userId, userId))).get()
+  const [note, target] = await Promise.all([owned(noteId), owned(targetId)])
+  if (!note || note.kind !== 'note' || !target) throw new Error('Not found')
+  const body = note.body ?? ''
+  if (parseWikilinks(body).some(t => t.toLowerCase() === target.filename.trim().toLowerCase())) return
+  await saveNote(userId, { id: note.id, title: note.filename, body: addUnderHeading(body, heading, `- ${wikilinkFor(target.filename)}`) }, { describe: false })
 }
 
 /** Renames any resource, keeping `[[links]]` to it pointing at it under the new title. */

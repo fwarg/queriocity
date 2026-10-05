@@ -3,6 +3,8 @@ import { ArrowLeft, ExternalLink, FileText, MessageSquare, NotebookPen, Plus, X 
 import { NoteEditor } from './NoteEditor.tsx'
 import { NoteMarkdown } from './NoteMarkdown.tsx'
 import { TagEditor } from './TagEditor.tsx'
+import { LocalGraph } from './LocalGraph.tsx'
+import { RelatedResources } from './RelatedResources.tsx'
 import {
   fetchResource, fetchCustomTemplates, fetchSpaces, renameResource, setResourceTags, tagFileToSpace, transformResource, untagFileFromSpace,
   type CustomTemplate, type ResourceDetail as Detail, type ResourceRef, type Space, type TransformOperation,
@@ -123,6 +125,16 @@ export function ResourceDetail({ id, onBack, onChanged, onOpen, onOpenChat }: Pr
       )}
 
       <LinksSection detail={detail} onOpen={onOpen} onCreate={setCreating} />
+
+      {/* Keyed on what can change the neighbourhood, so a new link redraws it. */}
+      <LocalGraph
+        key={`${detail.id}:${detail.updatedAt}:${detail.links.length}:${detail.backlinks.length}`}
+        rootId={detail.id}
+        onOpen={onOpen}
+        onOpenChat={onOpenChat}
+      />
+
+      <RelatedResources key={`related:${detail.id}:${detail.updatedAt}:${detail.backlinks.length}`} detail={detail} onOpen={onOpen} onChanged={changed} />
 
       <Section title={t('resource.taggedTo')}>
         <SpaceTags detail={detail} onChanged={changed} />

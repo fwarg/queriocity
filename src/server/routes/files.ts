@@ -5,7 +5,9 @@ import { generateText } from 'ai'
 import { db, sqlite, uploadedFiles, spaceFiles, spaces, customTemplates, chatSessions, getAppSetting } from '../lib/db.ts'
 import { and, eq } from 'drizzle-orm'
 import { ingestFile, extractFileText, isUsableText, ACCEPTED_MIME_TYPES } from '../lib/files/ingest.ts'
-import { saveNote, renameResource } from '../lib/files/notes.ts'
+import { saveNote, renameResource, addSeeAlso } from '../lib/files/notes.ts'
+import { relatedResources } from '../lib/files/related.ts'
+import { localGraph } from '../lib/files/graph.ts'
 import { deleteTag, listTags, MAX_TAG_CHARS, renameTag, resourceTagList, setResourceTags, suggestedTags, tagsByResource } from '../lib/files/tags.ts'
 import { linksOf } from '../lib/files/links.ts'
 import { collectResourceText } from '../lib/files/resource-context.ts'
@@ -228,6 +230,36 @@ filesRouter.put('/:id/tags', zValidator('json', z.object({ tags: tagList })), as
   const resource = await ownedResource(c.req.param('id'), userId)
   if (!resource) return c.json({ error: 'Not found' }, 404)
   return c.json({ tags: setResourceTags(userId, resource.id, c.req.valid('json').tags) })
+})
+
+/** Resources similar in content, from the stored chunk vectors — suggestions, never applied. */
+filesRouter.get('/:id/related', async (c) => {
+  const userId = c.get('userId') as string
+  const resource = await ownedResource(c.req.param('id'), userId)
+  if (!resource) return c.json({ error: 'Not found' }, 404)
+  return c.json(relatedResources(userId, resource.id))
+})
+
+/** The resource's explicit neighbourhood — links, derivations, chat of origin — to 1 or 2 hops. */
+filesRouter.get('/:id/graph', zValidator('query', z.object({ depth: z.coerce.number().int().min(1).max(2).default(1) })), async (c) => {
+  const userId = c.get('userId') as string
+  const resource = await ownedResource(c.req.param('id'), userId)
+  if (!resource) return c.json({ error: 'Not found' }, 404)
+  return c.json(localGraph(userId, resource.id, c.req.valid('query').depth))
+})
+
+/** Link note `:id` to `targetId` under a "See also" heading, given in the reader's language. */
+filesRouter.post('/:id/see-also', zValidator('json', z.object({
+  targetId: z.string().min(1),
+  heading: z.string().trim().min(1).max(60),
+})), async (c) => {
+  const { targetId, heading } = c.req.valid('json')
+  try {
+    await addSeeAlso(c.get('userId') as string, c.req.param('id'), targetId, heading)
+    return c.json({ ok: true })
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : 'Could not add the link' }, 404)
+  }
 })
 
 /** Renames any resource — an uploaded file and an ingested URL as much as a note.

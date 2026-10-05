@@ -101,3 +101,17 @@ export function linksOf(userId: string, resourceId: string): { links: OutgoingLi
     backlinks,
   }
 }
+
+/** `body` with `item` added under its `## heading` section, creating the section at the end when
+ *  missing. The item goes after the section's last non-blank line, before any following heading. */
+export function addUnderHeading(body: string, heading: string, item: string): string {
+  const lines = body.trimEnd().split('\n')
+  const start = lines.findIndex(l => l.trim() === `## ${heading}`)
+  if (start === -1) return `${lines.join('\n')}\n\n## ${heading}\n\n${item}\n`
+  let end = lines.findIndex((l, i) => i > start && /^#{1,6}\s/.test(l))
+  if (end === -1) end = lines.length
+  while (end - 1 > start && !lines[end - 1].trim()) end--
+  const at = end === start + 1 ? ['', item] : [item]
+  lines.splice(end, 0, ...at)
+  return `${lines.join('\n')}\n`
+}

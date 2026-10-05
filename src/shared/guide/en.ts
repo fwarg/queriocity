@@ -119,7 +119,9 @@ and pick one. A link to a title nothing has yet offers to create that note. Each
 it links to and what links to it, and a note saved from an answer links back to its chat. **Tags**
 such as \`#ml/rag\` are yours to set on any resource; the suggested ones come from the automatic
 summary, and choosing \`#ml\` in the filter also shows \`#ml/rag\`. Tags only organise — they never
-change what the assistant sees.
+change what the assistant sees. **Connections** draws a resource's links, the notes made from it and
+the chat a note came from; **Similar content** suggests resources about the same thing, each one tap
+from a *See also* link.
 
 Use a note for the things you want kept word for word: a brief, a set of requirements, a decision
 and why it was made.`,
