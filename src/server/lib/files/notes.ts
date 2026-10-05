@@ -5,6 +5,7 @@ import { indexResourceText } from './ingest.ts'
 import { bodiesRelinkedTo, resolveDangling, syncLinks } from './links.ts'
 import { describeResource } from './summarise.ts'
 import { setResourceTags } from './tags.ts'
+import { plainCitations } from '../../../shared/note-citations.ts'
 
 /** Notes: the one resource the user writes rather than uploads.
  *
@@ -104,6 +105,31 @@ async function relinkRenamed(userId: string, id: string, oldTitle: string, newTi
     await saveNote(userId, linking, { describe: false })
   }
   resolveDangling(userId, id, newTitle)
+}
+
+/** Rewrites notes saved from answers in the older form, where every citation marker carried its own
+ *  URL (`[\[1\]](https://…)`), to plain `[1]` markers paired with the note's sources list. Only markers
+ *  whose URL that list already holds are touched, so no source is lost. Idempotent — a converted
+ *  note no longer matches — and run at startup, so it needs no flag. Re-indexed (the text changed),
+ *  not re-described (the meaning did not). Returns how many notes changed. */
+export async function simplifyNoteCitations(): Promise<number> {
+  const candidates = await db.select({ id: uploadedFiles.id, userId: uploadedFiles.userId, title: uploadedFiles.filename, body: uploadedFiles.body })
+    .from(uploadedFiles)
+    // A bound parameter: a backslash written inside the sql tag does not reach SQLite as written.
+    .where(and(eq(uploadedFiles.kind, 'note'), sql`${uploadedFiles.body} LIKE ${'%[\\[%'}`))
+  let changed = 0
+  for (const note of candidates) {
+    const body = plainCitations(note.body ?? '')
+    if (body === note.body) continue
+    try {
+      await saveNote(note.userId, { id: note.id, title: note.title, body }, { describe: false })
+      changed++
+    } catch (e) {
+      console.warn(`  [notes] could not simplify citations in ${note.id}: ${e instanceof Error ? e.message : e}`)
+    }
+  }
+  if (changed) console.log(`  [notes] simplified citation links in ${changed} note(s)`)
+  return changed
 }
 
 /** Re-chunks notes that have no chunks at all, and reports how many it recovered.

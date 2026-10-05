@@ -348,10 +348,12 @@ Three ways to make one:
 - **Write it.** *+ New note* in the Resources view, with a preview toggle.
 - **Save an answer.** Every assistant message has a notebook icon next to its speaker icon. Clicking
   it opens the editor pre-filled with the answer and the question that produced it as a title, so a
-  result worth keeping does not have to be exported or pasted into a memory. The answer's `[n]`
-  citation markers are rewritten to point straight at their URLs and the cited sources are appended
-  as a list, keeping their original numbers — a note carries no source panel of its own, so without
-  this the markers would arrive as dead text.
+  result worth keeping does not have to be exported or pasted into a memory. The cited sources are
+  appended as a list keeping their original numbers (`- **[3]** [Title](url)`), and the answer's
+  `[n]` markers stay plain in the text. The note view pairs the two as the chat does — superscript
+  markers, a click highlights every use of a source and its line in the list — so each URL is
+  written once and the note stays easy to edit. Notes saved before this were converted at startup,
+  wherever the list already held the URL.
 - **Transform a resource.** See below.
 
 A note reaches a conversation two ways: as retrieved excerpts, like any other resource, and in full

@@ -12,9 +12,10 @@ const SOURCES = [
 ]
 
 describe('answerAsNoteBody', () => {
-  test('points each citation marker at its source URL', () => {
-    const body = answerAsNoteBody(answer({ content: 'Stubb tillträdde 2024 [1].', sources: SOURCES }), 'Källor')
-    expect(body).toContain('[\\[1\\]](https://presidentti.fi)')
+  test('keeps citation markers plain, writing each URL once in the list', () => {
+    const body = answerAsNoteBody(answer({ content: 'Stubb tillträdde 2024 [1], igen [1, 3].', sources: SOURCES }), 'Källor')
+    expect(body).toContain('Stubb tillträdde 2024 [1], igen [1][3].')
+    expect(body.split('https://presidentti.fi')).toHaveLength(2)
   })
 
   test('lists only the sources the answer cites, keeping their original numbers', () => {
@@ -43,7 +44,7 @@ describe('answerAsNoteBody', () => {
       answer({ content: 'From the spec.', fileSources: [{ title: 'spec.pdf', url: 'file:1', label: 'F1' }] }),
       'Sources',
     )
-    expect(body).toContain('- spec.pdf')
+    expect(body).toContain('- **[F1]** spec.pdf')
     expect(body).not.toContain('file:1')
   })
 

@@ -32,7 +32,7 @@ import { runDream } from './lib/memory.ts'
 import { runDueMonitors } from './lib/monitor-runner.ts'
 import { validateConfig, checkEmbeddingDimensions, checkAttachmentBudget } from './lib/config-check.ts'
 import { purgeOrphanVectors } from './lib/vector-cleanup.ts'
-import { reindexNotes } from './lib/files/notes.ts'
+import { reindexNotes, simplifyNoteCitations } from './lib/files/notes.ts'
 import { reembedMissingVectors } from './lib/reembed.ts'
 import { EMBED_BATCH_CHARS, EMBED_MAX_INPUT_CHARS } from './lib/llm.ts'
 
@@ -205,6 +205,8 @@ rebuildEmbeddings().catch(e => console.error('[reembed] failed:', e))
 async function rebuildEmbeddings(): Promise<void> {
   await reembedMissingVectors()
   await reindexNotes()
+  // Re-indexes the notes it rewrites, so it runs here, after the embedding state is sound.
+  await simplifyNoteCitations()
 }
 
 preflight().catch(() => {})
