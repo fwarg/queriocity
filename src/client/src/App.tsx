@@ -1272,7 +1272,7 @@ export default function App() {
             />
           )
         ) : view === 'files' ? (
-          <ResourcesView resources={files} onChanged={reloadFiles} openId={openResourceId} onOpenIdChange={setOpenResourceId} />
+          <ResourcesView resources={files} onChanged={reloadFiles} openId={openResourceId} onOpenIdChange={setOpenResourceId} onOpenChat={(id, title) => loadSession(id, title)} />
         ) : view === 'monitors' ? (
           <MonitorsView
             spaces={spaces}
@@ -1468,6 +1468,7 @@ export default function App() {
                   searchActiveIndex={chatSearchOpen && chatMatchIndices.length > 0 ? chatMatchIndices[chatSearchCursor] : -1}
                   searchMatchIndices={chatSearchOpen ? chatMatchIndices : []}
                   onOpenResource={openResource}
+                  sessionId={sessionId}
                 />
               </ImageCaptionContext.Provider>
             )}

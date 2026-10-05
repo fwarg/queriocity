@@ -2,10 +2,12 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { generateText } from 'ai'
-import { db, sqlite, uploadedFiles, spaceFiles, spaces, customTemplates, getAppSetting } from '../lib/db.ts'
+import { db, sqlite, uploadedFiles, spaceFiles, spaces, customTemplates, chatSessions, getAppSetting } from '../lib/db.ts'
 import { and, eq } from 'drizzle-orm'
 import { ingestFile, extractFileText, isUsableText, ACCEPTED_MIME_TYPES } from '../lib/files/ingest.ts'
-import { saveNote } from '../lib/files/notes.ts'
+import { saveNote, renameResource } from '../lib/files/notes.ts'
+import { deleteTag, listTags, MAX_TAG_CHARS, renameTag, resourceTagList, setResourceTags, suggestedTags, tagsByResource } from '../lib/files/tags.ts'
+import { linksOf } from '../lib/files/links.ts'
 import { collectResourceText } from '../lib/files/resource-context.ts'
 import { operationPrompt, transformPrompt, TRANSFORM_MAX_CHARS, TRANSFORM_OPERATIONS } from '../lib/files/transforms.ts'
 import { getChatModel } from '../lib/llm.ts'
@@ -123,10 +125,12 @@ filesRouter.get('/', async (c) => {
     list.push({ id: tag.id, name: tag.name })
     byFile.set(tag.fileId, list)
   }
+  const userTags = tagsByResource(userId)
 
   return c.json(files.map(f => ({
     ...f,
     topics: parseTopics(f.topics),
+    tags: userTags.get(f.id) ?? [],
     spaces: byFile.get(f.id) ?? [],
     createdAt: epochSeconds(f.createdAt),
     updatedAt: epochSeconds(f.updatedAt),
@@ -153,18 +157,22 @@ const ownedResource = (id: string, userId: string) =>
   db.select().from(uploadedFiles)
     .where(and(eq(uploadedFiles.id, id), eq(uploadedFiles.userId, userId))).get()
 
+const tagList = z.array(z.string().max(MAX_TAG_CHARS)).max(50)
+
 const noteBody = z.object({
   title: z.string().min(1).max(200),
   body: z.string().min(1).max(100_000),
+  tags: tagList.optional(),
 })
 
 filesRouter.post('/notes', zValidator('json', noteBody.extend({
   derivedFrom: z.string().optional(),
+  originSessionId: z.string().optional(),
+  originMessageId: z.string().optional(),
 })), async (c) => {
   const userId = c.get('userId') as string
-  const { title, body, derivedFrom } = c.req.valid('json')
   try {
-    const id = await saveNote(userId, { title, body, derivedFrom })
+    const id = await saveNote(userId, c.req.valid('json'))
     return c.json({ id }, 201)
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : 'Could not save note' }, 400)
@@ -185,11 +193,41 @@ filesRouter.patch('/notes/:id', zValidator('json', noteBody.partial()), async (c
       id,
       title: patch.title ?? existing.filename,
       body: patch.body ?? existing.body ?? '',
+      tags: patch.tags,
     })
     return c.json({ ok: true })
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : 'Could not save note' }, 400)
   }
+})
+
+/** The user's tags with direct counts, for autocomplete and the tag tree. Registered before the
+ *  `/:id` routes, which would otherwise take `tags` for an id. */
+filesRouter.get('/tags', (c) => c.json(listTags(c.get('userId') as string)))
+
+/** Rename a tag and everything under it; an existing target merges. */
+filesRouter.patch('/tags', zValidator('json', z.object({
+  from: z.string().min(1).max(MAX_TAG_CHARS),
+  to: z.string().min(1).max(MAX_TAG_CHARS),
+})), (c) => {
+  const { from, to } = c.req.valid('json')
+  try {
+    return c.json({ moved: renameTag(c.get('userId') as string, from, to) })
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : 'Could not rename tag' }, 400)
+  }
+})
+
+/** Remove a tag and everything under it from every resource. */
+filesRouter.delete('/tags', zValidator('query', z.object({ path: z.string().min(1).max(MAX_TAG_CHARS) })), (c) =>
+  c.json({ deleted: deleteTag(c.get('userId') as string, c.req.valid('query').path) }))
+
+/** Replace a resource's tags — any kind of resource, not only notes. */
+filesRouter.put('/:id/tags', zValidator('json', z.object({ tags: tagList })), async (c) => {
+  const userId = c.get('userId') as string
+  const resource = await ownedResource(c.req.param('id'), userId)
+  if (!resource) return c.json({ error: 'Not found' }, 404)
+  return c.json({ tags: setResourceTags(userId, resource.id, c.req.valid('json').tags) })
 })
 
 /** Renames any resource — an uploaded file and an ingested URL as much as a note.
@@ -212,9 +250,7 @@ filesRouter.patch('/:id', zValidator('json', z.object({
   const resource = await ownedResource(id, userId)
   if (!resource) return c.json({ error: 'Not found' }, 404)
 
-  await db.update(uploadedFiles)
-    .set({ filename, updatedAt: new Date() })
-    .where(eq(uploadedFiles.id, id))
+  await renameResource(userId, id, resource.filename, filename)
   return c.json({ ok: true })
 })
 
@@ -246,7 +282,18 @@ filesRouter.get('/:id', async (c) => {
   const derived = await db.select({ id: uploadedFiles.id, filename: uploadedFiles.filename, kind: uploadedFiles.kind })
     .from(uploadedFiles).where(eq(uploadedFiles.derivedFrom, resource.id))
 
+  // Resolved on read and owner-checked: a deleted chat leaves the id behind and simply shows nothing.
+  const originChat = resource.originSessionId
+    ? await db.select({ id: chatSessions.id, title: chatSessions.title }).from(chatSessions)
+        .where(and(eq(chatSessions.id, resource.originSessionId), eq(chatSessions.userId, userId))).get()
+    : undefined
+  const tags = resourceTagList(resource.id)
+
   return c.json({
+    ...linksOf(userId, resource.id),
+    tags,
+    suggestedTags: suggestedTags(parseTopics(resource.topics), tags),
+    originChat: originChat ? { ...originChat, messageId: resource.originMessageId } : null,
     derivedFrom: source ?? null,
     derived,
     id: resource.id,

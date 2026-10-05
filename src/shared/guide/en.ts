@@ -114,6 +114,13 @@ attached whole from the notebook icon beside the paperclip. Only notes can be at
 a file's text is stored as overlapping excerpts, so sending one whole would repeat itself; the
 paperclip already covers that case.
 
+**Links and tags.** Write \`[[Title]]\` to link to another note or resource — or tap *Insert link*
+and pick one. A link to a title nothing has yet offers to create that note. Each resource shows what
+it links to and what links to it, and a note saved from an answer links back to its chat. **Tags**
+such as \`#ml/rag\` are yours to set on any resource; the suggested ones come from the automatic
+summary, and choosing \`#ml\` in the filter also shows \`#ml/rag\`. Tags only organise — they never
+change what the assistant sees.
+
 Use a note for the things you want kept word for word: a brief, a set of requirements, a decision
 and why it was made.`,
   },

@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { ArrowLeft, ExternalLink, FileText, NotebookPen, X } from 'lucide-react'
+import { ArrowLeft, ExternalLink, FileText, MessageSquare, NotebookPen, Plus, X } from 'lucide-react'
 import { NoteEditor } from './NoteEditor.tsx'
+import { NoteMarkdown } from './NoteMarkdown.tsx'
+import { TagEditor } from './TagEditor.tsx'
 import {
-  fetchResource, fetchCustomTemplates, fetchSpaces, renameResource, tagFileToSpace, transformResource, untagFileFromSpace,
+  fetchResource, fetchCustomTemplates, fetchSpaces, renameResource, setResourceTags, tagFileToSpace, transformResource, untagFileFromSpace,
   type CustomTemplate, type ResourceDetail as Detail, type ResourceRef, type Space, type TransformOperation,
 } from '../lib/api.ts'
 import { useLang, useT } from '../lib/i18n.tsx'
@@ -23,18 +25,22 @@ interface Props {
   id: string
   onBack: () => void
   onChanged: () => void
-  /** Follow a provenance chip to another resource. */
+  /** Follow a provenance chip or a link to another resource. */
   onOpen: (id: string) => void
+  /** Open the chat a note was saved from. */
+  onOpenChat: (id: string, title: string) => void
 }
 
 /** What a stored resource actually contains: its summary, the spaces it feeds, and the excerpts
  *  retrieval works from. Notes are editable here; every resource can be transformed into one. */
-export function ResourceDetail({ id, onBack, onChanged, onOpen }: Props) {
+export function ResourceDetail({ id, onBack, onChanged, onOpen, onOpenChat }: Props) {
   const t = useT()
   const { lang } = useLang()
   const [detail, setDetail] = useState<Detail | null>(null)
   const [loadError, setLoadError] = useState('')
   const [editing, setEditing] = useState(false)
+  // A note being created from a link to a title nothing has yet.
+  const [creating, setCreating] = useState<string | null>(null)
 
   const load = useCallback(() => {
     setLoadError('')
@@ -50,6 +56,13 @@ export function ResourceDetail({ id, onBack, onChanged, onOpen }: Props) {
 
   const isNote = detail.kind === 'note'
   const stamp = new Date((detail.updatedAt ?? detail.createdAt) * 1000).toLocaleDateString(lang)
+  const changed = () => { load(); onChanged() }
+  /** A wikilink in the body: open its resource, or offer to create the note it names. */
+  const followLink = (title: string) => {
+    const target = detail.links.find(l => l.title.toLowerCase() === title.toLowerCase())?.target
+    if (target) onOpen(target.id)
+    else setCreating(title)
+  }
 
   return (
     <Panel onBack={onBack}>
@@ -89,19 +102,32 @@ export function ResourceDetail({ id, onBack, onChanged, onOpen }: Props) {
         {detail.summary
           ? <p className="text-sm text-gray-300">{detail.summary}</p>
           : <p className="text-sm text-gray-500">{t('resource.noSummary')}</p>}
-        {detail.topics.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mt-2">
-            {detail.topics.map(topic => (
-              <span key={topic} className="px-2 py-0.5 rounded-full text-xs bg-gray-800 text-gray-400 border border-gray-700">
-                {topic}
-              </span>
-            ))}
-          </div>
-        )}
       </Section>
 
+      <Section title={t('tags.title')}>
+        <TagEditor
+          tags={detail.tags}
+          suggestions={detail.suggestedTags}
+          onChange={async tags => { await setResourceTags(detail.id, tags); changed() }}
+        />
+      </Section>
+
+      {detail.originChat && (
+        <Section title={t('note.fromChat')}>
+          <button
+            onClick={() => onOpenChat(detail.originChat!.id, detail.originChat!.title)}
+            className="flex items-center gap-1.5 px-2 py-1.5 rounded text-sm bg-gray-800 text-gray-300 border border-gray-700 hover:border-gray-500 hover:text-gray-100 self-start max-w-full"
+          >
+            <MessageSquare size={13} className="shrink-0 text-indigo-400" />
+            <span className="truncate">{detail.originChat.title}</span>
+          </button>
+        </Section>
+      )}
+
+      <LinksSection detail={detail} onOpen={onOpen} onCreate={setCreating} />
+
       <Section title={t('resource.taggedTo')}>
-        <SpaceTags detail={detail} onChanged={() => { load(); onChanged() }} />
+        <SpaceTags detail={detail} onChanged={changed} />
       </Section>
 
       {detail.derivedFrom && (
@@ -123,7 +149,7 @@ export function ResourceDetail({ id, onBack, onChanged, onOpen }: Props) {
       {isNote && detail.body && (
         <Section title={t('note.body')}>
           <div className="prose prose-invert prose-sm max-w-none">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{detail.body}</ReactMarkdown>
+            <NoteMarkdown body={detail.body} onWikilink={followLink} />
           </div>
         </Section>
       )}
@@ -148,8 +174,17 @@ export function ResourceDetail({ id, onBack, onChanged, onOpen }: Props) {
           id={detail.id}
           initialTitle={detail.filename}
           initialBody={detail.body ?? ''}
+          initialTags={detail.tags}
           onClose={() => setEditing(false)}
-          onSaved={() => { setEditing(false); load(); onChanged() }}
+          onSaved={() => { setEditing(false); changed() }}
+        />
+      )}
+
+      {creating !== null && (
+        <NoteEditor
+          initialTitle={creating}
+          onClose={() => setCreating(null)}
+          onSaved={() => { setCreating(null); changed() }}
         />
       )}
     </Panel>
@@ -308,6 +343,44 @@ function SpaceTags({ detail, onChanged }: { detail: Detail; onChanged: () => voi
         </select>
       )}
     </div>
+  )
+}
+
+/** `[[links]]` out of a note and the notes linking in. A link to a title nothing has yet is offered
+ *  as a note to create — the usual way a Zettelkasten grows. Hidden for a file nothing links to. */
+function LinksSection({ detail, onOpen, onCreate }: { detail: Detail; onOpen: (id: string) => void; onCreate: (title: string) => void }) {
+  const t = useT()
+  if (detail.kind !== 'note' && detail.backlinks.length === 0) return null
+  const none = detail.links.length === 0 && detail.backlinks.length === 0
+
+  return (
+    <Section title={t('links.title')}>
+      {none && <p className="text-sm text-gray-500">{t('links.none')}</p>}
+      {detail.links.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-xs text-gray-500">{t('links.to')}:</span>
+          {detail.links.map(link => link.target
+            ? <ResourceChip key={link.title} resource={link.target} onOpen={onOpen} />
+            : (
+              <button
+                key={link.title}
+                onClick={() => onCreate(link.title)}
+                title={t('links.missing', { title: link.title })}
+                className="flex items-center gap-1 px-2 py-1 rounded text-xs text-gray-400 border border-dashed border-gray-600 hover:text-amber-300 hover:border-amber-700 max-w-full"
+              >
+                <Plus size={12} className="shrink-0" />
+                <span className="truncate">{t('links.create', { title: link.title })}</span>
+              </button>
+            ))}
+        </div>
+      )}
+      {detail.backlinks.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-xs text-gray-500">{t('links.from')}:</span>
+          {detail.backlinks.map(ref => <ResourceChip key={ref.id} resource={ref} onOpen={onOpen} />)}
+        </div>
+      )}
+    </Section>
   )
 }
 

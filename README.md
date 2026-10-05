@@ -34,6 +34,7 @@ through a single Bun process.
     - [Library upload (persistent)](#library-upload-persistent-vector-searchable)
     - [URL and YouTube ingestion](#url-and-youtube-ingestion)
     - [Notes](#notes)
+    - [Links and tags](#links-and-tags)
     - [Finding things in a large library](#finding-things-in-a-large-library)
     - [Resource detail and transforms](#resource-detail-and-transforms)
     - [Changing the embedding model](#changing-the-embedding-model)
@@ -358,24 +359,50 @@ by picking it from the notebook icon beside the paperclip in the chat input. Onl
 attached that way — a file's text is stored solely as overlapping excerpts, so injecting it would
 repeat passages; the paperclip already covers sending a document whole.
 
+### Links and tags
+
+Notes can link to each other, Zettelkasten-style, and any resource can carry tags.
+
+- **Links.** Write `[[Title]]` (or `[[Title|label]]`) in a note to link to another note or resource
+  by its title — or tap **Insert link** in the editor and pick one from a list, which works better on
+  a phone; typing `[[` opens the same list. Matching ignores case. A link to a title nothing has
+  yet is kept and shown as **Create note "…"**, so writing the link first and the note later works.
+  Renaming a resource rewrites `[[Old title]]` in every note linking to it. Code spans and blocks are
+  never parsed as links.
+- **Backlinks.** A resource's detail view lists what it **links to** and what is **linked from** it.
+- **Chat of origin.** A note saved from an answer remembers its chat and shows **Saved from chat**,
+  which opens that conversation. If the chat is deleted the note stays and the link disappears.
+- **Tags.** Hierarchical, lowercase, `/`-separated (`#ml/rag`), on any resource, set in the detail
+  view or the note editor. The small model's topics are offered as **suggested** tags, one tap to
+  adopt — they are no longer applied automatically, and your tags are never overwritten when a note
+  is re-summarised. A tag disappears once nothing carries it.
+
+Tags organise and filter; they deliberately have **no effect on retrieval**, so you can tag freely
+without changing what the model sees. That keeps the three groupings distinct: a **space** is where
+you work (chats, memory, lock), a **collection** is a shelf you attach to a chat as context, and a
+**tag** says what something is about.
+
 ### Finding things in a large library
 
 Once the library passes a handful of resources, a filter bar appears above the list:
 
-- A **filter box** over filename, summary and topics — the three things you are likely to remember
-  about a document. Chunk *content* is deliberately not searched here; that is what the model's
+- A **filter box** over filename, summary, tags and suggested topics — what you are likely to
+  remember about a document. Chunk *content* is deliberately not searched here; that is what the model's
   semantic search is for, and a substring match against every excerpt would return hits the list
   cannot explain.
 - **Grouping chips** with counts — every space and [collection](#collections) holding a resource,
-  plus **Untagged** — so you can see and browse the grouping you already have rather than only apply
-  it. A resource tagged to several appears under each.
-- **Topic chips on each row are clickable**, and narrow the list to everything sharing that topic —
-  an axis that cuts *across* projects, unlike spaces which follow them.
+  plus **In no space** — so you can see and browse the grouping you already have rather than only
+  apply it. A resource in several appears under each.
+- A **tag row** that drills down one level at a time: the top-level tags first, then — once one is
+  picked — its sub-tags. Picking `#ml` shows everything tagged `#ml` or anything under it. The
+  picked tag can be **renamed** (its sub-tags move with it, merging into an existing tag of the new
+  name) or **deleted** from every resource.
+- **Tag chips on each row are clickable**, and narrow the list to that tag — an axis that cuts
+  *across* projects, unlike spaces which follow them.
 
-There is no folder concept and no second taxonomy: the chips above are the grouping you already
-have. A resource is tagged from the space or collection's own panel, or from the resource's detail
-panel — the first suits setting a grouping up, the second suits filing a document you are already
-looking at.
+There is no folder concept. A resource is put in a space or collection from that space's own panel,
+or from the resource's detail panel — the first suits setting a grouping up, the second suits filing
+a document you are already looking at.
 
 For reference material that belongs to no conversation, a [collection](#collections) groups resources
 without the chats, memory and lock a space carries. Collections appear among the chips above like any
@@ -385,11 +412,14 @@ other grouping.
 
 Click any resource to open it. The detail view shows:
 
-- The **summary and topics** generated at ingest by the small model, which also appear in the list —
+- The **summary** generated at ingest by the small model, which also appears in the list —
   what makes a library of two hundred documents readable at a glance. Administrators can turn the
   generation off (Admin > System settings); it is best-effort either way, and a resource whose
   summary failed works normally without one.
-- Which **spaces** the resource is tagged to.
+- Its **tags**, editable in place, with the small model's topics offered as suggestions; and its
+  **links** — what it links to, what links to it, and for a note saved from an answer, the chat it
+  came from. See [Links and tags](#links-and-tags).
+- Which **spaces and collections** the resource is in.
 - **From** — where the resource came from: the full URL for an ingested page, shown as a link, or the
   original filename for an upload. Recorded once at ingest and never edited, so it survives any
   renaming below. This is what makes an ingested page traceable at all: the title is derived from the

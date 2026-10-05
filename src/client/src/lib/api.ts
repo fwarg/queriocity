@@ -68,6 +68,8 @@ export interface Source { title: string; url: string; content?: string }
 export interface FileSource { title: string; url: string; label: string }
 
 export interface Message {
+  /** The stored row's id; absent on a message still streaming or not yet reloaded. */
+  id?: string
   role: 'user' | 'assistant'
   content: string
   sources?: Source[]
@@ -353,14 +355,14 @@ export async function fetchSession(id: string): Promise<Message[]> {
   const res = await fetch(`${BASE}/history/${id}`)
   const { messages } = await res.json()
   const FIRST_PNG_RE = /!\[([^\]]*)\]\(([^)]+\.png)\)/
-  return (messages as Array<{ role: 'user' | 'assistant'; content: string; sources?: string; fileSources?: string }>).map(m => {
+  return (messages as Array<{ id: string; role: 'user' | 'assistant'; content: string; sources?: string; fileSources?: string }>).map(m => {
     const sources = m.sources ? JSON.parse(m.sources) : undefined
     const fileSources = m.fileSources ? JSON.parse(m.fileSources) : undefined
     if (m.role === 'assistant') {
       const match = FIRST_PNG_RE.exec(m.content)
-      return { role: m.role, content: m.content, sources, fileSources, images: match ? [{ alt: match[1], url: match[2] }] : undefined }
+      return { id: m.id, role: m.role, content: m.content, sources, fileSources, images: match ? [{ alt: match[1], url: match[2] }] : undefined }
     }
-    return { role: m.role, content: m.content, sources, fileSources }
+    return { id: m.id, role: m.role, content: m.content, sources, fileSources }
   })
 }
 
@@ -775,7 +777,10 @@ export interface Resource {
   size: number
   kind: 'file' | 'note'
   summary: string | null
+  /** The small model's topics — shown only as tag suggestions now. */
   topics: string[]
+  /** The user's own hierarchical tags (`ml/rag`). They organise and filter; retrieval ignores them. */
+  tags: string[]
   /** The spaces this resource is tagged to — the library's grouping, used to filter the list. */
   spaces: Array<{ id: string; name: string }>
   /** Where it came from: the URL for an ingested page, the original filename for an upload, null
@@ -794,6 +799,21 @@ export interface ResourceDetail extends Resource {
   /** The resource a transform produced this note from, if any, and the notes produced from it. */
   derivedFrom: ResourceRef | null
   derived: ResourceRef[]
+  /** Topics not yet adopted as tags, normalised — offered as one-tap suggestions. */
+  suggestedTags: string[]
+  /** This note's `[[links]]` in order; `target` is null while no resource carries the title. */
+  links: Array<{ title: string; target: ResourceRef | null }>
+  /** Notes linking here. */
+  backlinks: ResourceRef[]
+  /** The chat the note was saved from, while that chat still exists. */
+  originChat: { id: string; title: string; messageId: string | null } | null
+}
+
+export interface NoteOptions {
+  derivedFrom?: string
+  originSessionId?: string
+  originMessageId?: string
+  tags?: string[]
 }
 
 export async function fetchFiles(): Promise<Resource[]> {
@@ -813,11 +833,11 @@ export async function fetchNoteText(id: string): Promise<{ filename: string; con
   return res.json()
 }
 
-export async function createNote(title: string, body: string, derivedFrom?: string): Promise<{ id: string }> {
+export async function createNote(title: string, body: string, options: NoteOptions = {}): Promise<{ id: string }> {
   const res = await fetch(`${BASE}/files/notes`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title, body, derivedFrom }),
+    body: JSON.stringify({ title, body, ...options }),
   })
   if (!res.ok) throw await apiError(res, 'Could not save note')
   return res.json()
@@ -834,13 +854,45 @@ export async function renameResource(id: string, filename: string): Promise<void
   if (!res.ok) throw await apiError(res, 'Could not rename')
 }
 
-export async function updateNote(id: string, patch: { title?: string; body?: string }): Promise<void> {
+export async function updateNote(id: string, patch: { title?: string; body?: string; tags?: string[] }): Promise<void> {
   const res = await fetch(`${BASE}/files/notes/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
   })
   if (!res.ok) throw await apiError(res, 'Could not save note')
+}
+
+export async function setResourceTags(id: string, tags: string[]): Promise<string[]> {
+  const res = await fetch(`${BASE}/files/${id}/tags`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tags }),
+  })
+  if (!res.ok) throw await apiError(res, 'Could not save tags')
+  return (await res.json()).tags
+}
+
+/** The user's tags with how many resources carry each directly. */
+export async function fetchTags(): Promise<Array<{ path: string; count: number }>> {
+  const res = await fetch(`${BASE}/files/tags`)
+  if (!res.ok) throw await apiError(res, 'Could not load tags')
+  return res.json()
+}
+
+/** Renames a tag and everything under it; an existing target merges. */
+export async function renameTag(from: string, to: string): Promise<void> {
+  const res = await fetch(`${BASE}/files/tags`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ from, to }),
+  })
+  if (!res.ok) throw await apiError(res, 'Could not rename tag')
+}
+
+export async function deleteTag(path: string): Promise<void> {
+  const res = await fetch(`${BASE}/files/tags?path=${encodeURIComponent(path)}`, { method: 'DELETE' })
+  if (!res.ok) throw await apiError(res, 'Could not delete tag')
 }
 
 export type TransformOperation = 'summarize' | 'keypoints' | 'questions' | 'outline'

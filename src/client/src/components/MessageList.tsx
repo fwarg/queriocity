@@ -47,6 +47,8 @@ interface Props {
   searchActiveIndex?: number
   /** Opens a resource's detail view by id, given a cited [F1]/[C1] source's `file:${id}` url. */
   onOpenResource?: (id: string) => void
+  /** The open chat, recorded on a note saved from one of its answers. */
+  sessionId?: string
 }
 
 /** Normalize SVG blocks: unwrap any existing ```svg fences, then rewrap consistently. */
@@ -350,7 +352,7 @@ function HighlightedText({ text, query }: { text: string; query: string }) {
   )}</>
 }
 
-function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, searchQuery, noteTitle, onOpenResource }: { msg: Message; isFirst?: boolean; defaultCollapsed?: boolean; isMatch?: boolean; isActive?: boolean; searchQuery?: string; noteTitle?: string; onOpenResource?: (id: string) => void }) {
+function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, searchQuery, noteTitle, onOpenResource, sessionId }: { msg: Message; isFirst?: boolean; defaultCollapsed?: boolean; isMatch?: boolean; isActive?: boolean; searchQuery?: string; noteTitle?: string; onOpenResource?: (id: string) => void; sessionId?: string }) {
   const t = useT()
   const [highlighted, setHighlighted] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState(!!defaultCollapsed)
@@ -450,6 +452,8 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
               <NoteEditor
                 initialTitle={noteTitle ?? ''}
                 initialBody={answerAsNoteBody(msg, t('note.sources'))}
+                originSessionId={sessionId}
+                originMessageId={msg.id}
                 onClose={() => setSavingNote(false)}
                 onSaved={() => {
                   setSavingNote(false)
@@ -482,7 +486,7 @@ function noteTitleFor(messages: Message[], index: number): string | undefined {
   return undefined
 }
 
-export const MessageList = memo(function MessageList({ messages, streaming, streamingThinking, collapseFirstQuestion, searchQuery, searchMatchIndices, searchActiveIndex, onOpenResource }: Props) {
+export const MessageList = memo(function MessageList({ messages, streaming, streamingThinking, collapseFirstQuestion, searchQuery, searchMatchIndices, searchActiveIndex, onOpenResource, sessionId }: Props) {
   const msgRefs = useRef<Map<number, HTMLDivElement>>(new Map())
   const matchSet = useMemo(() => new Set(searchMatchIndices ?? []), [searchMatchIndices])
 
@@ -504,6 +508,7 @@ export const MessageList = memo(function MessageList({ messages, streaming, stre
             searchQuery={searchQuery}
             noteTitle={noteTitleFor(messages, i)}
             onOpenResource={onOpenResource}
+            sessionId={sessionId}
           />
         </div>
       ))}

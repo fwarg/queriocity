@@ -5,7 +5,7 @@ import { SectionHeader } from './SectionHeader.tsx'
 import { useConfirm } from './confirm.tsx'
 import { EmptyState, ListRow, PRIMARY_BTN, RowAction } from './ui.tsx'
 import { ResourceDetail } from './ResourceDetail.tsx'
-import { EMPTY_FILTER, isFiltered, matchesFilter, ResourceFilters, toggleSpace, toggleTopic, type ResourceFilter } from './ResourceFilters.tsx'
+import { EMPTY_FILTER, isFiltered, matchesFilter, ResourceFilters, toggleSpace, toggleTag, type ResourceFilter } from './ResourceFilters.tsx'
 import { deleteFile, ingestUrl, uploadFile, type Resource } from '../lib/api.ts'
 import { useLang, useT } from '../lib/i18n.tsx'
 
@@ -17,9 +17,9 @@ const CHIP_TONES = {
     idle: 'bg-indigo-950 text-indigo-300 border-indigo-900 hover:border-indigo-700',
     active: 'bg-indigo-700 text-white border-indigo-500',
   },
-  topic: {
-    idle: 'bg-gray-900 text-gray-400 border-gray-700 hover:border-gray-500',
-    active: 'bg-gray-600 text-white border-gray-400',
+  tag: {
+    idle: 'bg-emerald-950 text-emerald-300 border-emerald-900 hover:border-emerald-700',
+    active: 'bg-emerald-700 text-white border-emerald-500',
   },
 } as const
 
@@ -58,13 +58,15 @@ interface Props {
    *  switching to this view with an id already set. */
   openId: string | null
   onOpenIdChange: (id: string | null) => void
+  /** Open the chat a note was saved from. */
+  onOpenChat: (id: string, title: string) => void
 }
 
 /** The resource library: uploaded files, ingested URLs and notes, in one list.
  *
  *  Lives here rather than inline in App.tsx because it now owns a detail panel and two editors;
  *  the list state stays with the parent, which needs the same resources for space tagging. */
-export function ResourcesView({ resources, onChanged, openId, onOpenIdChange }: Props) {
+export function ResourcesView({ resources, onChanged, openId, onOpenIdChange, onOpenChat }: Props) {
   const t = useT()
   const confirm = useConfirm()
   const { lang } = useLang()
@@ -83,7 +85,7 @@ export function ResourcesView({ resources, onChanged, openId, onOpenIdChange }: 
   const shown = resources.filter(r => matchesFilter(r, filter))
 
   if (openId) {
-    return <ResourceDetail id={openId} onBack={() => onOpenIdChange(null)} onChanged={onChanged} onOpen={onOpenIdChange} />
+    return <ResourceDetail id={openId} onBack={() => onOpenIdChange(null)} onChanged={onChanged} onOpen={onOpenIdChange} onOpenChat={onOpenChat} />
   }
 
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -198,7 +200,7 @@ export function ResourcesView({ resources, onChanged, openId, onOpenIdChange }: 
               active, whatever the count. A row's chips can set one at any size, and hiding the bar
               then left the list narrowed with nothing naming the filter and no way to clear it. */}
           {(resources.length > FILTER_BAR_THRESHOLD || isFiltered(filter)) && (
-            <ResourceFilters resources={resources} filter={filter} onChange={setFilter} shown={shown.length} />
+            <ResourceFilters resources={resources} filter={filter} onChange={setFilter} shown={shown.length} onTagsChanged={onChanged} />
           )}
           {shown.length === 0 ? (
             <EmptyState>{t('files.filterNone')}</EmptyState>
@@ -215,9 +217,9 @@ export function ResourcesView({ resources, onChanged, openId, onOpenIdChange }: 
                     <div className="text-xs text-gray-500 mt-0.5">
                       {r.kind === 'note' ? t('note.kind') : r.mimeType} · {formatSize(r.size)} · {new Date((r.updatedAt ?? r.createdAt) * 1000).toLocaleDateString(lang)}
                     </div>
-                    {/* Space and topic chips both narrow the list rather than opening the resource,
-                        so they stop the row's own click — two grouping axes, one crossing projects
-                        and one following them. Each toggles: the chip that applied a filter is the
+                    {/* Space and tag chips both narrow the list rather than opening the resource,
+                        so they stop the row's own click — two grouping axes, one following projects
+                        and one crossing them. A tag chip filters on that tag and everything under it. Each toggles: the chip that applied a filter is the
                         obvious place to look for the way back out of it, and shows itself selected
                         so the filter is visible on every row it matched, not only in the bar. */}
                     <div className="flex flex-wrap gap-1 mt-1.5">
@@ -231,14 +233,14 @@ export function ResourcesView({ resources, onChanged, openId, onOpenIdChange }: 
                           {space.name}
                         </Chip>
                       ))}
-                      {r.topics.map(topic => (
+                      {r.tags.map(tag => (
                         <Chip
-                          key={topic}
-                          tone="topic"
-                          active={filter.topic === topic}
-                          onClick={() => setFilter(f => toggleTopic(f, topic))}
+                          key={tag}
+                          tone="tag"
+                          active={filter.tag === tag}
+                          onClick={() => setFilter(f => toggleTag(f, tag))}
                         >
-                          {topic}
+                          #{tag}
                         </Chip>
                       ))}
                     </div>

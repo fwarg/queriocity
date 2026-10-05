@@ -160,8 +160,38 @@ export const uploadedFiles = sqliteTable('uploaded_files', {
    *  provenance is also written into the note's first line, which is what carries it into retrieval
    *  and export — this column exists so the panel can link back. */
   derivedFrom: text('derived_from').references((): AnySQLiteColumn => uploadedFiles.id, { onDelete: 'set null' }),
+  /** The chat and answer a note was saved from. Plain ids with no foreign key: the chat can be
+   *  deleted on three separate paths, so instead of nulling it on each the link is resolved on read,
+   *  owner-checked, and simply shows nothing once the chat is gone. */
+  originSessionId: text('origin_session_id'),
+  originMessageId: text('origin_message_id'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }),
+})
+
+/** A user's tags: hierarchical paths such as `ml/rag`, lowercase and `/`-separated. A parent exists
+ *  implicitly through its children and has no row of its own. Rows exist only while some resource
+ *  carries them — an unused tag is deleted, so the list never fills with dead ones.
+ *
+ *  Deliberately separate from `topics`: those are the small model's suggestions and are rewritten
+ *  whenever a note's text changes, while a tag is the user's and nothing automatic touches it. */
+export const tags = sqliteTable('tags', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  path: text('path').notNull(),
+})
+
+export const resourceTags = sqliteTable('resource_tags', {
+  resourceId: text('resource_id').notNull().references(() => uploadedFiles.id, { onDelete: 'cascade' }),
+  tagId: text('tag_id').notNull().references(() => tags.id, { onDelete: 'cascade' }),
+}, (t) => ({ pk: primaryKey({ columns: [t.resourceId, t.tagId] }) }))
+
+/** `[[wikilinks]]` from a note, rebuilt from its body on every save. `dstId` is null while the link
+ *  names a title no resource has yet; creating or renaming one to that title resolves it. */
+export const resourceLinks = sqliteTable('resource_links', {
+  srcId: text('src_id').notNull().references(() => uploadedFiles.id, { onDelete: 'cascade' }),
+  dstId: text('dst_id').references(() => uploadedFiles.id, { onDelete: 'set null' }),
+  dstTitle: text('dst_title').notNull(),
 })
 
 export const spaceFiles = sqliteTable('space_files', {
@@ -314,6 +344,8 @@ function initSchema() {
       topics     TEXT,
       origin     TEXT,
       derived_from TEXT REFERENCES uploaded_files(id) ON DELETE SET NULL,
+      origin_session_id TEXT,
+      origin_message_id TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER
     );
@@ -522,6 +554,27 @@ function initSchema() {
   try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN derived_from TEXT') } catch {}
   try { sqlite.run(`ALTER TABLE spaces ADD COLUMN kind TEXT NOT NULL DEFAULT 'space'`) } catch {}
   try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN origin TEXT') } catch {}
+  try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN origin_session_id TEXT') } catch {}
+  try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN origin_message_id TEXT') } catch {}
+  sqlite.run(`CREATE TABLE IF NOT EXISTS tags (
+    id      TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    path    TEXT NOT NULL,
+    UNIQUE (user_id, path)
+  )`)
+  sqlite.run(`CREATE TABLE IF NOT EXISTS resource_tags (
+    resource_id TEXT NOT NULL REFERENCES uploaded_files(id) ON DELETE CASCADE,
+    tag_id      TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    PRIMARY KEY (resource_id, tag_id)
+  )`)
+  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_resource_tags_tag ON resource_tags(tag_id)`)
+  sqlite.run(`CREATE TABLE IF NOT EXISTS resource_links (
+    src_id    TEXT NOT NULL REFERENCES uploaded_files(id) ON DELETE CASCADE,
+    dst_id    TEXT REFERENCES uploaded_files(id) ON DELETE SET NULL,
+    dst_title TEXT NOT NULL
+  )`)
+  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_resource_links_src ON resource_links(src_id)`)
+  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_resource_links_dst ON resource_links(dst_id)`)
   try { sqlite.run('ALTER TABLE messages ADD COLUMN file_sources TEXT') } catch {}
   // Migrate: backfill timezone from owner's settings for personal monitors that have none
   try {

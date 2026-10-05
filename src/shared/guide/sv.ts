@@ -113,6 +113,14 @@ eller hel genom anteckningsikonen bredvid gemet. Bara anteckningar kan bifogas s
 lagras som överlappande utdrag, så att skicka den hel vore att upprepa sig; gemet täcker redan det
 fallet.
 
+**Länkar och taggar.** Skriv \`[[Titel]]\` för att länka till en annan anteckning eller resurs —
+eller tryck *Infoga länk* och välj en. En länk till en titel som inget har ännu erbjuder att skapa
+den anteckningen. Varje resurs visar vad den länkar till och vad som länkar till den, och en
+anteckning sparad från ett svar länkar tillbaka till sin chatt. **Taggar** som \`#ml/rag\` sätter
+du själv på vilken resurs som helst; förslagen kommer från den automatiska sammanfattningen, och
+väljer du \`#ml\` i filtret visas även \`#ml/rag\`. Taggar ordnar bara — de ändrar aldrig vad
+assistenten ser.
+
 Använd en anteckning för det du vill ha bevarat ord för ord: en beställning, en kravlista, ett
 beslut och skälet till det.`,
   },

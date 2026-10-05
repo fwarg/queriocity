@@ -1,8 +1,10 @@
 import { randomUUID } from 'crypto'
 import { and, eq, sql } from 'drizzle-orm'
-import { db, uploadedFiles } from '../db.ts'
+import { chatSessions, db, uploadedFiles } from '../db.ts'
 import { indexResourceText } from './ingest.ts'
+import { bodiesRelinkedTo, resolveDangling, syncLinks } from './links.ts'
 import { describeResource } from './summarise.ts'
+import { setResourceTags } from './tags.ts'
 
 /** Notes: the one resource the user writes rather than uploads.
  *
@@ -21,10 +23,16 @@ export interface NoteInput {
   body: string
   /** The resource a transform produced this note from; set once, at creation. */
   derivedFrom?: string
+  /** The chat and answer this note was saved from; set once, at creation. */
+  originSessionId?: string
+  originMessageId?: string
+  /** Replaces the note's tags when given; left alone when omitted. */
+  tags?: string[]
 }
 
-/** Creates or updates a note, re-indexing only when the text actually changed. */
-export async function saveNote(userId: string, note: NoteInput): Promise<string> {
+/** Creates or updates a note, re-indexing only when the text actually changed.
+ *  `describe: false` skips the small-model summary — for mechanical edits such as a link rewrite. */
+export async function saveNote(userId: string, note: NoteInput, { describe = true } = {}): Promise<string> {
   const title = note.title.trim()
   const body = note.body.trim()
   if (!title) throw new Error('A note needs a title')
@@ -45,23 +53,57 @@ export async function saveNote(userId: string, note: NoteInput): Promise<string>
       .set({ filename: title, body, size, updatedAt: now })
       .where(eq(uploadedFiles.id, id))
   } else {
-    // Only a resource this user owns, so a guessed id cannot reveal that someone else's exists.
-    const source = note.derivedFrom
-      ? await db.select({ id: uploadedFiles.id }).from(uploadedFiles)
-          .where(and(eq(uploadedFiles.id, note.derivedFrom), eq(uploadedFiles.userId, userId))).get()
-      : undefined
     await db.insert(uploadedFiles).values({
-      id, userId, filename: title, mimeType: NOTE_MIME_TYPE, size,
-      kind: 'note', body, derivedFrom: source?.id ?? null, createdAt: now, updatedAt: now,
+      id, userId, filename: title, mimeType: NOTE_MIME_TYPE, size, kind: 'note', body,
+      ...await ownedProvenance(userId, note), createdAt: now, updatedAt: now,
     })
   }
+  if (note.tags) setResourceTags(userId, id, note.tags)
 
   // Embedding is the expensive half, and a retitled note has the same content to retrieve.
   if (existing?.body !== body) {
+    syncLinks(userId, id, body)
     await indexResourceText(id, body, NOTE_MIME_TYPE, 0)
-    await describeResource(id, body)
+    if (describe) await describeResource(id, body)
   }
+  if (!existing) resolveDangling(userId, id, title)
+  else if (existing.filename !== title) await relinkRenamed(userId, id, existing.filename, title)
   return id
+}
+
+/** derivedFrom and the chat of origin, each kept only when this user owns it — so a guessed id
+ *  cannot reveal that someone else's resource or chat exists. */
+async function ownedProvenance(userId: string, note: NoteInput) {
+  const source = note.derivedFrom
+    ? await db.select({ id: uploadedFiles.id }).from(uploadedFiles)
+        .where(and(eq(uploadedFiles.id, note.derivedFrom), eq(uploadedFiles.userId, userId))).get()
+    : undefined
+  const session = note.originSessionId
+    ? await db.select({ id: chatSessions.id }).from(chatSessions)
+        .where(and(eq(chatSessions.id, note.originSessionId), eq(chatSessions.userId, userId))).get()
+    : undefined
+  return {
+    derivedFrom: source?.id ?? null,
+    originSessionId: session?.id ?? null,
+    originMessageId: session ? note.originMessageId ?? null : null,
+  }
+}
+
+/** Renames any resource, keeping `[[links]]` to it pointing at it under the new title. */
+export async function renameResource(userId: string, id: string, oldTitle: string, newTitle: string): Promise<void> {
+  await db.update(uploadedFiles)
+    .set({ filename: newTitle, updatedAt: new Date() })
+    .where(and(eq(uploadedFiles.id, id), eq(uploadedFiles.userId, userId)))
+  await relinkRenamed(userId, id, oldTitle, newTitle)
+}
+
+/** Rewrite `[[oldTitle]]` in the notes linking to a renamed resource, and adopt dangling links that
+ *  already used the new title. Rewritten notes are re-indexed (their text changed) but not re-described. */
+async function relinkRenamed(userId: string, id: string, oldTitle: string, newTitle: string): Promise<void> {
+  for (const linking of bodiesRelinkedTo(userId, id, oldTitle, newTitle)) {
+    await saveNote(userId, linking, { describe: false })
+  }
+  resolveDangling(userId, id, newTitle)
 }
 
 /** Re-chunks notes that have no chunks at all, and reports how many it recovered.
