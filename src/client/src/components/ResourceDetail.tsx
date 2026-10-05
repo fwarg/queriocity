@@ -1,6 +1,4 @@
 import { useCallback, useEffect, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import { ArrowLeft, ExternalLink, FileText, MessageSquare, NotebookPen, Plus, X } from 'lucide-react'
 import { NoteEditor } from './NoteEditor.tsx'
 import { NoteMarkdown } from './NoteMarkdown.tsx'
@@ -148,9 +146,7 @@ export function ResourceDetail({ id, onBack, onChanged, onOpen, onOpenChat }: Pr
 
       {isNote && detail.body && (
         <Section title={t('note.body')}>
-          <div className="prose prose-invert prose-sm max-w-none">
-            <NoteMarkdown body={detail.body} onWikilink={followLink} />
-          </div>
+          <NoteMarkdown body={detail.body} onWikilink={followLink} />
         </Section>
       )}
 
@@ -474,8 +470,8 @@ function TransformPanel({ id, sourceTitle, onSaved }: { id: string; sourceTitle:
 
       {result && (
         <div className="flex flex-col gap-2 mt-2 p-3 rounded-lg bg-gray-800 border border-gray-700">
-          <div className="prose prose-invert prose-sm max-w-none max-h-80 overflow-y-auto">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{result.content}</ReactMarkdown>
+          <div className="max-h-80 overflow-y-auto">
+            <NoteMarkdown body={result.content} />
           </div>
           <div className="flex justify-end">
             <button onClick={() => setSaving(true)} className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-sm font-medium">

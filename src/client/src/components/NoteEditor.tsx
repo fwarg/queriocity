@@ -88,7 +88,7 @@ export function NoteEditor({ id, initialTitle = '', initialBody = '', initialTag
           </div>
         </div>
         {preview ? (
-          <div className="prose prose-invert prose-sm max-w-none min-h-60 bg-gray-800 border border-gray-700 rounded px-3 py-2 overflow-y-auto">
+          <div className="min-h-60 bg-gray-800 border border-gray-700 rounded px-3 py-2 overflow-y-auto">
             {body.trim()
               ? <NoteMarkdown body={body} />
               : <p className="text-gray-500 text-sm">{t('note.emptyBody')}</p>}
