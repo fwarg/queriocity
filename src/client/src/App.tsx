@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { BookOpen, RotateCcw, Lock, ShieldCheck, Trash2, X } from 'lucide-react'
 import { MessageList, ImageCaptionContext } from './components/MessageList.tsx'
+import { ContextMeter } from './components/ContextIndicators.tsx'
 import { ProgressLog, Elapsed } from './components/ProgressLog.tsx'
 import { ApprovalPrompt } from './components/ApprovalPrompt.tsx'
 import { ChatInput } from './components/ChatInput.tsx'
@@ -170,7 +171,7 @@ export default function App() {
    *  refuses a collection either way; this keeps the UI from proposing what it will refuse. */
   const chatSpaces = spaces.filter(sp => sp.kind === 'space')
 
-  const { messages, setMessages, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, regenerate, cancel, reset, related, setRelated, steps, runStartedAt, approval, decideApproval } = useChat({
+  const { messages, setMessages, context, setContext, togglePin, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, regenerate, cancel, reset, related, setRelated, steps, runStartedAt, approval, decideApproval } = useChat({
     sessionId,
     focusMode,
     searchCategories,
@@ -363,7 +364,7 @@ export default function App() {
     setIsMonitorSession(fromMonitor)
     reset()
     setView('chat')
-    fetchSession(id).then(setMessages).catch(() => {})
+    fetchSession(id).then(s => { setMessages(s.messages); setContext(s.context) }).catch(() => {})
     if (addToHistory) {
       setSessions(prev => {
         const existing = prev.find(s => s.id === id)
@@ -1469,6 +1470,8 @@ export default function App() {
                   searchMatchIndices={chatSearchOpen ? chatMatchIndices : []}
                   onOpenResource={openResource}
                   sessionId={sessionId}
+                  context={context}
+                  onTogglePin={togglePin}
                 />
               </ImageCaptionContext.Provider>
             )}
@@ -1522,6 +1525,7 @@ export default function App() {
                     </div>
                   )}
                 </div>
+                {context && <div className="ml-auto"><ContextMeter report={context} /></div>}
               </div>
             )}
             <div ref={bottomRef} />

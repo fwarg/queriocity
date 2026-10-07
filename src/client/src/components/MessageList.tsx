@@ -11,6 +11,8 @@ import { blockMdComponents, escapeCurrencyDollars, ImageBlock, ImageCaptionConte
 import { useT } from '../lib/i18n.tsx'
 import { NoteEditor } from './NoteEditor.tsx'
 import { answerAsNoteBody } from '../lib/note-from-answer.ts'
+import type { ContextReport } from '@shared/context.ts'
+import { ContextDivider, PinButton } from './ContextIndicators.tsx'
 
 export { ImageCaptionContext }
 
@@ -44,6 +46,9 @@ interface Props {
   onOpenResource?: (id: string) => void
   /** The open chat, recorded on a note saved from one of its answers. */
   sessionId?: string
+  /** What the model saw on the latest turn; draws the dividers where its view begins. */
+  context?: ContextReport | null
+  onTogglePin?: (index: number) => void
 }
 
 /** Normalize SVG blocks: unwrap any existing ```svg fences, then rewrap consistently. */
@@ -245,7 +250,7 @@ function HighlightedText({ text, query }: { text: string; query: string }) {
   )}</>
 }
 
-function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, searchQuery, noteTitle, onOpenResource, sessionId }: { msg: Message; isFirst?: boolean; defaultCollapsed?: boolean; isMatch?: boolean; isActive?: boolean; searchQuery?: string; noteTitle?: string; onOpenResource?: (id: string) => void; sessionId?: string }) {
+function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, searchQuery, noteTitle, onOpenResource, sessionId, onTogglePin, keptInFull }: { msg: Message; isFirst?: boolean; defaultCollapsed?: boolean; isMatch?: boolean; isActive?: boolean; searchQuery?: string; noteTitle?: string; onOpenResource?: (id: string) => void; sessionId?: string; onTogglePin?: () => void; keptInFull?: boolean }) {
   const t = useT()
   const [highlighted, setHighlighted] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState(!!defaultCollapsed)
@@ -323,6 +328,7 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
             {msg.content && (
               <div className="flex justify-end items-center gap-2 mt-1">
                 {noteSaved && <span className="text-[11px] text-green-400">{t('note.savedFromAnswer')}</span>}
+                {onTogglePin && <PinButton pinned={msg.pinned} keptInFull={keptInFull} onToggle={onTogglePin} />}
                 <button
                   onClick={() => setSavingNote(true)}
                   className="p-0.5 rounded text-gray-600 hover:text-amber-400 transition-colors"
@@ -358,6 +364,7 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
           </>
         ) : <HighlightedText text={msg.content} query={searchQuery ?? ''} />}
       </div>
+      {msg.role === 'user' && onTogglePin && <PinButton pinned={msg.pinned} keptInFull={keptInFull} onToggle={onTogglePin} />}
       {(msg.sources && msg.sources.length > 0 || msg.fileSources && msg.fileSources.length > 0) && (
         <SourceList content={msg.content} sources={msg.sources ?? []} fileSources={msg.fileSources} highlighted={highlighted} onSourceClick={toggleSource} onOpenResource={onOpenResource} />
       )}
@@ -379,7 +386,11 @@ function noteTitleFor(messages: Message[], index: number): string | undefined {
   return undefined
 }
 
-export const MessageList = memo(function MessageList({ messages, streaming, streamingThinking, collapseFirstQuestion, searchQuery, searchMatchIndices, searchActiveIndex, onOpenResource, sessionId }: Props) {
+/** Unpinned messages in [from, to): those the model lost or got only as a summary. */
+const unpinnedIn = (messages: Message[], from: number, to: number) =>
+  messages.slice(from, to).filter(m => !m.pinned).length
+
+export const MessageList = memo(function MessageList({ messages, streaming, streamingThinking, collapseFirstQuestion, searchQuery, searchMatchIndices, searchActiveIndex, onOpenResource, sessionId, context, onTogglePin }: Props) {
   const msgRefs = useRef<Map<number, HTMLDivElement>>(new Map())
   const matchSet = useMemo(() => new Set(searchMatchIndices ?? []), [searchMatchIndices])
 
@@ -392,6 +403,12 @@ export const MessageList = memo(function MessageList({ messages, streaming, stre
     <div data-print-region className="flex flex-col gap-4 p-4 overflow-y-auto overflow-x-hidden flex-1">
       {messages.map((msg, i) => (
         <div key={i} ref={el => { if (el) msgRefs.current.set(i, el); else msgRefs.current.delete(i) }}>
+          {context && i > 0 && i === context.lostBefore && unpinnedIn(messages, 0, i) > 0 && (
+            <ContextDivider kind="lost" count={unpinnedIn(messages, 0, i)} />
+          )}
+          {context && i > context.lostBefore && i === context.cut && unpinnedIn(messages, context.lostBefore, i) > 0 && (
+            <ContextDivider kind="summarised" count={unpinnedIn(messages, context.lostBefore, i)} summary={context.summary} />
+          )}
           <MessageItem
             msg={msg}
             isFirst={i === 0}
@@ -402,6 +419,8 @@ export const MessageList = memo(function MessageList({ messages, streaming, stre
             noteTitle={noteTitleFor(messages, i)}
             onOpenResource={onOpenResource}
             sessionId={sessionId}
+            onTogglePin={onTogglePin ? () => onTogglePin(i) : undefined}
+            keptInFull={!!context && i < context.cut}
           />
         </div>
       ))}

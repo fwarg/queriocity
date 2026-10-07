@@ -7,6 +7,7 @@ import { saveMemories, saveUserMemory, searchSpaceHistory, MEMORY_MAX_SOURCES, t
 import { ragMinRelevance } from './rag-settings.ts'
 import { fetchUrl, processUrlsForContext, urlLabel, MIN_URL_CONTEXT_CHARS, type UrlOutcome } from './fetch-url.ts'
 import { trimMessages, compressMessages, contextCharBudget, CONTEXT_RESERVE_FRACTION } from './trim-messages.ts'
+import type { ContextReport } from '../../shared/context.ts'
 import { queryTerms, querySimilarity, QUERY_DUPLICATE_THRESHOLD } from './query-terms.ts'
 import {
   applyEgressMode, createEgressContext, inspectQuery, inspectUrl, noteSeenUrl, noteTaint, noteUserText,
@@ -186,6 +187,10 @@ export interface ResearchOptions {
   /** The chat's space is locked: no fetch_url, and no web_search unless a provider trusted for locked spaces backs it. Resolved from the database by the
    *  caller, never from the client. */
   locked?: boolean
+  /** Indices into `messages` the user pinned: kept in full however long the conversation gets. */
+  pinned?: ReadonlySet<number>
+  /** Called once history has been fitted to the context, with what the model will see of it. */
+  onContext?: (report: ContextReport) => void | Promise<void>
 }
 
 export interface EgressApprovalRequest {
@@ -194,7 +199,7 @@ export interface EgressApprovalRequest {
   reasons: string[]
 }
 
-export async function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, userMemoryEnabled = false, fetchSummarize = false, urlContextChars, compressHistory = false, searchCategory, maxStepsOverride, onEngineErrors, onUrlRead, onSource, searchBudget, requestApproval, locked = false }: ResearchOptions) {
+export async function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, userMemoryEnabled = false, fetchSummarize = false, urlContextChars, compressHistory = false, searchCategory, maxStepsOverride, onEngineErrors, onUrlRead, onSource, searchBudget, requestApproval, locked = false, pinned, onContext }: ResearchOptions) {
   const { maxSteps: defaultMaxSteps, count } = MODE_CONFIG[focusMode]
   // Read once per run, so the tools, the tool description and the system prompt agree.
   const trustedSearch = locked && await hasTrustedSearch()
@@ -327,11 +332,14 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
     // Reserve the summary's own cost out of the history sub-budget up front, so kept-messages +
     // summary together still respect historyBudgetTokens.
     const dropBudgetTokens = historyBudgetTokens - Math.ceil(summaryBudgetChars / CHARS_PER_TOKEN)
-    const { messages: compressedMessages, summary } = await compressMessages(augmentedMessages, dropBudgetTokens, system, summaryBudgetChars)
+    const { messages: compressedMessages, summary, report } = await compressMessages(augmentedMessages, dropBudgetTokens, system, summaryBudgetChars, pinned)
     augmentedMessages = compressedMessages
     if (summary) system += `\n\nSummary of earlier parts of this conversation (older messages were compacted to fit context):\n${summary}`
+    await onContext?.({ ...report, budgetTokens: Math.floor(totalInputTokens) })
   } else {
-    augmentedMessages = trimMessages(augmentedMessages, historyBudgetTokens, system)
+    const { messages: trimmed, report } = trimMessages(augmentedMessages, historyBudgetTokens, system, pinned)
+    augmentedMessages = trimmed
+    await onContext?.({ ...report, budgetTokens: Math.floor(totalInputTokens) })
   }
 
   // Cumulative budget for search/fetch content the agentic loop is about to add, derived from what's

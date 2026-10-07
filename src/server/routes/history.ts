@@ -87,6 +87,20 @@ historyRouter.get('/:id', async (c) => {
   return c.json({ session, messages: msgs })
 })
 
+/** Pins or unpins one message: a pinned message is kept in full when the chat outgrows the context. */
+historyRouter.patch('/:id/messages/:mid', zValidator('json', z.object({ pinned: z.boolean() })), async (c) => {
+  const userId = c.get('userId') as string
+  const id = c.req.param('id')
+  const session = await db.select({ id: chatSessions.id }).from(chatSessions)
+    .where(and(eq(chatSessions.id, id), eq(chatSessions.userId, userId))).get()
+  if (!session) return c.json({ error: 'Not found' }, 404)
+
+  const updated = await db.update(messages).set({ pinned: c.req.valid('json').pinned })
+    .where(and(eq(messages.id, c.req.param('mid')), eq(messages.sessionId, id))).returning({ id: messages.id })
+  if (!updated.length) return c.json({ error: 'Not found' }, 404)
+  return c.json({ ok: true })
+})
+
 historyRouter.patch('/:id', zValidator('json', z.object({
   title: z.string().min(1).max(200).optional(),
   spaceId: z.string().uuid().nullable().optional(),

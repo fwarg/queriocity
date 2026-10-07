@@ -1,4 +1,5 @@
 import type { Lang } from '@shared/i18n/index.ts'
+import type { ContextReport } from '@shared/context.ts'
 import type { ApiErrorBody, ErrorCode } from '@shared/error-codes.ts'
 
 /** An API failure, carrying the server's stable code where the route sends one.
@@ -76,6 +77,8 @@ export interface Message {
   fileSources?: FileSource[]
   thinking?: string
   images?: Array<{ url: string; alt: string }>
+  /** Kept in full when the conversation outgrows the model's context. */
+  pinned?: boolean
 }
 
 // Auth — cookies are sent automatically by the browser
@@ -225,6 +228,7 @@ export async function* streamChat(
         content: m.images?.length
           ? m.content + m.images.map(img => `\n\n![${img.alt}](${img.url})`).join('')
           : m.content,
+        ...(m.pinned ? { pinned: true } : {}),
       })),
       focusMode,
       sessionId,
@@ -351,19 +355,38 @@ export async function fetchRelatedQuestions(question: string, answer: string): P
   }
 }
 
-export async function fetchSession(id: string): Promise<Message[]> {
+/** A stored chat: its messages, and what the model saw of them on the latest turn. */
+export async function fetchSession(id: string): Promise<{ messages: Message[]; context: ContextReport | null }> {
   const res = await fetch(`${BASE}/history/${id}`)
-  const { messages } = await res.json()
+  const { session, messages } = await res.json()
+  return { messages: toMessages(messages), context: parseContext(session?.contextReport) }
+}
+
+function parseContext(raw: string | null | undefined): ContextReport | null {
+  if (!raw) return null
+  try { return JSON.parse(raw) as ContextReport } catch { return null }
+}
+
+function toMessages(messages: unknown): Message[] {
   const FIRST_PNG_RE = /!\[([^\]]*)\]\(([^)]+\.png)\)/
-  return (messages as Array<{ id: string; role: 'user' | 'assistant'; content: string; sources?: string; fileSources?: string }>).map(m => {
+  return (messages as Array<{ id: string; role: 'user' | 'assistant'; content: string; sources?: string; fileSources?: string; pinned?: boolean }>).map(m => {
     const sources = m.sources ? JSON.parse(m.sources) : undefined
     const fileSources = m.fileSources ? JSON.parse(m.fileSources) : undefined
     if (m.role === 'assistant') {
       const match = FIRST_PNG_RE.exec(m.content)
-      return { id: m.id, role: m.role, content: m.content, sources, fileSources, images: match ? [{ alt: match[1], url: match[2] }] : undefined }
+      return { id: m.id, role: m.role, content: m.content, sources, fileSources, pinned: m.pinned, images: match ? [{ alt: match[1], url: match[2] }] : undefined }
     }
-    return { id: m.id, role: m.role, content: m.content, sources, fileSources }
+    return { id: m.id, role: m.role, content: m.content, sources, fileSources, pinned: m.pinned }
   })
+}
+
+export async function setMessagePinned(sessionId: string, messageId: string, pinned: boolean): Promise<void> {
+  const res = await fetch(`${BASE}/history/${sessionId}/messages/${messageId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pinned }),
+  })
+  if (!res.ok) throw await apiError(res, 'Could not update the pin')
 }
 
 export async function updateSessionTitle(id: string, title: string): Promise<void> {

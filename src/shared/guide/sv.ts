@@ -85,6 +85,10 @@ Markdown, CSV, HTML och bilder fungerar, upp till 50 MB.
 **Lägg till en webbsida eller en YouTube-video.** *+ Lägg till URL* i samma vy. Sidan hämtas, eller
 videons transkript, och lagras precis som en uppladdning.
 
+I en lång chatt faller de äldsta meddelandena till slut ur det modellen läser. Ett meddelande med
+bilaga **fästs** så att det stannar kvar — nålen under varje meddelande gör samma sak — och mätaren
+**Kontext** under det senaste svaret visar hur fullt modellens fönster är.
+
 Skillnaden som betyder något: en **bilaga** läses hel, en gång. En **biblioteksresurs** hittas i
 bitar, för alltid. Fråga om ett dokument i sin helhet med gemet; bygg en hylla du kan fråga tvärs
 över med biblioteket.

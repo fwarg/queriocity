@@ -87,6 +87,8 @@ export const chatSessions = sqliteTable('chat_sessions', {
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   spaceId: text('space_id').references(() => spaces.id, { onDelete: 'set null' }),
   graduated: integer('graduated').notNull().default(0),
+  /** JSON ContextReport of the latest turn, so the context meter survives switching chats. */
+  contextReport: text('context_report'),
 })
 
 export const spaceMemories = sqliteTable('space_memories', {
@@ -127,6 +129,8 @@ export const messages = sqliteTable('messages', {
   content: text('content').notNull(),
   sources: text('sources'),
   fileSources: text('file_sources'),
+  /** Kept in full when a long conversation is trimmed to fit the model's context. */
+  pinned: integer('pinned', { mode: 'boolean' }).notNull().default(false),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 
@@ -576,6 +580,8 @@ function initSchema() {
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_resource_links_src ON resource_links(src_id)`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_resource_links_dst ON resource_links(dst_id)`)
   try { sqlite.run('ALTER TABLE messages ADD COLUMN file_sources TEXT') } catch {}
+  try { sqlite.run('ALTER TABLE messages ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0') } catch {}
+  try { sqlite.run('ALTER TABLE chat_sessions ADD COLUMN context_report TEXT') } catch {}
   // Migrate: backfill timezone from owner's settings for personal monitors that have none
   try {
     sqlite.run(`

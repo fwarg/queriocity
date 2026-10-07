@@ -25,6 +25,7 @@ through a single Bun process.
     - [Connection recovery](#connection-recovery)
     - [Searching chats](#searching-chats)
     - [Searching within a chat](#searching-within-a-chat)
+    - [Long chats: context and pinning](#long-chats-context-and-pinning)
   - [Research modes](#research-modes)
     - [Search category filtering](#search-category-filtering)
     - [spejaren (small-web index)](#spejaren-small-web-index)
@@ -155,6 +156,29 @@ The search box at the top of the Chats view searches both **chat titles and mess
 ### Searching within a chat
 
 Press **Ctrl+F** (or click the 🔍 icon in the chat header) to open an in-chat search bar. Matching messages are highlighted with a yellow ring and the active match scrolls into view. Use **▲ ▼**, **Enter** / **Shift+Enter** to navigate between matches; **Escape** closes the bar. Text matches are also highlighted inline in user messages.
+
+### Long chats: context and pinning
+
+The model reads only so much at once (`CONTEXT_TOKEN_LIMIT`). When a chat grows past that, the
+oldest messages are dropped from what it sees — or, with the *Compress dropped history* admin
+setting on, summarised in Balanced and Thorough. The chat itself is never changed; only the
+model's view of it.
+
+- **Context meter** — beside the export menu under the latest answer, e.g. *Context 64%*. The bar
+  shows how the last turn's input was spent: instructions and memory, pinned messages, summary,
+  recent messages; the rest is room for search results. It turns amber at 80% or once anything has
+  been dropped. Tap it for the breakdown. Counts are estimates (characters ÷ 4). The latest
+  report is stored with the chat, so meter and dividers reappear when you switch back to it.
+- **Dividers** — a dashed line in the chat marks where the model's view begins: *no longer seen*
+  above it, or *seen only as a summary*, with **Show summary** revealing the exact text the model
+  got. With compression on there can be both: the summariser covers only the most recent part of
+  what was dropped.
+- **Pinning** — the pin icon under any message keeps it in full however long the chat gets; only
+  unpinned messages are dropped or summarised. A message with an **attachment is pinned
+  automatically**, since the conversation is usually about the document; unpin it if not. Pins are
+  stored with the chat. If the pinned messages alone no longer fit, the oldest is shortened (its
+  beginning kept) and the meter says so — for a document that large, add it to the library
+  instead, where it is searched rather than read whole.
 
 ## Research modes
 
@@ -497,7 +521,7 @@ There are two ways page content reaches the model, and they share the same fetch
 - **Raw scrape ceiling** — each single fetch (one page) is capped at `FETCH_MAX_CHARS` chars (default 100 000) of extracted text before it's cached. This only bounds how much is scraped and kept in memory — it does *not* by itself limit what reaches the model; see the next two limits for that. It must stay ≥ `FETCH_MAX_URL_CONTEXT_CHARS` (below) or it silently clips content before the context cap or summarizer ever run; a startup warning is logged if misconfigured.
 - **Per-URL context cap** — before a page's content is injected into the model's context, it's capped at `FETCH_MAX_URL_CONTEXT_CHARS` (default 40 000 chars), applied identically whether the URL was pasted by the user or fetched by the model's own `fetch_url` tool. Overridable per-instance in Admin → Settings, which is validated against `FETCH_MAX_CHARS` so it can't be raised past the scrape ceiling. If the *Summarize oversized URL content* admin setting is enabled, content over the cap is compressed by the small model in serial chunks (`FETCH_SUMMARIZE_MAX_CHUNKS`, default 6) instead of being hard-truncated — but only when the page is at least 3× the cap. Below that, a summary would be a paraphrase rather than a compression, so truncation is used and the reason is logged. Each chunk's output is bounded by `maxOutputTokens`, and the joined result is clamped to the cap. A page longer than `FETCH_SUMMARIZE_MAX_CHUNKS` chunks can cover is only partly read; the summary then carries an explicit note saying how much went unread, so the model does not treat an unread section as an absent one.
 - **Per-turn cumulative budget** — `fetch_url` and `web_search` calls made by the model during one research turn draw from a single shared budget, derived from `CONTEXT_TOKEN_LIMIT` (roughly 80% of the model's real context window, minus what the system prompt and conversation history already use). A fixed fraction of that budget (`TOOL_BUDGET_RESERVE_FRACTION`, default 30%) is reserved for this pool *before* conversation history is trimmed, so a long conversation can never leave the tools with no room to work. Every call consumes from the pool as it goes; once it's nearly exhausted, further `fetch_url`/`web_search` calls are refused and the model is told to answer with what it already has instead of erroring. This is what actually protects against context overflow once an agentic research turn is underway — a `thorough`-mode run can call these tools many times across several steps, and this cap holds regardless of how high `FETCH_MAX_CHARS` is set for scraping purposes.
-- **History compaction** — when conversation history must be trimmed to make room (for the tool budget above), the oldest messages are dropped by default. If the *Compress dropped history* admin setting is enabled, they're summarized by the small model and folded into the system prompt instead, preserving continuity at the cost of an extra LLM call. Only applies to balanced/thorough research turns.
+- **History compaction** — when conversation history must be trimmed to make room (for the tool budget above), the oldest messages are dropped by default. If the *Compress dropped history* admin setting is enabled, they're summarized by the small model and folded into the system prompt instead, preserving continuity at the cost of an extra LLM call. Only applies to balanced/thorough research turns. [Pinned messages](#long-chats-context-and-pinning) are never dropped or summarised.
 - **Blocked targets** — fetches are restricted to `http`/`https`, and the hostname is resolved and rejected if it points at a loopback, private (RFC1918/CGNAT), link-local (including the `169.254.169.254` cloud-metadata address) or otherwise internal address. The check runs on the original URL *and* on every redirect hop, so a public URL cannot bounce a fetch onto your LAN. This matters because the model can be talked into fetching a link it read in a page or a search result — without the guard, a planted URL reaches your Ollama, SearXNG or LiteLLM instance. A refusal comes back to the model as `Error fetching <url>: <reason>`. To fetch internal pages deliberately (an intranet wiki, say), set `FETCH_ALLOW_PRIVATE_HOSTS=true`; a warning is logged at startup while it is on.
 - **Timeout** — each attempt is capped at `FETCH_TIMEOUT_MS` (default 10 s), applied separately to the static fetch and to the Playwright render, so an unreachable page costs at most roughly double that before the model is told it failed.
 - **Cache** — fetched URLs are cached for 5 minutes so the model does not re-fetch during the same session.
