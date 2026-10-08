@@ -27,6 +27,9 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   const [rerankTopNDraft, setRerankTopNDraft] = useState('15')
   const [ragTopKDraft, setRagTopKDraft] = useState('15')
   const [ragMinRelevanceDraft, setRagMinRelevanceDraft] = useState('0')
+  const [relatedMinSimilarityDraft, setRelatedMinSimilarityDraft] = useState('0.5')
+  const [relatedMinRelevanceDraft, setRelatedMinRelevanceDraft] = useState('0.5')
+  const [rerankConfigured, setRerankConfigured] = useState(false)
   // Derived server-side from the model context env vars; two settings below are clamped by them.
   const [limits, setLimits] = useState<{ smallModelInputChars: number; embedInputChars: number; scrapeMaxChars: number; minUrlContextChars: number } | null>(null)
   const [attachmentCharsDraft, setAttachmentCharsDraft] = useState('20000')
@@ -69,6 +72,9 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
       setRerankTopNDraft(String(s.rerankTopN))
       setRagTopKDraft(String(s.ragTopK))
       setRagMinRelevanceDraft(String(s.ragMinRelevance))
+      setRelatedMinSimilarityDraft(String(s.relatedMinSimilarity))
+      setRelatedMinRelevanceDraft(String(s.relatedMinRelevance))
+      setRerankConfigured(s.rerankEnabled)
       setLimits(s.limits)
       setAttachmentCharsDraft(String(s.attachmentChars))
       setSpaceRagBudgetDraft(String(s.spaceRagBudget))
@@ -99,6 +105,8 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     const rerankTopN = parseInt(rerankTopNDraft)
     const ragTopK = parseInt(ragTopKDraft)
     const ragMinRelevance = parseFloat(ragMinRelevanceDraft)
+    const relatedMinSimilarity = parseFloat(relatedMinSimilarityDraft)
+    const relatedMinRelevance = parseFloat(relatedMinRelevanceDraft)
     const attachmentChars = parseInt(attachmentCharsDraft)
     const spaceRagBudget = parseInt(spaceRagBudgetDraft)
     const userMemoryTokenBudget = parseInt(userMemoryBudgetDraft)
@@ -114,6 +122,8 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     if (isNaN(extractChars) || extractChars < 500) return
     if (isNaN(rerankTopN) || rerankTopN < 1) return
     if (isNaN(ragMinRelevance) || ragMinRelevance < 0 || ragMinRelevance > 1) return
+    if (isNaN(relatedMinSimilarity) || relatedMinSimilarity < 0 || relatedMinSimilarity > 1) return
+    if (isNaN(relatedMinRelevance) || relatedMinRelevance < 0 || relatedMinRelevance > 1) return
     if (isNaN(attachmentChars) || attachmentChars < 1000) return
     if (isNaN(spaceRagBudget) || spaceRagBudget < 0) return
     if (isNaN(userMemoryTokenBudget) || userMemoryTokenBudget < 0) return
@@ -126,7 +136,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     setError('')
     setSavingBudget(true)
     try {
-      await updateAdminSettings({ memoryTokenBudget: budget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, ragTopK, ragMinRelevance, attachmentChars, spaceRagBudget, queryReformulation: queryReformulationDraft, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow: fetchSummarizeOverflowDraft, compressHistoryOverflow: compressHistoryOverflowDraft, resourceSummary: resourceSummaryDraft })
+      await updateAdminSettings({ memoryTokenBudget: budget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, ragTopK, ragMinRelevance, relatedMinSimilarity, relatedMinRelevance, attachmentChars, spaceRagBudget, queryReformulation: queryReformulationDraft, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow: fetchSummarizeOverflowDraft, compressHistoryOverflow: compressHistoryOverflowDraft, resourceSummary: resourceSummaryDraft })
 
       onBudgetChange?.(budget)
       setBudgetSaved(true)
@@ -371,6 +381,20 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                 <p className="text-xs text-gray-500">Reranker score (0–1) a resource/collection excerpt must clear to be injected at all, instead of always filling out the chunk count above regardless of match quality. 0 disables the floor. Only applies when a reranker model is configured.</p>
                 <input type="number" min={0} max={1} step={0.05} value={ragMinRelevanceDraft}
                   onChange={e => setRagMinRelevanceDraft(e.target.value)}
+                  className="w-24 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <p className="text-xs text-gray-400 font-medium">Minimum similarity for "Similar content"</p>
+                <p className="text-xs text-gray-500">Cosine similarity (0–1) another resource must reach to be suggested as similar in a resource's detail view{rerankConfigured ? ' — used only when the reranker is unavailable' : ''}. What counts as similar depends on the embedding model: the server logs <code>[related] similarities</code> for every view, so raise this until unrelated resources drop out. 0 shows the nearest regardless.</p>
+                <input type="number" min={0} max={1} step={0.05} value={relatedMinSimilarityDraft}
+                  onChange={e => setRelatedMinSimilarityDraft(e.target.value)}
+                  className="w-24 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <p className="text-xs text-gray-400 font-medium">Minimum reranker relevance for "Similar content"</p>
+                <p className="text-xs text-gray-500">When a reranker is configured it judges the candidates instead, comparing titles and summaries; this is the relevance (0–1) one must reach. Scores are logged as <code>[reranker]</code> lines.{!rerankConfigured && <span className="text-amber-400"> No reranker is configured (RERANK_MODEL), so this has no effect.</span>}</p>
+                <input type="number" min={0} max={1} step={0.05} value={relatedMinRelevanceDraft}
+                  onChange={e => setRelatedMinRelevanceDraft(e.target.value)}
                   className="w-24 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
               </div>
             </div>

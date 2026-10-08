@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { ArrowLeft, ExternalLink, FileText, MessageSquare, NotebookPen, Plus, X } from 'lucide-react'
+import { ArrowLeft, ChevronRight, ExternalLink, FileText, MessageSquare, NotebookPen, Plus, X } from 'lucide-react'
 import { NoteEditor } from './NoteEditor.tsx'
 import { NoteMarkdown } from './NoteMarkdown.tsx'
 import { TagEditor } from './TagEditor.tsx'
@@ -98,6 +98,18 @@ export function ResourceDetail({ id, onBack, onChanged, onOpen, onOpenChat }: Pr
         </Section>
       )}
 
+      {detail.originChat && (
+        <Section title={t('note.fromChat')}>
+          <button
+            onClick={() => onOpenChat(detail.originChat!.id, detail.originChat!.title)}
+            className="flex items-center gap-1.5 px-2 py-1.5 rounded text-sm bg-gray-800 text-gray-300 border border-gray-700 hover:border-gray-500 hover:text-gray-100 self-start max-w-full"
+          >
+            <MessageSquare size={13} className="shrink-0 text-indigo-400" />
+            <span className="truncate">{detail.originChat.title}</span>
+          </button>
+        </Section>
+      )}
+
       <Section title={t('resource.summary')}>
         {detail.summary
           ? <p className="text-sm text-gray-300">{detail.summary}</p>
@@ -112,33 +124,13 @@ export function ResourceDetail({ id, onBack, onChanged, onOpen, onOpenChat }: Pr
         />
       </Section>
 
-      {detail.originChat && (
-        <Section title={t('note.fromChat')}>
-          <button
-            onClick={() => onOpenChat(detail.originChat!.id, detail.originChat!.title)}
-            className="flex items-center gap-1.5 px-2 py-1.5 rounded text-sm bg-gray-800 text-gray-300 border border-gray-700 hover:border-gray-500 hover:text-gray-100 self-start max-w-full"
-          >
-            <MessageSquare size={13} className="shrink-0 text-indigo-400" />
-            <span className="truncate">{detail.originChat.title}</span>
-          </button>
+      {isNote && detail.body && (
+        <Section title={t('note.body')}>
+          <NoteMarkdown body={detail.body} onWikilink={followLink} />
         </Section>
       )}
 
       <LinksSection detail={detail} onOpen={onOpen} onCreate={setCreating} />
-
-      {/* Keyed on what can change the neighbourhood, so a new link redraws it. */}
-      <LocalGraph
-        key={`${detail.id}:${detail.updatedAt}:${detail.links.length}:${detail.backlinks.length}`}
-        rootId={detail.id}
-        onOpen={onOpen}
-        onOpenChat={onOpenChat}
-      />
-
-      <RelatedResources key={`related:${detail.id}:${detail.updatedAt}:${detail.backlinks.length}`} detail={detail} onOpen={onOpen} onChanged={changed} />
-
-      <Section title={t('resource.taggedTo')}>
-        <SpaceTags detail={detail} onChanged={changed} />
-      </Section>
 
       {detail.derivedFrom && (
         <Section title={t('resource.derivedFrom')}>
@@ -154,28 +146,23 @@ export function ResourceDetail({ id, onBack, onChanged, onOpen, onOpenChat }: Pr
         </Section>
       )}
 
+      {/* Keyed on what can change the neighbourhood, so a new link redraws it. */}
+      <LocalGraph
+        key={`${detail.id}:${detail.updatedAt}:${detail.links.length}:${detail.backlinks.length}`}
+        rootId={detail.id}
+        onOpen={onOpen}
+        onOpenChat={onOpenChat}
+      />
+
+      <Section title={t('resource.taggedTo')}>
+        <SpaceTags detail={detail} onChanged={changed} />
+      </Section>
+
+      <RelatedResources key={`related:${detail.id}:${detail.updatedAt}:${detail.backlinks.length}`} detail={detail} onOpen={onOpen} onChanged={changed} />
+
       <TransformPanel id={id} sourceTitle={detail.filename} onSaved={onChanged} />
 
-      {isNote && detail.body && (
-        <Section title={t('note.body')}>
-          <NoteMarkdown body={detail.body} onWikilink={followLink} />
-        </Section>
-      )}
-
-      <Section title={t('resource.chunks', { count: detail.chunks.length })}>
-        {detail.chunks.length === 0
-          ? <p className="text-sm text-gray-500">{t('resource.noChunks')}</p>
-          : (
-            <>
-              <p className="text-xs text-gray-500">{t('resource.chunksIntro')}</p>
-              <div className="flex flex-col gap-2 mt-1">
-                {detail.chunks.map((chunk, i) => (
-                  <pre key={i} className="text-xs text-gray-400 bg-gray-800 rounded p-3 whitespace-pre-wrap break-words">{chunk}</pre>
-                ))}
-              </div>
-            </>
-          )}
-      </Section>
+      <IndexedExcerpts chunks={detail.chunks} />
 
       {editing && (
         <NoteEditor
@@ -405,6 +392,32 @@ function ResourceChip({ resource, onOpen }: { resource: ResourceRef; onOpen: (id
         : <FileText size={12} className="shrink-0 text-gray-500" />}
       <span className="truncate">{resource.filename}</span>
     </button>
+  )
+}
+
+/** The excerpts retrieval works from, folded away: looking at them is for understanding the
+ *  indexing, not for reading the resource. */
+function IndexedExcerpts({ chunks }: { chunks: string[] }) {
+  const t = useT()
+  return (
+    <details className="group">
+      <summary className="cursor-pointer list-none text-xs font-medium uppercase tracking-wide text-gray-500 hover:text-gray-300 flex items-center gap-1">
+        <ChevronRight size={12} className="transition-transform group-open:rotate-90" />
+        {t('resource.chunks', { count: chunks.length })}
+      </summary>
+      {chunks.length === 0
+        ? <p className="text-sm text-gray-500 mt-1.5">{t('resource.noChunks')}</p>
+        : (
+          <>
+            <p className="text-xs text-gray-500 mt-1.5">{t('resource.chunksIntro')}</p>
+            <div className="flex flex-col gap-2 mt-1">
+              {chunks.map((chunk, i) => (
+                <pre key={i} className="text-xs text-gray-400 bg-gray-800 rounded p-3 whitespace-pre-wrap break-words">{chunk}</pre>
+              ))}
+            </div>
+          </>
+        )}
+    </details>
   )
 }
 

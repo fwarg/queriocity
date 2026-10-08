@@ -24,3 +24,19 @@ export const ragTopK = async (): Promise<number> =>
  *  equivalent over raw vector distance, so callers without a reranker are unaffected. */
 export const ragMinRelevance = async (): Promise<number> =>
   parseFloat(await getAppSetting('rag_min_relevance', '0')) || 0
+
+/** Cosine similarity a resource must reach to be offered as "similar content". What counts as
+ *  similar depends on the embedding model, hence a setting; the scores are logged to calibrate it. */
+export const DEFAULT_RELATED_MIN_SIMILARITY = 0.5
+export const relatedMinSimilarity = async (): Promise<number> => {
+  const v = parseFloat(await getAppSetting('related_min_similarity', String(DEFAULT_RELATED_MIN_SIMILARITY)))
+  return Number.isNaN(v) ? DEFAULT_RELATED_MIN_SIMILARITY : v
+}
+
+/** Reranker relevance (0–1) a candidate must reach when a reranker judges "similar content". 0.5
+ *  is where a logit-scoring cross-encoder's own verdict turns from irrelevant to relevant. */
+export const DEFAULT_RELATED_MIN_RELEVANCE = 0.5
+export const relatedMinRelevance = async (): Promise<number> => {
+  const v = parseFloat(await getAppSetting('related_min_relevance', String(DEFAULT_RELATED_MIN_RELEVANCE)))
+  return Number.isNaN(v) ? DEFAULT_RELATED_MIN_RELEVANCE : v
+}

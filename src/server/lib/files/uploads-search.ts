@@ -47,7 +47,7 @@ export async function searchSpaceFiles(spaceId: string, query: string, embedding
     ORDER BY v.distance
   `).all(...params) as ChunkResult[]
 
-  if (skipRerank || !rerankEnabled || rows.length === 0) return rows
+  if (skipRerank || !rerankEnabled() || rows.length === 0) return rows
   const indices = await rerank(query, rows.map(r => r.content), rows.length, minScore)
   return indices.map(i => rows[i])
 }
@@ -74,7 +74,7 @@ export async function searchUploads(query: string, userId: string, limit?: numbe
     ORDER BY v.distance
   `).all(embeddingJson, topK, userId) as ChunkResult[]
 
-  if (!rerankEnabled || rows.length === 0) return rows
+  if (!rerankEnabled() || rows.length === 0) return rows
   const indices = await rerank(query, rows.map(r => r.content), rows.length, minScore)
   return indices.map(i => rows[i])
 }

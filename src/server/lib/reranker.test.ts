@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test'
-import { selectRerankedIndices, truncateForRerank } from './reranker.ts'
+import { selectRerankedIndices, truncateForRerank, normaliseScores } from './reranker.ts'
 
 describe('selectRerankedIndices', () => {
   const results = [
@@ -39,5 +39,19 @@ describe('truncateForRerank', () => {
     expect(truncated[0]).toBe('short')
     expect(truncated[1]).toHaveLength(1200)
     expect(numTruncated).toBe(1)
+  })
+})
+
+describe('normaliseScores', () => {
+  test('leaves probabilities alone', () => {
+    const results = [{ index: 0, relevance_score: 0.9 }, { index: 1, relevance_score: 0.2 }]
+    expect(normaliseScores(results)).toEqual(results)
+  })
+
+  test('maps logits through a sigmoid, keeping their order', () => {
+    // The shape llama.cpp returns: all negative, so a 0.2 floor used to drop every one.
+    const out = normaliseScores([{ index: 0, relevance_score: -2.7 }, { index: 1, relevance_score: -7.3 }, { index: 2, relevance_score: 0 }])
+    expect(out.map(r => r.relevance_score)).toEqual([1 / (1 + Math.exp(2.7)), 1 / (1 + Math.exp(7.3)), 0.5])
+    expect(out.every(r => r.relevance_score > 0 && r.relevance_score < 1)).toBe(true)
   })
 })

@@ -3,6 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { generateText } from 'ai'
 import { db, sqlite, uploadedFiles, spaceFiles, spaces, customTemplates, chatSessions, getAppSetting } from '../lib/db.ts'
+import { relatedMinSimilarity, relatedMinRelevance } from '../lib/rag-settings.ts'
 import { and, eq } from 'drizzle-orm'
 import { ingestFile, extractFileText, isUsableText, ACCEPTED_MIME_TYPES } from '../lib/files/ingest.ts'
 import { saveNote, renameResource, addSeeAlso } from '../lib/files/notes.ts'
@@ -237,7 +238,8 @@ filesRouter.get('/:id/related', async (c) => {
   const userId = c.get('userId') as string
   const resource = await ownedResource(c.req.param('id'), userId)
   if (!resource) return c.json({ error: 'Not found' }, 404)
-  return c.json(relatedResources(userId, resource.id))
+  const [minSimilarity, minRelevance] = await Promise.all([relatedMinSimilarity(), relatedMinRelevance()])
+  return c.json(await relatedResources(userId, resource.id, { minSimilarity, minRelevance }))
 })
 
 /** The resource's explicit neighbourhood — links, derivations, chat of origin — to 1 or 2 hops. */

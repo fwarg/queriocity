@@ -89,7 +89,7 @@ export async function pickFallbackSources(
   const pool = dedupeByUrl(turnSources)
   if (pool.length <= MEMORY_MAX_SOURCES) return pool.map(slimSource)
 
-  if (rerankEnabled) {
+  if (rerankEnabled()) {
     try {
       const docs = pool.map(s => (s.content ? `${s.title} — ${s.content}` : s.title))
       const ranked = (await rerank(text, docs, MEMORY_MAX_SOURCES))
@@ -226,7 +226,7 @@ export async function buildCollectionBlock(
   try {
     const embedding = await embedText(query)
     rows = await searchCollections(collectionIds, query, embedding)
-    if (rerankEnabled && rows.length) {
+    if (rerankEnabled() && rows.length) {
       const order = await rerank(query, rows.map(r => r.content), rows.length, await ragMinRelevance())
       rows = order.map(i => rows[i])
     }
@@ -382,7 +382,7 @@ async function rankMemoriesByRelevance<T extends { id: string; content: string }
     return null
   }
 
-  if (rerankEnabled && ordered.length > 1) {
+  if (rerankEnabled() && ordered.length > 1) {
     const indices = await rerank(query, ordered.map(m => m.content), ordered.length)
     ordered = indices.map(i => ordered[i]).filter(Boolean)
   }
@@ -524,7 +524,7 @@ export async function buildMemoryBlock(
         return `[${label}] ${content}`
       }
 
-      if (rerankEnabled && (chatRows.length + fileRows.length) > 0) {
+      if (rerankEnabled() && (chatRows.length + fileRows.length) > 0) {
         // Joint rerank: cross-encoder scores let chat and file chunks compete fairly
         console.log(`  [rag:rerank] joint reranking ${chatRows.length} chat + ${fileRows.length} file candidates`)
         const combined = [

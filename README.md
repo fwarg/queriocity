@@ -411,7 +411,12 @@ Notes can link to each other, Zettelkasten-style, and any resource can carry tag
   from (dotted) — a chat ties together every note saved from it. Tap a node to open it. Laid out once,
   not animated, so it stays light on a phone; capped at 40 nodes.
 - **Similar content.** Up to six resources closest in content, found from the vectors already stored
-  for retrieval — no extra model call. They are suggestions: **Link** adds `- [[Title]]` under a
+  for retrieval. With a reranker configured (`RERANK_MODEL`), it then judges the twelve nearest by
+  title and summary, and only those reaching a minimum relevance are shown (Admin → Settings,
+  default 0.5). Without one, or if the call fails, a minimum cosine similarity applies instead
+  (default 0.5; what counts as similar depends on the embedding model, so the server logs
+  `[related] similarities` for each view to calibrate it). Nothing shown beats showing something
+  unrelated. They are suggestions: **Link** adds `- [[Title]]` under a
   **See also** heading in the note (from a file, **Link from it** adds the link in the similar note
   instead), and tags that two or more similar resources share can be adopted with a tap. Already
   connected ones say **Linked**.
@@ -1117,8 +1122,11 @@ EMBED_DIMENSIONS=1536                       # must match the model's output size
 
 # ── Reranker (optional) ───────────────────────────────────────────────────────
 # When RERANK_MODEL is set, a cross-encoder reranker reorders accumulated sources
-# by relevance before the thorough-mode writer pass, and reorders library search
-# results. RERANK_BASE_URL defaults to BASE_URL if unset.
+# by relevance before the thorough-mode writer pass, reorders library search
+# results, and judges "Similar content" candidates. RERANK_BASE_URL defaults to
+# BASE_URL if unset. Scores are used as 0–1 relevance: a server returning raw
+# logits (llama.cpp's /rerank) is detected and passed through a sigmoid, so the
+# relevance floors in Admin → Settings mean the same on any reranker.
 # RERANK_BASE_URL=http://localhost:8097
 RERANK_MODEL=qwen3-reranker
 # RERANK_TIMEOUT_MS=30000                     # reranking is an optimisation and falls back to the
@@ -1749,6 +1757,8 @@ The **Admin panel > System settings** tab exposes runtime-configurable parameter
 | Search | Max pages per URL | 8 | How many paginated pages to fetch when a user provides a URL (`?page=2`, `?page=3`…). 0 = unlimited. |
 | Search | Summarize oversized URL content | Off | Summarize fetched URL content that exceeds the context budget with the small model instead of hard-truncating. Adds latency. |
 | Context | Compress dropped history | Off | When a research turn's conversation history must be trimmed to fit the context budget, summarize the dropped messages with the small model instead of discarding them, folded into the system prompt. Adds latency; only applies to balanced/thorough turns. |
+| Resources | Minimum similarity for "Similar content" | 0.5 | Cosine similarity another resource must reach to be suggested as similar, when no reranker judges the candidates. Model-dependent; calibrate from the `[related] similarities` log line. 0 shows the nearest regardless. |
+| Resources | Minimum reranker relevance for "Similar content" | 0.5 | With `RERANK_MODEL` set, the reranker relevance (0–1) a candidate must reach. Calibrate from the `[reranker]` log lines. |
 | Resources | Summarize on ingest | On | Generate a one-line summary and a few topics for every uploaded file, ingested URL and note, shown in the Resources list and detail view. One small-model call per resource, made after it is stored — a failure leaves it without a summary rather than losing it |
 | Attachments | Max context chars | 20000 | Max characters extracted from an attached file and sent as context. The chat model receives all of it and the text is indexed for later search, but the *query* embedding for that turn uses only the first `EMBED_MAX_INPUT_CHARS` — a startup warning appears if you set this much higher |
 

@@ -1,13 +1,17 @@
 import { getAppSetting } from './db.ts'
 
-const RERANK_URL = process.env.RERANK_BASE_URL ?? process.env.BASE_URL
-const RERANK_MODEL = process.env.RERANK_MODEL
-// Falls back to CHAT_API_KEY, mirroring EMBED/SMALL/THINKING in llm.ts, then to a
-// placeholder for a keyless local server. Needed when the reranker is reached
-// through an authenticated gateway (e.g. LiteLLM with a master key set).
-const RERANK_API_KEY = process.env.RERANK_API_KEY ?? process.env.CHAT_API_KEY ?? 'none'
+// Read per call rather than at load, like the model config in llm.ts, so the env in force is the
+// one used — a test configuring a fake reranker cannot be outrun by another file importing first.
+const rerankConfig = () => ({
+  url: process.env.RERANK_BASE_URL ?? process.env.BASE_URL,
+  model: process.env.RERANK_MODEL,
+  // Falls back to CHAT_API_KEY, mirroring EMBED/SMALL/THINKING in llm.ts, then to a
+  // placeholder for a keyless local server. Needed when the reranker is reached
+  // through an authenticated gateway (e.g. LiteLLM with a master key set).
+  apiKey: process.env.RERANK_API_KEY ?? process.env.CHAT_API_KEY ?? 'none',
+})
 
-export const rerankEnabled = !!RERANK_MODEL
+export const rerankEnabled = (): boolean => !!process.env.RERANK_MODEL
 // Reranking is an optimisation, and the caller already falls back to the original order,
 // so a slow reranker should give up quickly rather than delay the answer.
 const RERANK_TIMEOUT_MS = parseInt(process.env.RERANK_TIMEOUT_MS ?? '30000', 10)
@@ -20,15 +24,11 @@ const RERANK_TIMEOUT_MS = parseInt(process.env.RERANK_TIMEOUT_MS ?? '30000', 10)
 // batch configs for the query text and the reranker's own prompt template.
 const RERANK_MAX_DOC_CHARS = parseInt(process.env.RERANK_MAX_INPUT_CHARS ?? '', 10) || 1200
 
-/**
- * Reranks documents by relevance to query. Returns indices sorted best-first.
- * Falls back to identity order if reranker is not configured or call fails.
- */
 /** Orders search results by relevance, best-first, and prunes to the configured `rerank_top_n`.
  *  Identity when no reranker is configured, so callers need no branch of their own. Pruning is
  *  as much the point as ordering: everything kept here is paid for in the prompt downstream. */
 export async function rerankSearchResults<T extends { content: string }>(query: string, results: T[]): Promise<T[]> {
-  if (!rerankEnabled || results.length === 0 || !query) return results
+  if (!rerankEnabled() || results.length === 0 || !query) return results
   const t = performance.now()
   const indices = await rerank(query, results.map(r => r.content))
   const ranked = indices.map(i => results[i]).filter(Boolean)
@@ -63,29 +63,54 @@ export function truncateForRerank(documents: string[], maxChars: number): { trun
   return { truncated, numTruncated }
 }
 
-export async function rerank(query: string, documents: string[], topN?: number, minScore?: number): Promise<number[]> {
-  if (!rerankEnabled || documents.length === 0) return documents.map((_, i) => i)
-  const n = topN ?? parseInt(await getAppSetting('rerank_top_n', '15'), 10)
+/** Scores as 0–1 relevance. Cross-encoders served raw (llama.cpp's /rerank) return logits —
+ *  unbounded, often all negative — while others return probabilities already. A response with any
+ *  score outside 0–1 is taken as logits and passed through a sigmoid: same order, but a floor such
+ *  as `rag_min_relevance` then means the same thing on either kind of server. */
+export function normaliseScores<T extends { relevance_score: number }>(results: T[]): T[] {
+  if (results.every(r => r.relevance_score >= 0 && r.relevance_score <= 1)) return results
+  return results.map(r => ({ ...r, relevance_score: 1 / (1 + Math.exp(-r.relevance_score)) }))
+}
+
+/** Relevance (0–1) of each document to `query`, in input order; null when no reranker is
+ *  configured or the call failed, so a caller can fall back to a measure of its own. */
+export async function rerankScores(query: string, documents: string[], floor?: number): Promise<number[] | null> {
+  if (!rerankEnabled() || documents.length === 0) return null
   const { truncated, numTruncated } = truncateForRerank(documents, RERANK_MAX_DOC_CHARS)
   if (numTruncated > 0) {
     console.warn(`  [reranker] truncated ${numTruncated}/${documents.length} documents to ${RERANK_MAX_DOC_CHARS} chars to stay under the server's batch size`)
   }
+  const { url, model, apiKey } = rerankConfig()
   try {
-    const res = await fetch(`${RERANK_URL}/rerank`, {
+    const res = await fetch(`${url}/rerank`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${RERANK_API_KEY}` },
-      body: JSON.stringify({ model: RERANK_MODEL, query, documents: truncated }),
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ model, query, documents: truncated }),
       signal: AbortSignal.timeout(RERANK_TIMEOUT_MS),
     })
     if (!res.ok) throw new Error(`reranker HTTP ${res.status}`)
     const data = await res.json() as { results: Array<{ index: number; relevance_score: number }> }
-    // Scores, best-first — logged raw (not just kept/dropped counts) so a real relevance floor can
-    // be picked from observed distributions instead of guessed at.
-    const sortedScores = data.results.map(r => r.relevance_score).sort((a, b) => b - a).map(s => s.toFixed(3))
-    console.log(`  [reranker] "${query.slice(0, 60)}" scores: [${sortedScores.join(', ')}]${minScore != null ? ` (floor ${minScore})` : ''}`)
-    return selectRerankedIndices(data.results, n, minScore)
+    const results = normaliseScores(data.results)
+    // Scores, best-first — logged (not just kept/dropped counts) so a real relevance floor can be
+    // picked from observed distributions instead of guessed at.
+    const sorted = results.map(r => r.relevance_score).sort((a, b) => b - a).map(v => v.toFixed(3))
+    console.log(`  [reranker] "${query.slice(0, 60)}" scores: [${sorted.join(', ')}]${floor != null ? ` (floor ${floor})` : ''}`)
+    const scores: number[] = documents.map(() => 0)
+    for (const r of results) if (r.index >= 0 && r.index < scores.length) scores[r.index] = r.relevance_score
+    return scores
   } catch (e) {
-    console.warn('  [reranker] failed, using original order:', e)
-    return documents.map((_, i) => i)
+    console.warn('  [reranker] failed:', e)
+    return null
   }
+}
+
+/** Reranks documents by relevance to query: indices best-first, capped at `topN` (default the
+ *  `rerank_top_n` setting) and floored at `minScore`. Identity order when no reranker is
+ *  configured or the call fails. */
+export async function rerank(query: string, documents: string[], topN?: number, minScore?: number): Promise<number[]> {
+  if (!rerankEnabled() || documents.length === 0) return documents.map((_, i) => i)
+  const n = topN ?? parseInt(await getAppSetting('rerank_top_n', '15'), 10)
+  const scores = await rerankScores(query, documents, minScore)
+  if (!scores) return documents.map((_, i) => i)
+  return selectRerankedIndices(scores.map((relevance_score, index) => ({ index, relevance_score })), n, minScore)
 }

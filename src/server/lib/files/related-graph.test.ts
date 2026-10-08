@@ -51,7 +51,7 @@ describe('relatedResources', () => {
     await note('Other twin', TEXT, { tags: ['nature/insects'] })
     const linker = await note('Linker', `${TEXT} See [[Bees]].`)
 
-    const { related, tags } = relatedResources(ME, target)
+    const { related, tags } = await relatedResources(ME, target)
     expect(related.map(r => r.id)).not.toContain(target)
     expect(related.map(r => r.id)).toContain(twin)
     expect(related.find(r => r.id === linker)?.linked).toBe(true)
@@ -59,10 +59,21 @@ describe('relatedResources', () => {
     expect(tags).toEqual([{ path: 'nature/insects', count: 2 }])
   })
 
+  test('leaves out a resource below the similarity threshold, even when nothing else is closer', async () => {
+    const target = await note('Bees', TEXT)
+    const twin = await note('Pollination', TEXT)
+    const unrelated = await note('Tax', 'Quarterly VAT returns are due on the twelfth.')
+
+    expect((await relatedResources(ME, target)).related.map(r => r.id)).toContain(unrelated)
+    const ids = (await relatedResources(ME, target, { minSimilarity: 0.5, minRelevance: 0.5 })).related.map(r => r.id)
+    expect(ids).toContain(twin)
+    expect(ids).not.toContain(unrelated)
+  })
+
   test('never reaches another user\'s library', async () => {
     const target = await note('Bees', TEXT)
     await note('Theirs', TEXT, {}, OTHER)
-    expect(relatedResources(ME, target).related).toEqual([])
+    expect((await relatedResources(ME, target)).related).toEqual([])
   })
 })
 
