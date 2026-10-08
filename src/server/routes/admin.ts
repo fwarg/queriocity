@@ -3,6 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { generateText, embed } from 'ai'
 import { db, users, invites, chatSessions, spaces, spaceMemories, userMemories, uploadedFiles, authCredentials, getAppSetting, setAppSetting, bumpTokenVersion } from '../lib/db.ts'
+import { similarityReport, SIMILARITY_REPORT_LIMIT } from '../lib/files/related.ts'
 import { relatedMinSimilarity as relatedMinSimilaritySetting, relatedMinRelevance as relatedMinRelevanceSetting } from '../lib/rag-settings.ts'
 import { eq, desc } from 'drizzle-orm'
 import { indexSession, deindexSession } from '../lib/chat-indexer.ts'
@@ -118,6 +119,15 @@ adminRouter.patch('/settings', zValidator('json', z.object({
   if (body.resourceSummary != null) ops.push(setAppSetting('resource_summary', String(body.resourceSummary)))
   await Promise.all(ops)
   return c.json({ ok: true })
+})
+
+/** Pairwise "Similar content" scores over the admin's own library, for calibrating its thresholds.
+ *  Only the caller's resources: an admin tool, but not a way to read other users' titles. */
+adminRouter.get('/similarity', async (c) => {
+  const [report, minSimilarity, minRelevance] = await Promise.all([
+    similarityReport(c.get('userId') as string), relatedMinSimilaritySetting(), relatedMinRelevanceSetting(),
+  ])
+  return c.json({ ...report, minSimilarity, minRelevance, reranker: rerankEnabled(), limit: SIMILARITY_REPORT_LIMIT })
 })
 
 adminRouter.get('/search', async (c) => {

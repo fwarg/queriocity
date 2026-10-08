@@ -588,6 +588,29 @@ export interface SearchProviderStats {
   engines: Record<string, number>
 }
 
+export interface SimilarityPair {
+  from: { id: string; title: string }
+  to: { id: string; title: string }
+  cosine: number
+  /** Null when the reranker did not judge the pair. */
+  relevance: number | null
+}
+
+export interface SimilarityReport {
+  pairs: SimilarityPair[]
+  resources: number
+  limit: number
+  reranker: boolean
+  minSimilarity: number
+  minRelevance: number
+}
+
+export async function fetchSimilarityReport(): Promise<SimilarityReport> {
+  const res = await fetch(`${BASE}/admin/similarity`)
+  if (!res.ok) throw await apiError(res, 'Could not compute similarities')
+  return res.json()
+}
+
 export async function fetchSearchPolicy(): Promise<{ policy: SearchPolicy; stored: boolean; providers: SearchProviderInfo[]; telemetry: Record<string, SearchProviderStats>; usage: Record<string, number> }> {
   return fetch(`${BASE}/admin/search`).then(r => r.json())
 }

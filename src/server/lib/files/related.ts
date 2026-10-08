@@ -88,12 +88,19 @@ export interface RelatedThresholds {
   minRelevance: number
 }
 
+/** Reranker relevance of the nearest candidates to `fileId`, in candidate order; null when no
+ *  reranker judged them. */
+async function rerankCandidates(fileId: string, candidates: Array<[string, number]>, floor?: number): Promise<Array<[string, number]> | null> {
+  const pool = candidates.slice(0, RERANK_CANDIDATES)
+  const scores = pool.length ? await rerankScores(describe(fileId), pool.map(([id]) => describe(id)), floor) : null
+  return scores && pool.map(([id], i) => [id, scores[i]])
+}
+
 /** The ids to suggest, best first: reranked when possible, else by cosine. */
 async function selectRelated(fileId: string, candidates: Array<[string, number]>, t: RelatedThresholds): Promise<string[]> {
-  const pool = candidates.slice(0, RERANK_CANDIDATES)
-  const scores = pool.length ? await rerankScores(describe(fileId), pool.map(([id]) => describe(id)), t.minRelevance) : null
-  if (scores) {
-    return pool.map(([id], i) => [id, scores[i]] as const).filter(([, s]) => s >= t.minRelevance)
+  const reranked = await rerankCandidates(fileId, candidates, t.minRelevance)
+  if (reranked) {
+    return reranked.filter(([, s]) => s >= t.minRelevance)
       .sort((a, b) => b[1] - a[1]).slice(0, RELATED_LIMIT).map(([id]) => id)
   }
   if (candidates.length) console.log(`  [related] similarities: [${candidates.map(([, s]) => s.toFixed(3)).join(', ')}] (min ${t.minSimilarity})`)
@@ -128,4 +135,37 @@ export async function relatedResources(
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, MAX_TAG_HINTS)
     .map(([path, count]) => ({ path, count }))
   return { related, tags }
+}
+
+/** Most recent resources scored by the similarity report; each costs one reranker call. */
+export const SIMILARITY_REPORT_LIMIT = 40
+
+export interface SimilarityPair {
+  from: { id: string; title: string }
+  to: { id: string; title: string }
+  cosine: number
+  /** Null when no reranker judged the pair: it was not among the nearest candidates, or there is
+   *  no reranker, or the call failed. */
+  relevance: number | null
+}
+
+/** Every resource against its nearest neighbours, scored exactly as "Similar content" scores them,
+ *  so its thresholds can be calibrated against a real library. Directional: `from` is the resource
+ *  being viewed, and a cross-encoder may score the reverse differently. */
+export async function similarityReport(userId: string): Promise<{ pairs: SimilarityPair[]; resources: number }> {
+  const rows = sqlite.query('SELECT id, filename FROM uploaded_files WHERE user_id = ? ORDER BY created_at DESC LIMIT ?')
+    .all(userId, SIMILARITY_REPORT_LIMIT) as Array<{ id: string; filename: string }>
+  const titles = new Map(rows.map(r => [r.id, r.filename]))
+  const pairs: SimilarityPair[] = []
+  for (const { id, filename } of rows) {
+    const vector = resourceVector(id)
+    if (!vector) continue
+    const candidates = nearestResources(userId, id, vector).filter(([other]) => titles.has(other))
+    const relevance = new Map(await rerankCandidates(id, candidates) ?? [])
+    for (const [other, cosine] of candidates) {
+      pairs.push({ from: { id, title: filename }, to: { id: other, title: titles.get(other)! }, cosine, relevance: relevance.get(other) ?? null })
+    }
+  }
+  pairs.sort((a, b) => (b.relevance ?? -1) - (a.relevance ?? -1) || b.cosine - a.cosine)
+  return { pairs, resources: rows.length }
 }

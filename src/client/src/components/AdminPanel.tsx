@@ -3,6 +3,7 @@ import { useConfirm } from './confirm.tsx'
 import { listUsers, setUserRole, deleteUser, createInvite, listInvites, revokeInvite, resetUserPassword, testModels, fetchAdminSettings, updateAdminSettings, triggerDream, reindexChats, type ModelTestResult, type Invite } from '../lib/api.ts'
 import { Modal } from './Modal.tsx'
 import { AdminSearchPanel } from './AdminSearchPanel.tsx'
+import { AdminSimilarityPanel } from './AdminSimilarityPanel.tsx'
 
 interface Props {
   currentUserId: string
@@ -11,7 +12,7 @@ interface Props {
 }
 
 type UserRow = { id: string; email: string; name: string | null; role: string; createdAt: number }
-type Tab = 'settings' | 'search' | 'users'
+type Tab = 'settings' | 'search' | 'similarity' | 'users'
 
 export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   const confirm = useConfirm()
@@ -253,7 +254,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   }
 
   const tabBtn = (t: Tab, _label: string) =>
-    `px-4 py-2 text-sm font-medium border-b-2 transition-colors ${tab === t ? 'border-indigo-500 text-gray-100' : 'border-transparent text-gray-500 hover:text-gray-300'}`
+    `px-4 py-2 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${tab === t ? 'border-indigo-500 text-gray-100' : 'border-transparent text-gray-500 hover:text-gray-300'}`
 
   return (
     <Modal title="Admin" onClose={onClose} maxWidth="max-w-2xl">
@@ -261,13 +262,15 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
         {error && <p className="text-xs text-red-400 mb-3">{error}</p>}
 
         {/* Tabs */}
-        <div className="flex border-b border-gray-800 mb-5 -mt-2">
+        <div className="flex border-b border-gray-800 mb-5 -mt-2 overflow-x-auto">
           <button className={tabBtn('settings', 'System settings')} onClick={() => setTab('settings')}>System settings</button>
           <button className={tabBtn('search', 'Search')} onClick={() => setTab('search')}>Search</button>
+          <button className={tabBtn('similarity', 'Similarity')} onClick={() => setTab('similarity')}>Similarity</button>
           <button className={tabBtn('users', 'Users')} onClick={() => setTab('users')}>Users</button>
         </div>
 
         {tab === 'search' && <AdminSearchPanel />}
+        {tab === 'similarity' && <AdminSimilarityPanel />}
 
         {tab === 'settings' && (
           <div className="flex flex-col gap-6">

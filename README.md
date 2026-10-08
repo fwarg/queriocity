@@ -416,7 +416,9 @@ Notes can link to each other, Zettelkasten-style, and any resource can carry tag
   default 0.5). Without one, or if the call fails, a minimum cosine similarity applies instead
   (default 0.5; what counts as similar depends on the embedding model, so the server logs
   `[related] similarities` for each view to calibrate it). Nothing shown beats showing something
-  unrelated. They are suggestions: **Link** adds `- [[Title]]` under a
+  unrelated. To calibrate either threshold on a real library, **Admin → Similarity**
+  scores your own most recent 40 resources pairwise exactly as this box does and marks the pairs
+  that would be shown. They are suggestions: **Link** adds `- [[Title]]` under a
   **See also** heading in the note (from a file, **Link from it** adds the link in the similar note
   instead), and tags that two or more similar resources share can be adopted with a tap. Already
   connected ones say **Linked**.
