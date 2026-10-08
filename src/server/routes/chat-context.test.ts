@@ -60,7 +60,7 @@ describe('chat request with a long history', () => {
     expect(report).toBeDefined()
     expect(report.cut).toBeGreaterThan(1)
     expect(report.lostBefore).toBe(report.cut)
-    expect(report.pinnedTokens).toBeGreaterThan(0)
+    expect(report.pinnedChars).toBeGreaterThan(0)
     // The model got the pinned message and none of what was cut after it.
     const sent = JSON.stringify(fake.requests.at(-1))
     expect(sent).toContain('m0 ')

@@ -3,17 +3,20 @@ import { Pin } from 'lucide-react'
 import type { ContextReport } from '@shared/context.ts'
 import { useT } from '../lib/i18n.tsx'
 
-const kTokens = (n: number) => `${(n / 1000).toFixed(1)}k`
+const kChars = (n: number) => `${(n / 1000).toFixed(1)}k`
 
 /** Pins a message so it is kept in full when the conversation outgrows the model's context. */
-export function PinButton({ pinned, keptInFull, onToggle }: { pinned?: boolean; keptInFull?: boolean; onToggle: () => void }) {
+export function PinButton({ pinned, keptInFull, onToggle, onBlue }: { pinned?: boolean; keptInFull?: boolean; onToggle: () => void; onBlue?: boolean }) {
   const t = useT()
+  const tone = onBlue
+    ? (pinned ? 'text-amber-300 hover:text-amber-200' : 'text-blue-300 hover:text-white opacity-60 hover:opacity-100')
+    : (pinned ? 'text-amber-400 hover:text-amber-300' : 'text-gray-600 hover:text-gray-400')
   return (
     <button
       onClick={onToggle}
       aria-pressed={!!pinned}
       title={t(pinned ? 'pin.unpin' : 'pin.pin')}
-      className={`flex items-center gap-1 p-1 -m-0.5 rounded text-[11px] transition-colors ${pinned ? 'text-amber-400 hover:text-amber-300' : 'text-gray-600 hover:text-gray-400'}`}
+      className={`flex items-center gap-1 p-1 -m-0.5 rounded text-[11px] transition-colors ${tone}`}
     >
       <Pin size={13} className={pinned ? 'fill-current' : ''} />
       {pinned && keptInFull && <span>{t('pin.keptInFull')}</span>}
@@ -50,14 +53,15 @@ export function ContextDivider({ kind, count, summary }: { kind: 'lost' | 'summa
 export function ContextMeter({ report }: { report: ContextReport }) {
   const t = useT()
   const [open, setOpen] = useState(false)
-  const budget = Math.max(report.budgetTokens, 1)
+  const budget = Math.max(report.budgetChars, 1)
   const parts = [
-    { key: 'context.system', tokens: report.systemTokens, color: 'bg-gray-500' },
-    { key: 'context.pinned', tokens: report.pinnedTokens, color: 'bg-amber-400' },
-    { key: 'context.summary', tokens: report.summaryTokens, color: 'bg-purple-400' },
-    { key: 'context.recent', tokens: report.historyTokens, color: 'bg-blue-400' },
+    { key: 'context.system', chars: report.systemChars, color: 'bg-gray-500' },
+    { key: 'context.pinned', chars: report.pinnedChars, color: 'bg-amber-400' },
+    { key: 'context.summary', chars: report.summaryChars, color: 'bg-purple-400' },
+    { key: 'context.recent', chars: report.historyChars, color: 'bg-blue-400' },
+    { key: 'context.search', chars: report.searchChars ?? 0, color: 'bg-emerald-400' },
   ] as const
-  const used = parts.reduce((sum, p) => sum + p.tokens, 0)
+  const used = parts.reduce((sum, p) => sum + p.chars, 0)
   const pct = Math.min(100, Math.round((used / budget) * 100))
   const warn = pct >= 80 || report.cut > 0
   return (
@@ -69,23 +73,24 @@ export function ContextMeter({ report }: { report: ContextReport }) {
         aria-expanded={open}
       >
         <span className="flex h-1.5 w-16 overflow-hidden rounded-full bg-gray-800">
-          {parts.map(p => <span key={p.key} className={p.color} style={{ width: `${(p.tokens / budget) * 100}%` }} />)}
+          {parts.map(p => <span key={p.key} className={p.color} style={{ width: `${(p.chars / budget) * 100}%` }} />)}
         </span>
         <span className={warn ? 'text-amber-400' : 'text-gray-600'}>{t('context.meter', { pct })}</span>
       </button>
       {open && (
         <div className="absolute bottom-full right-0 mb-1 z-10 w-64 rounded border border-gray-700 bg-gray-800 p-3 text-xs text-gray-300 shadow-lg flex flex-col gap-1">
-          {parts.filter(p => p.tokens > 0).map(p => (
+          <p className="text-gray-500">{t('context.unit')}</p>
+          {parts.filter(p => p.chars > 0).map(p => (
             <div key={p.key} className="flex items-center gap-2">
               <span className={`h-2 w-2 rounded-full ${p.color}`} />
               <span className="flex-1">{t(p.key)}</span>
-              <span className="text-gray-500">{kTokens(p.tokens)}</span>
+              <span className="text-gray-500">{kChars(p.chars)}</span>
             </div>
           ))}
           <div className="flex items-center gap-2">
             <span className="h-2 w-2 rounded-full bg-gray-700" />
             <span className="flex-1">{t('context.free')}</span>
-            <span className="text-gray-500">{kTokens(Math.max(0, budget - used))}</span>
+            <span className="text-gray-500">{kChars(Math.max(0, budget - used))}</span>
           </div>
           {report.pinnedTruncated && <p className="mt-1 text-amber-400">{t('context.pinnedTruncated')}</p>}
           {report.cut > 0 && !report.summary && <p className="mt-1 text-gray-500">{t('context.compressHint')}</p>}

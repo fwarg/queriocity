@@ -362,9 +362,17 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
               />
             )}
           </>
-        ) : <HighlightedText text={msg.content} query={searchQuery ?? ''} />}
+        ) : (
+          <>
+            <HighlightedText text={msg.content} query={searchQuery ?? ''} />
+            {onTogglePin && (
+              <div className="flex justify-end mt-1 whitespace-normal">
+                <PinButton pinned={msg.pinned} keptInFull={keptInFull} onToggle={onTogglePin} onBlue />
+              </div>
+            )}
+          </>
+        )}
       </div>
-      {msg.role === 'user' && onTogglePin && <PinButton pinned={msg.pinned} keptInFull={keptInFull} onToggle={onTogglePin} />}
       {(msg.sources && msg.sources.length > 0 || msg.fileSources && msg.fileSources.length > 0) && (
         <SourceList content={msg.content} sources={msg.sources ?? []} fileSources={msg.fileSources} highlighted={highlighted} onSourceClick={toggleSource} onOpenResource={onOpenResource} />
       )}

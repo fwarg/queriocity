@@ -107,7 +107,9 @@ chatRouter.post('/suggest', rateLimitByUser(suggestLimiter, 'suggest'), zValidat
       system: 'Return a JSON array of exactly 3 short search query suggestions that complete or refine the user\'s partial input. Return ONLY the raw JSON array, no markdown, no explanation.',
       messages: [{ role: 'user', content: text }],
       maxOutputTokens: 120,
-      abortSignal: AbortSignal.timeout(6000),
+      // The client aborts a suggestion that has gone stale; stopping here frees the model for the
+      // request that replaced it rather than finishing an answer nobody will read.
+      abortSignal: AbortSignal.any([AbortSignal.timeout(6000), c.req.raw.signal]),
     })
     const match = raw.match(/\[[\s\S]*\]/)
     if (match) {
@@ -117,6 +119,7 @@ chatRouter.post('/suggest', rateLimitByUser(suggestLimiter, 'suggest'), zValidat
       }
     }
   } catch (e) {
+    if (c.req.raw.signal.aborted) return c.json([])
     // Autocomplete is optional; a timeout is routine and doesn't warrant a full stack dump.
     console.warn(`  [suggest] skipped: ${e instanceof Error ? e.message : e}`)
   }

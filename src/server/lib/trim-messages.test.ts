@@ -10,7 +10,7 @@ import { startFakeOpenAI } from './test-support/fake-openai.ts'
 import { envOverride } from './test-support/env-override.ts'
 
 const { trimMessages, compressMessages } = await import('./trim-messages.ts')
-const { SMALL_MODEL_INPUT_CHARS } = await import('./llm.ts')
+const { SMALL_MODEL_INPUT_CHARS, CHARS_PER_TOKEN } = await import('./llm.ts')
 
 /** A message of about `tokens` estimated tokens (chars / 4, plus JSON overhead). */
 const msg = (role: 'user' | 'assistant', label: string, tokens = 100): ModelMessage =>
@@ -25,7 +25,7 @@ describe('trimMessages', () => {
   test('keeps everything, and reports nothing cut, when it fits', () => {
     const { messages, report } = trimMessages(conversation(), 10_000)
     expect(messages).toHaveLength(10)
-    expect(report).toMatchObject({ cut: 0, lostBefore: 0, pinnedTokens: 0, pinnedTruncated: false, budgetTokens: 10_000 })
+    expect(report).toMatchObject({ cut: 0, lostBefore: 0, pinnedChars: 0, pinnedTruncated: false, budgetChars: 10_000 * CHARS_PER_TOKEN })
   })
 
   test('drops the oldest first and reports the cut', () => {
@@ -33,15 +33,15 @@ describe('trimMessages', () => {
     expect(labels(messages)).toEqual(['q6', 'a7', 'q8', 'a9'])
     expect(report.cut).toBe(6)
     expect(report.lostBefore).toBe(6)
-    expect(report.historyTokens).toBeLessThanOrEqual(450)
+    expect(report.historyChars).toBeLessThanOrEqual(450 * CHARS_PER_TOKEN)
   })
 
   test('keeps a pinned message in place while newer unpinned ones drop', () => {
     const { messages, report } = trimMessages(conversation(), 450, '', new Set([0]))
     expect(labels(messages)).toEqual(['q0', 'a7', 'q8', 'a9'])
     expect(report.cut).toBe(7)
-    expect(report.pinnedTokens).toBeGreaterThan(100)
-    expect(report.historyTokens).toBeGreaterThan(300)
+    expect(report.pinnedChars).toBeGreaterThan(100)
+    expect(report.historyChars).toBeGreaterThan(300)
   })
 
   test('shortens pinned messages, never below a readable head, when the pins alone overflow', () => {
@@ -53,6 +53,17 @@ describe('trimMessages', () => {
     expect(String(messages[0].content).length).toBeLessThan(5000 * 4)
     // The caller's array is not modified.
     expect(String(history[0].content).length).toBeGreaterThan(5000 * 4)
+  })
+
+  test('counts injected search results apart from the conversation', () => {
+    const history: ModelMessage[] = [
+      msg('user', 'q0'),
+      { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'pre-0', toolName: 'web_search', input: { queries: ['bees'] } }] },
+      { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'pre-0', toolName: 'web_search', output: { type: 'json', value: 'x'.repeat(2000) } }] },
+    ]
+    const { report } = trimMessages(history, 10_000)
+    expect(report.searchChars).toBeGreaterThan(2000)
+    expect(report.historyChars).toBeLessThan(200 * CHARS_PER_TOKEN)
   })
 
   test('keeps only the last message, pinned or not, when the system prompt alone exceeds the budget', () => {
@@ -76,7 +87,7 @@ describe('compressMessages', () => {
     expect(labels(messages)).toEqual(['q0', 'a7', 'q8', 'a9'])
     expect(summary).toContain('bees')
     expect(report).toMatchObject({ cut: 7, lostBefore: 0, summary })
-    expect(report.summaryTokens).toBeGreaterThan(0)
+    expect(report.summaryChars).toBeGreaterThan(0)
   })
 
   test('reports as lost the oldest messages that fall outside what the summary covers', async () => {

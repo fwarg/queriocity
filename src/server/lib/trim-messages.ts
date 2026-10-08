@@ -1,7 +1,7 @@
 import { generateText } from 'ai'
 import type { ModelMessage } from 'ai'
 import type { ContextReport } from '../../shared/context.ts'
-import { getSmallModel, SMALL_MODEL_INPUT_CHARS, CHARS_PER_TOKEN, estimateTokens as estimate } from './llm.ts'
+import { getSmallModel, SMALL_MODEL_INPUT_CHARS, CHARS_PER_TOKEN, estimateTokens as estimate, tokensToChars } from './llm.ts'
 
 // Fraction of the model's context window budgeted for input (system + history + tool content);
 // the remainder is reserved for the model's own output.
@@ -38,6 +38,10 @@ interface TrimSplit {
 
 const costOf = (m: ModelMessage) => estimate(JSON.stringify(m))
 
+/** A tool call or its result: search results and pages, not conversation. */
+const isToolExchange = (m: ModelMessage) =>
+  m.role === 'tool' || (m.role === 'assistant' && Array.isArray(m.content) && m.content.some(p => p.type === 'tool-call'))
+
 // Shared core: decides which oldest unpinned messages (plus any tool results orphaned by that)
 // must be dropped to fit `messages` within `maxTokens`, reserving `systemCost` tokens for
 // systemPrompt. Pinned messages are kept, shortened if they alone overflow; the last message is
@@ -68,7 +72,7 @@ function splitForTrim(messages: ModelMessage[], maxTokens: number, systemPrompt:
   const droppedIdx = [...drop].sort((a, b) => a - b)
   const kept = current.filter((_, i) => !drop.has(i))
   const dropped = droppedIdx.map(i => messages[i])
-  const report = reportFor(current, drop, droppedIdx, pinned, maxTokens, systemCost, current !== messages)
+  const report = reportFor(current, drop, droppedIdx, pinned, maxTokens, systemPrompt.length, current !== messages)
   return { kept, dropped, droppedIdx, systemCost, budget, report }
 }
 
@@ -89,17 +93,20 @@ function shortenPinned(messages: ModelMessage[], pinned: ReadonlySet<number>, la
 
 function reportFor(
   messages: ModelMessage[], drop: Set<number>, droppedIdx: number[], pinned: ReadonlySet<number>,
-  maxTokens: number, systemTokens: number, pinnedTruncated: boolean,
+  maxTokens: number, systemChars: number, pinnedTruncated: boolean,
 ): ContextReport {
-  let pinnedTokens = 0
-  let historyTokens = 0
+  let pinnedChars = 0
+  let historyChars = 0
+  let searchChars = 0
   messages.forEach((m, i) => {
     if (drop.has(i)) return
-    if (pinned.has(i)) pinnedTokens += costOf(m)
-    else historyTokens += costOf(m)
+    const chars = JSON.stringify(m).length
+    if (pinned.has(i)) pinnedChars += chars
+    else if (isToolExchange(m)) searchChars += chars
+    else historyChars += chars
   })
   const cut = droppedIdx.length ? droppedIdx[droppedIdx.length - 1] + 1 : 0
-  return { budgetTokens: maxTokens, systemTokens, pinnedTokens, historyTokens, summaryTokens: 0, cut, lostBefore: cut, pinnedTruncated }
+  return { budgetChars: tokensToChars(maxTokens), systemChars, pinnedChars, historyChars, summaryChars: 0, searchChars, cut, lostBefore: cut, pinnedTruncated }
 }
 
 export interface TrimResult {
@@ -168,7 +175,7 @@ export async function compressMessages(
     return {
       messages: kept,
       summary,
-      report: { ...report, summary, summaryTokens: estimate(summary), lostBefore: lost ? droppedIdx[lost - 1] + 1 : 0 },
+      report: { ...report, summary, summaryChars: summary.length, lostBefore: lost ? droppedIdx[lost - 1] + 1 : 0 },
     }
   } catch (err) {
     return hardDrop(`compression failed (${err})`)

@@ -3,15 +3,18 @@
  *  Indices refer to the messages array of that request, which is the client's transcript up to and
  *  including the question. Unpinned messages before `cut` were not seen in full; those before
  *  `lostBefore` were not seen at all. Without compression the two are equal; with it, the range
- *  between them was folded into `summary`. Token counts are estimates (chars / 4). */
+ *  between them was folded into `summary`. Sizes are in characters; the budget is converted from
+ *  CONTEXT_TOKEN_LIMIT with CHARS_PER_TOKEN, so it is only as accurate as that ratio. */
 export interface ContextReport {
-  /** Everything the model may read this turn; what is left after the parts below is the room
-   *  for search results and fetched pages. */
-  budgetTokens: number
-  systemTokens: number
-  pinnedTokens: number
-  historyTokens: number
-  summaryTokens: number
+  /** Everything the model may read this turn; what the parts below leave over is free. */
+  budgetChars: number
+  systemChars: number
+  pinnedChars: number
+  historyChars: number
+  summaryChars: number
+  /** Search results and fetched pages: those injected before the run, plus — in a research turn,
+   *  reported again once it ends — what its tools added. */
+  searchChars: number
   cut: number
   lostBefore: number
   /** A pinned message had to be shortened because the pins alone did not fit. */

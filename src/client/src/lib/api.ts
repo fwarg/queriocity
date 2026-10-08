@@ -118,13 +118,14 @@ export async function logout(): Promise<void> {
   await fetch(`${BASE}/auth/logout`, { method: 'POST' })
 }
 
-export async function fetchSuggestions(text: string): Promise<string[]> {
+/** `signal` cancels a suggestion that has gone stale; the server then frees the model at once. */
+export async function fetchSuggestions(text: string, signal?: AbortSignal): Promise<string[]> {
   try {
     const res = await fetch(`${BASE}/chat/suggest`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text }),
-      signal: AbortSignal.timeout(7000),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(7000)]) : AbortSignal.timeout(7000),
     })
     if (!res.ok) return []
     return res.json()
@@ -364,7 +365,11 @@ export async function fetchSession(id: string): Promise<{ messages: Message[]; c
 
 function parseContext(raw: string | null | undefined): ContextReport | null {
   if (!raw) return null
-  try { return JSON.parse(raw) as ContextReport } catch { return null }
+  try {
+    const report = JSON.parse(raw) as ContextReport
+    // A report stored before sizes were counted in characters is not comparable; skip it.
+    return typeof report.budgetChars === 'number' ? report : null
+  } catch { return null }
 }
 
 function toMessages(messages: unknown): Message[] {

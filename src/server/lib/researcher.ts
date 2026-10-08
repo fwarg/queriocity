@@ -327,6 +327,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
   const totalInputTokens = ctxLimit * CONTEXT_RESERVE_FRACTION
   const historyBudgetTokens = Math.floor(totalInputTokens * (1 - TOOL_BUDGET_RESERVE_FRACTION))
 
+  let contextReport: ContextReport
   if (compressHistory) {
     const summaryBudgetChars = Math.floor(tokensToChars(historyBudgetTokens) * COMPRESS_SUMMARY_FRACTION)
     // Reserve the summary's own cost out of the history sub-budget up front, so kept-messages +
@@ -335,17 +336,19 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
     const { messages: compressedMessages, summary, report } = await compressMessages(augmentedMessages, dropBudgetTokens, system, summaryBudgetChars, pinned)
     augmentedMessages = compressedMessages
     if (summary) system += `\n\nSummary of earlier parts of this conversation (older messages were compacted to fit context):\n${summary}`
-    await onContext?.({ ...report, budgetTokens: Math.floor(totalInputTokens) })
+    contextReport = { ...report, budgetChars: tokensToChars(totalInputTokens) }
   } else {
     const { messages: trimmed, report } = trimMessages(augmentedMessages, historyBudgetTokens, system, pinned)
     augmentedMessages = trimmed
-    await onContext?.({ ...report, budgetTokens: Math.floor(totalInputTokens) })
+    contextReport = { ...report, budgetChars: tokensToChars(totalInputTokens) }
   }
+  await onContext?.(contextReport)
 
   // Cumulative budget for search/fetch content the agentic loop is about to add, derived from what's
   // left of the context window after the (already trimmed/compressed) system prompt + conversation history.
   const usedChars = system.length + augmentedMessages.reduce((s, m) => s + JSON.stringify(m).length, 0)
   let toolBudgetRemaining = Math.max(0, contextCharBudget(ctxLimit) - usedChars)
+  const initialToolBudget = toolBudgetRemaining
   console.log(`  [researcher] tool budget: ${toolBudgetRemaining}c remaining (ctxLimit=${ctxLimit}tok, historyBudget=${historyBudgetTokens}tok, system+history=${usedChars}c)`)
 
   const webSearchTool = tool({
@@ -524,9 +527,12 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
       }).join(', ')
       console.log(`  [chat] step ${completedSteps}: ${fmt(step.usage.inputTokens)}p + ${fmt(step.usage.outputTokens)}c tok, finish=${step.finishReason}${toolSummary ? ` tools=[${toolSummary}]` : ''} budget=${toolBudgetRemaining}c`)
     },
-    onFinish: ({ usage }) => {
+    onFinish: async ({ usage }) => {
       const ms = (performance.now() - start).toFixed(0)
       console.log(`  [chat] done — ${ms}ms  tokens: ${fmt(usage.inputTokens)}p + ${fmt(usage.outputTokens)}c`)
+      // Reported again with what the tools read, so the meter's final picture includes the search.
+      const toolChars = initialToolBudget - toolBudgetRemaining
+      if (toolChars > 0) await onContext?.({ ...contextReport, searchChars: contextReport.searchChars + toolChars })
     },
     model,
     abortSignal,

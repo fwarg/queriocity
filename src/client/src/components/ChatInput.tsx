@@ -79,6 +79,20 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
   // Bumped on every fetch request and on submit, so a debounced or in-flight suggestion fetch
   // whose turn has passed can't repopulate the list after the user has sent the query.
   const suggestReqRef = useRef(0)
+  // Aborted along with the bump, so a stale request stops occupying the model instead of running
+  // to its timeout — on a one-request-at-a-time local model it would delay the real answer.
+  const suggestAbortRef = useRef<AbortController | null>(null)
+
+  /** Drops any pending or in-flight suggestion fetch; returns the id for the next one. */
+  function cancelSuggestion(): number {
+    if (suggestTimerRef.current) clearTimeout(suggestTimerRef.current)
+    suggestAbortRef.current?.abort()
+    suggestAbortRef.current = null
+    return ++suggestReqRef.current
+  }
+
+  // A run can also start from a follow-up chip, which bypasses handleSubmit.
+  useEffect(() => { if (disabled) cancelSuggestion() }, [disabled])
 
   function handleModeChange(m: FocusMode) {
     onFocusModeChange(m)
@@ -109,15 +123,17 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
       : t('collection.plural')
 
   function handleSuggestionFetch(text: string) {
-    if (suggestTimerRef.current) clearTimeout(suggestTimerRef.current)
-    const reqId = ++suggestReqRef.current
-    if (!suggestionsEnabled || focusMode === 'flash' || text.trim().length < 8) {
+    const reqId = cancelSuggestion()
+    // While an answer is being generated the model is busy with it; a suggestion would only queue.
+    if (!suggestionsEnabled || disabled || focusMode === 'flash' || text.trim().length < 8) {
       setSuggestions([])
       return
     }
     suggestTimerRef.current = setTimeout(async () => {
+      const ctrl = new AbortController()
+      suggestAbortRef.current = ctrl
       try {
-        const results = await fetchSuggestions(text.trim())
+        const results = await fetchSuggestions(text.trim(), ctrl.signal)
         if (suggestReqRef.current === reqId) setSuggestions(results)
       } catch { if (suggestReqRef.current === reqId) setSuggestions([]) }
     }, 500)
@@ -137,9 +153,8 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
     setValue('')
     setAttachments([])
     // The query is sent: any suggestion for how to phrase it is now obsolete. Cancel a pending
-    // debounce and invalidate an in-flight fetch so neither can repopulate the list afterwards.
-    if (suggestTimerRef.current) clearTimeout(suggestTimerRef.current)
-    suggestReqRef.current++
+    // debounce and abort an in-flight fetch so neither can repopulate the list afterwards.
+    cancelSuggestion()
     setSuggestions([])
   }
 

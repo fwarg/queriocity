@@ -166,8 +166,11 @@ model's view of it.
 
 - **Context meter** — beside the export menu under the latest answer, e.g. *Context 64%*. The bar
   shows how the last turn's input was spent: instructions and memory, pinned messages, summary,
-  recent messages; the rest is room for search results. It turns amber at 80% or once anything has
-  been dropped. Tap it for the breakdown. Counts are estimates (characters ÷ 4). The latest
+  recent messages, and search results and fetched pages (in Balanced and Thorough, everything the
+  run read); the rest is free. It turns amber at 80% or once anything has
+  been dropped. Tap it for the breakdown, in characters. The budget is `CONTEXT_TOKEN_LIMIT`
+  converted with `CHARS_PER_TOKEN` (default 4, fine for English; Swedish and other languages may
+  need a lower value), so the percentage is only as accurate as that ratio. The latest
   report is stored with the chat, so meter and dividers reappear when you switch back to it.
 - **Dividers** — a dashed line in the chat marks where the model's view begins: *no longer seen*
   above it, or *seen only as a summary*, with **Show summary** revealing the exact text the model
