@@ -48,3 +48,11 @@ export const notesRagBudget = async (): Promise<number> => {
   const v = parseInt(await getAppSetting('notes_rag_budget', String(DEFAULT_NOTES_RAG_BUDGET)), 10)
   return Number.isNaN(v) ? DEFAULT_NOTES_RAG_BUDGET : v
 }
+
+/** Average cosine similarity at which the topic map stops merging notes into a topic. Depends on the
+ *  embedding model like the related-content floor; Admin → Similarity shows the values to pick from. */
+export const DEFAULT_TOPIC_MIN_SIMILARITY = 0.6
+export const topicMinSimilarity = async (): Promise<number> => {
+  const v = parseFloat(await getAppSetting('topic_min_similarity', String(DEFAULT_TOPIC_MIN_SIMILARITY)))
+  return Number.isNaN(v) ? DEFAULT_TOPIC_MIN_SIMILARITY : v
+}

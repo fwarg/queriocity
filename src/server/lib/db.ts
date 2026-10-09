@@ -581,6 +581,15 @@ function initSchema() {
   )`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_resource_links_src ON resource_links(src_id)`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_resource_links_dst ON resource_links(dst_id)`)
+  // Names the small model gave topic-map clusters, keyed by a hash of the members, so reopening
+  // the map does not re-name what has not changed.
+  sqlite.run(`CREATE TABLE IF NOT EXISTS topic_names (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    key     TEXT NOT NULL,
+    name    TEXT NOT NULL,
+    tag     TEXT,
+    PRIMARY KEY (user_id, key)
+  )`)
   // Suggested links the user turned down, so the same pair is not proposed again.
   sqlite.run(`CREATE TABLE IF NOT EXISTS link_dismissals (
     src_id TEXT NOT NULL REFERENCES uploaded_files(id) ON DELETE CASCADE,

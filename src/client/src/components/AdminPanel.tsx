@@ -30,6 +30,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   const [ragMinRelevanceDraft, setRagMinRelevanceDraft] = useState('0')
   const [relatedMinSimilarityDraft, setRelatedMinSimilarityDraft] = useState('0.5')
   const [relatedMinRelevanceDraft, setRelatedMinRelevanceDraft] = useState('0.5')
+  const [topicMinSimilarityDraft, setTopicMinSimilarityDraft] = useState('0.6')
   const [rerankConfigured, setRerankConfigured] = useState(false)
   // Derived server-side from the model context env vars; two settings below are clamped by them.
   const [limits, setLimits] = useState<{ smallModelInputChars: number; embedInputChars: number; scrapeMaxChars: number; minUrlContextChars: number } | null>(null)
@@ -76,6 +77,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
       setRagMinRelevanceDraft(String(s.ragMinRelevance))
       setRelatedMinSimilarityDraft(String(s.relatedMinSimilarity))
       setRelatedMinRelevanceDraft(String(s.relatedMinRelevance))
+      setTopicMinSimilarityDraft(String(s.topicMinSimilarity))
       setRerankConfigured(s.rerankEnabled)
       setLimits(s.limits)
       setAttachmentCharsDraft(String(s.attachmentChars))
@@ -110,6 +112,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     const ragMinRelevance = parseFloat(ragMinRelevanceDraft)
     const relatedMinSimilarity = parseFloat(relatedMinSimilarityDraft)
     const relatedMinRelevance = parseFloat(relatedMinRelevanceDraft)
+    const topicMinSimilarity = parseFloat(topicMinSimilarityDraft)
     const attachmentChars = parseInt(attachmentCharsDraft)
     const spaceRagBudget = parseInt(spaceRagBudgetDraft)
     const notesRagBudget = parseInt(notesRagBudgetDraft)
@@ -128,6 +131,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     if (isNaN(ragMinRelevance) || ragMinRelevance < 0 || ragMinRelevance > 1) return
     if (isNaN(relatedMinSimilarity) || relatedMinSimilarity < 0 || relatedMinSimilarity > 1) return
     if (isNaN(relatedMinRelevance) || relatedMinRelevance < 0 || relatedMinRelevance > 1) return
+    if (isNaN(topicMinSimilarity) || topicMinSimilarity < 0 || topicMinSimilarity > 1) return
     if (isNaN(attachmentChars) || attachmentChars < 1000) return
     if (isNaN(spaceRagBudget) || spaceRagBudget < 0) return
     if (isNaN(notesRagBudget) || notesRagBudget < 0) return
@@ -141,7 +145,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     setError('')
     setSavingBudget(true)
     try {
-      await updateAdminSettings({ memoryTokenBudget: budget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, ragTopK, ragMinRelevance, relatedMinSimilarity, relatedMinRelevance, attachmentChars, spaceRagBudget, notesRagBudget, queryReformulation: queryReformulationDraft, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow: fetchSummarizeOverflowDraft, compressHistoryOverflow: compressHistoryOverflowDraft, resourceSummary: resourceSummaryDraft })
+      await updateAdminSettings({ memoryTokenBudget: budget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, ragTopK, ragMinRelevance, relatedMinSimilarity, relatedMinRelevance, topicMinSimilarity, attachmentChars, spaceRagBudget, notesRagBudget, queryReformulation: queryReformulationDraft, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow: fetchSummarizeOverflowDraft, compressHistoryOverflow: compressHistoryOverflowDraft, resourceSummary: resourceSummaryDraft })
 
       onBudgetChange?.(budget)
       setBudgetSaved(true)
@@ -407,6 +411,13 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                 <p className="text-xs text-gray-500">When a reranker is configured it judges the candidates instead, comparing titles and summaries; this is the relevance (0–1) one must reach. Scores are logged as <code>[reranker]</code> lines.{!rerankConfigured && <span className="text-amber-400"> No reranker is configured (RERANK_MODEL), so this has no effect.</span>}</p>
                 <input type="number" min={0} max={1} step={0.05} value={relatedMinRelevanceDraft}
                   onChange={e => setRelatedMinRelevanceDraft(e.target.value)}
+                  className="w-24 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <p className="text-xs text-gray-400 font-medium">Topic map similarity</p>
+                <p className="text-xs text-gray-500">Average cosine similarity at which Explore → Topics stops merging notes into a topic. Higher gives more, tighter topics; lower gives fewer, broader ones. Users can step it coarser or finer per view. Like the similar-content floor it depends on the embedding model — the Cosine column in the Similarity tab shows the values your related and unrelated notes get.</p>
+                <input type="number" min={0} max={1} step={0.05} value={topicMinSimilarityDraft}
+                  onChange={e => setTopicMinSimilarityDraft(e.target.value)}
                   className="w-24 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
               </div>
             </div>

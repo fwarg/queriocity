@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useElementSize } from '../lib/use-element-size.ts'
-import { fetchLibraryGraph, type GraphEdge, type LibraryGraphNode, type Space } from '../lib/api.ts'
+import { fetchLibraryGraph, type GraphEdge, type LibraryGraphNode, type Space, type Topic } from '../lib/api.ts'
 import { useT } from '../lib/i18n.tsx'
 import { EdgeLegend, GraphCanvas, NODE_FILL } from './GraphCanvas.tsx'
 import { EmptyState } from './ui.tsx'
@@ -20,7 +20,10 @@ type Graph = { nodes: LibraryGraphNode[]; edges: GraphEdge[]; total: number; tru
 
 /** The whole library's explicit connections, coloured by top-level tag and narrowed by tag, space
  *  and whether chats join in. Isolated resources are left out; the tag tree lists them. */
-export function GlobalGraph({ tags, spaces, tag, onTagChange, onOpenResource, onOpenChat }: {
+/** Nodes outside a highlighted topic. */
+const DIMMED = '#374151'
+
+export function GlobalGraph({ tags, spaces, tag, onTagChange, onOpenResource, onOpenChat, topics, focusTopic, onFocusTopicChange }: {
   /** Every tag path, for the filter. */
   tags: string[]
   spaces: Space[]
@@ -28,8 +31,14 @@ export function GlobalGraph({ tags, spaces, tag, onTagChange, onOpenResource, on
   onTagChange: (tag: string) => void
   onOpenResource: (id: string) => void
   onOpenChat: (id: string, title: string) => void
+  /** The topic map, once built; colouring by topic asks for it. */
+  topics?: Topic[]
+  /** null: colour by tag. '': colour by topic. A topic key: that topic highlighted, the rest dimmed. */
+  focusTopic: string | null
+  onFocusTopicChange: (key: string | null) => void
 }) {
   const t = useT()
+  const byTopic = focusTopic !== null
   const [spaceId, setSpaceId] = useState('')
   const [chats, setChats] = useState(false)
   const [graph, setGraph] = useState<Graph | null>(null)
@@ -54,6 +63,19 @@ export function GlobalGraph({ tags, spaces, tag, onTagChange, onOpenResource, on
     return new Map(order.map((g, i) => [g, GROUP_COLOURS[i] ?? OTHER_COLOUR]))
   }, [graph])
 
+  // Topics are sorted biggest first, so the first colours go to the biggest.
+  const topicIndex = useMemo(() => new Map((topics ?? []).flatMap((tp, i) => tp.members.map(m => [m.id, i] as const))), [topics])
+  const topicColour = (i: number) => GROUP_COLOURS[i] ?? OTHER_COLOUR
+  const focused = topics?.find(tp => tp.key === focusTopic)
+  const fill = (n: LibraryGraphNode) => {
+    if (!byTopic) return n.group ? colourOf.get(n.group) ?? OTHER_COLOUR : NODE_FILL[n.kind]
+    const i = topicIndex.get(n.id)
+    if (focused) return i !== undefined && topics![i] === focused ? topicColour(i) : DIMMED
+    return i === undefined ? DIMMED : topicColour(i)
+  }
+  // A topic's unlinked notes are not graph nodes; say so rather than let the topic look smaller.
+  const hidden = focused && graph ? focused.members.filter(m => !graph.nodes.some(n => n.id === m.id)).length : 0
+
   const open = (n: LibraryGraphNode) => n.kind === 'chat' ? onOpenChat(n.id.slice('chat:'.length), n.label) : onOpenResource(n.id)
   const select = 'text-sm bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-indigo-500 max-w-full'
 
@@ -72,7 +94,15 @@ export function GlobalGraph({ tags, spaces, tag, onTagChange, onOpenResource, on
           <input type="checkbox" checked={chats} onChange={e => setChats(e.target.checked)} />
           {t('explore.includeChats')}
         </label>
+        <select value={focusTopic === null ? 'tag' : focusTopic === '' ? 'topic' : focusTopic} aria-label={t('explore.colourBy')} className={select}
+          onChange={e => onFocusTopicChange(e.target.value === 'tag' ? null : e.target.value === 'topic' ? '' : e.target.value)}>
+          <option value="tag">{t('explore.colourByTag')}</option>
+          <option value="topic">{t('explore.colourByTopic')}</option>
+          {(topics ?? []).map(tp => <option key={tp.key} value={tp.key}>{t('explore.highlightTopic', { name: tp.name ?? tp.members[0].title })}</option>)}
+        </select>
       </div>
+      {byTopic && !topics && <p className="text-xs text-gray-500">{t('topics.working')}</p>}
+      {hidden > 0 && <p className="text-xs text-gray-500">{t('explore.topicHidden', { count: hidden })}</p>}
       {error ? <p className="text-sm text-red-400">{t('explore.graphFailed')}</p>
         : !graph ? null
         : graph.nodes.length === 0 ? <EmptyState>{t('explore.graphEmpty')}</EmptyState>
@@ -87,10 +117,19 @@ export function GlobalGraph({ tags, spaces, tag, onTagChange, onOpenResource, on
               height={height}
               zoomable
               showLabels={(area.width * height) / graph.nodes.length >= LABEL_AREA_PER_NODE}
-              fillOf={n => n.group ? colourOf.get(n.group) ?? OTHER_COLOUR : NODE_FILL[n.kind]}
+              fillOf={fill}
               onOpen={open}
             />}
             </div>
+            {byTopic ? (
+              <div className="flex flex-wrap gap-3 text-[11px] text-gray-400">
+                {(topics ?? []).slice(0, GROUP_COLOURS.length).map((tp, i) => (
+                  <span key={tp.key} className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: topicColour(i) }} />{tp.name ?? tp.members[0].title}</span>
+                ))}
+                {(topics?.length ?? 0) > GROUP_COLOURS.length && <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: OTHER_COLOUR }} />{t('explore.otherTopics')}</span>}
+                <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: DIMMED }} />{t(focused ? 'explore.otherNodes' : 'explore.noTopic')}</span>
+              </div>
+            ) : (
             <div className="flex flex-wrap gap-3 text-[11px] text-gray-400">
               {[...colourOf].map(([g, c]) => (
                 <span key={g} className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: c }} />#{g}</span>
@@ -98,6 +137,7 @@ export function GlobalGraph({ tags, spaces, tag, onTagChange, onOpenResource, on
               <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: NODE_FILL.note }} />{t('explore.untaggedNote')}</span>
               {chats && <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: NODE_FILL.chat }} />{t('explore.chat')}</span>}
             </div>
+            )}
             <EdgeLegend />
           </>
         )}

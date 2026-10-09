@@ -28,7 +28,7 @@ export interface RelatedResource {
 }
 
 /** The normalised mean of a resource's chunk vectors, or null when it has none indexed. */
-function resourceVector(fileId: string): number[] | null {
+export function resourceVector(fileId: string): number[] | null {
   const rows = sqlite.query(`
     SELECT embedding FROM file_chunks
     WHERE chunk_id IN (SELECT chunk_id FROM file_chunk_meta WHERE file_id = ?) LIMIT ?

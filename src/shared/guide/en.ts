@@ -24,8 +24,8 @@ search box that looks inside the messages, not just the titles. Under a finished
 - **Resources** — documents, web pages and notes the assistant can draw on.
 - **Workspaces** — spaces, which group chats and remember what was said in them, and collections,
   which group resources.
-- **Explore** — your tags as a tree, a graph of how your notes and resources connect, and
-  suggested links between notes.
+- **Explore** — your tags as a tree, your notes grouped into topics, a graph of how they
+  connect, and suggested links between notes.
 
 None of them are needed for asking a question. Add them when you want them.`,
   },
@@ -145,14 +145,18 @@ and why it was made.`,
 
   explore: {
     title: 'Organising your notes',
-    summary: 'The tag tree, the graph, and links the assistant suggests.',
-    body: `**Explore**, in the sidebar, shows how your library hangs together. It has three tabs.
+    summary: 'The tag tree, topics, the graph, and links the assistant suggests.',
+    body: `**Explore**, in the sidebar, shows how your library hangs together. It has four tabs.
 
 **Tags** lists every tag as a tree with counts — \`ml\` holds \`ml/rag\` and \`ml/agents\`. Tap a
 tag to see its resources; the **⋯** beside it renames it (sub-tags move along), deletes it, or shows
 it in the graph. At the bottom, **To organise** finds resources without tags and notes without links.
 
-**Graph** draws every link between your notes and resources, coloured by top-level tag. Narrow it
+**Topics** groups your notes by what they are about, even untagged and unlinked ones, names each
+group, and shows what it lacks. **Tag all**, **Create overview note** or **Link these notes** fixes it
+in one go; *Coarser* and *Finer* change how broad the topics are.
+
+**Graph** draws every link between your notes and resources, coloured by top-level tag or topic. Narrow it
 to a tag, a space or a collection, and tick *Include chats* to see which notes came from the same
 conversation. Drag to move, use the buttons to zoom, tap a dot to open it.
 

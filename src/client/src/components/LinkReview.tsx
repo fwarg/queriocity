@@ -8,13 +8,18 @@ type Scope = 'unlinked' | 'all'
 /** Goes through notes one at a time with their suggested links — for organising many notes at once,
  *  e.g. ones saved from a backlog of chats. The queue is fixed when started, so accepting a link
  *  (which makes a note "linked") does not reshuffle it; a note with nothing to suggest is skipped. */
-export function LinkReview({ resources, onChanged }: {
+export function LinkReview({ resources, onChanged, initialQueue }: {
   resources: Resource[]
   onChanged: () => void
+  /** Start straight away with these notes — a topic's, from the topic map. */
+  initialQueue?: Array<{ id: string; title: string }>
 }) {
   const t = useT()
   const [scope, setScope] = useState<Scope>('unlinked')
-  const [queue, setQueue] = useState<Array<{ id: string; title: string; summary: string | null }> | null>(null)
+  const summaryOf = (id: string) => resources.find(r => r.id === id)?.summary ?? null
+  const [queue, setQueue] = useState<Array<{ id: string; title: string; summary: string | null }> | null>(
+    () => initialQueue?.map(n => ({ ...n, summary: summaryOf(n.id) })) ?? null,
+  )
   const [index, setIndex] = useState(0)
 
   const candidates = resources

@@ -23,8 +23,8 @@ letar inne i meddelandena, inte bara i titlarna. Under ett färdigt svar kan du 
 - **Resurser** — dokument, webbsidor och anteckningar som assistenten kan använda.
 - **Arbetsytor** — utrymmen, som grupperar chattar och minns vad som sagts i dem, och samlingar,
   som grupperar resurser.
-- **Utforska** — dina taggar som ett träd, en graf över hur anteckningar och resurser hänger ihop,
-  och föreslagna länkar mellan anteckningar.
+- **Utforska** — dina taggar som ett träd, dina anteckningar grupperade i ämnen, en graf över hur
+  de hänger ihop, och föreslagna länkar mellan anteckningar.
 
 Inget av det behövs för att ställa en fråga. Lägg till det när du vill ha det.`,
   },
@@ -146,15 +146,19 @@ beslut och skälet till det.`,
 
   explore: {
     title: 'Ordna dina anteckningar',
-    summary: 'Taggträdet, grafen och länkar som assistenten föreslår.',
-    body: `**Utforska**, i sidopanelen, visar hur ditt bibliotek hänger ihop. Den har tre flikar.
+    summary: 'Taggträdet, ämnen, grafen och länkar som assistenten föreslår.',
+    body: `**Utforska**, i sidopanelen, visar hur ditt bibliotek hänger ihop. Den har fyra flikar.
 
 **Taggar** visar alla taggar som ett träd med antal — \`ml\` rymmer \`ml/rag\` och \`ml/agents\`.
 Tryck på en tagg för att se dess resurser; **⋯** bredvid byter namn på den (undertaggarna följer
 med), tar bort den eller visar den i grafen. Längst ner hittar **Att organisera** resurser utan
 taggar och anteckningar utan länkar.
 
-**Graf** ritar alla länkar mellan dina anteckningar och resurser, färgade efter toppnivåtagg.
+**Ämnen** grupperar dina anteckningar efter vad de handlar om, även otaggade och olänkade, namnger
+varje grupp och visar vad den saknar. **Tagga alla**, **Skapa översiktsanteckning** eller **Länka
+anteckningarna** åtgärdar det på en gång; *Grövre* och *Finare* ändrar hur breda ämnena är.
+
+**Graf** ritar alla länkar mellan dina anteckningar och resurser, färgade efter toppnivåtagg eller ämne.
 Begränsa den till en tagg, ett utrymme eller en samling, och kryssa i *Ta med chattar* för att se
 vilka anteckningar som kom från samma samtal. Dra för att flytta, zooma med knapparna, tryck på en
 punkt för att öppna den.

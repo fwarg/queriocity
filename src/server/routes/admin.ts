@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { generateText, embed } from 'ai'
 import { db, users, invites, chatSessions, spaces, spaceMemories, userMemories, uploadedFiles, authCredentials, getAppSetting, setAppSetting, bumpTokenVersion } from '../lib/db.ts'
 import { similarityReport, SIMILARITY_REPORT_LIMIT } from '../lib/files/related.ts'
-import { relatedMinSimilarity as relatedMinSimilaritySetting, relatedMinRelevance as relatedMinRelevanceSetting, notesRagBudget as notesRagBudgetSetting } from '../lib/rag-settings.ts'
+import { relatedMinSimilarity as relatedMinSimilaritySetting, relatedMinRelevance as relatedMinRelevanceSetting, notesRagBudget as notesRagBudgetSetting, topicMinSimilarity as topicMinSimilaritySetting } from '../lib/rag-settings.ts'
 import { eq, desc } from 'drizzle-orm'
 import { indexSession, deindexSession } from '../lib/chat-indexer.ts'
 import { EMBED_MAX_INPUT_CHARS, SMALL_MODEL_INPUT_CHARS, DEFAULT_MEMORY_TOKEN_BUDGET } from '../lib/llm.ts'
@@ -38,7 +38,7 @@ adminRouter.use('*', authMiddleware)
 adminRouter.use('*', adminMiddleware)
 
 adminRouter.get('/settings', async (c) => {
-  const [memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, ragMinRelevance, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow, compressHistoryOverflow, resourceSummary, relatedMinSimilarity, relatedMinRelevance, notesRagBudget] = await Promise.all([
+  const [memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, ragMinRelevance, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow, compressHistoryOverflow, resourceSummary, relatedMinSimilarity, relatedMinRelevance, notesRagBudget, topicMinSimilarity] = await Promise.all([
     getAppSetting('memory_token_budget', DEFAULT_MEMORY_TOKEN_BUDGET).then(Number),
     getAppSetting('user_memory_token_budget', '300').then(Number),
     getAppSetting('dream_hour', '-1').then(Number),
@@ -61,11 +61,12 @@ adminRouter.get('/settings', async (c) => {
     relatedMinSimilaritySetting(),
     relatedMinRelevanceSetting(),
     notesRagBudgetSetting(),
+    topicMinSimilaritySetting(),
   ])
   // Read-only, derived from the model context env vars. Two of the settings above are silently
   // clamped by these at use time, so the panel needs them to show what a value actually does
   // rather than what was typed.
-  return c.json({ memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, ragMinRelevance, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow, compressHistoryOverflow, resourceSummary, relatedMinSimilarity, relatedMinRelevance, notesRagBudget, rerankEnabled: rerankEnabled(), limits: { smallModelInputChars: SMALL_MODEL_INPUT_CHARS, embedInputChars: EMBED_MAX_INPUT_CHARS, scrapeMaxChars: SCRAPE_MAX_CHARS, minUrlContextChars: MIN_URL_CONTEXT_CHARS } })
+  return c.json({ memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, ragMinRelevance, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow, compressHistoryOverflow, resourceSummary, relatedMinSimilarity, relatedMinRelevance, notesRagBudget, topicMinSimilarity, rerankEnabled: rerankEnabled(), limits: { smallModelInputChars: SMALL_MODEL_INPUT_CHARS, embedInputChars: EMBED_MAX_INPUT_CHARS, scrapeMaxChars: SCRAPE_MAX_CHARS, minUrlContextChars: MIN_URL_CONTEXT_CHARS } })
 })
 
 adminRouter.patch('/settings', zValidator('json', z.object({
@@ -84,6 +85,7 @@ adminRouter.patch('/settings', zValidator('json', z.object({
   attachmentChars: z.number().int().min(1000).max(500000).optional(),
   spaceRagBudget: z.number().int().min(0).max(10000).optional(),
   notesRagBudget: z.number().int().min(0).max(10000).optional(),
+  topicMinSimilarity: z.number().min(0).max(1).optional(),
   queryReformulation: z.boolean().optional(),
   rssFeedCharsBudget: z.number().int().min(5000).max(500000).optional(),
   fetchMaxPages: z.number().int().min(0).max(50).optional(),
@@ -113,6 +115,7 @@ adminRouter.patch('/settings', zValidator('json', z.object({
   if (body.attachmentChars != null) ops.push(setAppSetting('attachment_chars', String(body.attachmentChars)))
   if (body.spaceRagBudget != null) ops.push(setAppSetting('space_rag_budget', String(body.spaceRagBudget)))
   if (body.notesRagBudget != null) ops.push(setAppSetting('notes_rag_budget', String(body.notesRagBudget)))
+  if (body.topicMinSimilarity != null) ops.push(setAppSetting('topic_min_similarity', String(body.topicMinSimilarity)))
   if (body.queryReformulation != null) ops.push(setAppSetting('query_reformulation', String(body.queryReformulation)))
   if (body.rssFeedCharsBudget != null) ops.push(setAppSetting('rss_feed_chars_budget', String(body.rssFeedCharsBudget)))
   if (body.fetchMaxPages != null) ops.push(setAppSetting('fetch_max_pages', String(body.fetchMaxPages)))

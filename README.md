@@ -84,7 +84,7 @@ Queriocity is a private research assistant you run on your own hardware. It is d
 - **Research questions** — ask anything and get a cited answer backed by live web search
 - **Document Q&A** — attach PDFs, images, or text files and interrogate them in conversation
 - **Persistent knowledge base** — upload documents to your library so the assistant can draw on them across many conversations
-- **Linked notes** — save answers as notes, link them Zettelkasten-style with tags and `[[wikilinks]]` (the assistant can suggest the links), browse them as a tag tree and graph, ask questions of them first, and export everything as an Obsidian vault
+- **Linked notes** — save answers as notes, link them Zettelkasten-style with tags and `[[wikilinks]]` (the assistant can suggest the links), browse them as a tag tree, topic map and graph, ask questions of them first, and export everything as an Obsidian vault
 - **Contextual workspaces** — group related chats into spaces with shared memory and file references
 - **An assistant that remembers** — spaces accumulate facts from your conversations and recall the ones relevant to each question; optionally, a short personal profile applies across every chat
 
@@ -486,17 +486,29 @@ you work (chats, memory, lock), a **collection** is a shelf you attach to a chat
 
 ### Explore
 
-**Explore** in the sidebar is the overview of how the library is organised, in three tabs:
+**Explore** in the sidebar is the overview of how the library is organised, in four tabs:
 
 - **Tags** — every tag as a collapsible tree with counts (`3 · 12 incl. sub-tags`: carried directly,
   and by anything under it). Tap a tag to open the library filtered on it; the **⋯** menu renames
   (sub-tags move along, an existing name merges), deletes, or shows it in the graph. **To organise**
   at the bottom opens resources **without tags** and notes **without links**.
+- **Topics** — your notes grouped by what they are about, from the vectors already stored for
+  retrieval: no tags or links needed, so it also covers what you haven't organised yet. Notes are
+  merged into a topic while their average similarity stays above a threshold (Admin → Settings,
+  *Topic map similarity*, default 0.6; **Coarser** / **Finer** step it per view); groups under three
+  notes are listed as *not in any topic* rather than forced into one. The small model names each
+  topic and suggests a tag, preferring yours; names are cached until the topic's notes change. Each
+  topic shows what it lacks — the tag most of it shares (*9 of 14 tagged #ml/rag*), a warning when it
+  spreads over unrelated tags, notes without links, and near-duplicates — with actions: **Tag all**
+  (adds the tag, keeps the others), **Create overview note** (links all its notes), **Link these
+  notes** (the Link notes queue for just this topic) and **Show in graph**. *All resources* includes
+  files and pages. Up to the 2 500 most recent are grouped.
 - **Graph** — the whole library's explicit connections (the same edges as Connections), filtered by
   tag subtree, space or collection, optionally with the chats notes were saved from. Nodes are
   coloured by top-level tag; resources with no connection are left out (the tag tree finds them).
   The drawing fills the screen and is laid out for its actual size, so a large monitor spreads the
-  nodes out rather than magnifying them. Drag to pan, zoom with the buttons or the wheel, tap a node
+  nodes out rather than magnifying them. **Colour by topic** instead of tag, or highlight one topic;
+  a topic's notes without links are not in the graph, and it says how many. Drag to pan, zoom with the buttons or the wheel, tap a node
   to open it. Capped at the 300 best-connected nodes, with a note when more were left out; labels
   show from the start when there is room for them, otherwise once zoomed in.
 - **Link notes** — goes through notes one at a time with their [suggested links](#links-and-tags):
@@ -1850,6 +1862,7 @@ The **Admin panel > System settings** tab exposes runtime-configurable parameter
 | Context | Compress dropped history | Off | When a research turn's conversation history must be trimmed to fit the context budget, summarize the dropped messages with the small model instead of discarding them, folded into the system prompt. Adds latency; only applies to balanced/thorough turns. |
 | Resources | Minimum similarity for "Similar content" | 0.5 | Cosine similarity another resource must reach to be suggested as similar, when no reranker judges the candidates. Model-dependent; calibrate from the `[related] similarities` log line. 0 shows the nearest regardless. |
 | Resources | Minimum reranker relevance for "Similar content" | 0.5 | With `RERANK_MODEL` set, the reranker relevance (0–1) a candidate must reach. Calibrate from the `[reranker]` log lines. |
+| Resources | Topic map similarity | 0.6 | Average cosine similarity at which Explore → Topics stops merging notes into a topic. Higher: more, tighter topics. Depends on the embedding model; the Cosine column in Admin → Similarity shows what your related and unrelated notes score. |
 | Resources | Summarize on ingest | On | Generate a one-line summary and a few topics for every uploaded file, ingested URL and note, shown in the Resources list and detail view. One small-model call per resource, made after it is stored — a failure leaves it without a summary rather than losing it |
 | Attachments | Max context chars | 20000 | Max characters extracted from an attached file and sent as context. The chat model receives all of it and the text is indexed for later search, but the *query* embedding for that turn uses only the first `EMBED_MAX_INPUT_CHARS` — a startup warning appears if you set this much higher |
 
@@ -1929,7 +1942,7 @@ Hono server (Bun)
   ├── /api/chat      — reformulate → pre-search → researcher → [writer]
   │                    (+ /suggest, /related, /resume/:id, /:id/stop)
   ├── /api/files     — upload/extract/list/delete, notes, tags, links, similar content,
-  │                    graphs, link suggestions, Obsidian export
+  │                    graphs, topic map, link suggestions, splitting, Obsidian export
   ├── /api/history   — chat sessions + messages (pins, turn deletion) + memory lifecycle
   ├── /api/spaces    — spaces, per-space memories, compact, recreate
   ├── /api/admin     — user/invite management, system settings, model test
@@ -1950,7 +1963,7 @@ Hono server (Bun)
              ├── space memories (extracted, manual, compacted)
              ├── chat message chunks + embeddings  (space RAG)
              ├── uploaded file chunks + embeddings (library + space file RAG)
-             ├── notes, tags, resource_links, link_dismissals (linked notes)
+             ├── notes, tags, resource_links, link_dismissals, topic_names (linked notes)
              ├── custom_templates (per-user prompt templates)
              ├── monitors + monitor_subscriptions + monitor_runs
              └── app_settings (runtime-configurable parameters)

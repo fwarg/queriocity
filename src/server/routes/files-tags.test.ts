@@ -152,3 +152,18 @@ describe('POST /files/extract', () => {
     await setAppSetting('attachment_chars', '20000')
   })
 })
+
+describe('topic routes', () => {
+  test('a topic map holds only the caller\'s notes, and bulk tagging skips others\' resources', async () => {
+    const ids = [] as string[]
+    for (const title of ['T1', 'T2', 'T3']) ids.push(await createNote({ title, body: 'Honey bees pollinate apple orchards.' }))
+    const mine = await (await call('/topics?threshold=0.9')).json() as { topics: Array<{ members: Array<{ id: string }> }> }
+    expect(mine.topics.flatMap(t => t.members.map(m => m.id)).sort()).toEqual([...ids].sort())
+    const theirs = await (await call('/topics?threshold=0.9', { as: STRANGER })).json() as { topics: unknown[]; loose: unknown[] }
+    expect([theirs.topics, theirs.loose]).toEqual([[], []])
+
+    expect(await (await call('/tags/bulk', { as: STRANGER, method: 'POST', body: { path: 'x', ids } })).json()).toEqual({ tagged: 0 })
+    expect(await (await call('/tags/bulk', { method: 'POST', body: { path: 'bees', ids } })).json()).toEqual({ tagged: 3 })
+    expect((await call('/topics/name', { as: STRANGER, method: 'POST', body: { ids } })).status).toBe(404)
+  })
+})

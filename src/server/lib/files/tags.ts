@@ -104,3 +104,13 @@ export function suggestedTags(topics: string[], tags: string[]): string[] {
   const have = new Set(tags)
   return [...new Set(topics.map(normaliseTag).filter(t => t && !have.has(t)))]
 }
+
+/** Adds one tag to several of the user's resources, keeping the tags they have. Resources the user
+ *  does not own are skipped. Returns how many were tagged. */
+export function addTagToResources(userId: string, ids: string[], path: string): number {
+  if (!ids.length || !normaliseTag(path)) return 0
+  const marks = ids.map(() => '?').join(',')
+  const owned = (sqlite.query(`SELECT id FROM uploaded_files WHERE user_id = ? AND id IN (${marks})`).all(userId, ...ids) as Array<{ id: string }>)
+  for (const { id } of owned) setResourceTags(userId, id, [...resourceTagList(id), path])
+  return owned.length
+}

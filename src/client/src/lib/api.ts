@@ -548,11 +548,11 @@ export async function ingestUrl(url: string): Promise<{ fileId: string; filename
   return res.json()
 }
 
-export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; userMemoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; ragTopK: number; ragMinRelevance: number; relatedMinSimilarity: number; relatedMinRelevance: number; rerankEnabled: boolean; attachmentChars: number; spaceRagBudget: number; notesRagBudget: number; queryReformulation: boolean; rssFeedCharsBudget: number; fetchMaxPages: number; fetchMaxUrlContextChars: number; fetchSummarizeOverflow: boolean; compressHistoryOverflow: boolean; resourceSummary: boolean; limits: { smallModelInputChars: number; embedInputChars: number; scrapeMaxChars: number; minUrlContextChars: number } }> {
+export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; userMemoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; ragTopK: number; ragMinRelevance: number; relatedMinSimilarity: number; relatedMinRelevance: number; rerankEnabled: boolean; attachmentChars: number; spaceRagBudget: number; notesRagBudget: number; topicMinSimilarity: number; queryReformulation: boolean; rssFeedCharsBudget: number; fetchMaxPages: number; fetchMaxUrlContextChars: number; fetchSummarizeOverflow: boolean; compressHistoryOverflow: boolean; resourceSummary: boolean; limits: { smallModelInputChars: number; embedInputChars: number; scrapeMaxChars: number; minUrlContextChars: number } }> {
   return fetch(`${BASE}/admin/settings`).then(r => r.json())
 }
 
-export async function updateAdminSettings(s: { memoryTokenBudget?: number; userMemoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; dreamDeep?: boolean; memoryExtractChars?: number; rerankTopN?: number; ragTopK?: number; ragMinRelevance?: number; relatedMinSimilarity?: number; relatedMinRelevance?: number; attachmentChars?: number; spaceRagBudget?: number; notesRagBudget?: number; queryReformulation?: boolean; rssFeedCharsBudget?: number; fetchMaxPages?: number; fetchMaxUrlContextChars?: number; fetchSummarizeOverflow?: boolean; compressHistoryOverflow?: boolean; resourceSummary?: boolean }): Promise<void> {
+export async function updateAdminSettings(s: { memoryTokenBudget?: number; userMemoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; dreamDeep?: boolean; memoryExtractChars?: number; rerankTopN?: number; ragTopK?: number; ragMinRelevance?: number; relatedMinSimilarity?: number; relatedMinRelevance?: number; attachmentChars?: number; spaceRagBudget?: number; notesRagBudget?: number; topicMinSimilarity?: number; queryReformulation?: boolean; rssFeedCharsBudget?: number; fetchMaxPages?: number; fetchMaxUrlContextChars?: number; fetchSummarizeOverflow?: boolean; compressHistoryOverflow?: boolean; resourceSummary?: boolean }): Promise<void> {
   await fetch(`${BASE}/admin/settings`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -974,6 +974,59 @@ export async function fetchGraph(id: string, depth: 1 | 2): Promise<{ nodes: Gra
   const res = await fetch(`${BASE}/files/${id}/graph?depth=${depth}`)
   if (!res.ok) throw await apiError(res, 'Could not load connections')
   return res.json()
+}
+
+export interface TopicMember { id: string; title: string; kind: 'file' | 'note' }
+
+/** One group of the topic map; `name`/`tag` are present once it has been named. */
+export interface Topic {
+  key: string
+  members: TopicMember[]
+  name?: string
+  tag?: string | null
+  topTag: { path: string; count: number } | null
+  tagSpread: number
+  unlinked: number
+  duplicates: Array<[string, string]>
+}
+
+export interface TopicMapData {
+  topics: Topic[]
+  loose: TopicMember[]
+  threshold: number
+  considered: number
+  capped: boolean
+}
+
+/** The topic map; without `threshold` the admin default applies. */
+export async function fetchTopicMap(opts: { threshold?: number; all?: boolean } = {}): Promise<TopicMapData> {
+  const q = new URLSearchParams()
+  if (opts.threshold !== undefined) q.set('threshold', opts.threshold.toFixed(2))
+  if (opts.all) q.set('scope', 'all')
+  const res = await fetch(`${BASE}/files/topics?${q}`)
+  if (!res.ok) throw await apiError(res, 'Could not build the topic map')
+  return res.json()
+}
+
+export async function nameTopic(ids: string[]): Promise<{ key: string; name: string; tag: string | null }> {
+  const res = await fetch(`${BASE}/files/topics/name`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  })
+  if (!res.ok) throw await apiError(res, 'Could not name the topic')
+  return res.json()
+}
+
+/** Adds a tag to several resources, keeping their other tags. */
+export async function addTagToMany(path: string, ids: string[]): Promise<number> {
+  const res = await fetch(`${BASE}/files/tags/bulk`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, ids }),
+  })
+  if (!res.ok) throw await apiError(res, 'Could not add the tag')
+  return (await res.json()).tagged
 }
 
 export interface LinkSuggestion {

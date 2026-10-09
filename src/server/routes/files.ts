@@ -3,13 +3,14 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { generateText } from 'ai'
 import { db, sqlite, uploadedFiles, spaceFiles, spaces, customTemplates, chatSessions, getAppSetting } from '../lib/db.ts'
-import { relatedMinSimilarity, relatedMinRelevance } from '../lib/rag-settings.ts'
+import { relatedMinSimilarity, relatedMinRelevance, topicMinSimilarity } from '../lib/rag-settings.ts'
+import { MAX_TOPIC_RESOURCES, nameTopic, topicMap } from '../lib/files/topics.ts'
 import { and, eq } from 'drizzle-orm'
 import { ingestFile, extractFileText, isUsableText, ACCEPTED_MIME_TYPES } from '../lib/files/ingest.ts'
 import { saveNote, renameResource, addSeeAlso } from '../lib/files/notes.ts'
 import { relatedResources } from '../lib/files/related.ts'
 import { globalGraph, linkCounts, localGraph } from '../lib/files/graph.ts'
-import { deleteTag, listTags, MAX_TAG_CHARS, renameTag, resourceTagList, setResourceTags, suggestedTags, tagsByResource } from '../lib/files/tags.ts'
+import { addTagToResources, deleteTag, listTags, MAX_TAG_CHARS, renameTag, resourceTagList, setResourceTags, suggestedTags, tagsByResource } from '../lib/files/tags.ts'
 import { linksOf } from '../lib/files/links.ts'
 import { exportVault } from '../lib/files/obsidian-export.ts'
 import { acceptLink, dismissLink, suggestLinks } from '../lib/files/link-suggest.ts'
@@ -212,6 +213,33 @@ filesRouter.patch('/notes/:id', zValidator('json', noteBody.partial()), async (c
 
 /** The user's tags with direct counts, for autocomplete and the tag tree. Registered before the
  *  `/:id` routes, which would otherwise take `tags` for an id. */
+/** The topic map: the caller's notes (or, with `scope=all`, every resource) grouped by content. */
+filesRouter.get('/topics', zValidator('query', z.object({
+  threshold: z.coerce.number().min(0).max(1).optional(),
+  scope: z.enum(['notes', 'all']).optional(),
+})), async (c) => {
+  const { threshold, scope } = c.req.valid('query')
+  return c.json(topicMap(c.get('userId') as string, threshold ?? await topicMinSimilarity(), { includeFiles: scope === 'all' }))
+})
+
+/** Names one topic (cached by its members). */
+filesRouter.post('/topics/name', zValidator('json', z.object({ ids: z.array(z.string()).min(1).max(MAX_TOPIC_RESOURCES) })), async (c) => {
+  try {
+    return c.json(await nameTopic(c.get('userId') as string, c.req.valid('json').ids))
+  } catch {
+    return c.json({ error: 'Not found' }, 404)
+  }
+})
+
+/** Adds a tag to several resources at once, keeping their other tags. */
+filesRouter.post('/tags/bulk', zValidator('json', z.object({
+  path: z.string().min(1).max(MAX_TAG_CHARS),
+  ids: z.array(z.string()).min(1).max(MAX_TOPIC_RESOURCES),
+})), (c) => {
+  const { path, ids } = c.req.valid('json')
+  return c.json({ tagged: addTagToResources(c.get('userId') as string, ids, path) })
+})
+
 /** The caller's library as an Obsidian vault (zip of markdown files), optionally with chats and images. */
 filesRouter.get('/export/obsidian', async (c) => {
   // `?full=1` adds chats and generated images.
