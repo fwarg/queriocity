@@ -52,7 +52,8 @@ export async function searchSpaceFiles(spaceId: string, query: string, embedding
   return indices.map(i => rows[i])
 }
 
-export async function searchUploads(query: string, userId: string, limit?: number, minScore?: number): Promise<ChunkResult[]> {
+/** `kind: 'note'` limits the search to the user's notes ("Notes first"). */
+export async function searchUploads(query: string, userId: string, limit?: number, minScore?: number, kind?: 'note'): Promise<ChunkResult[]> {
   const topK = limit ?? await ragTopK()
   const embedding = await embedText(query)
   const embeddingJson = JSON.stringify(embedding)
@@ -69,10 +70,10 @@ export async function searchUploads(query: string, userId: string, limit?: numbe
       AND v.chunk_id IN (
         SELECT m2.chunk_id FROM file_chunk_meta m2
         JOIN uploaded_files f2 ON f2.id = m2.file_id
-        WHERE f2.user_id = ?
+        WHERE f2.user_id = ?${kind ? ' AND f2.kind = ?' : ''}
       )
     ORDER BY v.distance
-  `).all(embeddingJson, topK, userId) as ChunkResult[]
+  `).all(embeddingJson, topK, userId, ...(kind ? [kind] : [])) as ChunkResult[]
 
   if (!rerankEnabled() || rows.length === 0) return rows
   const indices = await rerank(query, rows.map(r => r.content), rows.length, minScore)

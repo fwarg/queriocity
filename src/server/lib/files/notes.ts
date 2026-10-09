@@ -5,7 +5,8 @@ import { indexResourceText } from './ingest.ts'
 import { addUnderHeading, bodiesRelinkedTo, parseWikilinks, resolveDangling, syncLinks } from './links.ts'
 import { wikilinkFor } from '../../../shared/wikilinks.ts'
 import { describeResource } from './summarise.ts'
-import { setResourceTags } from './tags.ts'
+import { resourceTagList, setResourceTags } from './tags.ts'
+import { inlineTags } from '../../../shared/tags.ts'
 import { plainCitations } from '../../../shared/note-citations.ts'
 
 /** Notes: the one resource the user writes rather than uploads.
@@ -60,7 +61,10 @@ export async function saveNote(userId: string, note: NoteInput, { describe = tru
       ...await ownedProvenance(userId, note), createdAt: now, updatedAt: now,
     })
   }
-  if (note.tags) setResourceTags(userId, id, note.tags)
+  // `#tags` written in the text join the tag field. Removing one from the text leaves it there —
+  // the field is the source of truth, and silently dropping a tag would surprise more.
+  const inline = existing?.body === body ? [] : inlineTags(body)
+  if (note.tags || inline.length) setResourceTags(userId, id, [...(note.tags ?? resourceTagList(id)), ...inline])
 
   // Embedding is the expensive half, and a retitled note has the same content to retrieve.
   if (existing?.body !== body) {

@@ -21,7 +21,7 @@ interface Props {
   originSessionId?: string
   originMessageId?: string
   onClose: () => void
-  onSaved: (id: string) => void
+  onSaved: (id: string, title: string) => void
 }
 
 /** The one place a note is written, used for a blank note, an edit, and an answer saved from a chat. */
@@ -44,10 +44,10 @@ export function NoteEditor({ id, initialTitle = '', initialBody = '', initialTag
     try {
       if (id) {
         await updateNote(id, { title: title.trim(), body: body.trim(), tags })
-        onSaved(id)
+        onSaved(id, title.trim())
       } else {
         const created = await createNote(title.trim(), body.trim(), { derivedFrom, originSessionId, originMessageId, tags })
-        onSaved(created.id)
+        onSaved(created.id, title.trim())
       }
     } catch (err: unknown) {
       setError(errorMessage(t, err, t('note.saveFailed')))

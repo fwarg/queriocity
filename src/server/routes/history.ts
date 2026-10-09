@@ -83,8 +83,15 @@ historyRouter.get('/:id', async (c) => {
   if (!session) return c.json({ error: 'Not found' }, 404)
 
   const msgs = await db.select().from(messages).where(eq(messages.sessionId, id))
+  // Notes saved from this chat's answers, so each answer can say where it went.
+  const notes = sqlite.query(`
+    SELECT id, filename AS title, origin_message_id AS messageId FROM uploaded_files
+    WHERE user_id = ? AND origin_session_id = ? AND origin_message_id IS NOT NULL ORDER BY created_at
+  `).all(userId, id) as Array<{ id: string; title: string; messageId: string }>
+  const byMessage = new Map<string, Array<{ id: string; title: string }>>()
+  for (const n of notes) byMessage.set(n.messageId, [...(byMessage.get(n.messageId) ?? []), { id: n.id, title: n.title }])
 
-  return c.json({ session, messages: msgs })
+  return c.json({ session, messages: msgs.map(m => ({ ...m, savedNotes: byMessage.get(m.id) ?? [] })) })
 })
 
 /** Pins or unpins one message: a pinned message is kept in full when the chat outgrows the context. */

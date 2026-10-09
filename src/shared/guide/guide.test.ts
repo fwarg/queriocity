@@ -17,7 +17,7 @@ const ids = Object.keys(en) as TopicId[]
 /** The views the sidebar can switch to, plus the settings modal. Mirrors `MainView` in App.tsx
  *  minus 'chat', which is where you already are — a topic sending you to an empty chat helps
  *  nobody. Duplicated rather than imported: this file is shared code and cannot reach the client. */
-const TARGETS = new Set(['chats', 'files', 'spaces', 'monitors', 'settings'])
+const TARGETS = new Set(['chats', 'files', 'spaces', 'explore', 'monitors', 'settings'])
 
 /** Long enough to say something, short enough to still be the short version — past this the
  *  README is the better place and the topic should be split or trimmed. */

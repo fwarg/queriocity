@@ -50,6 +50,8 @@ interface Props {
   /** What the model saw on the latest turn; draws the dividers where its view begins. */
   context?: ContextReport | null
   onTogglePin?: (index: number) => void
+  /** A stored message to bring into view once, e.g. the answer a note was saved from. */
+  focusMessageId?: string | null
   /** Absent while a run is streaming: deleting then would race the turn being stored. */
   onDeleteTurn?: (index: number) => void
 }
@@ -260,6 +262,9 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
   const [speaking, setSpeaking] = useState(false)
   const [savingNote, setSavingNote] = useState(false)
   const [noteSaved, setNoteSaved] = useState(false)
+  // Notes saved from this answer: those stored with the chat, plus any saved since it was loaded.
+  const [savedHere, setSavedHere] = useState<Array<{ id: string; title: string }>>([])
+  const savedNotes = [...(msg.savedNotes ?? []), ...savedHere]
   const toggleSource = useCallback((key: string) => setHighlighted(v => v === key ? null : key), [])
   const mdComponents = makeMdComponents(highlighted, toggleSource, msg.sources, msg.fileSources)
 
@@ -330,6 +335,14 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
             {msg.images?.map((img, i) => <ImageBlock key={i} url={img.url} alt={img.alt} />)}
             {msg.content && (
               <div className="flex justify-end items-center gap-2 mt-1">
+                {savedNotes.length > 0 && onOpenResource && (
+                  <span className="mr-auto flex flex-wrap items-center gap-x-2 min-w-0 text-[11px] text-gray-500">
+                    {t('note.savedAs')}
+                    {savedNotes.map(n => (
+                      <button key={n.id} onClick={() => onOpenResource(n.id)} className="truncate max-w-[12rem] text-amber-400/80 hover:text-amber-300">{n.title}</button>
+                    ))}
+                  </span>
+                )}
                 {noteSaved && <span className="text-[11px] text-green-400">{t('note.savedFromAnswer')}</span>}
                 {onTogglePin && <PinButton pinned={msg.pinned} keptInFull={keptInFull} onToggle={onTogglePin} />}
                 <button
@@ -357,8 +370,9 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
                 originSessionId={sessionId}
                 originMessageId={msg.id}
                 onClose={() => setSavingNote(false)}
-                onSaved={() => {
+                onSaved={(id, title) => {
                   setSavingNote(false)
+                  setSavedHere(prev => [...prev, { id, title }])
                   setNoteSaved(true)
                   setTimeout(() => setNoteSaved(false), 3000)
                 }}
@@ -411,9 +425,26 @@ function noteTitleFor(messages: Message[], index: number): string | undefined {
 const unpinnedIn = (messages: Message[], from: number, to: number) =>
   messages.slice(from, to).filter(m => !m.pinned).length
 
-export const MessageList = memo(function MessageList({ messages, streaming, streamingThinking, collapseFirstQuestion, searchQuery, searchMatchIndices, searchActiveIndex, onOpenResource, sessionId, context, onTogglePin, onDeleteTurn }: Props) {
+export const MessageList = memo(function MessageList({ messages, streaming, streamingThinking, collapseFirstQuestion, searchQuery, searchMatchIndices, searchActiveIndex, onOpenResource, sessionId, context, onTogglePin, onDeleteTurn, focusMessageId }: Props) {
   const msgRefs = useRef<Map<number, HTMLDivElement>>(new Map())
   const matchSet = useMemo(() => new Set(searchMatchIndices ?? []), [searchMatchIndices])
+
+  // Once per id: after the chat loads, centre the message and outline it briefly. Delayed so it
+  // wins over the scroll to the bottom that every message-list change triggers.
+  const focused = useRef<string | null>(null)
+  useEffect(() => {
+    if (!focusMessageId || focused.current === focusMessageId) return
+    const i = messages.findIndex(m => m.id === focusMessageId)
+    const el = msgRefs.current.get(i)
+    if (i < 0 || !el) return
+    focused.current = focusMessageId
+    const timer = setTimeout(() => {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      el.classList.add('ring-2', 'ring-amber-400/60', 'rounded-lg')
+      setTimeout(() => el.classList.remove('ring-2', 'ring-amber-400/60', 'rounded-lg'), 2500)
+    }, 400)
+    return () => clearTimeout(timer)
+  }, [focusMessageId, messages])
 
   useEffect(() => {
     if (searchActiveIndex == null || searchActiveIndex < 0) return

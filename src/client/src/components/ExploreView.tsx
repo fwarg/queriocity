@@ -5,8 +5,9 @@ import { SectionHeader } from './SectionHeader.tsx'
 import { ViewTabs } from './ViewTabs.tsx'
 import { TagTree } from './TagTree.tsx'
 import { GlobalGraph } from './GlobalGraph.tsx'
+import { LinkReview } from './LinkReview.tsx'
 
-type Tab = 'tags' | 'graph'
+type Tab = 'tags' | 'graph' | 'review'
 
 /** An overview of the library's organisation: the tag tree, and the graph of explicit connections.
  *  A tag picked in either carries over to the other. */
@@ -35,12 +36,12 @@ export function ExploreView({ resources, spaces, onOpenTag, onShow, onOpenResour
   return (
     <div className="flex flex-col flex-1 min-h-0">
       <ViewTabs
-        tabs={[{ id: 'tags' as const, label: t('explore.tabTags') }, { id: 'graph' as const, label: t('explore.tabGraph') }]}
+        tabs={[{ id: 'tags' as const, label: t('explore.tabTags') }, { id: 'graph' as const, label: t('explore.tabGraph') }, { id: 'review' as const, label: t('explore.tabReview') }]}
         active={tab}
         onChange={setTab}
       />
       <div className="flex flex-col flex-1 overflow-y-auto p-4 sm:p-6 gap-3">
-        <SectionHeader title={t('nav.explore')} intro={t(tab === 'tags' ? 'explore.introTags' : 'explore.introGraph')} about={t('explore.about')} topic="notes" />
+        <SectionHeader title={t('nav.explore')} intro={t(tab === 'tags' ? 'explore.introTags' : tab === 'graph' ? 'explore.introGraph' : 'explore.introReview')} about={t('explore.about')} topic="explore" />
         {tab === 'tags' ? (
           <TagTree
             resources={resources}
@@ -49,6 +50,8 @@ export function ExploreView({ resources, spaces, onOpenTag, onShow, onOpenResour
             onShow={onShow}
             onTagsChanged={onTagsChanged}
           />
+        ) : tab === 'review' ? (
+          <LinkReview resources={resources} onChanged={onTagsChanged} />
         ) : (
           <GlobalGraph tags={tagPaths} spaces={spaces} tag={graphTag} onTagChange={setGraphTag} onOpenResource={onOpenResource} onOpenChat={onOpenChat} />
         )}

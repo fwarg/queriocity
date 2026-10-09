@@ -19,6 +19,8 @@ interface UseChatOptions {
   sessionId: string | undefined
   focusMode: 'flash' | 'balanced' | 'thorough' | 'image'
   searchCategories?: Array<'news' | 'science' | 'discussions' | 'tech'>
+  /** Answer from the user's own notes before the web. */
+  notesFirst?: boolean
   includeFileIds?: string[]
   collectionIds?: string[]
   includeMemoryIds?: string[]
@@ -35,7 +37,7 @@ function withStoredId(messages: Message[], id: string | undefined): Message[] {
   return [...messages.slice(0, -1), { ...last, id }]
 }
 
-export function useChat({ sessionId, focusMode, searchCategories, includeFileIds, includeMemoryIds, collectionIds, spaceId, followUpSuggestions = true, onSessionCreated }: UseChatOptions) {
+export function useChat({ sessionId, focusMode, searchCategories, notesFirst, includeFileIds, includeMemoryIds, collectionIds, spaceId, followUpSuggestions = true, onSessionCreated }: UseChatOptions) {
   const t = useT()
   const [messages, setMessages] = useState<Message[]>([])
   const [streaming, setStreaming] = useState('')
@@ -129,7 +131,7 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
     let storedIds: { user?: string; assistant?: string } = {}
 
     try {
-      for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId, undefined, searchCategories, includeFileIds, includeMemoryIds, collectionIds, regenerating)) {
+      for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId, undefined, searchCategories, includeFileIds, includeMemoryIds, collectionIds, regenerating, notesFirst)) {
         if (chunk.type === 'text') {
           accumulated += chunk.delta as string
           cancelAnimationFrame(rafRef.current)

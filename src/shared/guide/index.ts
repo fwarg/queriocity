@@ -24,13 +24,13 @@ export type Guide = { [K in TopicId]: Topic }
 /** The order the topic list is read in: what the app is, then what you do with it, then the
  *  things you reach for later. Object key order would work until someone sorted the file. */
 export const TOPIC_ORDER: readonly TopicId[] = [
-  'gettingStarted', 'modes', 'sources', 'resources', 'notes', 'spaces',
+  'gettingStarted', 'modes', 'sources', 'resources', 'notes', 'explore', 'spaces',
   'collections', 'monitors', 'templates', 'images', 'privacy', 'settings',
 ]
 
 /** Where a topic's "Open …" button can send you — the sidebar views, plus the settings modal.
  *  'chat' is deliberately absent: sending someone to the chat they are already in helps nobody. */
-export type GuideTarget = 'chats' | 'files' | 'spaces' | 'monitors' | 'settings'
+export type GuideTarget = 'chats' | 'files' | 'spaces' | 'explore' | 'monitors' | 'settings'
 
 /** Kept out of the catalogs deliberately: a destination is not translatable copy, and a
  *  translator editing one cannot break navigation. */
@@ -38,6 +38,7 @@ export const TOPIC_TARGET: Partial<Record<TopicId, GuideTarget>> = {
   gettingStarted: 'chats',
   resources: 'files',
   notes: 'files',
+  explore: 'explore',
   spaces: 'spaces',
   collections: 'spaces',
   monitors: 'monitors',

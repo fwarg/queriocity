@@ -581,6 +581,12 @@ function initSchema() {
   )`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_resource_links_src ON resource_links(src_id)`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_resource_links_dst ON resource_links(dst_id)`)
+  // Suggested links the user turned down, so the same pair is not proposed again.
+  sqlite.run(`CREATE TABLE IF NOT EXISTS link_dismissals (
+    src_id TEXT NOT NULL REFERENCES uploaded_files(id) ON DELETE CASCADE,
+    dst_id TEXT NOT NULL REFERENCES uploaded_files(id) ON DELETE CASCADE,
+    PRIMARY KEY (src_id, dst_id)
+  )`)
   try { sqlite.run('ALTER TABLE messages ADD COLUMN file_sources TEXT') } catch {}
   try { sqlite.run('ALTER TABLE messages ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0') } catch {}
   try { sqlite.run('ALTER TABLE chat_sessions ADD COLUMN context_report TEXT') } catch {}

@@ -59,7 +59,7 @@ interface Props {
   openId: string | null
   onOpenIdChange: (id: string | null) => void
   /** Open the chat a note was saved from. */
-  onOpenChat: (id: string, title: string) => void
+  onOpenChat: (id: string, title: string, messageId?: string) => void
   /** Filter to start from, when another view (Explore) opens the library on a tag. */
   initialFilter?: Partial<ResourceFilter>
 }
@@ -87,7 +87,7 @@ export function ResourcesView({ resources, onChanged, openId, onOpenIdChange, on
   const shown = resources.filter(r => matchesFilter(r, filter))
 
   if (openId) {
-    return <ResourceDetail id={openId} onBack={() => onOpenIdChange(null)} onChanged={onChanged} onOpen={onOpenIdChange} onOpenChat={onOpenChat} />
+    return <ResourceDetail id={openId} onBack={() => onOpenIdChange(null)} onChanged={onChanged} onOpen={onOpenIdChange} onOpenChat={onOpenChat} onTag={tag => { setFilter({ ...EMPTY_FILTER, tag }); onOpenIdChange(null) }} />
   }
 
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {

@@ -35,6 +35,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   const [limits, setLimits] = useState<{ smallModelInputChars: number; embedInputChars: number; scrapeMaxChars: number; minUrlContextChars: number } | null>(null)
   const [attachmentCharsDraft, setAttachmentCharsDraft] = useState('20000')
   const [spaceRagBudgetDraft, setSpaceRagBudgetDraft] = useState('500')
+  const [notesRagBudgetDraft, setNotesRagBudgetDraft] = useState('1500')
   const [userMemoryBudgetDraft, setUserMemoryBudgetDraft] = useState('300')
   const [queryReformulationDraft, setQueryReformulationDraft] = useState(true)
   const [rssFeedCharsBudgetDraft, setRssFeedCharsBudgetDraft] = useState('50000')
@@ -79,6 +80,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
       setLimits(s.limits)
       setAttachmentCharsDraft(String(s.attachmentChars))
       setSpaceRagBudgetDraft(String(s.spaceRagBudget))
+      setNotesRagBudgetDraft(String(s.notesRagBudget))
       setUserMemoryBudgetDraft(String(s.userMemoryTokenBudget))
       setQueryReformulationDraft(s.queryReformulation)
       setRssFeedCharsBudgetDraft(String(s.rssFeedCharsBudget))
@@ -110,6 +112,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     const relatedMinRelevance = parseFloat(relatedMinRelevanceDraft)
     const attachmentChars = parseInt(attachmentCharsDraft)
     const spaceRagBudget = parseInt(spaceRagBudgetDraft)
+    const notesRagBudget = parseInt(notesRagBudgetDraft)
     const userMemoryTokenBudget = parseInt(userMemoryBudgetDraft)
     const rssFeedCharsBudget = parseInt(rssFeedCharsBudgetDraft)
     const fetchMaxPages = parseInt(fetchMaxPagesDraft)
@@ -127,6 +130,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     if (isNaN(relatedMinRelevance) || relatedMinRelevance < 0 || relatedMinRelevance > 1) return
     if (isNaN(attachmentChars) || attachmentChars < 1000) return
     if (isNaN(spaceRagBudget) || spaceRagBudget < 0) return
+    if (isNaN(notesRagBudget) || notesRagBudget < 0) return
     if (isNaN(userMemoryTokenBudget) || userMemoryTokenBudget < 0) return
     if (isNaN(rssFeedCharsBudget) || rssFeedCharsBudget < 5000) return
     if (isNaN(fetchMaxPages) || fetchMaxPages < 0) return
@@ -137,7 +141,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     setError('')
     setSavingBudget(true)
     try {
-      await updateAdminSettings({ memoryTokenBudget: budget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, ragTopK, ragMinRelevance, relatedMinSimilarity, relatedMinRelevance, attachmentChars, spaceRagBudget, queryReformulation: queryReformulationDraft, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow: fetchSummarizeOverflowDraft, compressHistoryOverflow: compressHistoryOverflowDraft, resourceSummary: resourceSummaryDraft })
+      await updateAdminSettings({ memoryTokenBudget: budget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, ragTopK, ragMinRelevance, relatedMinSimilarity, relatedMinRelevance, attachmentChars, spaceRagBudget, notesRagBudget, queryReformulation: queryReformulationDraft, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow: fetchSummarizeOverflowDraft, compressHistoryOverflow: compressHistoryOverflowDraft, resourceSummary: resourceSummaryDraft })
 
       onBudgetChange?.(budget)
       setBudgetSaved(true)
@@ -348,6 +352,11 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                 <p className="text-xs text-gray-500">Extra tokens injected via semantic search: relevant past memories not in the fixed block, plus excerpts from files tagged to the space. Set to 0 to disable. Memory RAG is prioritised over file excerpts.</p>
                 <input type="number" min={0} max={10000} step={100} value={spaceRagBudgetDraft}
                   onChange={e => setSpaceRagBudgetDraft(e.target.value)}
+                  className="w-32 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
+                <p className="text-xs text-gray-400 font-medium mt-2">Notes-first budget (tokens)</p>
+                <p className="text-xs text-gray-500">Tokens of the user&apos;s own notes (and the notes they link with) injected when a question is sent with <em>Notes first</em>. Larger than the RAG budget: there the notes are what the answer rests on.</p>
+                <input type="number" min={0} max={10000} step={100} value={notesRagBudgetDraft}
+                  onChange={e => setNotesRagBudgetDraft(e.target.value)}
                   className="w-32 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
                 <p className="text-xs text-gray-500 mt-1">Re-index all chat sessions across all users. Run this after changing embedding models or dimensions.</p>
                 <button onClick={handleReindexChats} disabled={reindexing}

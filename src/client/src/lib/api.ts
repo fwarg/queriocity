@@ -79,6 +79,8 @@ export interface Message {
   images?: Array<{ url: string; alt: string }>
   /** Kept in full when the conversation outgrows the model's context. */
   pinned?: boolean
+  /** Notes saved from this answer. */
+  savedNotes?: Array<{ id: string; title: string }>
 }
 
 // Auth — cookies are sent automatically by the browser
@@ -219,6 +221,7 @@ export async function* streamChat(
   includeMemoryIds?: string[],
   collectionIds?: string[],
   regenerate?: boolean,
+  notesFirst?: boolean,
 ): AsyncGenerator<{ type: string; [k: string]: unknown }> {
   const res = await fetch(`${BASE}/chat`, {
     method: 'POST',
@@ -240,6 +243,7 @@ export async function* streamChat(
       ...(includeMemoryIds?.length ? { includeMemoryIds } : {}),
       ...(collectionIds?.length ? { collectionIds } : {}),
       ...(regenerate ? { regenerate: true } : {}),
+      ...(notesFirst ? { notesFirst: true } : {}),
     }),
     signal,
   })
@@ -374,12 +378,12 @@ function parseContext(raw: string | null | undefined): ContextReport | null {
 
 function toMessages(messages: unknown): Message[] {
   const FIRST_PNG_RE = /!\[([^\]]*)\]\(([^)]+\.png)\)/
-  return (messages as Array<{ id: string; role: 'user' | 'assistant'; content: string; sources?: string; fileSources?: string; pinned?: boolean }>).map(m => {
+  return (messages as Array<{ id: string; role: 'user' | 'assistant'; content: string; sources?: string; fileSources?: string; pinned?: boolean; savedNotes?: Array<{ id: string; title: string }> }>).map(m => {
     const sources = m.sources ? JSON.parse(m.sources) : undefined
     const fileSources = m.fileSources ? JSON.parse(m.fileSources) : undefined
     if (m.role === 'assistant') {
       const match = FIRST_PNG_RE.exec(m.content)
-      return { id: m.id, role: m.role, content: m.content, sources, fileSources, pinned: m.pinned, images: match ? [{ alt: match[1], url: match[2] }] : undefined }
+      return { id: m.id, role: m.role, content: m.content, sources, fileSources, pinned: m.pinned, savedNotes: m.savedNotes?.length ? m.savedNotes : undefined, images: match ? [{ alt: match[1], url: match[2] }] : undefined }
     }
     return { id: m.id, role: m.role, content: m.content, sources, fileSources, pinned: m.pinned }
   })
@@ -544,11 +548,11 @@ export async function ingestUrl(url: string): Promise<{ fileId: string; filename
   return res.json()
 }
 
-export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; userMemoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; ragTopK: number; ragMinRelevance: number; relatedMinSimilarity: number; relatedMinRelevance: number; rerankEnabled: boolean; attachmentChars: number; spaceRagBudget: number; queryReformulation: boolean; rssFeedCharsBudget: number; fetchMaxPages: number; fetchMaxUrlContextChars: number; fetchSummarizeOverflow: boolean; compressHistoryOverflow: boolean; resourceSummary: boolean; limits: { smallModelInputChars: number; embedInputChars: number; scrapeMaxChars: number; minUrlContextChars: number } }> {
+export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; userMemoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; ragTopK: number; ragMinRelevance: number; relatedMinSimilarity: number; relatedMinRelevance: number; rerankEnabled: boolean; attachmentChars: number; spaceRagBudget: number; notesRagBudget: number; queryReformulation: boolean; rssFeedCharsBudget: number; fetchMaxPages: number; fetchMaxUrlContextChars: number; fetchSummarizeOverflow: boolean; compressHistoryOverflow: boolean; resourceSummary: boolean; limits: { smallModelInputChars: number; embedInputChars: number; scrapeMaxChars: number; minUrlContextChars: number } }> {
   return fetch(`${BASE}/admin/settings`).then(r => r.json())
 }
 
-export async function updateAdminSettings(s: { memoryTokenBudget?: number; userMemoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; dreamDeep?: boolean; memoryExtractChars?: number; rerankTopN?: number; ragTopK?: number; ragMinRelevance?: number; relatedMinSimilarity?: number; relatedMinRelevance?: number; attachmentChars?: number; spaceRagBudget?: number; queryReformulation?: boolean; rssFeedCharsBudget?: number; fetchMaxPages?: number; fetchMaxUrlContextChars?: number; fetchSummarizeOverflow?: boolean; compressHistoryOverflow?: boolean; resourceSummary?: boolean }): Promise<void> {
+export async function updateAdminSettings(s: { memoryTokenBudget?: number; userMemoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; dreamDeep?: boolean; memoryExtractChars?: number; rerankTopN?: number; ragTopK?: number; ragMinRelevance?: number; relatedMinSimilarity?: number; relatedMinRelevance?: number; attachmentChars?: number; spaceRagBudget?: number; notesRagBudget?: number; queryReformulation?: boolean; rssFeedCharsBudget?: number; fetchMaxPages?: number; fetchMaxUrlContextChars?: number; fetchSummarizeOverflow?: boolean; compressHistoryOverflow?: boolean; resourceSummary?: boolean }): Promise<void> {
   await fetch(`${BASE}/admin/settings`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -957,6 +961,39 @@ export async function fetchGraph(id: string, depth: 1 | 2): Promise<{ nodes: Gra
   const res = await fetch(`${BASE}/files/${id}/graph?depth=${depth}`)
   if (!res.ok) throw await apiError(res, 'Could not load connections')
   return res.json()
+}
+
+export interface LinkSuggestion {
+  targetId: string
+  title: string
+  /** Text in the note to link from; null means the link goes under See also. */
+  phrase: string | null
+  reason: string
+}
+
+/** Links the small model proposes for a note, from its similar resources. */
+export async function fetchLinkSuggestions(noteId: string): Promise<LinkSuggestion[]> {
+  const res = await fetch(`${BASE}/files/${noteId}/link-suggestions`)
+  if (!res.ok) throw await apiError(res, 'Could not suggest links')
+  return res.json()
+}
+
+export async function acceptLinkSuggestion(noteId: string, s: LinkSuggestion, heading: string): Promise<void> {
+  const res = await fetch(`${BASE}/files/${noteId}/link-suggestions/accept`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ targetId: s.targetId, phrase: s.phrase, heading }),
+  })
+  if (!res.ok) throw await apiError(res, 'Could not add the link')
+}
+
+export async function dismissLinkSuggestion(noteId: string, targetId: string): Promise<void> {
+  const res = await fetch(`${BASE}/files/${noteId}/link-suggestions/dismiss`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ targetId }),
+  })
+  if (!res.ok) throw await apiError(res, 'Could not dismiss the suggestion')
 }
 
 export interface LibraryGraphNode extends GraphNode {

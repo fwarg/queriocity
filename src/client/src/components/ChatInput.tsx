@@ -25,6 +25,10 @@ interface Props {
   collections: Array<{ id: string; name: string }>
   selectedCollections: string[]
   onCollectionsChange: (ids: string[]) => void
+  /** "Notes first": answer from the user's own notes before the web. Offered once they have notes. */
+  notesAvailable?: boolean
+  notesFirst?: boolean
+  onNotesFirstChange?: (on: boolean) => void
   /** The chat's space is locked: no web search, URL fetching or image generation. Advisory only —
    *  the server enforces it — but the controls should not offer what will be refused. */
   lockedSpace?: boolean
@@ -61,7 +65,7 @@ const CATEGORY_LABEL_KEYS: Record<SearchCategory, TranslationKey> = {
   tech: 'category.tech',
 }
 
-export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, collections, selectedCollections, onCollectionsChange, suggestionsEnabled, lockedSpace = false, related = [], onRelatedSelect }: Props) {
+export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, collections, selectedCollections, onCollectionsChange, notesAvailable = false, notesFirst = false, onNotesFirstChange, suggestionsEnabled, lockedSpace = false, related = [], onRelatedSelect }: Props) {
   const t = useT()
   const [value, setValue] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
@@ -108,9 +112,11 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
   // local and offered everywhere. Either alone is enough to show the picker, which then renders
   // whichever groups apply — the trigger names what is currently in force.
   const categoriesAvailable = !lockedSpace && (focusMode === 'balanced' || focusMode === 'thorough')
-  const sourcesPicker = categoriesAvailable || collections.length > 0
-  const sourcesActive = searchCategories.length > 0 || selectedCollections.length > 0
+  const notesOffered = notesAvailable && focusMode !== 'image' && !!onNotesFirstChange
+  const sourcesPicker = categoriesAvailable || collections.length > 0 || notesOffered
+  const sourcesActive = searchCategories.length > 0 || selectedCollections.length > 0 || (notesOffered && notesFirst)
   const pickedNames = [
+    ...(notesOffered && notesFirst ? [t('notesFirst.label')] : []),
     ...(categoriesAvailable && searchCategories.length > 0 ? [searchCategories.map(c => t(CATEGORY_LABEL_KEYS[c])).join('+')] : []),
     ...collections.filter(c => selectedCollections.includes(c.id)).map(c => c.name),
   ]
@@ -291,6 +297,20 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
                   {t(CATEGORY_LABEL_KEYS[cat])}
                 </button>
               ))}
+            </div>
+          )}
+          {notesOffered && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-xs text-gray-500 mr-0.5">{t('notesFirst.group')}</span>
+              <button
+                type="button"
+                aria-pressed={notesFirst}
+                title={t('notesFirst.title')}
+                onClick={() => onNotesFirstChange?.(!notesFirst)}
+                className={`px-2 py-0.5 rounded text-xs ${notesFirst ? 'bg-emerald-700 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'}`}
+              >
+                {t('notesFirst.label')}
+              </button>
             </div>
           )}
           {collections.length > 0 && (

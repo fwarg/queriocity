@@ -452,6 +452,14 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
           </div>
           <div className="border-t border-gray-800" />
           <div className="flex flex-col gap-2">
+            <label className="text-xs text-gray-400 font-medium">{t('settings.export')}</label>
+            <p className="text-xs text-gray-500">{t('settings.exportDesc')}</p>
+            <a href="/api/files/export/obsidian" download className="self-start px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-200 hover:border-gray-500">
+              {t('settings.exportVault')}
+            </a>
+          </div>
+          <div className="border-t border-gray-800" />
+          <div className="flex flex-col gap-2">
             <label className="text-xs text-gray-400 font-medium">{t('settings.password')}</label>
             <p className="text-xs text-gray-500">{t('settings.passwordDesc')}</p>
             <input

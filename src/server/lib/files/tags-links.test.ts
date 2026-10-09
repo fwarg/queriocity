@@ -48,6 +48,15 @@ describe('normaliseTag', () => {
   })
 })
 
+describe('inline tags', () => {
+  test('#tags in a note join its tag field, alongside the field\'s own', async () => {
+    const id = await note(ME, 'Inline', 'About #ml/rag here.', { tags: ['reading'] })
+    expect(resourceTagList(id)).toEqual(['ml/rag', 'reading'])
+    await saveNote(ME, { id, title: 'Inline', body: 'About #ml/rag and #bees now.' })
+    expect(resourceTagList(id)).toEqual(['bees', 'ml/rag', 'reading'])
+  })
+})
+
 describe('tags', () => {
   test('are set per resource, deduplicated, and unused ones disappear', async () => {
     const id = await note(ME, 'A')

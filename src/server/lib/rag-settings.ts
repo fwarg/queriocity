@@ -40,3 +40,11 @@ export const relatedMinRelevance = async (): Promise<number> => {
   const v = parseFloat(await getAppSetting('related_min_relevance', String(DEFAULT_RELATED_MIN_RELEVANCE)))
   return Number.isNaN(v) ? DEFAULT_RELATED_MIN_RELEVANCE : v
 }
+
+/** Token budget for the "Notes first" block. Larger than the space RAG budget: there the notes are
+ *  one source among several, here they are what the answer is meant to rest on. */
+export const DEFAULT_NOTES_RAG_BUDGET = 1500
+export const notesRagBudget = async (): Promise<number> => {
+  const v = parseInt(await getAppSetting('notes_rag_budget', String(DEFAULT_NOTES_RAG_BUDGET)), 10)
+  return Number.isNaN(v) ? DEFAULT_NOTES_RAG_BUDGET : v
+}

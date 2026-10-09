@@ -9,6 +9,7 @@
   console.error = (...a) => _error(`[${ts()}]`, ...a)
 })()
 
+import { backfillNoteOrigins } from './lib/files/note-origin.ts'
 import { Hono } from 'hono'
 import { authMiddleware, type AppEnv } from './middleware/auth.ts'
 import { cors } from 'hono/cors'
@@ -207,6 +208,8 @@ async function rebuildEmbeddings(): Promise<void> {
   await reindexNotes()
   // Re-indexes the notes it rewrites, so it runs here, after the embedding state is sound.
   await simplifyNoteCitations()
+  // After the citation rewrite, so old notes compare in the same form as their answers.
+  await backfillNoteOrigins()
 }
 
 preflight().catch(() => {})

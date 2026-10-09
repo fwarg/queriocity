@@ -19,6 +19,7 @@ through a single Bun process.
   - [What is Queriocity](#what-is-queriocity)
   - [Chats](#chats)
     - [Text-to-speech](#text-to-speech)
+    - [Math](#math)
     - [Retrying an answer](#retrying-an-answer)
     - [Follow-up suggestions](#follow-up-suggestions)
     - [Exporting a chat](#exporting-a-chat)
@@ -27,6 +28,7 @@ through a single Bun process.
     - [Searching within a chat](#searching-within-a-chat)
     - [Long chats: context and pinning](#long-chats-context-and-pinning)
   - [Research modes](#research-modes)
+    - [Notes first](#notes-first)
     - [Search category filtering](#search-category-filtering)
     - [spejaren (small-web index)](#spejaren-small-web-index)
     - [Search providers](#search-providers)
@@ -36,6 +38,7 @@ through a single Bun process.
     - [URL and YouTube ingestion](#url-and-youtube-ingestion)
     - [Notes](#notes)
     - [Links and tags](#links-and-tags)
+    - [Explore](#explore)
     - [Finding things in a large library](#finding-things-in-a-large-library)
     - [Resource detail and transforms](#resource-detail-and-transforms)
     - [Changing the embedding model](#changing-the-embedding-model)
@@ -81,6 +84,7 @@ Queriocity is a private research assistant you run on your own hardware. It is d
 - **Research questions** — ask anything and get a cited answer backed by live web search
 - **Document Q&A** — attach PDFs, images, or text files and interrogate them in conversation
 - **Persistent knowledge base** — upload documents to your library so the assistant can draw on them across many conversations
+- **Linked notes** — save answers as notes, link them Zettelkasten-style with tags and `[[wikilinks]]` (the assistant can suggest the links), browse them as a tag tree and graph, ask questions of them first, and export everything as an Obsidian vault
 - **Contextual workspaces** — group related chats into spaces with shared memory and file references
 - **An assistant that remembers** — spaces accumulate facts from your conversations and recall the ones relevant to each question; optionally, a short personal profile applies across every chat
 
@@ -97,6 +101,14 @@ The **chat input bar** at the bottom can also be collapsed to give the full view
 Every assistant message has a small **speaker icon** (🔊) in its bottom-right corner. Click it to have the response read aloud using the browser's built-in Web Speech API. The icon turns blue and switches to a stop icon (🔇) while speaking; click again to stop. Starting a new message automatically cancels the previous one. Markdown syntax, code blocks, and citation markers are stripped before reading.
 
 The **Chats** view lists all your conversations with infinite scroll. Use the **Active / Created** toggle in the top-right to sort by most recently active or by creation date.
+
+### Math
+
+Answers and notes render LaTeX math with KaTeX: `$…$` or `\(…\)` inline, `$$…$$` or `\[…\]` as a
+display block (models emit both styles; the backslash forms are converted before rendering). A `$`
+followed by a digit is treated as money unless the same line closes it as math — `costs $5 and $10`
+stays text, while `$0.98$` or `$30^\circ$` render as math. Code spans and blocks are never touched.
+Rendering happens on display, so an older answer benefits from a fix without being regenerated.
 
 ### Retrying an answer
 
@@ -259,6 +271,16 @@ writer pass as well as the researcher, so an instruction like "always answer in 
 - If `RERANK_MODEL` is configured, accumulated sources are reranked by relevance and pruned to **Top N** before the writer pass, improving synthesis quality
 - The sources handed to the writer are fitted to the context budget (`CONTEXT_TOKEN_LIMIT`): each is trimmed to an equal share, and the lowest-ranked are dropped rather than clipping every source below the length that can support a citation
 
+### Notes first
+
+**Notes first**, in the sources picker under the input (shown once you have notes; remembered),
+asks for an answer from your own notes before the web — "ask your Zettelkasten". The notes most
+relevant to the question are retrieved, plus the opening of each note they link to or are linked
+from, and cited as `[N1]`, `[N2]`… In Balanced and Thorough the initial web search is skipped when
+the notes hold anything relevant; the researcher can still search for what they don't cover and is
+told to say which parts come from the notes. Flash answers from the notes alone. Budget: Admin →
+Settings → *Notes-first budget*.
+
 ### Search category filtering
 
 In **Balanced** and **Thorough** modes, an **All ▾** button appears at the right end of the mode row. Click it to restrict search to one or more topic categories:
@@ -388,8 +410,9 @@ Three ways to make one:
   wherever the list already held the URL.
 - **Transform a resource.** See below.
 
-A note reaches a conversation two ways: as retrieved excerpts, like any other resource, and in full
-by picking it from the notebook icon beside the paperclip in the chat input. Only notes can be
+A note reaches a conversation three ways: as retrieved excerpts, like any other resource; in full
+by picking it from the notebook icon beside the paperclip in the chat input; and with
+[Notes first](#notes-first), which answers from your notes and the notes they link with before the web. Only notes can be
 attached that way — a file's text is stored solely as overlapping excerpts, so injecting it would
 repeat passages; the paperclip already covers sending a document whole.
 
@@ -405,16 +428,29 @@ Notes can link to each other, Zettelkasten-style, and any resource can carry tag
   never parsed as links.
 - **Backlinks.** A resource's detail view lists what it **links to** and what is **linked from** it.
 - **Chat of origin.** A note saved from an answer remembers its chat and shows **Saved from chat**,
-  which opens that conversation. If the chat is deleted the note stays and the link disappears.
+  which opens that conversation scrolled to the answer, briefly outlined. The answer in turn shows
+  **Saved as note:** with a link to each note made from it. If the chat is deleted the note stays and
+  the link disappears. Notes saved before this was recorded are linked to their chat once, at
+  startup, when their opening text matches exactly one of your answers.
 - **Tags.** Hierarchical, lowercase, `/`-separated (`#ml/rag`), on any resource, set in the detail
   view or the note editor. The small model's topics are offered as **suggested** tags, one tap to
   adopt — they are no longer applied automatically, and your tags are never overwritten when a note
   is re-summarised. A tag disappears once nothing carries it.
-
+- **Inline tags.** `#tag` or `#tag/sub` written in a note's text is added to its tags on save and
+  shown as a tappable tag (opening the library filtered on it). Removing it from the text leaves the
+  tag on the note — the tag field is what counts; remove it there. Headings (`# Title`), `#12`,
+  `page#anchor` and code are not tags.
 - **Connections.** A small diagram in the detail view of the resource's explicit neighbourhood, one
   or two steps out: links both ways (solid), notes made from it (dashed) and the chat a note was saved
   from (dotted) — a chat ties together every note saved from it. Tap a node to open it. Laid out once,
-  not animated, so it stays light on a phone; capped at 40 nodes.
+  not animated, so it stays light on a phone; full width at a fixed height; capped at 40 nodes.
+- **Suggested links.** **Suggest links** under a note's Links asks the small model which of its
+  similar resources (the ones *Similar content* would show) the note should link to, and from which
+  phrase in the note. **✓** writes the link — the phrase becomes `[[Title|phrase]]`, or the link goes
+  under **See also** when no phrase fits; **✕** dismisses it for good. **Explore → Link notes** does
+  the same for many notes in a row (notes without links, or all), skipping notes with nothing to
+  suggest — the way to organise a backlog of notes saved from chats. Without a working small model
+  the similar resources are offered as See-also suggestions.
 - **Similar content.** Up to six resources closest in content, found from the vectors already stored
   for retrieval. With a reranker configured (`RERANK_MODEL`), it then judges the twelve nearest by
   title and summary, and only those reaching a minimum relevance are shown (Admin → Settings,
@@ -428,7 +464,14 @@ Notes can link to each other, Zettelkasten-style, and any resource can carry tag
   instead), and tags that two or more similar resources share can be adopted with a tap. Already
   connected ones say **Linked**.
 
-**Explore** (in the sidebar) gives the overview the library filter can't:
+Tags organise and filter; they deliberately have **no effect on retrieval**, so you can tag freely
+without changing what the model sees. That keeps the three groupings distinct: a **space** is where
+you work (chats, memory, lock), a **collection** is a shelf you attach to a chat as context, and a
+**tag** says what something is about.
+
+### Explore
+
+**Explore** in the sidebar is the overview of how the library is organised, in three tabs:
 
 - **Tags** — every tag as a collapsible tree with counts (`3 · 12 incl. sub-tags`: carried directly,
   and by anything under it). Tap a tag to open the library filtered on it; the **⋯** menu renames
@@ -437,14 +480,15 @@ Notes can link to each other, Zettelkasten-style, and any resource can carry tag
 - **Graph** — the whole library's explicit connections (the same edges as Connections), filtered by
   tag subtree, space or collection, optionally with the chats notes were saved from. Nodes are
   coloured by top-level tag; resources with no connection are left out (the tag tree finds them).
-  Drag to pan, zoom with the buttons or the wheel, tap a node to open it. Capped at the 300
-  best-connected nodes, with a note when more were left out; labels appear once zoomed in on a
-  large graph.
-
-Tags organise and filter; they deliberately have **no effect on retrieval**, so you can tag freely
-without changing what the model sees. That keeps the three groupings distinct: a **space** is where
-you work (chats, memory, lock), a **collection** is a shelf you attach to a chat as context, and a
-**tag** says what something is about.
+  The drawing fills the screen and is laid out for its actual size, so a large monitor spreads the
+  nodes out rather than magnifying them. Drag to pan, zoom with the buttons or the wheel, tap a node
+  to open it. Capped at the 300 best-connected nodes, with a note when more were left out; labels
+  show from the start when there is room for them, otherwise once zoomed in.
+- **Link notes** — goes through notes one at a time with their [suggested links](#links-and-tags):
+  notes without links, or all notes. Accept or dismiss each; a note with nothing to suggest is
+  skipped. The queue is fixed when started, so accepting links does not reshuffle it. Each note costs
+  one small-model call (and a reranker call, if configured), so a first round over a large backlog
+  takes a while.
 
 ### Finding things in a large library
 
@@ -474,29 +518,33 @@ other grouping.
 
 ### Resource detail and transforms
 
-Click any resource to open it. The detail view shows:
+Click any resource to open it. The detail view shows, top to bottom:
 
-- The **summary** generated at ingest by the small model, which also appears in the list —
-  what makes a library of two hundred documents readable at a glance. Administrators can turn the
-  generation off (Admin > System settings); it is best-effort either way, and a resource whose
-  summary failed works normally without one.
-- Its **tags**, editable in place, with the small model's topics offered as suggestions; and its
-  **links** — what it links to, what links to it, and for a note saved from an answer, the chat it
-  came from. See [Links and tags](#links-and-tags).
-- Which **spaces and collections** the resource is in.
-- **From** — where the resource came from: the full URL for an ingested page, shown as a link, or the
-  original filename for an upload. Recorded once at ingest and never edited, so it survives any
-  renaming below. This is what makes an ingested page traceable at all: the title is derived from the
-  URL and drops the scheme, so it was never something you could follow back.
 - The **title**, which the ✎ beside it renames — for uploaded files and ingested URLs as much as for
   notes. A file arrives named by whoever made it (`report_final_v3.pdf`) and a URL by its address, and
   neither is reliably descriptive. This name is also the label every retrieval citation carries, so
   renaming makes later answers say what the source actually is. Answers already given keep the name
   they cited at the time, and nothing is re-indexed — the excerpts describe content a rename leaves
   alone.
-- The **indexed excerpts**, in order. This is what retrieval actually sees, which is the thing worth
-  checking when a PDF or a YouTube transcript has extracted badly. They overlap by design, so text
-  repeats where two excerpts meet.
+- **From** — where the resource came from: the full URL for an ingested page, shown as a link, or the
+  original filename for an upload. Recorded once at ingest and never edited, so it survives any
+  renaming. For a note saved from an answer, **Saved from chat** instead, opening the chat at that
+  answer.
+- The **summary** generated at ingest by the small model, which also appears in the list —
+  what makes a library of two hundred documents readable at a glance. Administrators can turn the
+  generation off (Admin > System settings); it is best-effort either way, and a resource whose
+  summary failed works normally without one.
+- Its **tags**, editable in place, with the small model's topics offered as suggestions.
+- For a note, its **text**, rendered with citations, `[[links]]` and `#tags` you can tap.
+- Its **links** — what it links to and what links to it, *Created from* / *Notes made from this* for
+  transforms, and for a note **Suggest links**. See [Links and tags](#links-and-tags).
+- **Connections**, the small graph of its explicit neighbourhood.
+- Which **spaces and collections** the resource is in.
+- **Similar content**, with one-tap links and tag hints.
+- **Transform** (below).
+- The **indexed excerpts**, folded away by default: what retrieval actually sees, worth opening
+  when a PDF or a YouTube transcript has extracted badly. They overlap by design, so text repeats
+  where two excerpts meet.
 
 **Transform** runs a prompt over the resource and offers the result for saving as a new note. Four
 built-in operations — *Summarize*, *Key points*, *Open questions*, *Outline* — plus any of your own
@@ -709,6 +757,7 @@ Open **Settings** from the bottom of the sidebar. Settings are saved per user.
 | **Language** | Interface language, with a flag selector. Also offered on the sign-up form, so a new account starts in the right language. Signed out, the login page follows your browser's language (or your last choice on this device). This changes the interface only — the assistant still answers in whatever language you write in. See [Languages](#languages). |
 | **Font size** | UI font size: Small (15 px), Normal (17 px), Large (19 px), XL (21 px). Sizes scale up automatically on narrow viewports. |
 | **Timezone** | IANA timezone (e.g. `Europe/Stockholm`) used when scheduling monitors at a specific hour of the day. Defaults to server time (UTC in Docker) if not set. |
+| **Export** | **Download vault (.zip)**: your notes and resources as an Obsidian vault. One markdown file per item named by its title, so `[[links]]` resolve (titles with characters a file name can't hold are renamed, links rewritten to match and the original kept as an alias); `Notes/` and `Resources/` folders; tags, spaces and collections, dates, source URL, "made from" and the chat a note was saved from in YAML frontmatter. Uploaded files and pages are included as their extracted text. |
 | **Password** | Change your password. Requires the current one; the new one needs 8+ characters with upper and lower case, a digit and a symbol. Changing it signs out your other devices but keeps the current session. |
 
 ### Languages
@@ -760,7 +809,7 @@ build time and cannot follow the reader's language — they match the English `a
 ## In-app guide
 
 Most of what is on this page is also in the app, shorter. **Guide**, above Settings at the bottom of
-the sidebar, opens a panel of twelve topics — one per feature — that can be read in any order and
+the sidebar, opens a panel of thirteen topics — one per feature — that can be read in any order and
 searched. Each topic that has somewhere to go ends with a button that takes you there.
 
 The same guide is reachable from where a question actually arises: the ⓘ beside a view's heading
@@ -1282,7 +1331,7 @@ JWT_SECRET=change-me-in-production-32chars!!
 # The small model receives recent conversation history so it can resolve
 # pronouns and follow-up references ("it", "that company", etc.) when
 # rewriting queries. These caps bound how much history is injected, keeping
-# the small model's context short for latency. (~4 chars ≈ 1 token)
+# the small model's context short for latency. (CHARS_PER_TOKEN chars ≈ 1 token, default 4)
 REFORMULATE_USER_CTX=400                  # max chars of prior user turns
 REFORMULATE_ASSISTANT_CTX=1000            # max chars of prior assistant turns
 
@@ -1293,7 +1342,8 @@ REFORMULATE_ASSISTANT_CTX=1000            # max chars of prior assistant turns
 #    long conversation can never leave the agentic loop with no room left to search/fetch;
 #  - conversation history is trimmed (or, if "Compress dropped history" is enabled in
 #    Admin → System settings, summarized by the small model and folded into the system
-#    prompt instead of discarded) to fit what's left of the budget after that floor is
+#    prompt instead of discarded; the summary is stored per chat and extended turn by
+#    turn) to fit what's left of the budget after that floor is
 #    set aside;
 #  - the per-URL context cap for pasted URLs is derived from what's left of the 80%
 #    budget after the system prompt and history (see FETCH_MAX_URL_CONTEXT_CHARS);
@@ -1303,7 +1353,7 @@ REFORMULATE_ASSISTANT_CTX=1000            # max chars of prior assistant turns
 #    grow past the model's real context window — regardless of how many
 #    searches/fetches the model attempts or how high FETCH_MAX_CHARS is set.
 # ⚠ Default is 8192 — set to your actual model context or history will be
-# over-trimmed. (~4 chars ≈ 1 token)
+# over-trimmed. (Converted to characters with CHARS_PER_TOKEN, default 4.)
 # CONTEXT_TOKEN_LIMIT=32768               # ⚠ default: 8192 (too small for most modern models)
 
 # Fraction of the input budget (CONTEXT_TOKEN_LIMIT × 0.8) reserved for agentic tool
@@ -1733,6 +1783,11 @@ RERANK_BASE_URL=http://localhost:8000/v1   # via LiteLLM
 RERANK_MODEL=my-reranker-model
 ```
 
+Rerankers that return probabilities and ones that return raw logits (e.g. BGE reranker v2 on
+llama.cpp) both work: logits are detected and normalised to 0–1, so the relevance thresholds in
+Admin → Settings mean the same either way. To see where your reranker puts related and unrelated
+resources, use **Admin → Similarity**.
+
 ---
 
 # Admin guide
@@ -1776,6 +1831,7 @@ The **Admin panel > System settings** tab exposes runtime-configurable parameter
 | Search | RSS feed character budget | 50000 | Total characters of news content fetched per monitor run when RSS sources are selected. Items per feed and content length per item scale automatically to fill this budget. Increase for large-context models; decrease for small ones (8K context ≈ 20 000 chars). |
 | Search | Max pages per URL | 8 | How many paginated pages to fetch when a user provides a URL (`?page=2`, `?page=3`…). 0 = unlimited. |
 | Search | Summarize oversized URL content | Off | Summarize fetched URL content that exceeds the context budget with the small model instead of hard-truncating. Adds latency. |
+| Retrieval | Notes-first budget | 1500 | Tokens of your own notes (plus the opening of the notes they link with) injected when a question is sent with **Notes first**. |
 | Context | Compress dropped history | Off | When a research turn's conversation history must be trimmed to fit the context budget, summarize the dropped messages with the small model instead of discarding them, folded into the system prompt. Adds latency; only applies to balanced/thorough turns. |
 | Resources | Minimum similarity for "Similar content" | 0.5 | Cosine similarity another resource must reach to be suggested as similar, when no reranker judges the candidates. Model-dependent; calibrate from the `[related] similarities` log line. 0 shows the nearest regardless. |
 | Resources | Minimum reranker relevance for "Similar content" | 0.5 | With `RERANK_MODEL` set, the reranker relevance (0–1) a candidate must reach. Calibrate from the `[reranker]` log lines. |
@@ -1812,7 +1868,9 @@ The script prompts you to select a user when multiple accounts exist in the data
 
 ## Backup
 
-All persistent data lives in a single SQLite file. Use SQLite's `.backup` command to take a live snapshot without stopping the server:
+All persistent data lives in a single SQLite file. (For a user's own copy of their notes in a
+portable format, see **Settings → Export**, which downloads an Obsidian vault — not a backup of the
+app.) Use SQLite's `.backup` command to take a live snapshot without stopping the server:
 
 ```bash
 sqlite3 /path/to/queriocity.db ".backup /path/to/backup/queriocity-$(date +%Y%m%d).db"
@@ -1855,8 +1913,9 @@ Hono server (Bun)
   ├── /api/auth      — register, login (JWT + bcrypt)
   ├── /api/chat      — reformulate → pre-search → researcher → [writer]
   │                    (+ /suggest, /related, /resume/:id, /:id/stop)
-  ├── /api/files     — upload/extract/list/delete
-  ├── /api/history   — chat sessions + messages + memory lifecycle
+  ├── /api/files     — upload/extract/list/delete, notes, tags, links, similar content,
+  │                    graphs, link suggestions, Obsidian export
+  ├── /api/history   — chat sessions + messages (pins, turn deletion) + memory lifecycle
   ├── /api/spaces    — spaces, per-space memories, compact, recreate
   ├── /api/admin     — user/invite management, system settings, model test
   ├── /api/images     — serve generated images (per-user, auth-gated)
@@ -1876,6 +1935,7 @@ Hono server (Bun)
              ├── space memories (extracted, manual, compacted)
              ├── chat message chunks + embeddings  (space RAG)
              ├── uploaded file chunks + embeddings (library + space file RAG)
+             ├── notes, tags, resource_links, link_dismissals (linked notes)
              ├── custom_templates (per-user prompt templates)
              ├── monitors + monitor_subscriptions + monitor_runs
              └── app_settings (runtime-configurable parameters)

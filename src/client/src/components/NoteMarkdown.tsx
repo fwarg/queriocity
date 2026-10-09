@@ -4,11 +4,13 @@ import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import { linkNoteCitations, noteSources } from '@shared/note-citations.ts'
+import { linkInlineTags } from '@shared/tags.ts'
 import { wikilinksToMarkdown, wikilinkTitle } from '../lib/wikilinks.ts'
 import { blockMdComponents } from './markdown.tsx'
 import { prepareMath } from '../lib/math-markdown.ts'
 
 const CITE_PREFIX = '#cite='
+const TAG_PREFIX = '#tag='
 
 type C = { children?: React.ReactNode }
 
@@ -18,14 +20,15 @@ type C = { children?: React.ReactNode }
  *  superscript, and a click highlights every use of that source and its line in the list, whose link
  *  then leads to the page. Without `onWikilink` (the editor preview) a wikilink is shown but goes
  *  nowhere, since following it would abandon the draft. */
-export function NoteMarkdown({ body, onWikilink }: { body: string; onWikilink?: (title: string) => void }) {
+export function NoteMarkdown({ body, onWikilink, onTag }: { body: string; onWikilink?: (title: string) => void; onTag?: (tag: string) => void }) {
   const [highlighted, setHighlighted] = useState<string | null>(null)
   const toggle = (token: string) => setHighlighted(h => h === token ? null : token)
 
   const sources = useMemo(() => noteSources(body), [body])
-  const markdown = useMemo(() => wikilinksToMarkdown(
+  const markdown = useMemo(() => wikilinksToMarkdown(linkInlineTags(
     linkNoteCitations(prepareMath(body), new Set(sources.keys()), t => `${CITE_PREFIX}${encodeURIComponent(t)}`),
-  ), [body, sources])
+    tag => `${TAG_PREFIX}${encodeURIComponent(tag)}`,
+  )), [body, sources])
 
   return (
     <div className="text-sm text-gray-100 break-words">
@@ -47,6 +50,11 @@ export function NoteMarkdown({ body, onWikilink }: { body: string; onWikilink?: 
                   {children}
                 </button>
               )
+            }
+            if (href?.startsWith(TAG_PREFIX)) {
+              const tag = decodeURIComponent(href.slice(TAG_PREFIX.length))
+              if (!onTag) return <span className="text-emerald-300">{children}</span>
+              return <button type="button" onClick={() => onTag(tag)} className="text-emerald-300 hover:text-emerald-200">{children}</button>
             }
             const title = wikilinkTitle(href)
             if (title !== null) {

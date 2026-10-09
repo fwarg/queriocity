@@ -22,7 +22,8 @@ import { ThinkExtractor } from '../lib/think-extractor.ts'
 import { findLeakedToolCall, stripLeakedToolCall, coerceNumericArgs, findLeakedImageMarkdown, stripLeakedImageMarkdown } from '../lib/leaked-tool-call.ts'
 import { CitationNormalizer } from '../lib/citation-normalizer.ts'
 import { rerankSearchResults } from '../lib/reranker.ts'
-import { buildMemoryBlock, buildChatFileBlock, buildCollectionBlock, extractMemoriesPostHoc, userMemoryBlockIfEnabled, joinMemoryBlocks, toMemorySources } from '../lib/memory.ts'
+import { notesRagBudget } from '../lib/rag-settings.ts'
+import { buildMemoryBlock, buildChatFileBlock, buildCollectionBlock, buildNotesBlock, extractMemoriesPostHoc, userMemoryBlockIfEnabled, joinMemoryBlocks, toMemorySources } from '../lib/memory.ts'
 import { ownedCollectionIds } from '../lib/files/collections.ts'
 import { trimMessages, contextCharBudget, CONTEXT_RESERVE_FRACTION } from '../lib/trim-messages.ts'
 import { hasAttachment, type ContextReport } from '../../shared/context.ts'
@@ -93,6 +94,8 @@ const chatSchema = z.object({
   ephemeral: z.boolean().optional(),
   /** Re-answering the last question: replaces the previous answer instead of appending. */
   regenerate: z.boolean().optional(),
+  /** "Notes first": answer from the user's own notes (and the notes they link with) before the web. */
+  notesFirst: z.boolean().optional(),
 })
 
 export const chatRouter = new Hono<AppEnv>()
@@ -245,7 +248,7 @@ chatRouter.post('/:sessionId/approve', zValidator('json', z.object({
 
 chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', chatSchema), async (c) => {
   const userId = c.get('userId') as string
-  const { sessionId, spaceId, messages: requestMsgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, collectionIds, ephemeral, regenerate } = c.req.valid('json')
+  const { sessionId, spaceId, messages: requestMsgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, collectionIds, ephemeral, regenerate, notesFirst } = c.req.valid('json')
   const searchCategory = toSearxngCategories(searchCategories)
   const sid = sessionId ?? randomUUID()
   // Pins travel as indices, so the messages handed to the model carry nothing but role and content.
@@ -339,10 +342,12 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     // Collections are picked per request and apply with or without a space, so they get their own
     // budget rather than the space one — which is deliberately 0 for a chat that has no space.
     const flashCollections = await buildCollectionBlock(collections, userQuery, await collectionRagBudget(collections))
+    const flashNotes = notesFirst ? await buildNotesBlock(userId, userQuery, await notesRagBudget()) : { block: '', fileSources: [] }
     const resolvedMemoryBlock = joinMemoryBlocks(
       await userMemoryBlockIfEnabled(userId, parsedSettings, userQuery),
       flashScopedBlock,
       flashCollections.block,
+      flashNotes.block,
     )
     const t0 = Date.now()
     let fullContent = ''
@@ -353,7 +358,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       await out.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Thinking…' }) })
       // Collection excerpts carry [C1] labels of their own, so their sources ride along or the
       // citations in the answer resolve to nothing.
-      const flashSources = [...flashFileSources, ...flashCollections.fileSources]
+      const flashSources = [...flashFileSources, ...flashCollections.fileSources, ...flashNotes.fileSources]
       if (flashSources.length > 0) await out.writeSSE({ data: JSON.stringify({ type: 'file_sources', sources: flashSources }) })
       const flashSystem = FLASH_SYSTEM
         + (customPrompt ? `\n\nAdditional instructions:\n${customPrompt}` : '')
@@ -723,9 +728,12 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     // In a locked space the two network legs are skipped outright rather than filtered later: the
     // pre-search runs before the model is involved, and URL prefetching would fetch a link pasted
     // beside the document without any tool being called at all.
+    // Notes first: the notes are read before the pre-search, which is skipped when they hold
+    // anything relevant — the researcher can still search the web for what they do not cover.
+    const notesBlock = notesFirst ? await buildNotesBlock(userId, lastUser?.content ?? '', await notesRagBudget()) : { block: '', fileSources: [] }
     const [fileCountRow, { initialQueries, initialResults, engineErrors }, memoryBudget, ragBudget, prefetchedUrls] = await Promise.all([
       db.select({ count: sql<number>`count(*)` }).from(uploadedFiles).where(eq(uploadedFiles.userId, userId)).get(),
-      locked
+      locked || notesBlock.block
         ? Promise.resolve({ initialQueries: [] as string[], initialResults: [] as SearchResult[], engineErrors: [] as EngineError[] })
         : runReformulateAndPreSearch(msgsForReformulate, focusMode as 'balanced' | 'thorough', lastHasAttachment, searchCategory, searchBudget, abortSignal),
       spaceId ? getAppSetting('memory_token_budget', DEFAULT_MEMORY_TOKEN_BUDGET).then(Number) : Promise.resolve(Number(DEFAULT_MEMORY_TOKEN_BUDGET)),
@@ -746,6 +754,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       await userMemoryBlockIfEnabled(userId, parsedSettings, userQuery),
       scopedBlock,
       collectionBlock.block,
+      notesBlock.block,
     )
     const showThinkingSettings = (parsedSettings.showThinking ?? { balanced: false, thorough: false }) as { balanced: boolean; thorough: boolean }
     const showThinking = focusMode === 'balanced' ? showThinkingSettings.balanced
@@ -764,7 +773,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     let fullContent = ''
     const sources: unknown[] = []
 
-    const allFileSources = [...fileSources, ...collectionBlock.fileSources]
+    const allFileSources = [...fileSources, ...collectionBlock.fileSources, ...notesBlock.fileSources]
     if (allFileSources.length > 0) await out.writeSSE({ data: JSON.stringify({ type: 'file_sources', sources: allFileSources }) })
 
     // Warn when a search came back empty *because* engines were blocked/suspended

@@ -106,3 +106,20 @@ describe('library graph and link counts', () => {
     expect([count(hub), count(leaf), count(lonely)]).toEqual([2, 1, 0])
   })
 })
+
+describe('Obsidian export', () => {
+  test('zips the caller\'s notes with frontmatter and links pointing at file names, nobody else\'s', async () => {
+    await createNote({ title: 'A/B: odd', body: 'Body.', tags: ['bio'] })
+    await createNote({ title: 'Linker', body: 'See [[A/B: odd]] and [[A/B: odd|that]].' })
+    await call('/notes', { as: STRANGER, method: 'POST', body: { title: 'Theirs', body: 'Secret.' } })
+
+    const res = await call('/export/obsidian')
+    expect(res.headers.get('content-type')).toBe('application/zip')
+    const text = new TextDecoder().decode(new Uint8Array(await res.arrayBuffer()))
+    expect(text).toContain('Notes/A B odd.md')
+    expect(text).toContain('aliases:\n  - "A/B: odd"')
+    expect(text).toContain('tags:\n  - "bio"')
+    expect(text).toContain('[[A B odd|A/B: odd]] and [[A B odd|that]]')
+    expect(text).not.toContain('Secret.')
+  })
+})

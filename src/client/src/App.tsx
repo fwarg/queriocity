@@ -42,6 +42,7 @@ type AuthView = 'loading' | 'login' | 'register'
 type MainView = 'chat' | 'chats' | 'files' | 'spaces' | 'explore'
 type ChatsTab = 'chats' | 'monitors'
 const CHATS_TAB_KEY = 'queriocity.chatsTab'
+const NOTES_FIRST_KEY = 'queriocity.notesFirst'
 type Session = { id: string; title: string; spaceId: string | null; locked?: boolean }
 
 const MEMORY_HEADER_TOKENS = 30
@@ -79,6 +80,12 @@ export default function App() {
 
   const [focusMode, setFocusMode] = useState<'flash' | 'balanced' | 'thorough' | 'image'>('balanced')
   const [searchCategories, setSearchCategories] = useState<Array<'news' | 'science' | 'discussions' | 'tech'>>([])
+  // "Notes first" is a habit rather than a per-question choice, so it is remembered.
+  const [notesFirst, setNotesFirstState] = useState(() => { try { return localStorage.getItem(NOTES_FIRST_KEY) === '1' } catch { return false } })
+  const setNotesFirst = useCallback((on: boolean) => {
+    setNotesFirstState(on)
+    try { localStorage.setItem(NOTES_FIRST_KEY, on ? '1' : '0') } catch { /* not remembered in private mode */ }
+  }, [])
   /** Collections picked for the next message — per request, never stored on the chat.
    *
    *  Held here rather than in ChatInput, which remounts per session, so a selection survives asking
@@ -129,6 +136,7 @@ export default function App() {
   const [recreating, setRecreating] = useState(false)
   const [recreateProgress, setRecreateProgress] = useState<string | null>(null)
   const [view, setView] = useState<MainView>('chat')
+  const [focusMessageId, setFocusMessageId] = useState<string | null>(null)
   // Monitors live as a tab of Chats: a monitor is a recurring chat, and its runs are chats.
   const [chatsTab, setChatsTabState] = useState<ChatsTab>(() => {
     try { return localStorage.getItem(CHATS_TAB_KEY) === 'monitors' ? 'monitors' : 'chats' } catch { return 'chats' }
@@ -192,6 +200,7 @@ export default function App() {
     sessionId,
     focusMode,
     searchCategories,
+    notesFirst,
     includeFileIds: pinnedFileIds.length ? pinnedFileIds : undefined,
     collectionIds: selectedCollections.length ? selectedCollections : undefined,
     includeMemoryIds: pinnedMemoryIds.length ? pinnedMemoryIds : undefined,
@@ -376,6 +385,7 @@ export default function App() {
 
 
   function loadSession(id: string, title: string, addToHistory = true, fromMonitor = false) {
+    setFocusMessageId(null)
     setSessionId(id)
     setEditingTitle(false)
     setIsMonitorSession(fromMonitor)
@@ -388,6 +398,12 @@ export default function App() {
         return [{ id, title, spaceId: existing?.spaceId ?? null }, ...prev.filter(s => s.id !== id)]
       })
     }
+  }
+
+  /** Opens a chat at a given answer — "Saved from chat" on a note. */
+  function openChatAt(id: string, title: string, messageId?: string) {
+    loadSession(id, title)
+    setFocusMessageId(messageId ?? null)
   }
 
   function newChat(inSpaceId?: string) {
@@ -1311,7 +1327,7 @@ export default function App() {
             />
           )
         ) : view === 'files' ? (
-          <ResourcesView resources={files} onChanged={reloadFiles} openId={openResourceId} onOpenIdChange={setOpenResourceId} onOpenChat={(id, title) => loadSession(id, title)} initialFilter={resourceSeed ?? undefined} />
+          <ResourcesView resources={files} onChanged={reloadFiles} openId={openResourceId} onOpenIdChange={setOpenResourceId} onOpenChat={openChatAt} initialFilter={resourceSeed ?? undefined} />
         ) : view === 'explore' ? (
           <ExploreView
             resources={files}
@@ -1513,6 +1529,7 @@ export default function App() {
                   context={context}
                   onTogglePin={togglePin}
                   onDeleteTurn={busy ? undefined : deleteTurn}
+                  focusMessageId={focusMessageId}
                 />
               </ImageCaptionContext.Provider>
             )}
@@ -1585,6 +1602,9 @@ export default function App() {
               collections={spaces.filter(sp => sp.kind === 'collection')}
               selectedCollections={selectedCollections}
               onCollectionsChange={setSelectedCollections}
+              notesAvailable={files.some(f => f.kind === 'note')}
+              notesFirst={notesFirst}
+              onNotesFirstChange={setNotesFirst}
               suggestionsEnabled={currentUser?.settings?.querySuggestions !== false}
               lockedSpace={activeSpaceLocked}
               related={related}

@@ -23,7 +23,8 @@ letar inne i meddelandena, inte bara i titlarna. Under ett färdigt svar kan du 
 - **Resurser** — dokument, webbsidor och anteckningar som assistenten kan använda.
 - **Arbetsytor** — utrymmen, som grupperar chattar och minns vad som sagts i dem, och samlingar,
   som grupperar resurser.
-- **Utforska** — dina taggar som ett träd, och en graf över hur anteckningar och resurser hänger ihop.
+- **Utforska** — dina taggar som ett träd, en graf över hur anteckningar och resurser hänger ihop,
+  och föreslagna länkar mellan anteckningar.
 
 Inget av det behövs för att ställa en fråga. Lägg till det när du vill ha det.`,
   },
@@ -53,7 +54,7 @@ köra om grundligt är helt normalt.`,
 
   sources: {
     title: 'Välja källor',
-    summary: 'Avgränsa sökningen till nyheter eller vetenskap, och svara utifrån en samling.',
+    summary: 'Avgränsa sökningen till nyheter eller vetenskap, och svara utifrån en samling eller dina anteckningar.',
     body: `Knappen till höger om lägena avgör *varifrån* ett svar får hämta. Den är valfri — rör du
 den inte används allt.
 
@@ -66,8 +67,13 @@ träffar — produktsidor när du ville ha forskning, till exempel.
 den, oavsett vilken chatt du är i. Utdrag ur en samling får hänvisningarna \`[C1]\`, \`[C2]\` så att
 du alltid ser vilken hylla svaret kommer från.
 
-Båda valen gäller **bara nästa meddelande** och lyser tills du tar bort dem — de sparas inte på
-chatten. Ingenting är valt från början, så när knappen säger *Alla kategorier* betyder det alla
+**Anteckningar först**, under *Dina anteckningar* när du har några, svarar utifrån dina egna
+anteckningar — och anteckningarna de länkar ihop med — innan webben söks. De hänvisas som \`[N1]\`,
+\`[N2]\`; webben söks bara för det de inte täcker. Till skillnad från de andra valen kommer det ihåg
+tills du stänger av det.
+
+Kategorier och samlingar gäller **bara nästa meddelande** och lyser tills du tar bort dem — de
+sparas inte på chatten. Ingenting är valt från början, så när knappen säger *Alla kategorier* betyder det alla
 *kategorier*, inte alla samlingar.`,
   },
 
@@ -114,23 +120,47 @@ den att redigera efteråt.
   ifylld med svaret, frågan som titel och källorna listade sist.
 - **Omvandla en resurs.** Sammanfatta ett dokument och behåll sammanfattningen.
 
-En anteckning når ett samtal på två sätt: automatiskt som utdrag, likt vilken resurs som helst,
-eller hel genom anteckningsikonen bredvid gemet. Bara anteckningar kan bifogas så — en fils text
-lagras som överlappande utdrag, så att skicka den hel vore att upprepa sig; gemet täcker redan det
-fallet.
+En anteckning når ett samtal på tre sätt: automatiskt som utdrag, likt vilken resurs som helst;
+hel genom anteckningsikonen bredvid gemet (bara anteckningar kan bifogas så — en fils text lagras
+som överlappande utdrag); eller med **Anteckningar först**, som svarar utifrån dina anteckningar
+före webben.
 
 **Länkar och taggar.** Skriv \`[[Titel]]\` för att länka till en annan anteckning eller resurs —
 eller tryck *Infoga länk* och välj en. En länk till en titel som inget har ännu erbjuder att skapa
-den anteckningen. Varje resurs visar vad den länkar till och vad som länkar till den, och en
-anteckning sparad från ett svar länkar tillbaka till sin chatt. **Taggar** som \`#ml/rag\` sätter
-du själv på vilken resurs som helst; förslagen kommer från den automatiska sammanfattningen, och
-väljer du \`#ml\` i filtret visas även \`#ml/rag\`. Taggar ordnar bara — de ändrar aldrig vad
-assistenten ser. **Kopplingar** ritar en resurs länkar, anteckningarna gjorda av den och chatten en
-anteckning kom från; **Liknande innehåll** föreslår resurser om samma sak, var och en ett tryck från
-en *Se även*-länk.
+den anteckningen. Varje resurs visar vad den länkar till och vad som länkar till den. En anteckning
+sparad från ett svar länkar tillbaka till sin chatt och öppnar den vid svaret, och svaret visar
+vilka anteckningar som gjorts av det. **Taggar** som \`#ml/rag\` sätter du själv på vilken resurs
+som helst, eller skriver \`#ml/rag\` i en antecknings text; väljer du \`#ml\` i filtret visas även
+\`#ml/rag\`. **Kopplingar** ritar en resurs länkar; **Liknande innehåll** föreslår resurser om samma
+sak. Om taggträdet, hela grafen och föreslagna länkar, se *Ordna dina anteckningar*.
 
 Använd en anteckning för det du vill ha bevarat ord för ord: en beställning, en kravlista, ett
 beslut och skälet till det.`,
+  },
+
+  explore: {
+    title: 'Ordna dina anteckningar',
+    summary: 'Taggträdet, grafen och länkar som assistenten föreslår.',
+    body: `**Utforska**, i sidopanelen, visar hur ditt bibliotek hänger ihop. Den har tre flikar.
+
+**Taggar** visar alla taggar som ett träd med antal — \`ml\` rymmer \`ml/rag\` och \`ml/agents\`.
+Tryck på en tagg för att se dess resurser; **⋯** bredvid byter namn på den (undertaggarna följer
+med), tar bort den eller visar den i grafen. Längst ner hittar **Att organisera** resurser utan
+taggar och anteckningar utan länkar.
+
+**Graf** ritar alla länkar mellan dina anteckningar och resurser, färgade efter toppnivåtagg.
+Begränsa den till en tagg, ett utrymme eller en samling, och kryssa i *Ta med chattar* för att se
+vilka anteckningar som kom från samma samtal. Dra för att flytta, zooma med knapparna, tryck på en
+punkt för att öppna den.
+
+**Länka anteckningar** går igenom dina anteckningar en i taget med länkar som assistenten
+föreslår — det snabba sättet att knyta ihop anteckningar sparade från många chattar. Varje förslag
+är en liknande anteckning och orden att länka från: **✓** gör orden till en länk (eller lägger den
+under *Se även*), **✕** betyder att den aldrig föreslås igen. Samma förslag finns ett tryck bort på
+varje anteckning: **Föreslå länkar**, under dess länkar.
+
+Taggar ändrar aldrig vad assistenten ser, men länkar gör det när du ber om det: med **Anteckningar
+först** (se *Välja källor*) tar en anteckning med sig anteckningarna den länkar ihop med in i svaret.`,
   },
 
   spaces: {
@@ -290,6 +320,8 @@ vardag:
 - **Visa sökprocessen** — visar sökningarna och utdragen ovanför svaret, hopfällt. Värt att slå på
   en gång för att se hur ett svar kom till.
 - **Textstorlek** och **Tidszon** — den senare avgör vad *02:00* betyder för en bevakning.
+- **Export** — laddar ner dina anteckningar och resurser som ett Obsidian-valv, med länkar och
+  taggar kvar.
 - **Lösenord** — att byta det loggar ut dina andra enheter och behåller den här.`,
   },
 } satisfies Guide

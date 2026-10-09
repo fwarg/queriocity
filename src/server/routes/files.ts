@@ -11,6 +11,8 @@ import { relatedResources } from '../lib/files/related.ts'
 import { globalGraph, linkCounts, localGraph } from '../lib/files/graph.ts'
 import { deleteTag, listTags, MAX_TAG_CHARS, renameTag, resourceTagList, setResourceTags, suggestedTags, tagsByResource } from '../lib/files/tags.ts'
 import { linksOf } from '../lib/files/links.ts'
+import { exportVault } from '../lib/files/obsidian-export.ts'
+import { acceptLink, dismissLink, suggestLinks } from '../lib/files/link-suggest.ts'
 import { collectResourceText } from '../lib/files/resource-context.ts'
 import { operationPrompt, transformPrompt, TRANSFORM_MAX_CHARS, TRANSFORM_OPERATIONS } from '../lib/files/transforms.ts'
 import { getChatModel } from '../lib/llm.ts'
@@ -208,6 +210,16 @@ filesRouter.patch('/notes/:id', zValidator('json', noteBody.partial()), async (c
 
 /** The user's tags with direct counts, for autocomplete and the tag tree. Registered before the
  *  `/:id` routes, which would otherwise take `tags` for an id. */
+/** The caller's library as an Obsidian vault (zip of markdown files). */
+filesRouter.get('/export/obsidian', (c) => {
+  const zip = exportVault(c.get('userId') as string)
+  const stamp = new Date().toISOString().slice(0, 10)
+  return c.body(zip.buffer as ArrayBuffer, 200, {
+    'Content-Type': 'application/zip',
+    'Content-Disposition': `attachment; filename="queriocity-vault-${stamp}.zip"`,
+  })
+})
+
 /** The whole library's explicit connections, optionally narrowed to a tag subtree or a space. */
 filesRouter.get('/graph', zValidator('query', z.object({
   tag: z.string().max(MAX_TAG_CHARS).optional(),
@@ -252,6 +264,42 @@ filesRouter.get('/:id/related', async (c) => {
   if (!resource) return c.json({ error: 'Not found' }, 404)
   const [minSimilarity, minRelevance] = await Promise.all([relatedMinSimilarity(), relatedMinRelevance()])
   return c.json(await relatedResources(userId, resource.id, { minSimilarity, minRelevance }))
+})
+
+/** Links the small model proposes for a note, picked from its similar resources. */
+filesRouter.get('/:id/link-suggestions', async (c) => {
+  const userId = c.get('userId') as string
+  const [minSimilarity, minRelevance] = await Promise.all([relatedMinSimilarity(), relatedMinRelevance()])
+  try {
+    return c.json(await suggestLinks(userId, c.req.param('id'), { minSimilarity, minRelevance }))
+  } catch {
+    return c.json({ error: 'Not found' }, 404)
+  }
+})
+
+/** Accepts a suggestion: links the phrase in place, or under `heading` when there is none. */
+filesRouter.post('/:id/link-suggestions/accept', zValidator('json', z.object({
+  targetId: z.string(),
+  phrase: z.string().max(200).nullable(),
+  heading: z.string().min(1).max(60),
+})), async (c) => {
+  const { targetId, phrase, heading } = c.req.valid('json')
+  try {
+    await acceptLink(c.get('userId') as string, c.req.param('id'), targetId, phrase, heading)
+    return c.json({ ok: true })
+  } catch {
+    return c.json({ error: 'Not found' }, 404)
+  }
+})
+
+/** Turns a suggestion down for good. */
+filesRouter.post('/:id/link-suggestions/dismiss', zValidator('json', z.object({ targetId: z.string() })), (c) => {
+  try {
+    dismissLink(c.get('userId') as string, c.req.param('id'), c.req.valid('json').targetId)
+    return c.json({ ok: true })
+  } catch {
+    return c.json({ error: 'Not found' }, 404)
+  }
 })
 
 /** The resource's explicit neighbourhood — links, derivations, chat of origin — to 1 or 2 hops. */

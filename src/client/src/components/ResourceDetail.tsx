@@ -5,6 +5,7 @@ import { NoteMarkdown } from './NoteMarkdown.tsx'
 import { TagEditor } from './TagEditor.tsx'
 import { LocalGraph } from './LocalGraph.tsx'
 import { RelatedResources } from './RelatedResources.tsx'
+import { LinkSuggestions } from './LinkSuggestions.tsx'
 import {
   fetchResource, fetchCustomTemplates, fetchSpaces, renameResource, setResourceTags, tagFileToSpace, transformResource, untagFileFromSpace,
   type CustomTemplate, type ResourceDetail as Detail, type ResourceRef, type Space, type TransformOperation,
@@ -28,12 +29,15 @@ interface Props {
   /** Follow a provenance chip or a link to another resource. */
   onOpen: (id: string) => void
   /** Open the chat a note was saved from. */
-  onOpenChat: (id: string, title: string) => void
+  /** `messageId`: the answer to scroll to, when known. */
+  onOpenChat: (id: string, title: string, messageId?: string) => void
+  /** An inline `#tag` in the note was tapped: show the library filtered on it. */
+  onTag?: (tag: string) => void
 }
 
 /** What a stored resource actually contains: its summary, the spaces it feeds, and the excerpts
  *  retrieval works from. Notes are editable here; every resource can be transformed into one. */
-export function ResourceDetail({ id, onBack, onChanged, onOpen, onOpenChat }: Props) {
+export function ResourceDetail({ id, onBack, onChanged, onOpen, onOpenChat, onTag }: Props) {
   const t = useT()
   const { lang } = useLang()
   const [detail, setDetail] = useState<Detail | null>(null)
@@ -101,7 +105,7 @@ export function ResourceDetail({ id, onBack, onChanged, onOpen, onOpenChat }: Pr
       {detail.originChat && (
         <Section title={t('note.fromChat')}>
           <button
-            onClick={() => onOpenChat(detail.originChat!.id, detail.originChat!.title)}
+            onClick={() => onOpenChat(detail.originChat!.id, detail.originChat!.title, detail.originChat!.messageId ?? undefined)}
             className="flex items-center gap-1.5 px-2 py-1.5 rounded text-sm bg-gray-800 text-gray-300 border border-gray-700 hover:border-gray-500 hover:text-gray-100 self-start max-w-full"
           >
             <MessageSquare size={13} className="shrink-0 text-indigo-400" />
@@ -126,11 +130,13 @@ export function ResourceDetail({ id, onBack, onChanged, onOpen, onOpenChat }: Pr
 
       {isNote && detail.body && (
         <Section title={t('note.body')}>
-          <NoteMarkdown body={detail.body} onWikilink={followLink} />
+          <NoteMarkdown body={detail.body} onWikilink={followLink} onTag={onTag} />
         </Section>
       )}
 
-      <LinksSection detail={detail} onOpen={onOpen} onCreate={setCreating} />
+      <LinksSection detail={detail} onOpen={onOpen} onCreate={setCreating}>
+        {detail.kind === 'note' && <LinkSuggestions key={`${detail.id}:${detail.updatedAt}`} noteId={detail.id} onChanged={changed} onOpen={onOpen} />}
+      </LinksSection>
 
       {detail.derivedFrom && (
         <Section title={t('resource.derivedFrom')}>
@@ -343,7 +349,7 @@ function SpaceTags({ detail, onChanged }: { detail: Detail; onChanged: () => voi
 
 /** `[[links]]` out of a note and the notes linking in. A link to a title nothing has yet is offered
  *  as a note to create — the usual way a Zettelkasten grows. Hidden for a file nothing links to. */
-function LinksSection({ detail, onOpen, onCreate }: { detail: Detail; onOpen: (id: string) => void; onCreate: (title: string) => void }) {
+function LinksSection({ detail, onOpen, onCreate, children }: { detail: Detail; onOpen: (id: string) => void; onCreate: (title: string) => void; children?: React.ReactNode }) {
   const t = useT()
   if (detail.kind !== 'note' && detail.backlinks.length === 0) return null
   const none = detail.links.length === 0 && detail.backlinks.length === 0
@@ -375,6 +381,7 @@ function LinksSection({ detail, onOpen, onCreate }: { detail: Detail; onOpen: (i
           {detail.backlinks.map(ref => <ResourceChip key={ref.id} resource={ref} onOpen={onOpen} />)}
         </div>
       )}
+      {children}
     </Section>
   )
 }

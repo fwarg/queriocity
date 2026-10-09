@@ -209,6 +209,39 @@ export async function buildChatFileBlock(
   return renderFileBlock(fileRows, ragBudget, 'Relevant document excerpts', 'F', 'chat-file')
 }
 
+/** "Notes first": the user's notes most relevant to the query, then the opening of each note they
+ *  link to or are linked from — one hop, so a note brings its context along. Labelled [N1]… */
+export async function buildNotesBlock(userId: string, query: string, ragBudget: number): Promise<MemoryBlock> {
+  if (!query.trim() || ragBudget <= 0) return { block: '', fileSources: [] }
+  let hits: ChunkResult[] = []
+  try {
+    hits = await searchUploads(query, userId, await ragTopK(), await ragMinRelevance(), 'note')
+  } catch (e) {
+    console.error('  [memory] notes RAG failed:', e)
+    return { block: '', fileSources: [] }
+  }
+  const rows = [...hits, ...linkedNoteOpenings(userId, [...new Set(hits.map(h => h.fileId))])]
+  const rendered = renderFileBlock(rows, ragBudget, 'Your own notes (most relevant first, then notes they link with)', 'N', 'notes')
+  if (!rendered.block) return rendered
+  return { ...rendered, block: `${rendered.block}
+
+The user asked for an answer from their own notes first. Base the answer on the notes above; search the web only for what they do not cover, and make clear which parts come from the notes and which from elsewhere.` }
+}
+
+/** The first chunk of each note linked with any of `noteIds`, either direction, not already among them. */
+function linkedNoteOpenings(userId: string, noteIds: string[]): ChunkResult[] {
+  if (!noteIds.length) return []
+  const marks = noteIds.map(() => '?').join(',')
+  return sqlite.query(`
+    SELECT m.chunk_id AS chunkId, f.id AS fileId, f.filename, m.content, 0 AS distance
+    FROM uploaded_files f JOIN file_chunk_meta m ON m.file_id = f.id AND m.chunk_id = f.id || ':0'
+    WHERE f.user_id = ? AND f.kind = 'note' AND f.id NOT IN (${marks}) AND f.id IN (
+      SELECT dst_id FROM resource_links WHERE src_id IN (${marks})
+      UNION SELECT src_id FROM resource_links WHERE dst_id IN (${marks})
+    )
+  `).all(userId, ...noteIds, ...noteIds, ...noteIds) as ChunkResult[]
+}
+
 /** Excerpts from the collections picked for this request, whether or not the chat is in a space.
  *
  *  A block of its own rather than another source folded into `buildMemoryBlock`'s joint rerank: the

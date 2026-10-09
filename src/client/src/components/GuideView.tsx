@@ -19,6 +19,7 @@ const TARGET_LABEL: Record<GuideTarget, TranslationKey> = {
   chats: 'nav.chats',
   files: 'nav.resources',
   spaces: 'nav.workspaces',
+  explore: 'nav.explore',
   monitors: 'nav.monitors',
   settings: 'nav.settings',
 }
