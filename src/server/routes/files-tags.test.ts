@@ -81,3 +81,28 @@ describe('resource detail', () => {
       .toEqual([['Bees', bees], ['Honey', null]])
   })
 })
+
+describe('library graph and link counts', () => {
+  test('connects only the caller\'s linked resources, narrows by tag subtree, and counts links', async () => {
+    const hub = await createNote({ title: 'Hub', body: 'See [[Leaf]] and [[Other]].', tags: ['bio/bees'], originSessionId: 'tags-chat' })
+    const leaf = await createNote({ title: 'Leaf', body: 'Leaf.', tags: ['bio'] })
+    const other = await createNote({ title: 'Other', body: 'Other.', tags: ['tax'] })
+    const lonely = await createNote({ title: 'Lonely', body: 'Nothing links here.' })
+    await call('/notes', { as: STRANGER, method: 'POST', body: { title: 'Theirs', body: 'See [[Hub]].' } })
+
+    const all = await (await call('/graph')).json() as { nodes: Array<{ id: string; group?: string }>; edges: unknown[]; truncated: boolean }
+    expect(all.nodes.map(n => n.id).sort()).toEqual([hub, leaf, other].sort())
+    expect(all.nodes.find(n => n.id === hub)?.group).toBe('bio')
+    expect(all.truncated).toBe(false)
+
+    const bio = await (await call('/graph?tag=bio')).json() as { nodes: Array<{ id: string }> }
+    expect(bio.nodes.map(n => n.id).sort()).toEqual([hub, leaf].sort())
+
+    const withChats = await (await call('/graph?chats=1')).json() as { nodes: Array<{ id: string; kind: string }> }
+    expect(withChats.nodes.some(n => n.kind === 'chat')).toBe(true)
+
+    const listed = await (await call('')).json() as Array<{ id: string; linkCount: number }>
+    const count = (id: string) => listed.find(r => r.id === id)?.linkCount
+    expect([count(hub), count(leaf), count(lonely)]).toEqual([2, 1, 0])
+  })
+})

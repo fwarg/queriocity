@@ -842,6 +842,8 @@ export interface Resource {
   topics: string[]
   /** The user's own hierarchical tags (`ml/rag`). They organise and filter; retrieval ignores them. */
   tags: string[]
+  /** Resolved wikilinks in and out; 0 marks an unlinked resource. */
+  linkCount: number
   /** The spaces this resource is tagged to — the library's grouping, used to filter the list. */
   spaces: Array<{ id: string; name: string }>
   /** Where it came from: the URL for an ingested page, the original filename for an upload, null
@@ -954,6 +956,22 @@ export interface GraphEdge { source: string; target: string; kind: 'link' | 'der
 export async function fetchGraph(id: string, depth: 1 | 2): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> {
   const res = await fetch(`${BASE}/files/${id}/graph?depth=${depth}`)
   if (!res.ok) throw await apiError(res, 'Could not load connections')
+  return res.json()
+}
+
+export interface LibraryGraphNode extends GraphNode {
+  /** Top-level tag, for colouring. */
+  group?: string
+}
+
+/** The whole library's connections, optionally narrowed to a tag subtree or a space. */
+export async function fetchLibraryGraph(opts: { tag?: string; spaceId?: string; chats?: boolean }): Promise<{ nodes: LibraryGraphNode[]; edges: GraphEdge[]; total: number; truncated: boolean }> {
+  const q = new URLSearchParams()
+  if (opts.tag) q.set('tag', opts.tag)
+  if (opts.spaceId) q.set('space', opts.spaceId)
+  if (opts.chats) q.set('chats', '1')
+  const res = await fetch(`${BASE}/files/graph?${q}`)
+  if (!res.ok) throw await apiError(res, 'Could not load the graph')
   return res.json()
 }
 

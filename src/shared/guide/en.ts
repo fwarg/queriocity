@@ -19,11 +19,12 @@ search box that looks inside the messages, not just the titles. Under a finished
 
 **The four things in the sidebar:**
 
-- **Chats** — everything you have asked.
+- **Chats** — everything you have asked. Its **Monitors** tab holds questions that re-ask
+  themselves on a schedule.
 - **Resources** — documents, web pages and notes the assistant can draw on.
 - **Workspaces** — spaces, which group chats and remember what was said in them, and collections,
   which group resources.
-- **Monitors** — questions that re-ask themselves on a schedule.
+- **Explore** — your tags as a tree, and a graph of how your notes and resources connect.
 
 None of them are needed for asking a question. Add them when you want them.`,
   },
@@ -182,7 +183,7 @@ chats and memories has no sensible reading as a collection.`,
     body: `A **monitor** re-runs a question by itself — every six hours, daily, weekly — and keeps
 each run as an ordinary chat you can open, read and continue.
 
-**Making one.** *New monitor* in the Monitors view. Give it a question, a research mode and an
+**Making one.** *New monitor* under Chats → Monitors. Give it a question, a research mode and an
 interval; daily and weekly monitors can also be given an hour of the day. The first run happens
 after one full interval, so use **▶ Run now** if you want to see it work immediately.
 

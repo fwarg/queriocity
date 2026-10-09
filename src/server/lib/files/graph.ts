@@ -1,4 +1,5 @@
 import { sqlite } from '../db.ts'
+import { isUnder, tagsByResource } from './tags.ts'
 
 /** The neighbourhood of one resource: what it links to and from, what it was derived from or into,
  *  and the chat a note was saved from — a chat being the hub that ties together notes saved from it.
@@ -83,4 +84,65 @@ export function localGraph(userId: string, rootId: string, depth: number): { nod
   })
   const kept = new Set(nodes.map(n => n.id))
   return { nodes, edges: edges.filter(e => kept.has(e.source) && kept.has(e.target)) }
+}
+
+/** Cap for the whole-library graph: past this a force layout is a hairball, and a phone stalls. */
+export const MAX_GLOBAL_NODES = 300
+
+export interface GlobalGraphNode extends GraphNode {
+  /** Top-level segment of the resource's first tag, for colouring; absent for chats and untagged. */
+  group?: string
+}
+
+export interface GlobalGraph {
+  nodes: GlobalGraphNode[]
+  edges: GraphEdge[]
+  /** Nodes before the cap, so the client can say how much was left out. */
+  total: number
+  truncated: boolean
+}
+
+/** Whole-library graph of explicit connections, optionally narrowed to a tag subtree or a space.
+ *  Only connected resources appear — an isolated one says nothing in a graph (the tag tree lists
+ *  them). Past the cap the best-connected nodes are kept. */
+export function globalGraph(userId: string, opts: { tag?: string; spaceId?: string; includeChats?: boolean } = {}): GlobalGraph {
+  const tags = tagsByResource(userId)
+  const inSpace = opts.spaceId ? spaceMembers(userId, opts.spaceId) : null
+  const passes = (id: string) => id.startsWith('chat:')
+    ? !!opts.includeChats
+    : (!opts.tag || (tags.get(id) ?? []).some(t => isUnder(t, opts.tag!))) && (!inSpace || inSpace.has(id))
+  const edges = userEdges(userId).filter(e => passes(e.source) && passes(e.target))
+
+  const degree = new Map<string, number>()
+  for (const e of edges) for (const id of [e.source, e.target]) degree.set(id, (degree.get(id) ?? 0) + 1)
+  const ranked = [...degree.keys()].sort((a, b) => degree.get(b)! - degree.get(a)! || a.localeCompare(b))
+  const keptIds = ranked.slice(0, MAX_GLOBAL_NODES)
+  const info = describe(keptIds)
+  const nodes = keptIds.flatMap(id => {
+    const i = info.get(id)
+    const group = tags.get(id)?.[0]?.split('/')[0]
+    return i ? [{ id, ...i, depth: 0, ...(group ? { group } : {}) }] : []
+  })
+  const kept = new Set(nodes.map(n => n.id))
+  return { nodes, edges: edges.filter(e => kept.has(e.source) && kept.has(e.target)), total: ranked.length, truncated: ranked.length > keptIds.length }
+}
+
+/** Resources of one of the user's spaces. */
+function spaceMembers(userId: string, spaceId: string): Set<string> {
+  return new Set((sqlite.query(`
+    SELECT sf.file_id AS id FROM space_files sf JOIN uploaded_files f ON f.id = sf.file_id
+    WHERE sf.space_id = ? AND f.user_id = ?
+  `).all(spaceId, userId) as Array<{ id: string }>).map(r => r.id))
+}
+
+/** Resolved wikilinks in and out of each of the user's resources, for spotting unlinked notes. */
+export function linkCounts(userId: string): Map<string, number> {
+  const rows = sqlite.query(`
+    SELECT x.rid AS id, COUNT(*) AS n FROM (
+      SELECT rl.src_id AS rid FROM resource_links rl JOIN uploaded_files d ON d.id = rl.dst_id WHERE d.user_id = ?1
+      UNION ALL
+      SELECT rl.dst_id AS rid FROM resource_links rl JOIN uploaded_files s ON s.id = rl.src_id WHERE s.user_id = ?1 AND rl.dst_id IS NOT NULL
+    ) x JOIN uploaded_files f ON f.id = x.rid WHERE f.user_id = ?1 GROUP BY x.rid
+  `).all(userId) as Array<{ id: string; n: number }>
+  return new Map(rows.map(r => [r.id, r.n]))
 }

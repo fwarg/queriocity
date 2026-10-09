@@ -9,6 +9,9 @@ import { LoginPage } from './components/LoginPage.tsx'
 import { RegisterPage } from './components/RegisterPage.tsx'
 import { SettingsPanel } from './components/SettingsPanel.tsx'
 import { AdminPanel } from './components/AdminPanel.tsx'
+import { ViewTabs } from './components/ViewTabs.tsx'
+import { ExploreView } from './components/ExploreView.tsx'
+import type { ResourceFilter } from './components/ResourceFilters.tsx'
 import { MonitorsView } from './components/MonitorsView.tsx'
 import { ChatRow } from './components/ChatRow.tsx'
 import { useConfirm } from './components/confirm.tsx'
@@ -36,7 +39,9 @@ import { useLang, useT } from './lib/i18n.tsx'
 const EXAMPLE_KEYS = ['guide.example1', 'guide.example2', 'guide.example3'] as const
 
 type AuthView = 'loading' | 'login' | 'register'
-type MainView = 'chat' | 'chats' | 'files' | 'spaces' | 'monitors'
+type MainView = 'chat' | 'chats' | 'files' | 'spaces' | 'explore'
+type ChatsTab = 'chats' | 'monitors'
+const CHATS_TAB_KEY = 'queriocity.chatsTab'
 type Session = { id: string; title: string; spaceId: string | null; locked?: boolean }
 
 const MEMORY_HEADER_TOKENS = 30
@@ -124,10 +129,21 @@ export default function App() {
   const [recreating, setRecreating] = useState(false)
   const [recreateProgress, setRecreateProgress] = useState<string | null>(null)
   const [view, setView] = useState<MainView>('chat')
+  // Monitors live as a tab of Chats: a monitor is a recurring chat, and its runs are chats.
+  const [chatsTab, setChatsTabState] = useState<ChatsTab>(() => {
+    try { return localStorage.getItem(CHATS_TAB_KEY) === 'monitors' ? 'monitors' : 'chats' } catch { return 'chats' }
+  })
+  const setChatsTab = useCallback((tab: ChatsTab) => {
+    setChatsTabState(tab)
+    try { localStorage.setItem(CHATS_TAB_KEY, tab) } catch { /* private mode: the tab just isn't remembered */ }
+  }, [])
   // Which resource's detail panel is open in the Resources view. Lives here rather than inside
   // ResourcesView so a chat citation's [F1]/[C1] reference can open one directly from outside it.
   const [openResourceId, setOpenResourceId] = useState<string | null>(null)
+  // The filter the library opens with when Explore sends the user there (a tag, or "untagged").
+  const [resourceSeed, setResourceSeed] = useState<Partial<ResourceFilter> | null>(null)
   const openResource = useCallback((id: string) => {
+    setResourceSeed(null)
     setOpenResourceId(id)
     setView('files')
     setSidebarOpen(false)
@@ -147,9 +163,10 @@ export default function App() {
     if (target === 'settings') { setShowSettings(true); return }
     if (target === 'spaces') setCurrentSpaceId(null)
     if (target === 'files') setOpenResourceId(null)
-    setView(target)
+    if (target === 'monitors' || target === 'chats') setChatsTab(target)
+    setView(target === 'monitors' ? 'chats' : target)
     setSidebarOpen(false)
-  }, []))
+  }, [setChatsTab]))
   const [chatHasMore, setChatHasMore] = useState(false)
   const [chatLoadingMore, setChatLoadingMore] = useState(false)
   const chatOffsetRef = useRef(0)
@@ -649,6 +666,7 @@ export default function App() {
 
   /** ResourcesView mutates the library; the list stays here because the space panel tags from it. */
   const reloadFiles = useCallback(() => { fetchFiles().then(setFiles).catch(() => {}) }, [])
+  const tagCount = useMemo(() => new Set(files.flatMap(f => f.tags)).size, [files])
 
   // Auth screens
   if (authView === 'loading' && !currentUser) {
@@ -748,7 +766,7 @@ export default function App() {
           {t('nav.chats')} ({chatTotal || sessions.length})
         </button>
         <button
-          onClick={() => { setView(v => v === 'files' ? 'chat' : 'files'); setOpenResourceId(null); setSidebarOpen(false) }}
+          onClick={() => { setView(v => v === 'files' ? 'chat' : 'files'); setOpenResourceId(null); setResourceSeed(null); setSidebarOpen(false) }}
           className={`w-full text-left px-3 py-2 rounded text-sm font-medium ${view === 'files' ? 'bg-indigo-700 text-white' : 'text-indigo-400 hover:bg-gray-800'}`}
         >
           {t('nav.resources')} ({files.length})
@@ -760,10 +778,10 @@ export default function App() {
           {t('nav.workspaces')} ({spaces.length})
         </button>
         <button
-          onClick={() => { setView(v => v === 'monitors' ? 'chat' : 'monitors'); setSidebarOpen(false) }}
-          className={`w-full text-left px-3 py-2 rounded text-sm font-medium ${view === 'monitors' ? 'bg-indigo-700 text-white' : 'text-indigo-400 hover:bg-gray-800'}`}
+          onClick={() => { setView(v => v === 'explore' ? 'chat' : 'explore'); setSidebarOpen(false) }}
+          className={`w-full text-left px-3 py-2 rounded text-sm font-medium ${view === 'explore' ? 'bg-indigo-700 text-white' : 'text-indigo-400 hover:bg-gray-800'}`}
         >
-          {t('nav.monitors')} ({monitorCount})
+          {t('nav.explore')} ({tagCount})
         </button>
         <div className="border-t border-gray-800 my-1" />
         <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-1">
@@ -828,6 +846,24 @@ export default function App() {
           <span className="font-semibold text-white text-sm">Queriocity</span>
         </div>
         {view === 'chats' ? (
+          <div className="flex flex-col flex-1 min-h-0">
+          <ViewTabs
+            tabs={[
+              { id: 'chats' as const, label: `${t('nav.chats')} (${chatTotal || sessions.length})` },
+              { id: 'monitors' as const, label: `${t('nav.monitors')} (${monitorCount})` },
+            ]}
+            active={chatsTab}
+            onChange={setChatsTab}
+          />
+          {chatsTab === 'monitors' ? (
+            <MonitorsView
+              spaces={spaces}
+              isAdmin={currentUser?.role === 'admin'}
+              timezone={currentUser?.settings?.timezone ?? ''}
+              onCountChange={setMonitorCount}
+              onOpenSession={(id, title) => { loadSession(id, title, false, true); setSidebarOpen(false) }}
+            />
+          ) : (
           <div className="flex flex-col flex-1 overflow-y-auto p-6 gap-3" onClick={() => setSpacePickerOpen(null)}>
             <div className="mb-2">
             <SectionHeader title={t('nav.chats')} intro={t('chat.intro')} about={t('chat.aboutTitle')} topic="gettingStarted">
@@ -873,6 +909,8 @@ export default function App() {
                 {chatLoadingMore ? t('common.loading') : ''}
               </div>
             )}
+          </div>
+          )}
           </div>
         ) : view === 'spaces' ? (
           currentSpaceId ? (
@@ -1273,14 +1311,16 @@ export default function App() {
             />
           )
         ) : view === 'files' ? (
-          <ResourcesView resources={files} onChanged={reloadFiles} openId={openResourceId} onOpenIdChange={setOpenResourceId} onOpenChat={(id, title) => loadSession(id, title)} />
-        ) : view === 'monitors' ? (
-          <MonitorsView
+          <ResourcesView resources={files} onChanged={reloadFiles} openId={openResourceId} onOpenIdChange={setOpenResourceId} onOpenChat={(id, title) => loadSession(id, title)} initialFilter={resourceSeed ?? undefined} />
+        ) : view === 'explore' ? (
+          <ExploreView
+            resources={files}
             spaces={spaces}
-            isAdmin={currentUser?.role === 'admin'}
-            timezone={currentUser?.settings?.timezone ?? ''}
-            onCountChange={setMonitorCount}
-            onOpenSession={(id, title) => { loadSession(id, title, false, true); setSidebarOpen(false) }}
+            onOpenTag={tag => { setResourceSeed({ tag }); setOpenResourceId(null); setView('files') }}
+            onShow={show => { setResourceSeed({ show }); setOpenResourceId(null); setView('files') }}
+            onOpenResource={openResource}
+            onOpenChat={(id, title) => loadSession(id, title)}
+            onTagsChanged={reloadFiles}
           />
         ) : (
           <>

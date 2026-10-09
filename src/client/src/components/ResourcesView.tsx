@@ -60,18 +60,20 @@ interface Props {
   onOpenIdChange: (id: string | null) => void
   /** Open the chat a note was saved from. */
   onOpenChat: (id: string, title: string) => void
+  /** Filter to start from, when another view (Explore) opens the library on a tag. */
+  initialFilter?: Partial<ResourceFilter>
 }
 
 /** The resource library: uploaded files, ingested URLs and notes, in one list.
  *
  *  Lives here rather than inline in App.tsx because it now owns a detail panel and two editors;
  *  the list state stays with the parent, which needs the same resources for space tagging. */
-export function ResourcesView({ resources, onChanged, openId, onOpenIdChange, onOpenChat }: Props) {
+export function ResourcesView({ resources, onChanged, openId, onOpenIdChange, onOpenChat, initialFilter }: Props) {
   const t = useT()
   const confirm = useConfirm()
   const { lang } = useLang()
   const [writingNote, setWritingNote] = useState(false)
-  const [filter, setFilter] = useState<ResourceFilter>(EMPTY_FILTER)
+  const [filter, setFilter] = useState<ResourceFilter>(() => ({ ...EMPTY_FILTER, ...initialFilter }))
 
   const fileRef = useRef<HTMLInputElement>(null)
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'ok' | 'error'>('idle')

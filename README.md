@@ -428,6 +428,19 @@ Notes can link to each other, Zettelkasten-style, and any resource can carry tag
   instead), and tags that two or more similar resources share can be adopted with a tap. Already
   connected ones say **Linked**.
 
+**Explore** (in the sidebar) gives the overview the library filter can't:
+
+- **Tags** — every tag as a collapsible tree with counts (`3 · 12 incl. sub-tags`: carried directly,
+  and by anything under it). Tap a tag to open the library filtered on it; the **⋯** menu renames
+  (sub-tags move along, an existing name merges), deletes, or shows it in the graph. **To organise**
+  at the bottom opens resources **without tags** and notes **without links**.
+- **Graph** — the whole library's explicit connections (the same edges as Connections), filtered by
+  tag subtree, space or collection, optionally with the chats notes were saved from. Nodes are
+  coloured by top-level tag; resources with no connection are left out (the tag tree finds them).
+  Drag to pan, zoom with the buttons or the wheel, tap a node to open it. Capped at the 300
+  best-connected nodes, with a note when more were left out; labels appear once zoomed in on a
+  large graph.
+
 Tags organise and filter; they deliberately have **no effect on retrieval**, so you can tag freely
 without changing what the model sees. That keeps the three groupings distinct: a **space** is where
 you work (chats, memory, lock), a **collection** is a shelf you attach to a chat as context, and a
@@ -1001,7 +1014,7 @@ It is **off by default**, and deliberately narrower than space memory:
 
 ## Monitors
 
-**Monitors** are scheduled queries that run automatically on a recurring interval and store their results as chat sessions. Open the **Monitors** view from the sidebar to manage them.
+**Monitors** are scheduled queries that run automatically on a recurring interval and store their results as chat sessions. Manage them in the **Monitors** tab of the **Chats** view (a monitor is a recurring chat, so it lives with the chats).
 
 Each monitor has:
 
@@ -1014,7 +1027,7 @@ Each monitor has:
 
 ### Creating a monitor
 
-Click **New monitor** in the Monitors view. The editor has two tabs:
+Click **New monitor** under Chats → Monitors. The editor has two tabs:
 
 **General** — fill in the prompt, pick a mode and interval, and save. The first run fires after one full interval — use **Run now** (▶) to get an immediate result.
 
@@ -1044,7 +1057,7 @@ The schedule can be changed at any time — the next run is rescheduled from the
 
 ### Global monitors
 
-Admins can create **global monitors** visible to all users. Users subscribe to them from the "Browse global monitors" section at the bottom of the Monitors view. Each subscriber receives their own independent copy of every run — results are not shared between users. Global monitors are created and managed in the **Monitors** view (admin section at the bottom) or in the **Admin panel**.
+Admins can create **global monitors** visible to all users. Users subscribe to them from the "Browse global monitors" section at the bottom of the Monitors tab. Each subscriber receives their own independent copy of every run — results are not shared between users. Global monitors are created and managed in the **Monitors** tab (admin section at the bottom) or in the **Admin panel**.
 
 ---
 

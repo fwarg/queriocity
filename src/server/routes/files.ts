@@ -8,7 +8,7 @@ import { and, eq } from 'drizzle-orm'
 import { ingestFile, extractFileText, isUsableText, ACCEPTED_MIME_TYPES } from '../lib/files/ingest.ts'
 import { saveNote, renameResource, addSeeAlso } from '../lib/files/notes.ts'
 import { relatedResources } from '../lib/files/related.ts'
-import { localGraph } from '../lib/files/graph.ts'
+import { globalGraph, linkCounts, localGraph } from '../lib/files/graph.ts'
 import { deleteTag, listTags, MAX_TAG_CHARS, renameTag, resourceTagList, setResourceTags, suggestedTags, tagsByResource } from '../lib/files/tags.ts'
 import { linksOf } from '../lib/files/links.ts'
 import { collectResourceText } from '../lib/files/resource-context.ts'
@@ -129,11 +129,13 @@ filesRouter.get('/', async (c) => {
     byFile.set(tag.fileId, list)
   }
   const userTags = tagsByResource(userId)
+  const links = linkCounts(userId)
 
   return c.json(files.map(f => ({
     ...f,
     topics: parseTopics(f.topics),
     tags: userTags.get(f.id) ?? [],
+    linkCount: links.get(f.id) ?? 0,
     spaces: byFile.get(f.id) ?? [],
     createdAt: epochSeconds(f.createdAt),
     updatedAt: epochSeconds(f.updatedAt),
@@ -206,6 +208,16 @@ filesRouter.patch('/notes/:id', zValidator('json', noteBody.partial()), async (c
 
 /** The user's tags with direct counts, for autocomplete and the tag tree. Registered before the
  *  `/:id` routes, which would otherwise take `tags` for an id. */
+/** The whole library's explicit connections, optionally narrowed to a tag subtree or a space. */
+filesRouter.get('/graph', zValidator('query', z.object({
+  tag: z.string().max(MAX_TAG_CHARS).optional(),
+  space: z.string().optional(),
+  chats: z.enum(['0', '1']).optional(),
+})), (c) => {
+  const { tag, space, chats } = c.req.valid('query')
+  return c.json(globalGraph(c.get('userId') as string, { tag: tag || undefined, spaceId: space || undefined, includeChats: chats === '1' }))
+})
+
 filesRouter.get('/tags', (c) => c.json(listTags(c.get('userId') as string)))
 
 /** Rename a tag and everything under it; an existing target merges. */

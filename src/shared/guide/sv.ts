@@ -18,11 +18,12 @@ letar inne i meddelandena, inte bara i titlarna. Under ett färdigt svar kan du 
 
 **De fyra sakerna i sidopanelen:**
 
-- **Chattar** — allt du har frågat.
+- **Chattar** — allt du har frågat. Fliken **Bevakningar** rymmer frågor som ställer sig själva
+  enligt ett schema.
 - **Resurser** — dokument, webbsidor och anteckningar som assistenten kan använda.
 - **Arbetsytor** — utrymmen, som grupperar chattar och minns vad som sagts i dem, och samlingar,
   som grupperar resurser.
-- **Bevakningar** — frågor som ställer sig själva enligt ett schema.
+- **Utforska** — dina taggar som ett träd, och en graf över hur anteckningar och resurser hänger ihop.
 
 Inget av det behövs för att ställa en fråga. Lägg till det när du vill ha det.`,
   },
@@ -183,7 +184,7 @@ redan har chattar och minnen går inte att läsa som en samling.`,
     body: `En **bevakning** kör om en fråga av sig själv — var sjätte timme, dagligen, veckovis —
 och sparar varje körning som en vanlig chatt du kan öppna, läsa och fortsätta i.
 
-**Skapa en.** *Ny bevakning* i vyn Bevakningar. Ge den en fråga, ett researchläge och ett
+**Skapa en.** *Ny bevakning* under Chattar → Bevakningar. Ge den en fråga, ett researchläge och ett
 intervall; dagliga och veckovisa bevakningar kan dessutom få en klockslag. Första körningen sker
 efter ett helt intervall, så använd **▶ Kör nu** om du vill se den arbeta direkt.
 
