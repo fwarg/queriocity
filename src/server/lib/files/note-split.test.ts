@@ -7,7 +7,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test'
 import { startFakeOpenAI } from '../test-support/fake-openai.ts'
 import { envOverride } from '../test-support/env-override.ts'
 
-const { proposeSplit, splitSources } = await import('./note-split.ts')
+const { proposeSplit, splitSources, parseParts } = await import('./note-split.ts')
 
 const BODY = `Bees pollinate orchards [1]. Wild bees matter in cold springs [2].
 
@@ -23,8 +23,8 @@ let restoreEnv: () => void
 
 beforeAll(() => {
   model = startFakeOpenAI([
-    { text: ['```json\n[{"title":"Bees and orchards","body":"Bees pollinate orchards [1]."},{"title":"Wild bees","body":"Wild bees matter in cold springs [2]."}]\n```'] },
-    { text: ['[{"title":"Only one","body":"x"}]'] },
+    { text: ['=== Bees and orchards\nBees pollinate orchards [1].\n=== Wild bees\nWild bees matter in cold springs [2].'] },
+    { text: ['=== Only one\nx'] },
   ])
   restoreEnv = envOverride({ CHAT_BASE_URL: model.baseURL, CHAT_API_KEY: 'test', CHAT_MODEL: 'fake' })
 })
@@ -42,6 +42,14 @@ describe('proposeSplit', () => {
 
   test('refuses a "split" into a single note', async () => {
     await expect(proposeSplit('Bees', BODY)).rejects.toThrow('usable split')
+  })
+
+  test('bodies keep backslashes, multiple lines and code; a wrapping fence and heading marks go', () => {
+    const reply = '```\n=== # Regex\nMatch digits with `\\d+`.\n\nHeading\n===\nAnd $\\frac{a}{b}$.\n=== Second\nText.\n```'
+    expect(parseParts(reply)).toEqual([
+      { title: 'Regex', body: 'Match digits with `\\d+`.\n\nHeading\n===\nAnd $\\frac{a}{b}$.' },
+      { title: 'Second', body: 'Text.' },
+    ])
   })
 
   test('a body without a sources list is left whole', () => {
