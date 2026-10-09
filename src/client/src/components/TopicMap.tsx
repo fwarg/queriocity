@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import { TopicBubbles } from './TopicBubbles.tsx'
+import { TopicNoteMap } from './TopicNoteMap.tsx'
 import { ChevronDown, ChevronRight, Minus, Network, Plus, RefreshCw } from 'lucide-react'
 import { addTagToMany, createNote, nameTopic, type Topic, type TopicMapData, type TopicMember } from '../lib/api.ts'
 import { wikilinkFor } from '@shared/wikilinks.ts'
@@ -11,6 +13,11 @@ import { EmptyState } from './ui.tsx'
 const STEP = 0.05
 /** Members listed before "show all". */
 const PREVIEW = 5
+const VIEW_KEY = 'queriocity.topicView'
+
+type View = 'map' | 'list'
+/** What the map shows: the bubbles, or the note map for every note (`topic` absent) or one topic. */
+type Level = { notes: false } | { notes: true; topic?: string }
 
 /** The topic map: notes grouped by what they are about, each group with what it lacks — a common
  *  tag, links, an overview — and the actions that supply it. The data is owned by Explore, which
@@ -31,6 +38,15 @@ export function TopicMap({ data, loading, error, all, onScope, onThreshold, onRe
   onChanged: () => void
 }) {
   const t = useT()
+  const [view, setViewState] = useState<View>(() => { try { return localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'map' } catch { return 'map' } })
+  const setView = (v: View) => { setViewState(v); try { localStorage.setItem(VIEW_KEY, v) } catch { /* not remembered */ } }
+  const [level, setLevel] = useState<Level>({ notes: false })
+  const [scrollTo, setScrollTo] = useState<string | null>(null)
+  useEffect(() => {
+    if (view !== 'list' || !scrollTo) return
+    document.getElementById(`topic-${scrollTo}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    setScrollTo(null)
+  }, [view, scrollTo])
   // Name unnamed topics one at a time, biggest first, so a local model is not swamped.
   const naming = useRef<string | null>(null)
   useEffect(() => {
@@ -47,6 +63,13 @@ export function TopicMap({ data, loading, error, all, onScope, onThreshold, onRe
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
+        {(['map', 'list'] as const).map(v => (
+          <button key={v} onClick={() => setView(v)} aria-pressed={view === v}
+            className={`px-3 py-1 rounded text-xs border ${view === v ? 'bg-indigo-700 text-white border-indigo-500' : 'text-gray-400 border-gray-700 hover:text-gray-200'}`}>
+            {t(v === 'map' ? 'topics.viewMap' : 'topics.viewList')}
+          </button>
+        ))}
+        <span className="w-px h-4 bg-gray-700" />
         {([false, true] as const).map(scope => (
           <button key={String(scope)} onClick={() => onScope(scope)} aria-pressed={all === scope}
             className={`px-3 py-1 rounded text-xs border ${all === scope ? 'bg-gray-700 text-gray-100 border-gray-500' : 'text-gray-400 border-gray-700 hover:text-gray-200'}`}>
@@ -73,12 +96,31 @@ export function TopicMap({ data, loading, error, all, onScope, onThreshold, onRe
             {t('topics.summary', { topics: data.topics.length, loose: data.loose.length, threshold: threshold.toFixed(2) })}
             {data.capped && <> · {t('topics.capped', { count: data.considered })}</>}
           </p>
-          {data.topics.length === 0
-            ? <EmptyState>{t('topics.none')}</EmptyState>
-            : data.topics.map(topic => (
-              <TopicCard key={topic.key} topic={topic} onOpenResource={onOpenResource} onReview={onReview} onShowInGraph={onShowInGraph} onChanged={onChanged} />
-            ))}
-          {data.loose.length > 0 && <MemberList title={t('topics.loose', { count: data.loose.length })} members={data.loose} onOpen={onOpenResource} />}
+          {view === 'map' ? (
+            level.notes ? (
+              <TopicNoteMap
+                threshold={threshold}
+                all={all}
+                topic={level.topic ? data.topics.find(tp => tp.key === level.topic) : undefined}
+                topics={data.topics}
+                onBack={() => setLevel({ notes: false })}
+                onShowCard={key => { setScrollTo(key); setView('list') }}
+                onStale={() => { setLevel({ notes: false }); onRefresh() }}
+                onOpenResource={onOpenResource}
+              />
+            ) : data.topics.length === 0
+              ? <EmptyState>{t('topics.none')}</EmptyState>
+              : <TopicBubbles data={data} onOpenTopic={key => setLevel({ notes: true, topic: key })} onAllNotes={() => setLevel({ notes: true })} />
+          ) : (
+            <>
+              {data.topics.length === 0
+                ? <EmptyState>{t('topics.none')}</EmptyState>
+                : data.topics.map(topic => (
+                  <TopicCard key={topic.key} topic={topic} onOpenResource={onOpenResource} onReview={onReview} onShowInGraph={onShowInGraph} onChanged={onChanged} />
+                ))}
+              {data.loose.length > 0 && <MemberList title={t('topics.loose', { count: data.loose.length })} members={data.loose} onOpen={onOpenResource} />}
+            </>
+          )}
         </>
       )}
     </div>
@@ -121,7 +163,7 @@ function TopicCard({ topic, onOpenResource, onReview, onShowInGraph, onChanged }
   })
 
   return (
-    <div className="flex flex-col gap-2 rounded-lg border border-gray-800 bg-gray-900/60 p-3">
+    <div id={`topic-${topic.key}`} className="flex flex-col gap-2 rounded-lg border border-gray-800 bg-gray-900/60 p-3">
       <div className="flex items-baseline gap-2">
         <h3 className={`text-sm font-medium break-words ${topic.name ? 'text-gray-100' : 'text-gray-400 italic'}`}>{name}</h3>
         <span className="text-xs text-gray-500 whitespace-nowrap">{t('topics.size', { count: topic.members.length })}</span>

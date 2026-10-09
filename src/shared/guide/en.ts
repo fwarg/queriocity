@@ -154,7 +154,12 @@ it in the graph. At the bottom, **To organise** finds resources without tags and
 
 **Topics** groups your notes by what they are about, even untagged and unlinked ones, names each
 group, and shows what it lacks. **Tag all**, **Create overview note** or **Link these notes** fixes it
-in one go; *Coarser* and *Finer* change how broad the topics are.
+in one go; *Coarser* and *Finer* change how broad the topics are. As a **map**, topics are bubbles you
+tap to see their notes as dots, with similar notes drawn close together.
+
+**Graph or map?** The **Graph** shows the links you made, so a note without links is not in it. The
+topic **map** shows every note, placed by what it is about — notes that belong together but are not
+linked yet show up as a close group with few solid lines.
 
 **Graph** draws every link between your notes and resources, coloured by top-level tag or topic. Narrow it
 to a tag, a space or a collection, and tick *Include chats* to see which notes came from the same

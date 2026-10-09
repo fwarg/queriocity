@@ -76,3 +76,29 @@ function dot(a: ArrayLike<number>, b: ArrayLike<number>): number {
   for (let i = 0; i < a.length; i++) s += a[i] * b[i]
   return s
 }
+
+/** The normalised mean of some vectors: what a group of notes is about, as one vector. */
+export function centroid(vectors: ArrayLike<number>[]): number[] {
+  const mean = new Array<number>(vectors[0]?.length ?? 0).fill(0)
+  for (const v of vectors) for (let i = 0; i < mean.length; i++) mean[i] += v[i]
+  const norm = Math.sqrt(dot(mean, mean)) || 1
+  return mean.map(x => x / norm)
+}
+
+/** Each item's `k` most similar others at or above `floor`, as index pairs listed once (lower index
+ *  first). Used to draw "similar" lines: few enough per item that a layout shows islands, not a mesh. */
+export function nearestPairs(vectors: ArrayLike<number>[], k: number, floor: number): Array<[number, number, number]> {
+  const n = vectors.length
+  const sim = similarityMatrix(vectors)
+  const pairs = new Map<string, [number, number, number]>()
+  for (let i = 0; i < n; i++) {
+    const best: Array<[number, number]> = []
+    for (let j = 0; j < n; j++) if (j !== i && sim[i * n + j] >= floor) best.push([j, sim[i * n + j]])
+    best.sort((x, y) => y[1] - x[1] || x[0] - y[0])
+    for (const [j, s] of best.slice(0, k)) {
+      const [a, b] = i < j ? [i, j] : [j, i]
+      pairs.set(`${a}:${b}`, [a, b, s])
+    }
+  }
+  return [...pairs.values()].sort((x, y) => x[0] - y[0] || x[1] - y[1])
+}

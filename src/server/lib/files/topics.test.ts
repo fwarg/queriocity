@@ -10,7 +10,7 @@ import { envOverride } from '../test-support/env-override.ts'
 
 const { db, sqlite, users, setAppSetting, EMBED_DIMS } = await import('../db.ts')
 const { saveNote } = await import('./notes.ts')
-const { topicMap, nameTopic } = await import('./topics.ts')
+const { topicMap, nameTopic, noteMap } = await import('./topics.ts')
 const { addTagToResources, resourceTagList } = await import('./tags.ts')
 
 const ME = 'tm-user'
@@ -72,6 +72,51 @@ describe('topicMap', () => {
     const other = [ids[0], ids[1]]
     expect(await nameTopic(ME, other)).toMatchObject({ name: 'A', tag: null })
     await expect(nameTopic(OTHER, ids)).rejects.toThrow()
+  })
+})
+
+describe('maps', () => {
+  // Bag-of-words fake embeddings: A and B share four of five words (cosine 0.8), C shares none.
+  const A = 'bees pollinate apple orchards early'
+  const B = 'bees pollinate apple orchards late'
+  const C = 'quarterly vat returns are due'
+
+  async function library() {
+    const ids: Record<string, string[]> = { A: [], B: [], C: [] }
+    for (const [group, text] of Object.entries({ A, B, C })) {
+      for (let i = 1; i <= 3; i++) ids[group].push(await saveNote(ME, { title: `${group}${i}`, body: text }))
+    }
+    return ids
+  }
+
+  test('relations join related topics and leave an unrelated one out', async () => {
+    await library()
+    const map = topicMap(ME, 0.9)
+    expect(map.topics).toHaveLength(3)
+    const title = (key: string) => map.topics.find(tp => tp.key === key)!.members[0].title[0]
+    expect(map.relations.map(r => [title(r.a), title(r.b)].sort().join(''))).toEqual(['AB'])
+  })
+
+  test('the note map joins similar notes above the floor, adds real links, and can show one topic', async () => {
+    const ids = await library()
+    const all = noteMap(ME, 0.9)!
+    expect(all.nodes).toHaveLength(9)
+    const groupOf = (id: string) => Object.entries(ids).find(([, list]) => list.includes(id))![0]
+    // A and B notes are within the floor (0.8 ≥ 0.9 − 0.1); C notes are joined only to each other.
+    expect(all.similar.every(e => groupOf(e.a) === 'C' ? groupOf(e.b) === 'C' : groupOf(e.b) !== 'C')).toBe(true)
+    expect(all.similar.length).toBeGreaterThan(0)
+
+    const topicA = topicMap(ME, 0.9).topics.find(tp => tp.members.some(m => m.id === ids.A[0]))!
+    const one = noteMap(ME, 0.9, { topic: topicA.key })!
+    expect(one.nodes.map(n => n.id).sort()).toEqual([...ids.A].sort())
+    expect(noteMap(ME, 0.9, { topic: 'no-such-topic' })).toBeNull()
+  })
+
+  test('the note map draws explicit links among its notes', async () => {
+    const ids = await library()
+    const linker = await saveNote(ME, { title: 'Linker', body: `${C} See [[A1]].` })
+    const map = noteMap(ME, 0.9)!
+    expect(map.links).toContainEqual({ a: linker, b: ids.A[0] })
   })
 })
 

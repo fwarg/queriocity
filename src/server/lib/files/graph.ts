@@ -17,7 +17,7 @@ export const chatNodeId = (sessionId: string) => `chat:${sessionId}`
 
 /** Every explicit edge among a user's resources and chats. Small next to the chunk tables, so it is
  *  read whole and walked in memory rather than queried hop by hop. */
-function userEdges(userId: string): GraphEdge[] {
+export function userEdges(userId: string): GraphEdge[] {
   const links = sqlite.query(`
     SELECT DISTINCT rl.src_id AS source, rl.dst_id AS target FROM resource_links rl
     JOIN uploaded_files s ON s.id = rl.src_id JOIN uploaded_files d ON d.id = rl.dst_id

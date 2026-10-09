@@ -503,6 +503,14 @@ you work (chats, memory, lock), a **collection** is a shelf you attach to a chat
   (adds the tag, keeps the others), **Create overview note** (links all its notes), **Link these
   notes** (the Link notes queue for just this topic) and **Show in graph**. *All resources* includes
   files and pages. Up to the 2 500 most recent are grouped.
+
+  **Map** (the default; **List** shows the cards) draws the same topics in two levels. First as
+  **bubbles** — one per topic, sized by its notes, joined to related topics (thicker = more alike).
+  Tap a bubble, or **Show all notes**, for the **note map**: every note as a dot coloured by its topic
+  — including notes with no links, which the Graph tab cannot show — joined by faint dotted lines to
+  its three most similar notes, so topics settle into islands, with real `[[links]]` drawn solid on
+  top. On the all-notes map each island carries its topic's name. At most the 1 000 most recent notes
+  are drawn. **Show its card** jumps to the topic's card and actions in the list.
 - **Graph** — the whole library's explicit connections (the same edges as Connections), filtered by
   tag subtree, space or collection, optionally with the chats notes were saved from. Nodes are
   coloured by top-level tag; resources with no connection are left out (the tag tree finds them).
@@ -516,6 +524,20 @@ you work (chats, memory, lock), a **collection** is a shelf you attach to a chat
   skipped. The queue is fixed when started, so accepting links does not reshuffle it. Each note costs
   one small-model call (and a reranker call, if configured), so a first round over a large backlog
   takes a while.
+
+**Graph or note map?** Both draw notes as dots; the lines mean different things.
+
+| | **Graph** tab | **Topics → Show all notes** |
+|---|---|---|
+| Lines | Connections you made: `[[links]]`, *made from*, optionally the chat a note came from | Each note's three most similar notes (dotted), with real links on top |
+| Which notes | Only those with at least one connection | Every note, linked or not |
+| Position | Decided by your links | Decided by content: notes about the same thing cluster |
+| Colours | By tag (or topic) | By topic |
+| Filters | Tag, space or collection; chats on or off | Notes or all resources |
+
+The graph shows the structure you have built; the note map shows the structure already in your
+content. Read together, an island on the note map with few solid lines is a set of notes that belong
+together but are not linked yet — where **Link these notes** or **Create overview note** pays off.
 
 ### Finding things in a large library
 

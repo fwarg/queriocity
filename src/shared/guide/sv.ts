@@ -156,7 +156,13 @@ taggar och anteckningar utan länkar.
 
 **Ämnen** grupperar dina anteckningar efter vad de handlar om, även otaggade och olänkade, namnger
 varje grupp och visar vad den saknar. **Tagga alla**, **Skapa översiktsanteckning** eller **Länka
-anteckningarna** åtgärdar det på en gång; *Grövre* och *Finare* ändrar hur breda ämnena är.
+anteckningarna** åtgärdar det på en gång; *Grövre* och *Finare* ändrar hur breda ämnena är. Som
+**karta** är ämnena bubblor du trycker på för att se deras anteckningar som punkter, där liknande
+anteckningar hamnar nära varandra.
+
+**Graf eller karta?** **Grafen** visar länkarna du gjort, så en anteckning utan länkar finns inte med.
+Ämnes**kartan** visar alla anteckningar, placerade efter vad de handlar om — anteckningar som hör
+ihop men ännu inte är länkade syns som en tät grupp med få heldragna linjer.
 
 **Graf** ritar alla länkar mellan dina anteckningar och resurser, färgade efter toppnivåtagg eller ämne.
 Begränsa den till en tagg, ett utrymme eller en samling, och kryssa i *Ta med chattar* för att se

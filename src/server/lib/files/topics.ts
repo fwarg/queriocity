@@ -3,10 +3,10 @@ import { generateText } from 'ai'
 import { sqlite } from '../db.ts'
 import { getSmallModel } from '../llm.ts'
 import { resourceVector } from './related.ts'
-import { linkCounts } from './graph.ts'
+import { linkCounts, userEdges } from './graph.ts'
 import { listTags, tagsByResource } from './tags.ts'
 import { normaliseTag, tagAncestry } from '../../../shared/tags.ts'
-import { clusterBySimilarity, similarityMatrix } from './topic-cluster.ts'
+import { centroid, clusterBySimilarity, nearestPairs, similarityMatrix } from './topic-cluster.ts'
 
 /** The topic map: a user's notes (optionally all resources) grouped by content, with what each group
  *  says about how organised it is. Nothing is stored but the names, so topics follow the library as
@@ -20,6 +20,15 @@ export const MAX_TOPIC_RESOURCES = 2500
 const DUPLICATE_SIMILARITY = 0.95
 /** Members shown to the model when naming a topic. */
 const NAMING_SAMPLE = 10
+/** Related topics drawn per topic on the bubble map, and how far below the clustering threshold a
+ *  relation may fall — topics are by definition less alike than the notes within them. */
+const RELATIONS_PER_TOPIC = 2
+const RELATION_MARGIN = 0.15
+/** "Similar" lines per note on the note map, and their margin below the threshold. */
+const SIMILAR_PER_NOTE = 3
+const SIMILAR_MARGIN = 0.1
+/** Notes drawn on one note map: a force layout of more stalls a phone. */
+export const MAX_MAP_NOTES = 1000
 
 export interface TopicMember { id: string; title: string; kind: 'file' | 'note' }
 
@@ -38,8 +47,12 @@ export interface Topic {
   duplicates: Array<[string, string]>
 }
 
+export interface TopicRelation { a: string; b: string; similarity: number }
+
 export interface TopicMap {
   topics: Topic[]
+  /** Pairs of related topics, for the bubble map. */
+  relations: TopicRelation[]
   /** Resources in no topic: alone, or in a group smaller than MIN_TOPIC_SIZE. */
   loose: TopicMember[]
   threshold: number
@@ -50,27 +63,80 @@ export interface TopicMap {
 
 export const topicKey = (ids: string[]) => createHash('sha256').update([...ids].sort().join(',')).digest('hex').slice(0, 24)
 
-/** Groups the user's notes (or all resources) whose average similarity reaches `threshold`. */
-export function topicMap(userId: string, threshold: number, { includeFiles = false } = {}): TopicMap {
+interface Clustered {
+  members: TopicMember[]
+  vectors: number[][]
+  /** Groups of indices into `members`, topics and loose alike. */
+  groups: number[][]
+  capped: boolean
+}
+
+/** The user's notes (or all resources) with their vectors, clustered at `threshold`. */
+function clusterLibrary(userId: string, threshold: number, includeFiles: boolean): Clustered {
   const rows = sqlite.query(`
     SELECT id, filename AS title, kind FROM uploaded_files
     WHERE user_id = ? ${includeFiles ? '' : "AND kind = 'note'"} ORDER BY created_at DESC LIMIT ?
   `).all(userId, MAX_TOPIC_RESOURCES + 1) as TopicMember[]
-  const capped = rows.length > MAX_TOPIC_RESOURCES
   const withVectors = rows.slice(0, MAX_TOPIC_RESOURCES).flatMap(r => {
     const v = resourceVector(r.id)
     return v ? [{ member: r, vector: v }] : []
   })
   const vectors = withVectors.map(w => w.vector)
-  const groups = clusterBySimilarity(vectors, threshold)
+  return { members: withVectors.map(w => w.member), vectors, groups: clusterBySimilarity(vectors, threshold), capped: rows.length > MAX_TOPIC_RESOURCES }
+}
+
+/** Groups the user's notes (or all resources) whose average similarity reaches `threshold`. */
+export function topicMap(userId: string, threshold: number, { includeFiles = false } = {}): TopicMap {
+  const { members, vectors, groups, capped } = clusterLibrary(userId, threshold, includeFiles)
   const tags = tagsByResource(userId)
   const links = linkCounts(userId)
   const names = cachedNames(userId)
-  const topics = groups.filter(g => g.length >= MIN_TOPIC_SIZE)
-    .map(g => describeTopic(g.map(i => withVectors[i].member), g.map(i => vectors[i]), tags, links, names))
-    .sort((a, b) => b.members.length - a.members.length)
-  const loose = groups.filter(g => g.length < MIN_TOPIC_SIZE).flat().map(i => withVectors[i].member)
-  return { topics, loose, threshold, considered: withVectors.length, capped }
+  const big = groups.filter(g => g.length >= MIN_TOPIC_SIZE).sort((a, b) => b.length - a.length)
+  const topics = big.map(g => describeTopic(g.map(i => members[i]), g.map(i => vectors[i]), tags, links, names))
+  const relations = topicRelations(topics.map(tp => tp.key), big.map(g => centroid(g.map(i => vectors[i]))), threshold - RELATION_MARGIN)
+  const loose = groups.filter(g => g.length < MIN_TOPIC_SIZE).flat().map(i => members[i])
+  return { topics, relations, loose, threshold, considered: members.length, capped }
+}
+
+/** Each topic joined to its most similar others above `floor`, each pair once. */
+function topicRelations(keys: string[], centroids: number[][], floor: number): TopicRelation[] {
+  return nearestPairs(centroids, RELATIONS_PER_TOPIC, floor).map(([a, b, s]) => ({ a: keys[a], b: keys[b], similarity: s }))
+}
+
+export interface NoteMap {
+  nodes: Array<TopicMember & { topic: string | null }>
+  similar: Array<{ a: string; b: string; similarity: number }>
+  /** Explicit connections among the nodes: links and "made from". */
+  links: Array<{ a: string; b: string }>
+  truncated: boolean
+}
+
+/** Every note (or one topic's notes) with lines to its nearest neighbours, for drawing topics as
+ *  islands. Null when `topic` names no topic at this threshold and scope. */
+export function noteMap(userId: string, threshold: number, { includeFiles = false, topic }: { includeFiles?: boolean; topic?: string } = {}): NoteMap | null {
+  const { members, vectors, groups } = clusterLibrary(userId, threshold, includeFiles)
+  const topicOf = new Map<number, string>()
+  for (const g of groups) {
+    if (g.length < MIN_TOPIC_SIZE) continue
+    const key = topicKey(g.map(i => members[i].id))
+    for (const i of g) topicOf.set(i, key)
+  }
+  let picked = members.map((_, i) => i)
+  if (topic) {
+    picked = picked.filter(i => topicOf.get(i) === topic)
+    if (!picked.length) return null
+  }
+  // Members are newest first, so the cap keeps the most recent.
+  const truncated = picked.length > MAX_MAP_NOTES
+  picked = picked.slice(0, MAX_MAP_NOTES)
+  const ids = picked.map(i => members[i].id)
+  const inMap = new Set(ids)
+  const similar = nearestPairs(picked.map(i => vectors[i]), SIMILAR_PER_NOTE, threshold - SIMILAR_MARGIN)
+    .map(([a, b, s]) => ({ a: ids[a], b: ids[b], similarity: s }))
+  const links = userEdges(userId)
+    .filter(e => e.kind !== 'chat' && inMap.has(e.source) && inMap.has(e.target))
+    .map(e => ({ a: e.source, b: e.target }))
+  return { nodes: picked.map(i => ({ ...members[i], topic: topicOf.get(i) ?? null })), similar, links, truncated }
 }
 
 function describeTopic(

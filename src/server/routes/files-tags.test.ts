@@ -165,5 +165,10 @@ describe('topic routes', () => {
     expect(await (await call('/tags/bulk', { as: STRANGER, method: 'POST', body: { path: 'x', ids } })).json()).toEqual({ tagged: 0 })
     expect(await (await call('/tags/bulk', { method: 'POST', body: { path: 'bees', ids } })).json()).toEqual({ tagged: 3 })
     expect((await call('/topics/name', { as: STRANGER, method: 'POST', body: { ids } })).status).toBe(404)
+    const map = await (await call('/topics/notes?threshold=0.9')).json() as { nodes: Array<{ id: string }> }
+    expect(map.nodes.map(n => n.id).sort()).toEqual([...ids].sort())
+    const theirMap = await (await call('/topics/notes?threshold=0.9', { as: STRANGER })).json() as { nodes: unknown[] }
+    expect(theirMap.nodes).toEqual([])
+    expect((await call('/topics/notes?topic=gone')).status).toBe(404)
   })
 })

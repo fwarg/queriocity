@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { generateText } from 'ai'
 import { db, sqlite, uploadedFiles, spaceFiles, spaces, customTemplates, chatSessions, getAppSetting } from '../lib/db.ts'
 import { relatedMinSimilarity, relatedMinRelevance, topicMinSimilarity } from '../lib/rag-settings.ts'
-import { MAX_TOPIC_RESOURCES, nameTopic, topicMap } from '../lib/files/topics.ts'
+import { MAX_TOPIC_RESOURCES, nameTopic, noteMap, topicMap } from '../lib/files/topics.ts'
 import { and, eq } from 'drizzle-orm'
 import { ingestFile, extractFileText, isUsableText, ACCEPTED_MIME_TYPES } from '../lib/files/ingest.ts'
 import { saveNote, renameResource, addSeeAlso } from '../lib/files/notes.ts'
@@ -220,6 +220,18 @@ filesRouter.get('/topics', zValidator('query', z.object({
 })), async (c) => {
   const { threshold, scope } = c.req.valid('query')
   return c.json(topicMap(c.get('userId') as string, threshold ?? await topicMinSimilarity(), { includeFiles: scope === 'all' }))
+})
+
+/** The note map: every note (or one topic's) with lines to its most similar notes and its links. */
+filesRouter.get('/topics/notes', zValidator('query', z.object({
+  threshold: z.coerce.number().min(0).max(1).optional(),
+  scope: z.enum(['notes', 'all']).optional(),
+  topic: z.string().max(64).optional(),
+})), async (c) => {
+  const { threshold, scope, topic } = c.req.valid('query')
+  const map = noteMap(c.get('userId') as string, threshold ?? await topicMinSimilarity(), { includeFiles: scope === 'all', topic })
+  // The topic is gone when the notes changed since the map was drawn; the client reloads it.
+  return map ? c.json(map) : c.json({ error: 'Not found' }, 404)
 })
 
 /** Names one topic (cached by its members). */

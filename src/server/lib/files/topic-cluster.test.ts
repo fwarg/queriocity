@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test'
-import { clusterBySimilarity } from './topic-cluster.ts'
+import { centroid, clusterBySimilarity, nearestPairs } from './topic-cluster.ts'
 
 const sorted = (groups: number[][]) => groups.map(g => [...g].sort((a, b) => a - b)).sort((a, b) => a[0] - b[0])
 
@@ -23,5 +23,22 @@ describe('clusterBySimilarity', () => {
   test('handles zero or one vector', () => {
     expect(clusterBySimilarity([], 0.5)).toEqual([])
     expect(clusterBySimilarity([[1, 0]], 0.5)).toEqual([[0]])
+  })
+})
+
+describe('nearestPairs', () => {
+  const vectors = [[1, 0], [0.99, 0.1], [0.98, 0.2], [0, 1]]
+
+  test('joins each to its nearest above the floor, each pair once', () => {
+    expect(nearestPairs(vectors, 1, 0.5).map(([a, b]) => [a, b])).toEqual([[0, 1], [1, 2]])
+  })
+
+  test('the floor keeps an unrelated item alone', () => {
+    expect(nearestPairs(vectors, 3, 0.5).some(([a, b]) => a === 3 || b === 3)).toBe(false)
+  })
+
+  test('a centroid is the normalised mean', () => {
+    const [x, y] = centroid([[1, 0], [0, 1]])
+    expect([x.toFixed(3), y.toFixed(3)]).toEqual(['0.707', '0.707'])
   })
 })

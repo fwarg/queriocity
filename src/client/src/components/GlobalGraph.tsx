@@ -4,11 +4,10 @@ import { fetchLibraryGraph, type GraphEdge, type LibraryGraphNode, type Space, t
 import { useT } from '../lib/i18n.tsx'
 import { EdgeLegend, GraphCanvas, NODE_FILL } from './GraphCanvas.tsx'
 import { EmptyState } from './ui.tsx'
+import { DIMMED, GROUP_COLOURS, OTHER_COLOUR, groupColour } from '../lib/topic-colours.ts'
 
 /** Colours for top-level tags, in order of size; the rest share the last. Readable on the dark
  *  background and distinct from each other at dot size. */
-const GROUP_COLOURS = ['#34d399', '#60a5fa', '#f472b6', '#fbbf24', '#a78bfa', '#f87171', '#2dd4bf', '#fb923c']
-const OTHER_COLOUR = '#d1d5db'
 /** Labels show from the start when each node has at least this much room (px²); otherwise once
  *  zoomed in. A wide monitor thus labels a graph a phone would not. */
 const LABEL_AREA_PER_NODE = 12_000
@@ -20,9 +19,6 @@ type Graph = { nodes: LibraryGraphNode[]; edges: GraphEdge[]; total: number; tru
 
 /** The whole library's explicit connections, coloured by top-level tag and narrowed by tag, space
  *  and whether chats join in. Isolated resources are left out; the tag tree lists them. */
-/** Nodes outside a highlighted topic. */
-const DIMMED = '#374151'
-
 export function GlobalGraph({ tags, spaces, tag, onTagChange, onOpenResource, onOpenChat, topics, focusTopic, onFocusTopicChange }: {
   /** Every tag path, for the filter. */
   tags: string[]
@@ -60,18 +56,17 @@ export function GlobalGraph({ tags, spaces, tag, onTagChange, onOpenResource, on
     const sizes = new Map<string, number>()
     for (const n of graph?.nodes ?? []) if (n.group) sizes.set(n.group, (sizes.get(n.group) ?? 0) + 1)
     const order = [...sizes].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([g]) => g)
-    return new Map(order.map((g, i) => [g, GROUP_COLOURS[i] ?? OTHER_COLOUR]))
+    return new Map(order.map((g, i) => [g, groupColour(i)]))
   }, [graph])
 
   // Topics are sorted biggest first, so the first colours go to the biggest.
   const topicIndex = useMemo(() => new Map((topics ?? []).flatMap((tp, i) => tp.members.map(m => [m.id, i] as const))), [topics])
-  const topicColour = (i: number) => GROUP_COLOURS[i] ?? OTHER_COLOUR
   const focused = topics?.find(tp => tp.key === focusTopic)
   const fill = (n: LibraryGraphNode) => {
     if (!byTopic) return n.group ? colourOf.get(n.group) ?? OTHER_COLOUR : NODE_FILL[n.kind]
     const i = topicIndex.get(n.id)
-    if (focused) return i !== undefined && topics![i] === focused ? topicColour(i) : DIMMED
-    return i === undefined ? DIMMED : topicColour(i)
+    if (focused) return i !== undefined && topics![i] === focused ? groupColour(i) : DIMMED
+    return i === undefined ? DIMMED : groupColour(i)
   }
   // A topic's unlinked notes are not graph nodes; say so rather than let the topic look smaller.
   const hidden = focused && graph ? focused.members.filter(m => !graph.nodes.some(n => n.id === m.id)).length : 0
@@ -124,7 +119,7 @@ export function GlobalGraph({ tags, spaces, tag, onTagChange, onOpenResource, on
             {byTopic ? (
               <div className="flex flex-wrap gap-3 text-[11px] text-gray-400">
                 {(topics ?? []).slice(0, GROUP_COLOURS.length).map((tp, i) => (
-                  <span key={tp.key} className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: topicColour(i) }} />{tp.name ?? tp.members[0].title}</span>
+                  <span key={tp.key} className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: groupColour(i) }} />{tp.name ?? tp.members[0].title}</span>
                 ))}
                 {(topics?.length ?? 0) > GROUP_COLOURS.length && <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: OTHER_COLOUR }} />{t('explore.otherTopics')}</span>}
                 <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: DIMMED }} />{t(focused ? 'explore.otherNodes' : 'explore.noTopic')}</span>

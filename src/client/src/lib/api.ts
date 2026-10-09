@@ -967,7 +967,14 @@ export async function fetchRelated(id: string): Promise<{ related: RelatedResour
 }
 
 export interface GraphNode { id: string; label: string; kind: 'note' | 'file' | 'chat'; depth: number }
-export interface GraphEdge { source: string; target: string; kind: 'link' | 'derived' | 'chat' }
+export interface GraphEdge {
+  source: string
+  target: string
+  /** `similar` (notes alike in content) and `related` (topics alike) are drawn only by the topic map. */
+  kind: 'link' | 'derived' | 'chat' | 'similar' | 'related'
+  /** 0–1 strength, drawn as line width where given. */
+  weight?: number
+}
 
 /** A resource's explicit neighbourhood. Chat nodes have ids `chat:<sessionId>`. */
 export async function fetchGraph(id: string, depth: 1 | 2): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> {
@@ -992,10 +999,30 @@ export interface Topic {
 
 export interface TopicMapData {
   topics: Topic[]
+  /** Pairs of related topics, for the bubble map. */
+  relations: Array<{ a: string; b: string; similarity: number }>
   loose: TopicMember[]
   threshold: number
   considered: number
   capped: boolean
+}
+
+export interface NoteMapData {
+  nodes: Array<TopicMember & { topic: string | null }>
+  similar: Array<{ a: string; b: string; similarity: number }>
+  links: Array<{ a: string; b: string }>
+  truncated: boolean
+}
+
+/** Every note (or one topic's) with lines to its most similar notes; null when the topic is gone. */
+export async function fetchNoteMap(opts: { threshold: number; all?: boolean; topic?: string }): Promise<NoteMapData | null> {
+  const q = new URLSearchParams({ threshold: opts.threshold.toFixed(2) })
+  if (opts.all) q.set('scope', 'all')
+  if (opts.topic) q.set('topic', opts.topic)
+  const res = await fetch(`${BASE}/files/topics/notes?${q}`)
+  if (res.status === 404) return null
+  if (!res.ok) throw await apiError(res, 'Could not draw the map')
+  return res.json()
 }
 
 /** The topic map; without `threshold` the admin default applies. */

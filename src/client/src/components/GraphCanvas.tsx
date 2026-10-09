@@ -7,6 +7,8 @@ import { useT } from '../lib/i18n.tsx'
 /** Drawing shared by the local graph (one resource's neighbourhood) and the library graph. */
 
 const PAD = 28
+/** A node's radius unless the caller sizes them. */
+const DOT = 6
 const MAX_LABEL = 18
 /** Movement below this many screen pixels is a tap on a node, not a pan. */
 const DRAG_SLOP = 5
@@ -16,6 +18,8 @@ export const EDGE_STYLE: Record<GraphEdge['kind'], { stroke: string; dash?: stri
   link: { stroke: '#6b7280' },
   derived: { stroke: '#6b7280', dash: '4 3' },
   chat: { stroke: '#6366f1', dash: '1 3' },
+  similar: { stroke: '#4b5563', dash: '2 3' },
+  related: { stroke: '#6b7280' },
 }
 
 export type Placed<N extends GraphNode = GraphNode> = N & { x: number; y: number }
@@ -23,13 +27,18 @@ export type Placed<N extends GraphNode = GraphNode> = N & { x: number; y: number
 /** A static force layout, run to rest before drawing: no animation to jank a phone, and the same
  *  input lays out the same way every time (d3 seeds positions deterministically). An optional root
  *  is pinned while the forces settle, then the whole drawing is fitted to the area. */
-export function layout<N extends GraphNode>(nodes: N[], edges: GraphEdge[], size: { width: number; height: number }, rootId?: string): Placed<N>[] {
-  const sim = nodes.map(n => ({ ...n, ...(n.id === rootId ? { fx: 0, fy: 0 } : {}) })) as Array<N & SimulationNodeDatum>
+export function layout<N extends GraphNode>(
+  nodes: N[], edges: GraphEdge[], size: { width: number; height: number }, rootId?: string, radiusOf: (n: N) => number = () => DOT,
+): Placed<N>[] {
+  type Sim = N & SimulationNodeDatum
+  const sim = nodes.map(n => ({ ...n, ...(n.id === rootId ? { fx: 0, fy: 0 } : {}) })) as Sim[]
   forceSimulation(sim)
-    .force('link', forceLink<N & SimulationNodeDatum, { source: string; target: string }>(edges.map(e => ({ ...e }))).id(d => d.id).distance(70))
+    // Linked nodes sit their own sizes apart plus a gap, so big bubbles do not overlap their neighbours.
+    .force('link', forceLink<Sim, { source: string | Sim; target: string | Sim }>(edges.map(e => ({ ...e })))
+      .id(d => d.id).distance(l => 50 + radiusOf(l.source as Sim) + radiusOf(l.target as Sim)))
     .force('charge', forceManyBody().strength(-220))
     .force('center', forceCenter(0, 0))
-    .force('collide', forceCollide(26))
+    .force('collide', forceCollide<Sim>(d => radiusOf(d) + 20))
     .stop()
     .tick(300)
   const xs = sim.map(n => n.x ?? 0)
@@ -44,20 +53,24 @@ const short = (label: string) => label.length > MAX_LABEL ? `${label.slice(0, MA
 
 /** The graph as SVG. With `zoomable`, it pans by dragging and zooms with buttons or the wheel —
  *  buttons rather than pinch, which a phone browser would take for zooming the page. */
-export function GraphCanvas<N extends GraphNode>({ nodes, edges, width, height, rootId, fillOf, zoomable, showLabels = true, onOpen }: {
+export function GraphCanvas<N extends GraphNode>({ nodes, edges, width, height, rootId, fillOf, radiusOf, overlay, zoomable, showLabels = true, onOpen }: {
   nodes: N[]
   edges: GraphEdge[]
   width: number
   height: number
   rootId?: string
   fillOf?: (node: N) => string
+  /** Node radius in drawing units; the topic map sizes bubbles by their note count. */
+  radiusOf?: (node: N) => number
+  /** Extra SVG drawn over the graph, in the same zoomed coordinates — e.g. labels for groups. */
+  overlay?: (placed: Placed<N>[], zoom: number) => React.ReactNode
   zoomable?: boolean
   /** Labels on every node; a large graph shows them only once zoomed in. */
   showLabels?: boolean
   onOpen: (node: N) => void
 }) {
   const t = useT()
-  const placed = useMemo(() => layout(nodes, edges, { width, height }, rootId), [nodes, edges, width, height, rootId])
+  const placed = useMemo(() => layout(nodes, edges, { width, height }, rootId, radiusOf), [nodes, edges, width, height, rootId, radiusOf])
   const at = new Map(placed.map(n => [n.id, n]))
   const [view, setView] = useState({ k: 1, x: 0, y: 0 })
   const drag = useRef<{ px: number; py: number; x: number; y: number; moved: boolean } | null>(null)
@@ -103,17 +116,27 @@ export function GraphCanvas<N extends GraphNode>({ nodes, edges, width, height, 
             const b = at.get(e.target)
             if (!a || !b) return null
             const style = EDGE_STYLE[e.kind]
-            return <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={style.stroke} strokeDasharray={style.dash} strokeWidth={1.2 / view.k} />
+            const width = e.weight !== undefined ? 0.6 + e.weight * 2.4 : 1.2
+            return <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={style.stroke} strokeDasharray={style.dash} strokeWidth={width / view.k} />
           })}
           {placed.map(n => (
             <g key={n.id} onClick={() => open(n)} className={n.id === rootId ? '' : 'cursor-pointer'}>
               <title>{n.label}</title>
               {/* A larger transparent target than the dot: a finger is wider than 6px. */}
-              <circle cx={n.x} cy={n.y} r={16 / view.k} fill="transparent" />
-              <circle cx={n.x} cy={n.y} r={(n.id === rootId ? 8 : 6) / Math.sqrt(view.k)} fill={fillOf?.(n) ?? NODE_FILL[n.kind]} stroke={n.id === rootId ? '#fff' : 'none'} strokeWidth={2} />
-              {labels && <text x={n.x} y={n.y + 18 / Math.sqrt(view.k)} textAnchor="middle" fontSize={9 / Math.sqrt(view.k)} fill={n.id === rootId ? '#f3f4f6' : '#9ca3af'}>{short(n.label)}</text>}
+              {/* Sized nodes (bubbles) scale with the zoom like the drawing; plain dots stay readable. */}
+              {(() => {
+                const r = radiusOf ? radiusOf(n) : (n.id === rootId ? 8 : DOT) / Math.sqrt(view.k)
+                return (
+                  <>
+                    <circle cx={n.x} cy={n.y} r={Math.max(16 / view.k, r)} fill="transparent" />
+                    <circle cx={n.x} cy={n.y} r={r} fill={fillOf?.(n) ?? NODE_FILL[n.kind]} stroke={n.id === rootId ? '#fff' : 'none'} strokeWidth={2} />
+                    {labels && <text x={n.x} y={n.y + r + 12 / Math.sqrt(view.k)} textAnchor="middle" fontSize={9 / Math.sqrt(view.k)} fill={n.id === rootId ? '#f3f4f6' : '#9ca3af'}>{short(n.label)}</text>}
+                  </>
+                )
+              })()}
             </g>
           ))}
+          {overlay?.(placed, view.k)}
         </g>
       </svg>
       {zoomable && (
