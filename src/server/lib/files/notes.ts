@@ -1,8 +1,13 @@
 import { randomUUID } from 'crypto'
 import { and, eq, sql } from 'drizzle-orm'
-import { db, uploadedFiles } from '../db.ts'
+import { chatSessions, db, uploadedFiles } from '../db.ts'
 import { indexResourceText } from './ingest.ts'
+import { addUnderHeading, bodiesRelinkedTo, parseWikilinks, resolveDangling, syncLinks } from './links.ts'
+import { wikilinkFor } from '../../../shared/wikilinks.ts'
 import { describeResource } from './summarise.ts'
+import { resourceTagList, setResourceTags } from './tags.ts'
+import { inlineTags } from '../../../shared/tags.ts'
+import { plainCitations } from '../../../shared/note-citations.ts'
 
 /** Notes: the one resource the user writes rather than uploads.
  *
@@ -21,10 +26,16 @@ export interface NoteInput {
   body: string
   /** The resource a transform produced this note from; set once, at creation. */
   derivedFrom?: string
+  /** The chat and answer this note was saved from; set once, at creation. */
+  originSessionId?: string
+  originMessageId?: string
+  /** Replaces the note's tags when given; left alone when omitted. */
+  tags?: string[]
 }
 
-/** Creates or updates a note, re-indexing only when the text actually changed. */
-export async function saveNote(userId: string, note: NoteInput): Promise<string> {
+/** Creates or updates a note, re-indexing only when the text actually changed.
+ *  `describe: false` skips the small-model summary — for mechanical edits such as a link rewrite. */
+export async function saveNote(userId: string, note: NoteInput, { describe = true } = {}): Promise<string> {
   const title = note.title.trim()
   const body = note.body.trim()
   if (!title) throw new Error('A note needs a title')
@@ -45,23 +56,98 @@ export async function saveNote(userId: string, note: NoteInput): Promise<string>
       .set({ filename: title, body, size, updatedAt: now })
       .where(eq(uploadedFiles.id, id))
   } else {
-    // Only a resource this user owns, so a guessed id cannot reveal that someone else's exists.
-    const source = note.derivedFrom
-      ? await db.select({ id: uploadedFiles.id }).from(uploadedFiles)
-          .where(and(eq(uploadedFiles.id, note.derivedFrom), eq(uploadedFiles.userId, userId))).get()
-      : undefined
     await db.insert(uploadedFiles).values({
-      id, userId, filename: title, mimeType: NOTE_MIME_TYPE, size,
-      kind: 'note', body, derivedFrom: source?.id ?? null, createdAt: now, updatedAt: now,
+      id, userId, filename: title, mimeType: NOTE_MIME_TYPE, size, kind: 'note', body,
+      ...await ownedProvenance(userId, note), createdAt: now, updatedAt: now,
     })
   }
+  // `#tags` written in the text join the tag field. Removing one from the text leaves it there —
+  // the field is the source of truth, and silently dropping a tag would surprise more.
+  const inline = existing?.body === body ? [] : inlineTags(body)
+  if (note.tags || inline.length) setResourceTags(userId, id, [...(note.tags ?? resourceTagList(id)), ...inline])
 
   // Embedding is the expensive half, and a retitled note has the same content to retrieve.
   if (existing?.body !== body) {
+    syncLinks(userId, id, body)
     await indexResourceText(id, body, NOTE_MIME_TYPE, 0)
-    await describeResource(id, body)
+    if (describe) await describeResource(id, body)
   }
+  if (!existing) resolveDangling(userId, id, title)
+  else if (existing.filename !== title) await relinkRenamed(userId, id, existing.filename, title)
   return id
+}
+
+/** derivedFrom and the chat of origin, each kept only when this user owns it — so a guessed id
+ *  cannot reveal that someone else's resource or chat exists. */
+async function ownedProvenance(userId: string, note: NoteInput) {
+  const source = note.derivedFrom
+    ? await db.select({ id: uploadedFiles.id }).from(uploadedFiles)
+        .where(and(eq(uploadedFiles.id, note.derivedFrom), eq(uploadedFiles.userId, userId))).get()
+    : undefined
+  const session = note.originSessionId
+    ? await db.select({ id: chatSessions.id }).from(chatSessions)
+        .where(and(eq(chatSessions.id, note.originSessionId), eq(chatSessions.userId, userId))).get()
+    : undefined
+  return {
+    derivedFrom: source?.id ?? null,
+    originSessionId: session?.id ?? null,
+    originMessageId: session ? note.originMessageId ?? null : null,
+  }
+}
+
+/** Link a note to another resource by adding `- [[Title]]` under its `## heading` ("See also" in
+ *  the user's language). A no-op when the note already links there. Not re-described: one link
+ *  does not change what the note is about. */
+export async function addSeeAlso(userId: string, noteId: string, targetId: string, heading: string): Promise<void> {
+  const owned = (id: string) => db.select().from(uploadedFiles)
+    .where(and(eq(uploadedFiles.id, id), eq(uploadedFiles.userId, userId))).get()
+  const [note, target] = await Promise.all([owned(noteId), owned(targetId)])
+  if (!note || note.kind !== 'note' || !target) throw new Error('Not found')
+  const body = note.body ?? ''
+  if (parseWikilinks(body).some(t => t.toLowerCase() === target.filename.trim().toLowerCase())) return
+  await saveNote(userId, { id: note.id, title: note.filename, body: addUnderHeading(body, heading, `- ${wikilinkFor(target.filename)}`) }, { describe: false })
+}
+
+/** Renames any resource, keeping `[[links]]` to it pointing at it under the new title. */
+export async function renameResource(userId: string, id: string, oldTitle: string, newTitle: string): Promise<void> {
+  await db.update(uploadedFiles)
+    .set({ filename: newTitle, updatedAt: new Date() })
+    .where(and(eq(uploadedFiles.id, id), eq(uploadedFiles.userId, userId)))
+  await relinkRenamed(userId, id, oldTitle, newTitle)
+}
+
+/** Rewrite `[[oldTitle]]` in the notes linking to a renamed resource, and adopt dangling links that
+ *  already used the new title. Rewritten notes are re-indexed (their text changed) but not re-described. */
+async function relinkRenamed(userId: string, id: string, oldTitle: string, newTitle: string): Promise<void> {
+  for (const linking of bodiesRelinkedTo(userId, id, oldTitle, newTitle)) {
+    await saveNote(userId, linking, { describe: false })
+  }
+  resolveDangling(userId, id, newTitle)
+}
+
+/** Rewrites notes saved from answers in the older form, where every citation marker carried its own
+ *  URL (`[\[1\]](https://…)`), to plain `[1]` markers paired with the note's sources list. Only markers
+ *  whose URL that list already holds are touched, so no source is lost. Idempotent — a converted
+ *  note no longer matches — and run at startup, so it needs no flag. Re-indexed (the text changed),
+ *  not re-described (the meaning did not). Returns how many notes changed. */
+export async function simplifyNoteCitations(): Promise<number> {
+  const candidates = await db.select({ id: uploadedFiles.id, userId: uploadedFiles.userId, title: uploadedFiles.filename, body: uploadedFiles.body })
+    .from(uploadedFiles)
+    // A bound parameter: a backslash written inside the sql tag does not reach SQLite as written.
+    .where(and(eq(uploadedFiles.kind, 'note'), sql`${uploadedFiles.body} LIKE ${'%[\\[%'}`))
+  let changed = 0
+  for (const note of candidates) {
+    const body = plainCitations(note.body ?? '')
+    if (body === note.body) continue
+    try {
+      await saveNote(note.userId, { id: note.id, title: note.title, body }, { describe: false })
+      changed++
+    } catch (e) {
+      console.warn(`  [notes] could not simplify citations in ${note.id}: ${e instanceof Error ? e.message : e}`)
+    }
+  }
+  if (changed) console.log(`  [notes] simplified citation links in ${changed} note(s)`)
+  return changed
 }
 
 /** Re-chunks notes that have no chunks at all, and reports how many it recovered.

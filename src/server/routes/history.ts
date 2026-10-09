@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { db, sqlite, chatSessions, messages, spaces, spaceMemories, monitorRuns } from '../lib/db.ts'
-import { eq, and, desc, ne, count, isNull, or, sql } from 'drizzle-orm'
+import { eq, and, desc, ne, count, isNull, or, sql, inArray } from 'drizzle-orm'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
@@ -8,7 +8,7 @@ import { COLLECTION_HOLDS_NO_CHATS } from '../lib/ownership.ts'
 import { extractMemoriesPostHoc, retroExtractionInputs } from '../lib/memory.ts'
 import { deleteSessionImages } from '../lib/image-store.ts'
 import { canMoveChat } from '../lib/space-lock.ts'
-import { deindexSession, indexSession } from '../lib/chat-indexer.ts'
+import { deindexContent, deindexSession, indexSession } from '../lib/chat-indexer.ts'
 
 export const historyRouter = new Hono<AppEnv>()
 
@@ -83,8 +83,49 @@ historyRouter.get('/:id', async (c) => {
   if (!session) return c.json({ error: 'Not found' }, 404)
 
   const msgs = await db.select().from(messages).where(eq(messages.sessionId, id))
+  // Notes saved from this chat's answers, so each answer can say where it went.
+  const notes = sqlite.query(`
+    SELECT id, filename AS title, origin_message_id AS messageId FROM uploaded_files
+    WHERE user_id = ? AND origin_session_id = ? AND origin_message_id IS NOT NULL ORDER BY created_at
+  `).all(userId, id) as Array<{ id: string; title: string; messageId: string }>
+  const byMessage = new Map<string, Array<{ id: string; title: string }>>()
+  for (const n of notes) byMessage.set(n.messageId, [...(byMessage.get(n.messageId) ?? []), { id: n.id, title: n.title }])
 
-  return c.json({ session, messages: msgs })
+  return c.json({ session, messages: msgs.map(m => ({ ...m, savedNotes: byMessage.get(m.id) ?? [] })) })
+})
+
+/** Pins or unpins one message: a pinned message is kept in full when the chat outgrows the context. */
+historyRouter.patch('/:id/messages/:mid', zValidator('json', z.object({ pinned: z.boolean() })), async (c) => {
+  const userId = c.get('userId') as string
+  const id = c.req.param('id')
+  const session = await db.select({ id: chatSessions.id }).from(chatSessions)
+    .where(and(eq(chatSessions.id, id), eq(chatSessions.userId, userId))).get()
+  if (!session) return c.json({ error: 'Not found' }, 404)
+
+  const updated = await db.update(messages).set({ pinned: c.req.valid('json').pinned })
+    .where(and(eq(messages.id, c.req.param('mid')), eq(messages.sessionId, id))).returning({ id: messages.id })
+  if (!updated.length) return c.json({ error: 'Not found' }, 404)
+  return c.json({ ok: true })
+})
+
+/** Deletes one turn of a chat (a question and its answer), along with its chat-RAG chunks and
+ *  generated images. Memories already extracted from it stay; they are managed separately. */
+historyRouter.delete('/:id/messages', zValidator('json', z.object({ ids: z.array(z.string()).min(1).max(2) })), async (c) => {
+  const userId = c.get('userId') as string
+  const id = c.req.param('id')
+  const session = await db.select({ id: chatSessions.id }).from(chatSessions)
+    .where(and(eq(chatSessions.id, id), eq(chatSessions.userId, userId))).get()
+  if (!session) return c.json({ error: 'Not found' }, 404)
+
+  const deleted = await db.delete(messages)
+    .where(and(eq(messages.sessionId, id), inArray(messages.id, c.req.valid('json').ids)))
+    .returning({ content: messages.content })
+  if (!deleted.length) return c.json({ error: 'Not found' }, 404)
+  // The stored report indexes into the old message list; the next turn writes a fresh one.
+  await db.update(chatSessions).set({ contextReport: null }).where(eq(chatSessions.id, id))
+  for (const m of deleted) deindexContent(id, m.content)
+  deleteSessionImages(deleted.map(m => m.content)).catch(e => console.error('[image] cleanup failed:', e))
+  return c.json({ ok: true })
 })
 
 historyRouter.patch('/:id', zValidator('json', z.object({

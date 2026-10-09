@@ -1,6 +1,8 @@
+import { createHash } from 'node:crypto'
 import { generateText } from 'ai'
 import type { ModelMessage } from 'ai'
-import { getSmallModel, SMALL_MODEL_INPUT_CHARS, CHARS_PER_TOKEN, estimateTokens as estimate } from './llm.ts'
+import type { ContextReport } from '../../shared/context.ts'
+import { getSmallModel, SMALL_MODEL_INPUT_CHARS, CHARS_PER_TOKEN, estimateTokens as estimate, tokensToChars } from './llm.ts'
 
 // Fraction of the model's context window budgeted for input (system + history + tool content);
 // the remainder is reserved for the model's own output.
@@ -18,59 +20,126 @@ const MIN_COMPRESS_CHARS = 300
 // default; not separately env-configurable — compression is already gated by its own admin toggle).
 const MAX_HISTORY_COMPRESS_CHUNKS = 6
 
+/** No message pinned. */
+const NO_PINS: ReadonlySet<number> = new Set()
+// A pinned message is shortened to fit rather than dropped, but never below this: the question
+// and the start of its document stay readable.
+const MIN_PINNED_CHARS = 1000
+const TRUNCATED_NOTE = '\n\n[…truncated to fit the context window]'
+
 interface TrimSplit {
   kept: ModelMessage[]
   dropped: ModelMessage[]
+  /** Request indices of `dropped`, ascending. */
+  droppedIdx: number[]
   systemCost: number
   budget: number
+  report: ContextReport
 }
 
-// Shared core: decides which oldest messages (plus any orphaned leading tool results) must be
-// dropped to fit `messages` within `maxTokens`, reserving `systemCost` tokens for systemPrompt.
-// Pure/sync. Used by both trimMessages (hard-drop) and compressMessages (summarize-then-fold).
-function splitForTrim(messages: ModelMessage[], maxTokens: number, systemPrompt: string): TrimSplit {
+const costOf = (m: ModelMessage) => estimate(JSON.stringify(m))
+
+/** A tool call or its result: search results and pages, not conversation. */
+const isToolExchange = (m: ModelMessage) =>
+  m.role === 'tool' || (m.role === 'assistant' && Array.isArray(m.content) && m.content.some(p => p.type === 'tool-call'))
+
+// Shared core: decides which oldest unpinned messages (plus any tool results orphaned by that)
+// must be dropped to fit `messages` within `maxTokens`, reserving `systemCost` tokens for
+// systemPrompt. Pinned messages are kept, shortened if they alone overflow; the last message is
+// always kept. Pure/sync. Used by both trimMessages (hard-drop) and compressMessages.
+function splitForTrim(messages: ModelMessage[], maxTokens: number, systemPrompt: string, pinned = NO_PINS): TrimSplit {
   const systemCost = estimate(systemPrompt)
   const budget = maxTokens - systemCost
-  if (budget <= 0) return { kept: messages.slice(-1), dropped: messages.slice(0, -1), systemCost, budget }
-
-  let total = messages.reduce((sum, m) => sum + estimate(JSON.stringify(m)), 0)
-  if (total <= budget) return { kept: messages, dropped: [], systemCost, budget }
-
-  let start = 0
-  while (total > budget && start < messages.length - 1) {
-    total -= estimate(JSON.stringify(messages[start]))
-    start++
-    // Drop orphaned tool results at the front, but never the last message
-    while (start < messages.length - 1 && messages[start].role === 'tool') {
-      total -= estimate(JSON.stringify(messages[start]))
-      start++
-    }
-  }
-  const trimmed = messages.slice(start)
-  // Strip any leading tool message left orphaned after its tool-call was dropped
-  const firstNonTool = trimmed.findIndex(m => m.role !== 'tool')
-  const kept = firstNonTool > 0 ? trimmed.slice(firstNonTool) : trimmed
-  const dropped = messages.slice(0, messages.length - kept.length)
-  return { kept, dropped, systemCost, budget }
-}
-
-// Trims oldest messages so estimated tokens fit within maxTokens.
-// Pass systemPrompt so its cost is reserved from the budget.
-export function trimMessages(messages: ModelMessage[], maxTokens: number, systemPrompt = ''): ModelMessage[] {
-  const { kept, dropped, systemCost, budget } = splitForTrim(messages, maxTokens, systemPrompt)
+  const last = messages.length - 1
+  const drop = new Set<number>()
+  let current = messages
   if (budget <= 0) {
-    console.warn(`[chat] system prompt alone (~${systemCost} tok) exceeds context budget ${maxTokens}`)
-    return kept
+    for (let i = 0; i < last; i++) drop.add(i)
+  } else {
+    const cost = messages.map(costOf)
+    let total = cost.reduce((a, b) => a + b, 0)
+    for (let i = 0; i < last && total > budget; i++) {
+      if (pinned.has(i)) continue
+      drop.add(i)
+      total -= cost[i]
+      // A tool result is meaningless without the call it answers, but never drop the last message
+      while (i + 1 < last && messages[i + 1].role === 'tool') {
+        drop.add(++i)
+        total -= cost[i]
+      }
+    }
+    if (total > budget) current = shortenPinned(messages, pinned, last, total - budget)
   }
-  if (dropped.length === 0) return messages
-  console.warn(`[chat] context trim: dropped first ${dropped.length} messages (system ~${systemCost} tok, budget ${budget} tok)`)
-  return kept
+  const droppedIdx = [...drop].sort((a, b) => a - b)
+  const kept = current.filter((_, i) => !drop.has(i))
+  const dropped = droppedIdx.map(i => messages[i])
+  const report = reportFor(current, drop, droppedIdx, pinned, maxTokens, systemPrompt.length, current !== messages)
+  return { kept, dropped, droppedIdx, systemCost, budget, report }
 }
 
-export interface CompressResult {
+/** Shortens pinned messages, oldest first, by `excessTokens` in total. Returns a new array. */
+function shortenPinned(messages: ModelMessage[], pinned: ReadonlySet<number>, last: number, excessTokens: number): ModelMessage[] {
+  let excessChars = excessTokens * CHARS_PER_TOKEN
+  const out = [...messages]
+  for (const i of [...pinned].sort((a, b) => a - b)) {
+    const m = out[i]
+    if (i >= last || excessChars <= 0 || !m || typeof m.content !== 'string') continue
+    const cut = Math.min(excessChars, m.content.length - MIN_PINNED_CHARS)
+    if (cut <= 0) continue
+    out[i] = { ...m, content: m.content.slice(0, m.content.length - cut) + TRUNCATED_NOTE } as ModelMessage
+    excessChars -= cut
+  }
+  return out
+}
+
+function reportFor(
+  messages: ModelMessage[], drop: Set<number>, droppedIdx: number[], pinned: ReadonlySet<number>,
+  maxTokens: number, systemChars: number, pinnedTruncated: boolean,
+): ContextReport {
+  let pinnedChars = 0
+  let historyChars = 0
+  let searchChars = 0
+  messages.forEach((m, i) => {
+    if (drop.has(i)) return
+    const chars = JSON.stringify(m).length
+    if (pinned.has(i)) pinnedChars += chars
+    else if (isToolExchange(m)) searchChars += chars
+    else historyChars += chars
+  })
+  const cut = droppedIdx.length ? droppedIdx[droppedIdx.length - 1] + 1 : 0
+  return { budgetChars: tokensToChars(maxTokens), systemChars, pinnedChars, historyChars, summaryChars: 0, searchChars, cut, lostBefore: cut, pinnedTruncated }
+}
+
+export interface TrimResult {
   messages: ModelMessage[]
+  report: ContextReport
+}
+
+// Trims oldest unpinned messages so estimated tokens fit within maxTokens.
+// Pass systemPrompt so its cost is reserved from the budget.
+export function trimMessages(messages: ModelMessage[], maxTokens: number, systemPrompt = '', pinned = NO_PINS): TrimResult {
+  const { kept, dropped, systemCost, budget, report } = splitForTrim(messages, maxTokens, systemPrompt, pinned)
+  if (budget <= 0) console.warn(`[chat] system prompt alone (~${systemCost} tok) exceeds context budget ${maxTokens}`)
+  else if (dropped.length > 0) console.warn(`[chat] context trim: dropped ${dropped.length} oldest messages (system ~${systemCost} tok, budget ${budget} tok${pinned.size ? `, ${pinned.size} pinned kept` : ''})`)
+  if (report.pinnedTruncated) console.warn(`[chat] context trim: pinned messages alone exceed the budget — shortened`)
+  return { messages: kept, report }
+}
+
+export interface CompressResult extends TrimResult {
   /** Present only when messages were dropped AND successfully compressed into a summary. */
   summary?: string
+  /** The summary to carry into the next turn; the same object as `previous` when it was reused as is. */
+  stored?: HistorySummary
+}
+
+/** A summary carried between turns of one chat. It covers the first trimmed messages, one hash
+ *  each, so a change in that range (a deleted turn, a pin or unpin) forces a rebuild rather than
+ *  extending a summary of messages that are no longer there. */
+export interface HistorySummary {
+  summary: string
+  hashes: string[]
+  /** Leading trimmed messages the summary never covered: too many to fit when it was built. */
+  lost: number
 }
 
 // Async sibling of trimMessages for the agentic researcher path: when messages must be dropped,
@@ -83,54 +152,127 @@ export interface CompressResult {
 // dropped range is larger than MAX_HISTORY_COMPRESS_CHUNKS chunks can cover, only the most recent
 // slice of it (closest to the current topic) is summarized; the oldest remainder is dropped
 // entirely rather than partially represented. Falls back to a plain hard-drop on any generateText
-// failure or when the summary budget is too small to be worthwhile.
+// failure or when the summary budget is too small to be worthwhile. Pinned messages are never
+// dropped, so never summarized.
 export async function compressMessages(
   messages: ModelMessage[],
   maxTokens: number,
   systemPrompt: string,
   summaryBudgetChars: number,
+  pinned = NO_PINS,
+  previous?: HistorySummary,
 ): Promise<CompressResult> {
-  const { kept, dropped, systemCost, budget } = splitForTrim(messages, maxTokens, systemPrompt)
+  const { kept, dropped, droppedIdx, systemCost, budget, report } = splitForTrim(messages, maxTokens, systemPrompt, pinned)
+  const hardDrop = (why: string) => {
+    console.warn(`[chat] context trim: dropped ${dropped.length} oldest messages (system ~${systemCost} tok, budget ${budget} tok) — ${why}, hard-dropped`)
+    return { messages: kept, report }
+  }
   if (budget <= 0) {
     console.warn(`[chat] system prompt alone (~${systemCost} tok) exceeds context budget ${maxTokens}`)
-    return { messages: kept }
+    return { messages: kept, report }
   }
-  if (dropped.length === 0) return { messages }
-  if (summaryBudgetChars < MIN_COMPRESS_CHARS) {
-    console.warn(`[chat] context trim: dropped first ${dropped.length} messages (system ~${systemCost} tok, budget ${budget} tok) — summary budget too small (${summaryBudgetChars}c), hard-dropped`)
-    return { messages: kept }
-  }
+  if (dropped.length === 0) return { messages: kept, report }
+  if (summaryBudgetChars < MIN_COMPRESS_CHARS) return hardDrop(`summary budget too small (${summaryBudgetChars}c)`)
 
   const start = performance.now()
-  const fullInput = dropped.map(m => `${m.role}: ${typeof m.content === 'string' ? m.content : JSON.stringify(m.content)}`).join('\n\n')
+  const parts = dropped.map(m => `${m.role}: ${typeof m.content === 'string' ? m.content : JSON.stringify(m.content)}`)
+  try {
+    const { stored, how } = await updateSummary(parts, summaryBudgetChars, previous)
+    console.log(`  [chat] history compressed: dropped ${dropped.length} messages → summary ${stored.summary.length}c (${how}) in ${(performance.now() - start).toFixed(0)}ms`)
+    const lost = Math.min(stored.lost, droppedIdx.length)
+    return {
+      messages: kept,
+      summary: stored.summary,
+      stored,
+      report: { ...report, summary: stored.summary, summaryChars: stored.summary.length, lostBefore: lost ? droppedIdx[lost - 1] + 1 : 0 },
+    }
+  } catch (err) {
+    return hardDrop(`compression failed (${err})`)
+  }
+}
+
+const hashPart = (part: string) => createHash('sha256').update(part).digest('hex').slice(0, 16)
+
+/** Reuses, extends or rebuilds the summary of the trimmed messages `parts`. Reused as is when the
+ *  trimmed range shrank (the budget varies a little per turn): covering a message that is also
+ *  kept in full costs a few summary words, not a rebuild. */
+async function updateSummary(
+  parts: string[], budgetChars: number, previous?: HistorySummary,
+): Promise<{ stored: HistorySummary; how: 'reused' | 'extended' | 'rebuilt' }> {
+  const hashes = parts.map(hashPart)
+  if (previous && previous.hashes.every((h, i) => i >= hashes.length || h === hashes[i])) {
+    if (hashes.length <= previous.hashes.length) return { stored: previous, how: 'reused' }
+    const summary = await extendSummary(previous.summary, parts.slice(previous.hashes.length), budgetChars)
+    if (summary !== null) return { stored: { summary, hashes, lost: previous.lost }, how: 'extended' }
+  }
+  return { stored: await buildSummary(parts, hashes, budgetChars), how: 'rebuilt' }
+}
+
+/** Summarises the whole trimmed range from scratch; only its most recent part if it is too large. */
+async function buildSummary(parts: string[], hashes: string[], budgetChars: number): Promise<HistorySummary> {
+  const fullInput = parts.join('\n\n')
   const maxInputChars = MAX_HISTORY_COMPRESS_CHUNKS * SMALL_MODEL_INPUT_CHARS
   const input = fullInput.length > maxInputChars ? fullInput.slice(fullInput.length - maxInputChars) : fullInput
   if (fullInput.length > maxInputChars) {
     console.log(`  [chat] history compression: dropped range too large (${fullInput.length}c) for ${MAX_HISTORY_COMPRESS_CHUNKS} chunks — summarizing only the most recent ${maxInputChars}c`)
   }
-  const numChunks = Math.min(MAX_HISTORY_COMPRESS_CHUNKS, Math.ceil(input.length / SMALL_MODEL_INPUT_CHARS))
-  const perChunkChars = Math.floor(summaryBudgetChars / numChunks)
-  try {
-    const summaries: string[] = []
-    for (let i = 0; i < numChunks; i++) {
-      const chunk = input.slice(i * SMALL_MODEL_INPUT_CHARS, (i + 1) * SMALL_MODEL_INPUT_CHARS)
-      const { text } = await generateText({
-        model: getSmallModel(),
-        system: `You are compacting an earlier portion of a long conversation so it can be dropped from the active context without losing important information.
+  const summary = await summarizeHistory(input, budgetChars)
+  return { summary, hashes, lost: lostCount(parts, fullInput.length - input.length) }
+}
+
+/** Folds newly trimmed messages into an existing summary, a window at a time. Null when they are
+ *  too many for the chunk cap, so the caller rebuilds instead. */
+async function extendSummary(summary: string, fresh: string[], budgetChars: number): Promise<string | null> {
+  const input = fresh.join('\n\n')
+  if (input.length > MAX_HISTORY_COMPRESS_CHUNKS * SMALL_MODEL_INPUT_CHARS) return null
+  const window = Math.max(SMALL_MODEL_INPUT_CHARS - summary.length, Math.floor(SMALL_MODEL_INPUT_CHARS / 2))
+  let current = summary
+  for (let i = 0; i < input.length; i += window) {
+    const { text } = await generateText({
+      model: getSmallModel(),
+      system: `${COMPACT_RULES}
+You are given the existing summary, then newer messages. Return ONE updated summary that keeps what still matters from the existing one and adds the newer messages.
+Output ONLY the summary, no preamble. Target approximately ${budgetChars} characters.`,
+      prompt: `Existing summary:\n${current}\n\nNewer messages:\n${input.slice(i, i + window)}`,
+      maxOutputTokens: Math.ceil(budgetChars / CHARS_PER_TOKEN),
+    })
+    current = text.trim()
+  }
+  return current
+}
+
+/** How many of the leading dropped messages fall wholly before `sliceStart`, outside the summary. */
+function lostCount(parts: string[], sliceStart: number): number {
+  let offset = 0
+  let lost = 0
+  for (const part of parts) {
+    if (offset + part.length > sliceStart) break
+    lost++
+    offset += part.length + 2  // the '\n\n' separator
+  }
+  return lost
+}
+
+const COMPACT_RULES = `You are compacting an earlier portion of a long conversation so it can be dropped from the active context without losing important information.
 1. Preserve names, decisions, facts, and numbers a later turn might refer back to.
 2. Omit pleasantries, repeated context, and anything superseded by a later message.
-3. Write as a compact third-person briefing note, not a transcript.
+3. Write as a compact third-person briefing note, not a transcript.`
+
+/** Summarizes `input` in serial small-model chunks, to roughly `budgetChars` in total. */
+async function summarizeHistory(input: string, budgetChars: number): Promise<string> {
+  const numChunks = Math.min(MAX_HISTORY_COMPRESS_CHUNKS, Math.ceil(input.length / SMALL_MODEL_INPUT_CHARS))
+  const perChunkChars = Math.floor(budgetChars / numChunks)
+  const summaries: string[] = []
+  for (let i = 0; i < numChunks; i++) {
+    const chunk = input.slice(i * SMALL_MODEL_INPUT_CHARS, (i + 1) * SMALL_MODEL_INPUT_CHARS)
+    const { text } = await generateText({
+      model: getSmallModel(),
+      system: `${COMPACT_RULES}
 Output ONLY the summary, no preamble. Target approximately ${perChunkChars} characters.`,
-        prompt: chunk,
-        maxOutputTokens: Math.ceil(perChunkChars / CHARS_PER_TOKEN),
-      })
-      summaries.push(text.trim())
-    }
-    const summary = summaries.join('\n')
-    console.log(`  [chat] history compressed: dropped ${dropped.length} messages (${input.length}c, ${numChunks} chunk(s)) → summary ${summary.length}c in ${(performance.now() - start).toFixed(0)}ms`)
-    return { messages: kept, summary }
-  } catch (err) {
-    console.warn(`[chat] context trim: dropped first ${dropped.length} messages (system ~${systemCost} tok, budget ${budget} tok) — compression failed (${err}), hard-dropped`)
-    return { messages: kept }
+      prompt: chunk,
+      maxOutputTokens: Math.ceil(perChunkChars / CHARS_PER_TOKEN),
+    })
+    summaries.push(text.trim())
   }
+  return summaries.join('\n')
 }

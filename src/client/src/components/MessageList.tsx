@@ -1,23 +1,25 @@
-import React, { useState, useCallback, useContext, useEffect, useRef, useMemo, memo, createContext } from 'react'
+import React, { useState, useCallback, useEffect, useRef, useMemo, memo } from 'react'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
-import { ExternalLink, FileText, Download, Sparkles, Volume2, VolumeX, NotebookPen } from 'lucide-react'
+import { ExternalLink, FileText, Volume2, VolumeX, NotebookPen, Trash2, Scissors } from 'lucide-react'
 import type { Message, Source, FileSource } from '../lib/api.ts'
-import { downloadGeneratedImage } from '../lib/image-download.ts'
-import { markSvg } from '@shared/ai-provenance.ts'
 import { splitGroupedCitations } from '@shared/citations.ts'
+import { blockMdComponents, ImageBlock, ImageCaptionContext } from './markdown.tsx'
+import { prepareMath } from '../lib/math-markdown.ts'
+import { SplitNotesDialog } from './SplitNotesDialog.tsx'
+
+/** Answers shorter than this are one idea already; splitting is offered only above it. */
+const SPLIT_MIN_CHARS = 1500
 import { useT } from '../lib/i18n.tsx'
 import { NoteEditor } from './NoteEditor.tsx'
 import { answerAsNoteBody } from '../lib/note-from-answer.ts'
+import type { ContextReport } from '@shared/context.ts'
+import { ContextDivider, PinButton } from './ContextIndicators.tsx'
 
-/** Whether downloaded images get a visible caption bar burned in. A context rather than a prop
- *  because the markdown component map is module-level, so there is nothing to drill through. */
-export const ImageCaptionContext = createContext(true)
+export { ImageCaptionContext }
 
 function stripForSpeech(content: string): string {
   return content
@@ -47,6 +49,17 @@ interface Props {
   searchActiveIndex?: number
   /** Opens a resource's detail view by id, given a cited [F1]/[C1] source's `file:${id}` url. */
   onOpenResource?: (id: string) => void
+  /** The open chat, recorded on a note saved from one of its answers. */
+  sessionId?: string
+  /** What the model saw on the latest turn; draws the dividers where its view begins. */
+  context?: ContextReport | null
+  onTogglePin?: (index: number) => void
+  /** A note was saved from an answer; the parent refreshes the library list. */
+  onNotesChanged?: () => void
+  /** A stored message to bring into view once, e.g. the answer a note was saved from. */
+  focusMessageId?: string | null
+  /** Absent while a run is streaming: deleting then would race the turn being stored. */
+  onDeleteTurn?: (index: number) => void
 }
 
 /** Normalize SVG blocks: unwrap any existing ```svg fences, then rewrap consistently. */
@@ -55,10 +68,6 @@ function wrapSvgBlocks(content: string): string {
   return unwrapped.replace(/(<svg[\s\S]*?<\/svg>)/gi, (_m, svg) => `\`\`\`svg\n${svg}\n\`\`\``)
 }
 
-/** Escape $ signs immediately preceding a digit (currency amounts) so remark-math doesn't treat them as math delimiters. */
-function escapeCurrencyDollars(content: string): string {
-  return content.replace(/\$(?=\d)/g, '\\$')
-}
 
 /** A citation token as it appears inside [...] — a bare number for a web source ("1"), or a
  *  letter-prefixed label for a resource excerpt ("F1", "C2"). */
@@ -78,66 +87,6 @@ function insertCitationLinks(content: string, sources: Array<{ url: string }>, f
   })
 }
 
-type C = { children?: React.ReactNode }
-
-/** Visible AI disclosure. Shown on every generated image rather than only on the ones that would
- *  count as deepfakes under Art 50(4) — nothing here can tell them apart at generation time. */
-function AiBadge() {
-  const t = useT()
-  return (
-    <span className="inline-flex items-center gap-1 text-[11px] text-gray-500" title={t('message.aiBadge')}>
-      <Sparkles size={11} /> AI-generated
-    </span>
-  )
-}
-
-function ImageBlock({ url, alt }: { url: string; alt: string }) {
-  const t = useT()
-  const caption = useContext(ImageCaptionContext)
-  const [error, setError] = useState('')
-
-  function handleDownload() {
-    setError('')
-    downloadGeneratedImage(url, url.split('/').pop() ?? 'image.png', caption ? t('message.imageCaption') : null)
-      .catch(e => setError(e instanceof Error ? e.message : t('message.downloadFailed')))
-  }
-
-  return (
-    <div className="my-2">
-      <img src={url} alt={alt} className="max-w-full rounded border border-gray-700" />
-      <div className="mt-1 flex items-center gap-3">
-        <button onClick={handleDownload} className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-200">
-          <Download size={12} /> {t('message.downloadPng')}
-        </button>
-        <AiBadge />
-      </div>
-      {error && <div className="text-xs text-amber-500">{error}</div>}
-    </div>
-  )
-}
-
-function SvgBlock({ svg }: { svg: string }) {
-  const t = useT()
-  const dataUri = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
-  const handleDownload = () => {
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(new Blob([markSvg(svg, `Queriocity ${__APP_VERSION__}`)], { type: 'image/svg+xml' }))
-    a.download = 'image.svg'
-    a.click()
-    URL.revokeObjectURL(a.href)
-  }
-  return (
-    <div className="my-2">
-      <img src={dataUri} alt="SVG output" className="max-w-full rounded border border-gray-700 bg-white" />
-      <div className="mt-1 flex items-center gap-3">
-        <button onClick={handleDownload} className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-200">
-          <Download size={12} /> {t('message.downloadSvg')}
-        </button>
-        <AiBadge />
-      </div>
-    </div>
-  )
-}
 
 /** Bare hostname for the tooltip's source line; falls back to the raw string. */
 function hostnameOf(url: string): string {
@@ -186,45 +135,7 @@ function makeMdComponents(highlighted: string | null, onCitationClick: (key: str
       </a>
     )
   },
-  p: ({ children }: C) => <p className="mb-2 last:mb-0">{children}</p>,
-  ul: ({ children }: C) => <ul className="list-disc pl-4 mb-2 space-y-0.5">{children}</ul>,
-  ol: ({ children }: C) => <ol className="list-decimal pl-4 mb-2 space-y-0.5">{children}</ol>,
-  li: ({ children }: C) => <li>{children}</li>,
-  strong: ({ children }: C) => <strong className="font-semibold text-white">{children}</strong>,
-  h1: ({ children }: C) => <h1 className="text-base font-semibold text-white mb-1 mt-2">{children}</h1>,
-  h2: ({ children }: C) => <h2 className="text-sm font-semibold text-white mb-1 mt-2">{children}</h2>,
-  h3: ({ children }: C) => <h3 className="text-sm font-medium text-white mb-1 mt-1">{children}</h3>,
-  code: ({ children, className }: { children?: React.ReactNode; className?: string }) => {
-    const match = /language-(\w+)/.exec(className || '')
-    if (match) {
-      const src = String(children).replace(/\n$/, '')
-      if (match[1] === 'svg') return <SvgBlock svg={src} />
-      return (
-        <SyntaxHighlighter
-          style={oneDark}
-          language={match[1]}
-          PreTag="div"
-          customStyle={{ margin: '0 0 0.5rem', borderRadius: '0.375rem', padding: '0.75rem', fontSize: '0.75rem' }}
-        >
-          {src}
-        </SyntaxHighlighter>
-      )
-    }
-    return <code className="bg-gray-700 text-gray-100 rounded px-1 py-0.5 text-xs font-mono">{children}</code>
-  },
-  img: ({ src, alt }: { src?: string; alt?: string }) => src ? <ImageBlock url={src} alt={alt ?? ''} /> : null,
-  pre: ({ children }: C) => <>{children}</>,
-  blockquote: ({ children }: C) => <blockquote className="border-l-2 border-gray-600 pl-3 text-gray-400 italic my-2">{children}</blockquote>,
-  del: ({ children }: C) => <del className="text-gray-500">{children}</del>,
-  input: ({ type, checked }: { type?: string; checked?: boolean }) => type === 'checkbox'
-    ? <input type="checkbox" checked={checked} readOnly className="mr-2 accent-blue-400" />
-    : null,
-  table: ({ children }: C) => <div className="overflow-x-auto mb-2"><table className="text-xs border-collapse">{children}</table></div>,
-  thead: ({ children }: C) => <thead className="text-gray-300">{children}</thead>,
-  tbody: ({ children }: C) => <tbody>{children}</tbody>,
-  tr: ({ children }: C) => <tr className="border-b border-gray-700">{children}</tr>,
-  th: ({ children }: C) => <th className="px-3 py-1 text-left font-semibold border-r border-gray-700 last:border-r-0">{children}</th>,
-  td: ({ children }: C) => <td className="px-3 py-1 border-r border-gray-700 last:border-r-0">{children}</td>,
+  ...blockMdComponents,
 }}
 
 interface SourceListProps {
@@ -350,13 +261,17 @@ function HighlightedText({ text, query }: { text: string; query: string }) {
   )}</>
 }
 
-function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, searchQuery, noteTitle, onOpenResource }: { msg: Message; isFirst?: boolean; defaultCollapsed?: boolean; isMatch?: boolean; isActive?: boolean; searchQuery?: string; noteTitle?: string; onOpenResource?: (id: string) => void }) {
+function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, searchQuery, noteTitle, onOpenResource, sessionId, onTogglePin, onDeleteTurn, onNotesChanged, keptInFull }: { msg: Message; isFirst?: boolean; defaultCollapsed?: boolean; isMatch?: boolean; isActive?: boolean; searchQuery?: string; noteTitle?: string; onOpenResource?: (id: string) => void; sessionId?: string; onTogglePin?: () => void; onDeleteTurn?: () => void; onNotesChanged?: () => void; keptInFull?: boolean }) {
   const t = useT()
   const [highlighted, setHighlighted] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState(!!defaultCollapsed)
   const [speaking, setSpeaking] = useState(false)
   const [savingNote, setSavingNote] = useState(false)
+  const [splitting, setSplitting] = useState(false)
   const [noteSaved, setNoteSaved] = useState(false)
+  // Notes saved from this answer: those stored with the chat, plus any saved since it was loaded.
+  const [savedHere, setSavedHere] = useState<Array<{ id: string; title: string }>>([])
+  const savedNotes = [...(msg.savedNotes ?? []), ...savedHere]
   const toggleSource = useCallback((key: string) => setHighlighted(v => v === key ? null : key), [])
   const mdComponents = makeMdComponents(highlighted, toggleSource, msg.sources, msg.fileSources)
 
@@ -422,12 +337,21 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
             {msg.content && (() => {
               const cited = (msg.sources?.length || msg.fileSources?.length) ? insertCitationLinks(msg.content, msg.sources ?? [], msg.fileSources ?? []) : splitGroupedCitations(msg.content)
               const cleaned = msg.images?.length ? cited.replace(/!\[.*?\]\([^)]+\.png\)/g, '') : cited
-              return cleaned.trim() ? <ReactMarkdown components={mdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{wrapSvgBlocks(escapeCurrencyDollars(cleaned))}</ReactMarkdown> : null
+              return cleaned.trim() ? <ReactMarkdown components={mdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{wrapSvgBlocks(prepareMath(cleaned))}</ReactMarkdown> : null
             })()}
             {msg.images?.map((img, i) => <ImageBlock key={i} url={img.url} alt={img.alt} />)}
             {msg.content && (
               <div className="flex justify-end items-center gap-2 mt-1">
+                {savedNotes.length > 0 && onOpenResource && (
+                  <span className="mr-auto flex flex-wrap items-center gap-x-2 min-w-0 text-[11px] text-gray-500">
+                    {t('note.savedAs')}
+                    {savedNotes.map(n => (
+                      <button key={n.id} onClick={() => onOpenResource(n.id)} className="truncate max-w-[12rem] text-amber-400/80 hover:text-amber-300">{n.title}</button>
+                    ))}
+                  </span>
+                )}
                 {noteSaved && <span className="text-[11px] text-green-400">{t('note.savedFromAnswer')}</span>}
+                {onTogglePin && <PinButton pinned={msg.pinned} keptInFull={keptInFull} onToggle={onTogglePin} />}
                 <button
                   onClick={() => setSavingNote(true)}
                   className="p-0.5 rounded text-gray-600 hover:text-amber-400 transition-colors"
@@ -435,6 +359,15 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
                 >
                   <NotebookPen size={13} />
                 </button>
+                {msg.content.length >= SPLIT_MIN_CHARS && (
+                  <button
+                    onClick={() => setSplitting(true)}
+                    className="p-0.5 rounded text-gray-600 hover:text-amber-400 transition-colors"
+                    title={t('split.fromAnswer')}
+                  >
+                    <Scissors size={13} />
+                  </button>
+                )}
                 {'speechSynthesis' in window && (
                   <button
                     onClick={handleSpeak}
@@ -446,20 +379,52 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
                 )}
               </div>
             )}
+            {splitting && (
+              <SplitNotesDialog
+                title={noteTitle ?? ''}
+                body={answerAsNoteBody(msg, t('note.sources'))}
+                options={{ originSessionId: sessionId, originMessageId: msg.id }}
+                onClose={() => setSplitting(false)}
+                onSaved={notes => { setSplitting(false); setSavedHere(prev => [...prev, ...notes]); onNotesChanged?.() }}
+              />
+            )}
             {savingNote && (
               <NoteEditor
                 initialTitle={noteTitle ?? ''}
                 initialBody={answerAsNoteBody(msg, t('note.sources'))}
+                originSessionId={sessionId}
+                originMessageId={msg.id}
                 onClose={() => setSavingNote(false)}
-                onSaved={() => {
+                onSaved={(id, title) => {
                   setSavingNote(false)
+                  setSavedHere(prev => [...prev, { id, title }])
+                  onNotesChanged?.()
                   setNoteSaved(true)
                   setTimeout(() => setNoteSaved(false), 3000)
                 }}
               />
             )}
           </>
-        ) : <HighlightedText text={msg.content} query={searchQuery ?? ''} />}
+        ) : (
+          <>
+            <HighlightedText text={msg.content} query={searchQuery ?? ''} />
+            {(onTogglePin || onDeleteTurn) && (
+              <div className="flex justify-end gap-3 mt-1 whitespace-normal">
+                {onDeleteTurn && (
+                  <button
+                    onClick={() => { if (window.confirm(t('message.deleteTurnConfirm'))) onDeleteTurn() }}
+                    title={t('message.deleteTurn')}
+                    aria-label={t('message.deleteTurn')}
+                    className="p-1 -m-0.5 rounded text-blue-300 hover:text-white opacity-60 hover:opacity-100 transition-colors"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                )}
+                {onTogglePin && <PinButton pinned={msg.pinned} keptInFull={keptInFull} onToggle={onTogglePin} onBlue />}
+              </div>
+            )}
+          </>
+        )}
       </div>
       {(msg.sources && msg.sources.length > 0 || msg.fileSources && msg.fileSources.length > 0) && (
         <SourceList content={msg.content} sources={msg.sources ?? []} fileSources={msg.fileSources} highlighted={highlighted} onSourceClick={toggleSource} onOpenResource={onOpenResource} />
@@ -482,9 +447,30 @@ function noteTitleFor(messages: Message[], index: number): string | undefined {
   return undefined
 }
 
-export const MessageList = memo(function MessageList({ messages, streaming, streamingThinking, collapseFirstQuestion, searchQuery, searchMatchIndices, searchActiveIndex, onOpenResource }: Props) {
+/** Unpinned messages in [from, to): those the model lost or got only as a summary. */
+const unpinnedIn = (messages: Message[], from: number, to: number) =>
+  messages.slice(from, to).filter(m => !m.pinned).length
+
+export const MessageList = memo(function MessageList({ messages, streaming, streamingThinking, collapseFirstQuestion, searchQuery, searchMatchIndices, searchActiveIndex, onOpenResource, sessionId, context, onTogglePin, onDeleteTurn, focusMessageId, onNotesChanged }: Props) {
   const msgRefs = useRef<Map<number, HTMLDivElement>>(new Map())
   const matchSet = useMemo(() => new Set(searchMatchIndices ?? []), [searchMatchIndices])
+
+  // Once per id: after the chat loads, centre the message and outline it briefly. Delayed so it
+  // wins over the scroll to the bottom that every message-list change triggers.
+  const focused = useRef<string | null>(null)
+  useEffect(() => {
+    if (!focusMessageId || focused.current === focusMessageId) return
+    const i = messages.findIndex(m => m.id === focusMessageId)
+    const el = msgRefs.current.get(i)
+    if (i < 0 || !el) return
+    focused.current = focusMessageId
+    const timer = setTimeout(() => {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      el.classList.add('ring-2', 'ring-amber-400/60', 'rounded-lg')
+      setTimeout(() => el.classList.remove('ring-2', 'ring-amber-400/60', 'rounded-lg'), 2500)
+    }, 400)
+    return () => clearTimeout(timer)
+  }, [focusMessageId, messages])
 
   useEffect(() => {
     if (searchActiveIndex == null || searchActiveIndex < 0) return
@@ -495,6 +481,12 @@ export const MessageList = memo(function MessageList({ messages, streaming, stre
     <div data-print-region className="flex flex-col gap-4 p-4 overflow-y-auto overflow-x-hidden flex-1">
       {messages.map((msg, i) => (
         <div key={i} ref={el => { if (el) msgRefs.current.set(i, el); else msgRefs.current.delete(i) }}>
+          {context && i > 0 && i === context.lostBefore && unpinnedIn(messages, 0, i) > 0 && (
+            <ContextDivider kind="lost" count={unpinnedIn(messages, 0, i)} />
+          )}
+          {context && i > context.lostBefore && i === context.cut && unpinnedIn(messages, context.lostBefore, i) > 0 && (
+            <ContextDivider kind="summarised" count={unpinnedIn(messages, context.lostBefore, i)} summary={context.summary} />
+          )}
           <MessageItem
             msg={msg}
             isFirst={i === 0}
@@ -504,6 +496,11 @@ export const MessageList = memo(function MessageList({ messages, streaming, stre
             searchQuery={searchQuery}
             noteTitle={noteTitleFor(messages, i)}
             onOpenResource={onOpenResource}
+            sessionId={sessionId}
+            onTogglePin={onTogglePin ? () => onTogglePin(i) : undefined}
+            onDeleteTurn={onDeleteTurn ? () => onDeleteTurn(i) : undefined}
+            onNotesChanged={onNotesChanged}
+            keptInFull={!!context && i < context.cut}
           />
         </div>
       ))}
@@ -513,7 +510,7 @@ export const MessageList = memo(function MessageList({ messages, streaming, stre
             {streamingThinking && <ThinkingBlock content={streamingThinking} open />}
             {streaming && (
               <>
-                <ReactMarkdown components={baseMdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{wrapSvgBlocks(escapeCurrencyDollars(splitGroupedCitations(streaming.replace(/!\[.*?\]\([^)]+\.png\)/g, ''))))}</ReactMarkdown>
+                <ReactMarkdown components={baseMdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{wrapSvgBlocks(prepareMath(splitGroupedCitations(streaming.replace(/!\[.*?\]\([^)]+\.png\)/g, ''))))}</ReactMarkdown>
                 <span className="animate-pulse">▋</span>
               </>
             )}

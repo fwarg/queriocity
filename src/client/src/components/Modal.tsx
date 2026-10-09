@@ -9,6 +9,10 @@ interface Props {
   maxWidth?: string
 }
 
+/** Open modals, innermost last. Keys are document-wide, so without this a modal opened from another
+ *  (the link picker over the note editor) would close both on one Escape — and lose the draft. */
+const openModals: symbol[] = []
+
 /** Accessible modal with focus trap, Escape-to-close, and backdrop click dismiss. */
 export function Modal({ title, onClose, children, maxWidth = 'max-w-md' }: Props) {
   const t = useT()
@@ -19,9 +23,12 @@ export function Modal({ title, onClose, children, maxWidth = 'max-w-md' }: Props
   const stableClose = useCallback(() => onCloseRef.current(), [])
 
   useEffect(() => {
+    const self = Symbol('modal')
+    openModals.push(self)
     panelRef.current?.focus()
 
     function handleKey(e: KeyboardEvent) {
+      if (openModals[openModals.length - 1] !== self) return
       if (e.key === 'Escape') { onCloseRef.current(); return }
       if (e.key !== 'Tab') return
       const focusables = panelRef.current?.querySelectorAll<HTMLElement>(
@@ -38,7 +45,10 @@ export function Modal({ title, onClose, children, maxWidth = 'max-w-md' }: Props
     }
 
     document.addEventListener('keydown', handleKey)
-    return () => document.removeEventListener('keydown', handleKey)
+    return () => {
+      document.removeEventListener('keydown', handleKey)
+      openModals.splice(openModals.indexOf(self), 1)
+    }
   }, []) // stable — uses ref for onClose so effect doesn't re-run on every render
 
   return (

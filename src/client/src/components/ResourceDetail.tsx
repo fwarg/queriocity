@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import { ArrowLeft, ExternalLink, FileText, NotebookPen, X } from 'lucide-react'
+import { ArrowLeft, ChevronRight, ExternalLink, FileText, MessageSquare, NotebookPen, Plus, Scissors, X } from 'lucide-react'
 import { NoteEditor } from './NoteEditor.tsx'
+import { NoteMarkdown } from './NoteMarkdown.tsx'
+import { TagEditor } from './TagEditor.tsx'
+import { LocalGraph } from './LocalGraph.tsx'
+import { RelatedResources } from './RelatedResources.tsx'
+import { LinkSuggestions } from './LinkSuggestions.tsx'
+import { SplitNotesDialog } from './SplitNotesDialog.tsx'
 import {
-  fetchResource, fetchCustomTemplates, fetchSpaces, renameResource, tagFileToSpace, transformResource, untagFileFromSpace,
+  fetchResource, fetchCustomTemplates, fetchSpaces, renameResource, setResourceTags, tagFileToSpace, transformResource, untagFileFromSpace,
   type CustomTemplate, type ResourceDetail as Detail, type ResourceRef, type Space, type TransformOperation,
 } from '../lib/api.ts'
 import { useLang, useT } from '../lib/i18n.tsx'
@@ -14,6 +18,8 @@ import { GuideLink } from './GuideView.tsx'
 import type { TopicId } from '@shared/guide/index.ts'
 
 const OPERATIONS: TransformOperation[] = ['summarize', 'keypoints', 'questions', 'outline']
+/** Notes shorter than this are one idea already; splitting is offered only above it. */
+const SPLIT_MIN_CHARS = 1500
 
 /** Built-in transform labels are assembled at runtime; i18n.test.ts holds the catalogue to the list
  *  above so a fifth operation cannot ship without its label. */
@@ -23,18 +29,26 @@ interface Props {
   id: string
   onBack: () => void
   onChanged: () => void
-  /** Follow a provenance chip to another resource. */
+  /** Follow a provenance chip or a link to another resource. */
   onOpen: (id: string) => void
+  /** Open the chat a note was saved from. */
+  /** `messageId`: the answer to scroll to, when known. */
+  onOpenChat: (id: string, title: string, messageId?: string) => void
+  /** An inline `#tag` in the note was tapped: show the library filtered on it. */
+  onTag?: (tag: string) => void
 }
 
 /** What a stored resource actually contains: its summary, the spaces it feeds, and the excerpts
  *  retrieval works from. Notes are editable here; every resource can be transformed into one. */
-export function ResourceDetail({ id, onBack, onChanged, onOpen }: Props) {
+export function ResourceDetail({ id, onBack, onChanged, onOpen, onOpenChat, onTag }: Props) {
   const t = useT()
   const { lang } = useLang()
   const [detail, setDetail] = useState<Detail | null>(null)
   const [loadError, setLoadError] = useState('')
   const [editing, setEditing] = useState(false)
+  const [splitting, setSplitting] = useState(false)
+  // A note being created from a link to a title nothing has yet.
+  const [creating, setCreating] = useState<string | null>(null)
 
   const load = useCallback(() => {
     setLoadError('')
@@ -50,6 +64,13 @@ export function ResourceDetail({ id, onBack, onChanged, onOpen }: Props) {
 
   const isNote = detail.kind === 'note'
   const stamp = new Date((detail.updatedAt ?? detail.createdAt) * 1000).toLocaleDateString(lang)
+  const changed = () => { load(); onChanged() }
+  /** A wikilink in the body: open its resource, or offer to create the note it names. */
+  const followLink = (title: string) => {
+    const target = detail.links.find(l => l.title.toLowerCase() === title.toLowerCase())?.target
+    if (target) onOpen(target.id)
+    else setCreating(title)
+  }
 
   return (
     <Panel onBack={onBack}>
@@ -85,24 +106,56 @@ export function ResourceDetail({ id, onBack, onChanged, onOpen }: Props) {
         </Section>
       )}
 
+      {detail.originChat && (
+        <Section title={t('note.fromChat')}>
+          <button
+            onClick={() => onOpenChat(detail.originChat!.id, detail.originChat!.title, detail.originChat!.messageId ?? undefined)}
+            className="flex items-center gap-1.5 px-2 py-1.5 rounded text-sm bg-gray-800 text-gray-300 border border-gray-700 hover:border-gray-500 hover:text-gray-100 self-start max-w-full"
+          >
+            <MessageSquare size={13} className="shrink-0 text-indigo-400" />
+            <span className="truncate">{detail.originChat.title}</span>
+          </button>
+        </Section>
+      )}
+
       <Section title={t('resource.summary')}>
         {detail.summary
           ? <p className="text-sm text-gray-300">{detail.summary}</p>
           : <p className="text-sm text-gray-500">{t('resource.noSummary')}</p>}
-        {detail.topics.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mt-2">
-            {detail.topics.map(topic => (
-              <span key={topic} className="px-2 py-0.5 rounded-full text-xs bg-gray-800 text-gray-400 border border-gray-700">
-                {topic}
-              </span>
-            ))}
-          </div>
-        )}
       </Section>
 
-      <Section title={t('resource.taggedTo')}>
-        <SpaceTags detail={detail} onChanged={() => { load(); onChanged() }} />
+      <Section title={t('tags.title')}>
+        <TagEditor
+          tags={detail.tags}
+          suggestions={detail.suggestedTags}
+          onChange={async tags => { await setResourceTags(detail.id, tags); changed() }}
+        />
       </Section>
+
+      {isNote && detail.body && (
+        <Section title={t('note.body')}>
+          <NoteMarkdown body={detail.body} onWikilink={followLink} onTag={onTag} />
+          {detail.body.length >= SPLIT_MIN_CHARS && (
+            <button onClick={() => setSplitting(true)} className="self-start flex items-center gap-1.5 px-2 py-1.5 rounded text-sm text-gray-300 border border-gray-700 hover:border-gray-500">
+              <Scissors size={13} className="text-amber-300" /> {t('split.fromNote')}
+            </button>
+          )}
+        </Section>
+      )}
+      {splitting && detail.body && (
+        <SplitNotesDialog
+          title={detail.filename}
+          body={detail.body}
+          options={{ derivedFrom: detail.id, tags: detail.tags }}
+          fromNoteId={detail.id}
+          onClose={() => setSplitting(false)}
+          onSaved={() => { setSplitting(false); changed() }}
+        />
+      )}
+
+      <LinksSection detail={detail} onOpen={onOpen} onCreate={setCreating}>
+        {detail.kind === 'note' && <LinkSuggestions key={`${detail.id}:${detail.updatedAt}`} noteId={detail.id} onChanged={changed} onOpen={onOpen} />}
+      </LinksSection>
 
       {detail.derivedFrom && (
         <Section title={t('resource.derivedFrom')}>
@@ -118,38 +171,40 @@ export function ResourceDetail({ id, onBack, onChanged, onOpen }: Props) {
         </Section>
       )}
 
+      {/* Keyed on what can change the neighbourhood, so a new link redraws it. */}
+      <LocalGraph
+        key={`${detail.id}:${detail.updatedAt}:${detail.links.length}:${detail.backlinks.length}`}
+        rootId={detail.id}
+        onOpen={onOpen}
+        onOpenChat={onOpenChat}
+      />
+
+      <Section title={t('resource.taggedTo')}>
+        <SpaceTags detail={detail} onChanged={changed} />
+      </Section>
+
+      <RelatedResources key={`related:${detail.id}:${detail.updatedAt}:${detail.backlinks.length}`} detail={detail} onOpen={onOpen} onChanged={changed} />
+
       <TransformPanel id={id} sourceTitle={detail.filename} onSaved={onChanged} />
 
-      {isNote && detail.body && (
-        <Section title={t('note.body')}>
-          <div className="prose prose-invert prose-sm max-w-none">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{detail.body}</ReactMarkdown>
-          </div>
-        </Section>
-      )}
-
-      <Section title={t('resource.chunks', { count: detail.chunks.length })}>
-        {detail.chunks.length === 0
-          ? <p className="text-sm text-gray-500">{t('resource.noChunks')}</p>
-          : (
-            <>
-              <p className="text-xs text-gray-500">{t('resource.chunksIntro')}</p>
-              <div className="flex flex-col gap-2 mt-1">
-                {detail.chunks.map((chunk, i) => (
-                  <pre key={i} className="text-xs text-gray-400 bg-gray-800 rounded p-3 whitespace-pre-wrap break-words">{chunk}</pre>
-                ))}
-              </div>
-            </>
-          )}
-      </Section>
+      <IndexedExcerpts chunks={detail.chunks} />
 
       {editing && (
         <NoteEditor
           id={detail.id}
           initialTitle={detail.filename}
           initialBody={detail.body ?? ''}
+          initialTags={detail.tags}
           onClose={() => setEditing(false)}
-          onSaved={() => { setEditing(false); load(); onChanged() }}
+          onSaved={() => { setEditing(false); changed() }}
+        />
+      )}
+
+      {creating !== null && (
+        <NoteEditor
+          initialTitle={creating}
+          onClose={() => setCreating(null)}
+          onSaved={() => { setCreating(null); changed() }}
         />
       )}
     </Panel>
@@ -311,6 +366,45 @@ function SpaceTags({ detail, onChanged }: { detail: Detail; onChanged: () => voi
   )
 }
 
+/** `[[links]]` out of a note and the notes linking in. A link to a title nothing has yet is offered
+ *  as a note to create — the usual way a Zettelkasten grows. Hidden for a file nothing links to. */
+function LinksSection({ detail, onOpen, onCreate, children }: { detail: Detail; onOpen: (id: string) => void; onCreate: (title: string) => void; children?: React.ReactNode }) {
+  const t = useT()
+  if (detail.kind !== 'note' && detail.backlinks.length === 0) return null
+  const none = detail.links.length === 0 && detail.backlinks.length === 0
+
+  return (
+    <Section title={t('links.title')}>
+      {none && <p className="text-sm text-gray-500">{t('links.none')}</p>}
+      {detail.links.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-xs text-gray-500">{t('links.to')}:</span>
+          {detail.links.map(link => link.target
+            ? <ResourceChip key={link.title} resource={link.target} onOpen={onOpen} />
+            : (
+              <button
+                key={link.title}
+                onClick={() => onCreate(link.title)}
+                title={t('links.missing', { title: link.title })}
+                className="flex items-center gap-1 px-2 py-1 rounded text-xs text-gray-400 border border-dashed border-gray-600 hover:text-amber-300 hover:border-amber-700 max-w-full"
+              >
+                <Plus size={12} className="shrink-0" />
+                <span className="truncate">{t('links.create', { title: link.title })}</span>
+              </button>
+            ))}
+        </div>
+      )}
+      {detail.backlinks.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-xs text-gray-500">{t('links.from')}:</span>
+          {detail.backlinks.map(ref => <ResourceChip key={ref.id} resource={ref} onOpen={onOpen} />)}
+        </div>
+      )}
+      {children}
+    </Section>
+  )
+}
+
 /** A provenance link. The Resources view holds the open resource in state rather than in the URL,
  *  so this asks the parent to switch rather than rendering an anchor. */
 function ResourceChip({ resource, onOpen }: { resource: ResourceRef; onOpen: (id: string) => void }) {
@@ -324,6 +418,32 @@ function ResourceChip({ resource, onOpen }: { resource: ResourceRef; onOpen: (id
         : <FileText size={12} className="shrink-0 text-gray-500" />}
       <span className="truncate">{resource.filename}</span>
     </button>
+  )
+}
+
+/** The excerpts retrieval works from, folded away: looking at them is for understanding the
+ *  indexing, not for reading the resource. */
+function IndexedExcerpts({ chunks }: { chunks: string[] }) {
+  const t = useT()
+  return (
+    <details className="group">
+      <summary className="cursor-pointer list-none text-xs font-medium uppercase tracking-wide text-gray-500 hover:text-gray-300 flex items-center gap-1">
+        <ChevronRight size={12} className="transition-transform group-open:rotate-90" />
+        {t('resource.chunks', { count: chunks.length })}
+      </summary>
+      {chunks.length === 0
+        ? <p className="text-sm text-gray-500 mt-1.5">{t('resource.noChunks')}</p>
+        : (
+          <>
+            <p className="text-xs text-gray-500 mt-1.5">{t('resource.chunksIntro')}</p>
+            <div className="flex flex-col gap-2 mt-1">
+              {chunks.map((chunk, i) => (
+                <pre key={i} className="text-xs text-gray-400 bg-gray-800 rounded p-3 whitespace-pre-wrap break-words">{chunk}</pre>
+              ))}
+            </div>
+          </>
+        )}
+    </details>
   )
 }
 
@@ -401,8 +521,8 @@ function TransformPanel({ id, sourceTitle, onSaved }: { id: string; sourceTitle:
 
       {result && (
         <div className="flex flex-col gap-2 mt-2 p-3 rounded-lg bg-gray-800 border border-gray-700">
-          <div className="prose prose-invert prose-sm max-w-none max-h-80 overflow-y-auto">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{result.content}</ReactMarkdown>
+          <div className="max-h-80 overflow-y-auto">
+            <NoteMarkdown body={result.content} />
           </div>
           <div className="flex justify-end">
             <button onClick={() => setSaving(true)} className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-sm font-medium">

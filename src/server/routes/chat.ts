@@ -22,9 +22,11 @@ import { ThinkExtractor } from '../lib/think-extractor.ts'
 import { findLeakedToolCall, stripLeakedToolCall, coerceNumericArgs, findLeakedImageMarkdown, stripLeakedImageMarkdown } from '../lib/leaked-tool-call.ts'
 import { CitationNormalizer } from '../lib/citation-normalizer.ts'
 import { rerankSearchResults } from '../lib/reranker.ts'
-import { buildMemoryBlock, buildChatFileBlock, buildCollectionBlock, extractMemoriesPostHoc, userMemoryBlockIfEnabled, joinMemoryBlocks, toMemorySources } from '../lib/memory.ts'
+import { notesRagBudget } from '../lib/rag-settings.ts'
+import { buildMemoryBlock, buildChatFileBlock, buildCollectionBlock, buildNotesBlock, extractMemoriesPostHoc, userMemoryBlockIfEnabled, joinMemoryBlocks, toMemorySources } from '../lib/memory.ts'
 import { ownedCollectionIds } from '../lib/files/collections.ts'
 import { trimMessages, contextCharBudget, CONTEXT_RESERVE_FRACTION } from '../lib/trim-messages.ts'
+import { hasAttachment, type ContextReport } from '../../shared/context.ts'
 import { indexContents, deindexContent } from '../lib/chat-indexer.ts'
 import { ownsSpace, sessionOwnership } from '../lib/ownership.ts'
 import { isSpaceLocked } from '../lib/space-lock.ts'
@@ -80,6 +82,8 @@ const chatSchema = z.object({
   messages: z.array(z.object({
     role: z.enum(['user', 'assistant']),
     content: z.string().max(600_000),
+    /** Kept in full when history is trimmed — see trimMessages. */
+    pinned: z.boolean().optional(),
   })).max(200),
   focusMode: z.enum(['flash', 'balanced', 'thorough', 'image']).default('balanced'),
   searchCategories: z.array(z.enum(['news', 'science', 'discussions', 'tech'])).optional(),
@@ -90,6 +94,8 @@ const chatSchema = z.object({
   ephemeral: z.boolean().optional(),
   /** Re-answering the last question: replaces the previous answer instead of appending. */
   regenerate: z.boolean().optional(),
+  /** "Notes first": answer from the user's own notes (and the notes they link with) before the web. */
+  notesFirst: z.boolean().optional(),
 })
 
 export const chatRouter = new Hono<AppEnv>()
@@ -104,7 +110,9 @@ chatRouter.post('/suggest', rateLimitByUser(suggestLimiter, 'suggest'), zValidat
       system: 'Return a JSON array of exactly 3 short search query suggestions that complete or refine the user\'s partial input. Return ONLY the raw JSON array, no markdown, no explanation.',
       messages: [{ role: 'user', content: text }],
       maxOutputTokens: 120,
-      abortSignal: AbortSignal.timeout(6000),
+      // The client aborts a suggestion that has gone stale; stopping here frees the model for the
+      // request that replaced it rather than finishing an answer nobody will read.
+      abortSignal: AbortSignal.any([AbortSignal.timeout(6000), c.req.raw.signal]),
     })
     const match = raw.match(/\[[\s\S]*\]/)
     if (match) {
@@ -114,6 +122,7 @@ chatRouter.post('/suggest', rateLimitByUser(suggestLimiter, 'suggest'), zValidat
       }
     }
   } catch (e) {
+    if (c.req.raw.signal.aborted) return c.json([])
     // Autocomplete is optional; a timeout is routine and doesn't warrant a full stack dump.
     console.warn(`  [suggest] skipped: ${e instanceof Error ? e.message : e}`)
   }
@@ -239,9 +248,18 @@ chatRouter.post('/:sessionId/approve', zValidator('json', z.object({
 
 chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', chatSchema), async (c) => {
   const userId = c.get('userId') as string
-  const { sessionId, spaceId, messages: msgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, collectionIds, ephemeral, regenerate } = c.req.valid('json')
+  const { sessionId, spaceId, messages: requestMsgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, collectionIds, ephemeral, regenerate, notesFirst } = c.req.valid('json')
   const searchCategory = toSearxngCategories(searchCategories)
   const sid = sessionId ?? randomUUID()
+  // Pins travel as indices, so the messages handed to the model carry nothing but role and content.
+  const pinned: ReadonlySet<number> = new Set(requestMsgs.flatMap((m, i) => m.pinned ? [i] : []))
+  const msgs = requestMsgs.map(({ role, content }) => ({ role, content }))
+  // The latest report is also stored with the chat, so the meter reappears when it is reopened.
+  let lastContext: ContextReport | undefined
+  const sendContext = (out: SSEStream, report: ContextReport) => {
+    lastContext = report
+    return out.writeSSE({ data: JSON.stringify({ type: 'context', ...report }) })
+  }
 
   // Both ids come straight from the client: without these checks a known space id leaks
   // another user's memories into this answer, and a known session id appends to their chat.
@@ -324,10 +342,12 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     // Collections are picked per request and apply with or without a space, so they get their own
     // budget rather than the space one — which is deliberately 0 for a chat that has no space.
     const flashCollections = await buildCollectionBlock(collections, userQuery, await collectionRagBudget(collections))
+    const flashNotes = notesFirst ? await buildNotesBlock(userId, userQuery, await notesRagBudget()) : { block: '', fileSources: [] }
     const resolvedMemoryBlock = joinMemoryBlocks(
       await userMemoryBlockIfEnabled(userId, parsedSettings, userQuery),
       flashScopedBlock,
       flashCollections.block,
+      flashNotes.block,
     )
     const t0 = Date.now()
     let fullContent = ''
@@ -338,17 +358,19 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       await out.writeSSE({ data: JSON.stringify({ type: 'status', text: 'Thinking…' }) })
       // Collection excerpts carry [C1] labels of their own, so their sources ride along or the
       // citations in the answer resolve to nothing.
-      const flashSources = [...flashFileSources, ...flashCollections.fileSources]
+      const flashSources = [...flashFileSources, ...flashCollections.fileSources, ...flashNotes.fileSources]
       if (flashSources.length > 0) await out.writeSSE({ data: JSON.stringify({ type: 'file_sources', sources: flashSources }) })
       const flashSystem = FLASH_SYSTEM
         + (customPrompt ? `\n\nAdditional instructions:\n${customPrompt}` : '')
         + (resolvedMemoryBlock ? '\n\n' + resolvedMemoryBlock : '')
       const ctxLimit = parseInt(process.env.CONTEXT_TOKEN_LIMIT ?? '8192')
+      const flashHistory = trimMessages(msgs, Math.floor(ctxLimit * CONTEXT_RESERVE_FRACTION), flashSystem, pinned)
+      await sendContext(out, flashHistory.report)
       const result = streamText({
         model: getFlashModel(),
         abortSignal,
         system: flashSystem,
-        messages: trimMessages(msgs, Math.floor(ctxLimit * CONTEXT_RESERVE_FRACTION), flashSystem),
+        messages: flashHistory.messages,
         maxOutputTokens: FLASH_MAX_TOKENS,
       })
       // Flash runs getFlashModel(), which is the full chat model unless FLASH_MODEL=small — the
@@ -365,8 +387,8 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       }
       await emitFlash(flashExtractor.flush().text)
       console.log(`  [flash] done in ${Date.now() - t0}ms, ${fullContent.length} chars`)
-      if (fullContent.length >= 50) setCached(ck, { content: fullContent, sources: [], fileSources: flashSources })
-      await finishTurn(out, { sid, userId, msgs, fullContent, sources: [], fileSources: flashSources, spaceId, regenerate, ephemeral, t0 })
+      if (!abortSignal.aborted && fullContent.length >= 50) setCached(ck, { content: fullContent, sources: [], fileSources: flashSources })
+      await finishTurn(out, { sid, userId, msgs, fullContent, sources: [], fileSources: flashSources, spaceId, regenerate, ephemeral, t0, context: lastContext, aborted: abortSignal.aborted })
     })
   }
 
@@ -520,6 +542,8 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     return streamRun(c, run, async (out) => {
       await out.writeSSE({ data: JSON.stringify({ type: 'session', sessionId: sid }) })
       const ctxLimit = parseInt(process.env.CONTEXT_TOKEN_LIMIT ?? '8192')
+      const imageHistory = trimMessages(msgs, Math.floor(ctxLimit * CONTEXT_RESERVE_FRACTION), imageSystem, pinned)
+      await sendContext(out, imageHistory.report)
       // Not the flash model: this drives a multi-step tool loop with five typed parameters, and
       // with FLASH_MODEL=small that is a small model doing the least reliable thing asked of it —
       // a misparsed size/steps degrades the image with no visible error.
@@ -527,7 +551,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         model: getChatModel(),
         abortSignal,
         system: imageSystem,
-        messages: trimMessages(msgs, Math.floor(ctxLimit * CONTEXT_RESERVE_FRACTION), imageSystem),
+        messages: imageHistory.messages,
         tools: imageTools,
         stopWhen: stepCountIs(4),
         maxOutputTokens: RESEARCH_MAX_TOKENS,
@@ -644,7 +668,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         clearInterval(keepalive)
       }
       console.log(`  [image] done in ${Date.now() - t0}ms, ${fullContent.length} chars`)
-      await finishTurn(out, { sid, userId, msgs, fullContent, sources: imageSources, fileSources: [], spaceId, regenerate, ephemeral, t0 })
+      await finishTurn(out, { sid, userId, msgs, fullContent, sources: imageSources, fileSources: [], spaceId, regenerate, ephemeral, t0, context: lastContext, aborted: abortSignal.aborted })
     })
   }
 
@@ -656,7 +680,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       : m
   )
 
-  const hasAttachment = /\n\n---\n\[/.test(lastUser?.content ?? '')
+  const lastHasAttachment = hasAttachment(lastUser?.content ?? '')
 
   const t0 = Date.now()
 
@@ -704,14 +728,17 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     // In a locked space the two network legs are skipped outright rather than filtered later: the
     // pre-search runs before the model is involved, and URL prefetching would fetch a link pasted
     // beside the document without any tool being called at all.
+    // Notes first: the notes are read before the pre-search, which is skipped when they hold
+    // anything relevant — the researcher can still search the web for what they do not cover.
+    const notesBlock = notesFirst ? await buildNotesBlock(userId, lastUser?.content ?? '', await notesRagBudget()) : { block: '', fileSources: [] }
     const [fileCountRow, { initialQueries, initialResults, engineErrors }, memoryBudget, ragBudget, prefetchedUrls] = await Promise.all([
       db.select({ count: sql<number>`count(*)` }).from(uploadedFiles).where(eq(uploadedFiles.userId, userId)).get(),
-      locked
+      locked || notesBlock.block
         ? Promise.resolve({ initialQueries: [] as string[], initialResults: [] as SearchResult[], engineErrors: [] as EngineError[] })
-        : runReformulateAndPreSearch(msgsForReformulate, focusMode as 'balanced' | 'thorough', hasAttachment, searchCategory, searchBudget, abortSignal),
+        : runReformulateAndPreSearch(msgsForReformulate, focusMode as 'balanced' | 'thorough', lastHasAttachment, searchCategory, searchBudget, abortSignal),
       spaceId ? getAppSetting('memory_token_budget', DEFAULT_MEMORY_TOKEN_BUDGET).then(Number) : Promise.resolve(Number(DEFAULT_MEMORY_TOKEN_BUDGET)),
       getAppSetting('space_rag_budget', '500').then(Number),
-      locked ? Promise.resolve([]) : prefetchUrlsFromMessage(lastUser?.content ?? '', hasAttachment, fetchMaxPages),
+      locked ? Promise.resolve([]) : prefetchUrlsFromMessage(lastUser?.content ?? '', lastHasAttachment, fetchMaxPages),
     ])
     const userQuery = lastUser?.content ?? ''
     const hasFiles = (fileCountRow?.count ?? 0) > 0
@@ -719,7 +746,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     const { block: scopedBlock, fileSources } = spaceId
       ? await buildMemoryBlock(spaceId, memoryBudget, effectiveRag, userQuery, includeFileIds, includeMemoryIds)
       : (hasFiles && parsedSettings.useChatRag !== false)
-        ? await buildChatFileBlock(userId, userQuery, ragBudget)
+        ? await buildChatFileBlock(userId, userQuery, ragBudget, !!notesBlock.block)
         : { block: '', fileSources: [] }
     const collectionBlock = await buildCollectionBlock(collections, userQuery, await collectionRagBudget(collections))
     // User memory applies to every chat, including those with no space at all.
@@ -727,6 +754,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       await userMemoryBlockIfEnabled(userId, parsedSettings, userQuery),
       scopedBlock,
       collectionBlock.block,
+      notesBlock.block,
     )
     const showThinkingSettings = (parsedSettings.showThinking ?? { balanced: false, thorough: false }) as { balanced: boolean; thorough: boolean }
     const showThinking = focusMode === 'balanced' ? showThinkingSettings.balanced
@@ -745,7 +773,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     let fullContent = ''
     const sources: unknown[] = []
 
-    const allFileSources = [...fileSources, ...collectionBlock.fileSources]
+    const allFileSources = [...fileSources, ...collectionBlock.fileSources, ...notesBlock.fileSources]
     if (allFileSources.length > 0) await out.writeSSE({ data: JSON.stringify({ type: 'file_sources', sources: allFileSources }) })
 
     // Warn when a search came back empty *because* engines were blocked/suspended
@@ -808,7 +836,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       // URLs the user pointed at or the model chose to read in full — kept out of the reranker's
       // prune below so a page that was explicitly fetched always reaches the writer.
       const fetchedUrls = new Set<string>()
-      const researcherResult = await runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, onUrlRead: emitUrlOutcome, onSource: (s) => { allSources.push(s); fetchedUrls.add(s.url) }, searchBudget, requestApproval, locked })
+      const researcherResult = await runResearcher({ messages: msgs, focusMode, userId, model: researchModel, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, onUrlRead: emitUrlOutcome, onSource: (s) => { allSources.push(s); fetchedUrls.add(s.url) }, searchBudget, requestApproval, locked, pinned, onContext: r => sendContext(out, r) })
       let researcherNotes = ''
       // Unconditional: the extractor also drops leaked tool-call markup, which has to be stripped
       // whether or not the user is shown thinking. Displaying thinking is gated separately.
@@ -906,7 +934,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         sources.push(toStoredSource(s))
         await out.writeSSE({ data: JSON.stringify({ type: 'sources', sources: [s] }) })
       }
-      const result = await runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, onUrlRead: emitUrlOutcome, onSource: emitFetchedSource, searchBudget, requestApproval, locked })
+      const result = await runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, onUrlRead: emitUrlOutcome, onSource: emitFetchedSource, searchBudget, requestApproval, locked, pinned, onContext: r => sendContext(out, r) })
       const extractor = new ThinkExtractor()   // see thoroughExtractor above
       const citations = new CitationNormalizer()
 
@@ -982,7 +1010,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     // Last line of defence: nothing survived the main pass or the fallback. Name the failure in
     // the answer body — an empty `done` reads to the client as an unreachable server.
     const emptyAnswer = !fullContent.trim()
-    if (emptyAnswer) {
+    if (emptyAnswer && !abortSignal.aborted) {
       console.error(`  [${focusMode}] empty answer after fallback — reporting failure to the client`)
       fullContent = EMPTY_ANSWER_MESSAGE
       await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: fullContent }) })
@@ -993,8 +1021,8 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
 
     // Never cache the failure notice — it would be replayed as the answer for every repeat of
     // this question until the entry expires.
-    if (!emptyAnswer && fullContent.length >= 50) setCached(ck, { content: fullContent, sources, fileSources: allFileSources })
-    await finishTurn(out, { sid, userId, msgs, fullContent, sources, fileSources: allFileSources, spaceId, regenerate, ephemeral, t0 })
+    if (!emptyAnswer && !abortSignal.aborted && fullContent.length >= 50) setCached(ck, { content: fullContent, sources, fileSources: allFileSources })
+    await finishTurn(out, { sid, userId, msgs, fullContent, sources, fileSources: allFileSources, spaceId, regenerate, ephemeral, t0, context: lastContext, aborted: abortSignal.aborted })
   })
 })
 
@@ -1011,7 +1039,7 @@ interface CachedAnswer {
  *  background memory/index work. Centralised because four branches ran their own copy and the
  *  cached-answer path quietly omitted all of it — losing the turn from the conversation. */
 async function finishTurn(out: SSEStream, {
-  sid, userId, msgs, fullContent, sources, fileSources, spaceId, regenerate, ephemeral, t0,
+  sid, userId, msgs, fullContent, sources, fileSources, spaceId, regenerate, ephemeral, t0, context, aborted,
 }: {
   sid: string
   userId: string
@@ -1023,14 +1051,21 @@ async function finishTurn(out: SSEStream, {
   regenerate?: boolean
   ephemeral?: boolean
   t0: number
+  /** Absent for a cached answer, which leaves the stored report of the last real turn in place. */
+  context?: ContextReport
+  /** Stopped by the user. With nothing produced, the client withdraws the question, so the
+   *  server must not store it either — it would reappear as a phantom turn on reload. */
+  aborted?: boolean
 }): Promise<void> {
   const elapsedMs = Date.now() - t0
-  if (ephemeral) {
+  if (ephemeral || (aborted && !fullContent.trim())) {
     await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, elapsedMs }) })
     return
   }
-  const { title, supersededAnswer } = await persistMessage(sid, userId, msgs, fullContent, sources, fileSources, spaceId, regenerate)
-  await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title, elapsedMs }) })
+  const { title, supersededAnswer, userMessageId, assistantMessageId } = await persistMessage(sid, userId, msgs, fullContent, sources, fileSources, spaceId, regenerate)
+  if (context) await db.update(chatSessions).set({ contextReport: JSON.stringify(context) }).where(eq(chatSessions.id, sid))
+  // The stored ids let the client pin these messages without reloading the chat.
+  await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title, elapsedMs, userMessageId, assistantMessageId }) })
   // Outside the spaceId block below: a regenerate strands its predecessor's image whether or not
   // the chat belongs to a space. Fire-and-forget, as the chat-delete path does — a failed unlink
   // costs a stray file the startup sweep will collect, and must not fail the turn.
@@ -1175,8 +1210,10 @@ async function persistMessage(
   fileSources: unknown[],
   spaceId?: string,
   regenerate = false,
-): Promise<{ title: string; supersededAnswer?: string }> {
+): Promise<{ title: string; supersededAnswer?: string; userMessageId?: string; assistantMessageId: string }> {
   const now = new Date()
+  const assistantMessageId = randomUUID()
+  let userMessageId: string | undefined
   const title = msgs.find(m => m.role === 'user')?.content.slice(0, SESSION_TITLE_MAX) ?? 'Chat'
   const lastUser = [...msgs].reverse().find(m => m.role === 'user')
   let supersededAnswer: string | undefined
@@ -1197,10 +1234,11 @@ async function persistMessage(
         await tx.delete(messages).where(eq(messages.id, previous.id))
       }
     } else if (lastUser) {
-      await tx.insert(messages).values({ id: randomUUID(), sessionId, role: 'user', content: lastUser.content, createdAt: now })
+      userMessageId = randomUUID()
+      await tx.insert(messages).values({ id: userMessageId, sessionId, role: 'user', content: lastUser.content, pinned: hasAttachment(lastUser.content), createdAt: now })
     }
-    await tx.insert(messages).values({ id: randomUUID(), sessionId, role: 'assistant', content: assistantContent, sources: JSON.stringify(sources), fileSources: JSON.stringify(fileSources), createdAt: now })
+    await tx.insert(messages).values({ id: assistantMessageId, sessionId, role: 'assistant', content: assistantContent, sources: JSON.stringify(sources), fileSources: JSON.stringify(fileSources), createdAt: now })
   })
 
-  return { title, supersededAnswer }
+  return { title, supersededAnswer, userMessageId, assistantMessageId }
 }

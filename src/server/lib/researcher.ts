@@ -7,6 +7,8 @@ import { saveMemories, saveUserMemory, searchSpaceHistory, MEMORY_MAX_SOURCES, t
 import { ragMinRelevance } from './rag-settings.ts'
 import { fetchUrl, processUrlsForContext, urlLabel, MIN_URL_CONTEXT_CHARS, type UrlOutcome } from './fetch-url.ts'
 import { trimMessages, compressMessages, contextCharBudget, CONTEXT_RESERVE_FRACTION } from './trim-messages.ts'
+import type { ContextReport } from '../../shared/context.ts'
+import { loadHistorySummary, saveHistorySummary } from './history-summary.ts'
 import { queryTerms, querySimilarity, QUERY_DUPLICATE_THRESHOLD } from './query-terms.ts'
 import {
   applyEgressMode, createEgressContext, inspectQuery, inspectUrl, noteSeenUrl, noteTaint, noteUserText,
@@ -186,6 +188,10 @@ export interface ResearchOptions {
   /** The chat's space is locked: no fetch_url, and no web_search unless a provider trusted for locked spaces backs it. Resolved from the database by the
    *  caller, never from the client. */
   locked?: boolean
+  /** Indices into `messages` the user pinned: kept in full however long the conversation gets. */
+  pinned?: ReadonlySet<number>
+  /** Called once history has been fitted to the context, with what the model will see of it. */
+  onContext?: (report: ContextReport) => void | Promise<void>
 }
 
 export interface EgressApprovalRequest {
@@ -194,7 +200,7 @@ export interface EgressApprovalRequest {
   reasons: string[]
 }
 
-export async function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, userMemoryEnabled = false, fetchSummarize = false, urlContextChars, compressHistory = false, searchCategory, maxStepsOverride, onEngineErrors, onUrlRead, onSource, searchBudget, requestApproval, locked = false }: ResearchOptions) {
+export async function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, userMemoryEnabled = false, fetchSummarize = false, urlContextChars, compressHistory = false, searchCategory, maxStepsOverride, onEngineErrors, onUrlRead, onSource, searchBudget, requestApproval, locked = false, pinned, onContext }: ResearchOptions) {
   const { maxSteps: defaultMaxSteps, count } = MODE_CONFIG[focusMode]
   // Read once per run, so the tools, the tool description and the system prompt agree.
   const trustedSearch = locked && await hasTrustedSearch()
@@ -322,22 +328,30 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
   const totalInputTokens = ctxLimit * CONTEXT_RESERVE_FRACTION
   const historyBudgetTokens = Math.floor(totalInputTokens * (1 - TOOL_BUDGET_RESERVE_FRACTION))
 
+  let contextReport: ContextReport
   if (compressHistory) {
     const summaryBudgetChars = Math.floor(tokensToChars(historyBudgetTokens) * COMPRESS_SUMMARY_FRACTION)
     // Reserve the summary's own cost out of the history sub-budget up front, so kept-messages +
     // summary together still respect historyBudgetTokens.
     const dropBudgetTokens = historyBudgetTokens - Math.ceil(summaryBudgetChars / CHARS_PER_TOKEN)
-    const { messages: compressedMessages, summary } = await compressMessages(augmentedMessages, dropBudgetTokens, system, summaryBudgetChars)
+    const previous = await loadHistorySummary(sessionId)
+    const { messages: compressedMessages, summary, report, stored } = await compressMessages(augmentedMessages, dropBudgetTokens, system, summaryBudgetChars, pinned, previous)
+    if (sessionId && stored && stored !== previous) await saveHistorySummary(sessionId, stored)
     augmentedMessages = compressedMessages
     if (summary) system += `\n\nSummary of earlier parts of this conversation (older messages were compacted to fit context):\n${summary}`
+    contextReport = { ...report, budgetChars: tokensToChars(totalInputTokens) }
   } else {
-    augmentedMessages = trimMessages(augmentedMessages, historyBudgetTokens, system)
+    const { messages: trimmed, report } = trimMessages(augmentedMessages, historyBudgetTokens, system, pinned)
+    augmentedMessages = trimmed
+    contextReport = { ...report, budgetChars: tokensToChars(totalInputTokens) }
   }
+  await onContext?.(contextReport)
 
   // Cumulative budget for search/fetch content the agentic loop is about to add, derived from what's
   // left of the context window after the (already trimmed/compressed) system prompt + conversation history.
   const usedChars = system.length + augmentedMessages.reduce((s, m) => s + JSON.stringify(m).length, 0)
   let toolBudgetRemaining = Math.max(0, contextCharBudget(ctxLimit) - usedChars)
+  const initialToolBudget = toolBudgetRemaining
   console.log(`  [researcher] tool budget: ${toolBudgetRemaining}c remaining (ctxLimit=${ctxLimit}tok, historyBudget=${historyBudgetTokens}tok, system+history=${usedChars}c)`)
 
   const webSearchTool = tool({
@@ -516,9 +530,12 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
       }).join(', ')
       console.log(`  [chat] step ${completedSteps}: ${fmt(step.usage.inputTokens)}p + ${fmt(step.usage.outputTokens)}c tok, finish=${step.finishReason}${toolSummary ? ` tools=[${toolSummary}]` : ''} budget=${toolBudgetRemaining}c`)
     },
-    onFinish: ({ usage }) => {
+    onFinish: async ({ usage }) => {
       const ms = (performance.now() - start).toFixed(0)
       console.log(`  [chat] done — ${ms}ms  tokens: ${fmt(usage.inputTokens)}p + ${fmt(usage.outputTokens)}c`)
+      // Reported again with what the tools read, so the meter's final picture includes the search.
+      const toolChars = initialToolBudget - toolBudgetRemaining
+      if (toolChars > 0) await onContext?.({ ...contextReport, searchChars: contextReport.searchChars + toolChars })
     },
     model,
     abortSignal,

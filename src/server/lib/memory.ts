@@ -89,7 +89,7 @@ export async function pickFallbackSources(
   const pool = dedupeByUrl(turnSources)
   if (pool.length <= MEMORY_MAX_SOURCES) return pool.map(slimSource)
 
-  if (rerankEnabled) {
+  if (rerankEnabled()) {
     try {
       const docs = pool.map(s => (s.content ? `${s.title} — ${s.content}` : s.title))
       const ranked = (await rerank(text, docs, MEMORY_MAX_SOURCES))
@@ -190,23 +190,58 @@ function renderFileBlock(
   return { block, fileSources }
 }
 
-/** Build a file RAG block for non-space chats from the user's own uploaded files. */
+/** Build a file RAG block for non-space chats from the user's own uploaded files. `withoutNotes`
+ *  when "Notes first" already supplies the notes, so they are not injected twice. */
 export async function buildChatFileBlock(
   userId: string,
   query: string,
   ragBudget = 500,
+  withoutNotes = false,
 ): Promise<MemoryBlock> {
   if (!query.trim() || ragBudget <= 0) return { block: '', fileSources: [] }
 
   let fileRows: ChunkResult[] = []
   try {
-    fileRows = await searchUploads(query, userId, await ragTopK(), await ragMinRelevance())
+    fileRows = await searchUploads(query, userId, await ragTopK(), await ragMinRelevance(), withoutNotes ? 'file' : undefined)
   } catch (e) {
     console.error('  [memory] chat file RAG failed:', e)
     return { block: '', fileSources: [] }
   }
 
   return renderFileBlock(fileRows, ragBudget, 'Relevant document excerpts', 'F', 'chat-file')
+}
+
+/** "Notes first": the user's notes most relevant to the query, then the opening of each note they
+ *  link to or are linked from — one hop, so a note brings its context along. Labelled [N1]… */
+export async function buildNotesBlock(userId: string, query: string, ragBudget: number): Promise<MemoryBlock> {
+  if (!query.trim() || ragBudget <= 0) return { block: '', fileSources: [] }
+  let hits: ChunkResult[] = []
+  try {
+    hits = await searchUploads(query, userId, await ragTopK(), await ragMinRelevance(), 'note')
+  } catch (e) {
+    console.error('  [memory] notes RAG failed:', e)
+    return { block: '', fileSources: [] }
+  }
+  const rows = [...hits, ...linkedNoteOpenings(userId, [...new Set(hits.map(h => h.fileId))])]
+  const rendered = renderFileBlock(rows, ragBudget, 'Your own notes (most relevant first, then notes they link with)', 'N', 'notes')
+  if (!rendered.block) return rendered
+  return { ...rendered, block: `${rendered.block}
+
+The user asked for an answer from their own notes first. Base the answer on the notes above; search the web only for what they do not cover, and make clear which parts come from the notes and which from elsewhere.` }
+}
+
+/** The first chunk of each note linked with any of `noteIds`, either direction, not already among them. */
+function linkedNoteOpenings(userId: string, noteIds: string[]): ChunkResult[] {
+  if (!noteIds.length) return []
+  const marks = noteIds.map(() => '?').join(',')
+  return sqlite.query(`
+    SELECT m.chunk_id AS chunkId, f.id AS fileId, f.filename, m.content, 0 AS distance
+    FROM uploaded_files f JOIN file_chunk_meta m ON m.file_id = f.id AND m.chunk_id = f.id || ':0'
+    WHERE f.user_id = ? AND f.kind = 'note' AND f.id NOT IN (${marks}) AND f.id IN (
+      SELECT dst_id FROM resource_links WHERE src_id IN (${marks})
+      UNION SELECT src_id FROM resource_links WHERE dst_id IN (${marks})
+    )
+  `).all(userId, ...noteIds, ...noteIds, ...noteIds) as ChunkResult[]
 }
 
 /** Excerpts from the collections picked for this request, whether or not the chat is in a space.
@@ -226,7 +261,7 @@ export async function buildCollectionBlock(
   try {
     const embedding = await embedText(query)
     rows = await searchCollections(collectionIds, query, embedding)
-    if (rerankEnabled && rows.length) {
+    if (rerankEnabled() && rows.length) {
       const order = await rerank(query, rows.map(r => r.content), rows.length, await ragMinRelevance())
       rows = order.map(i => rows[i])
     }
@@ -382,7 +417,7 @@ async function rankMemoriesByRelevance<T extends { id: string; content: string }
     return null
   }
 
-  if (rerankEnabled && ordered.length > 1) {
+  if (rerankEnabled() && ordered.length > 1) {
     const indices = await rerank(query, ordered.map(m => m.content), ordered.length)
     ordered = indices.map(i => ordered[i]).filter(Boolean)
   }
@@ -524,7 +559,7 @@ export async function buildMemoryBlock(
         return `[${label}] ${content}`
       }
 
-      if (rerankEnabled && (chatRows.length + fileRows.length) > 0) {
+      if (rerankEnabled() && (chatRows.length + fileRows.length) > 0) {
         // Joint rerank: cross-encoder scores let chat and file chunks compete fairly
         console.log(`  [rag:rerank] joint reranking ${chatRows.length} chat + ${fileRows.length} file candidates`)
         const combined = [

@@ -12,7 +12,7 @@ import { envOverride } from '../test-support/env-override.ts'
 
 const { db, sqlite, users, uploadedFiles, setAppSetting, EMBED_DIMS } = await import('../db.ts')
 const { eq } = await import('drizzle-orm')
-const { saveNote, reindexNotes } = await import('./notes.ts')
+const { saveNote, reindexNotes, simplifyNoteCitations } = await import('./notes.ts')
 const { searchUploads } = await import('./uploads-search.ts')
 
 let server: ReturnType<typeof startFakeEmbeddings>
@@ -147,5 +147,19 @@ describe('reindexNotes', () => {
   test('does nothing when every note is already indexed', async () => {
     await saveNote('nu', { title: 'Indexed', body: 'Already has chunks.' })
     expect(await reindexNotes()).toBe(0)
+  })
+})
+
+describe('simplifyNoteCitations', () => {
+  test('rewrites old-form linked markers to plain ones, once, keeping the sources list', async () => {
+    const list = '\n\n## Sources\n\n- **[1]** [Kansli](https://presidentti.fi)'
+    const id = await saveNote('nu', { title: 'Old answer', body: `Stubb [\\[1\\]](https://presidentti.fi) och [\\[2\\]](https://other.example).${list}` })
+
+    expect(await simplifyNoteCitations()).toBe(1)
+    const row = await db.select().from(uploadedFiles).where(eq(uploadedFiles.id, id)).get()
+    // [2] has no line in the list, so its URL would be lost: it stays linked.
+    expect(row?.body).toBe(`Stubb [1] och [\\[2\\]](https://other.example).${list}`)
+    expect(chunkText(id)).toContain('Stubb [1]')
+    expect(await simplifyNoteCitations()).toBe(0)
   })
 })

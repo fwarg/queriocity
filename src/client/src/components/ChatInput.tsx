@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, type FormEvent, type KeyboardEvent } from 'react'
-import { Send, Paperclip, X, Square, LayoutGrid, ChevronDown, ChevronUp, NotebookPen } from 'lucide-react'
+import { Send, Paperclip, X, Square, LayoutGrid, ChevronDown, ChevronUp, NotebookPen, Library } from 'lucide-react'
 import { AI_SYSTEM_NOTICE_SHORT } from '../lib/ai-notice.ts'
-import { extractFileForContext, fetchFiles, fetchNoteText, fetchSuggestions, type Resource } from '../lib/api.ts'
+import { extractFileForContext, uploadFile, tagFileToSpace, fetchFiles, fetchNoteText, fetchSuggestions, type Resource } from '../lib/api.ts'
 import { Modal } from './Modal.tsx'
 import { TemplateSelector } from './TemplateSelector.tsx'
 import { useT } from '../lib/i18n.tsx'
@@ -25,6 +25,15 @@ interface Props {
   collections: Array<{ id: string; name: string }>
   selectedCollections: string[]
   onCollectionsChange: (ids: string[]) => void
+  /** "Notes first": answer from the user's own notes before the web. Offered once they have notes. */
+  notesAvailable?: boolean
+  notesFirst?: boolean
+  onNotesFirstChange?: (on: boolean) => void
+  /** The chat's space, so a document moved to the library is also tagged to it — a space chat
+   *  draws on its own tagged resources, not the whole library. */
+  spaceId?: string
+  /** A document was added to the library from here; the parent reloads the list. */
+  onAddedToLibrary?: () => void
   /** The chat's space is locked: no web search, URL fetching or image generation. Advisory only —
    *  the server enforces it — but the controls should not offer what will be refused. */
   lockedSpace?: boolean
@@ -37,6 +46,10 @@ interface Props {
 interface Attachment {
   filename: string
   content: string
+  /** Cut to the attachment limit; `file` is kept so it can go to the library instead. */
+  truncated?: boolean
+  totalChars?: number
+  file?: File
 }
 
 const FLASH_MAX = 200
@@ -61,12 +74,13 @@ const CATEGORY_LABEL_KEYS: Record<SearchCategory, TranslationKey> = {
   tech: 'category.tech',
 }
 
-export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, collections, selectedCollections, onCollectionsChange, suggestionsEnabled, lockedSpace = false, related = [], onRelatedSelect }: Props) {
+export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, collections, selectedCollections, onCollectionsChange, notesAvailable = false, notesFirst = false, onNotesFirstChange, suggestionsEnabled, lockedSpace = false, related = [], onRelatedSelect, spaceId, onAddedToLibrary }: Props) {
   const t = useT()
   const [value, setValue] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [extractStatus, setExtractStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [extractError, setExtractError] = useState('')
+  const [libraryNotice, setLibraryNotice] = useState('')
   const [pickingNote, setPickingNote] = useState(false)
   const [showTemplates, setShowTemplates] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
@@ -79,6 +93,20 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
   // Bumped on every fetch request and on submit, so a debounced or in-flight suggestion fetch
   // whose turn has passed can't repopulate the list after the user has sent the query.
   const suggestReqRef = useRef(0)
+  // Aborted along with the bump, so a stale request stops occupying the model instead of running
+  // to its timeout — on a one-request-at-a-time local model it would delay the real answer.
+  const suggestAbortRef = useRef<AbortController | null>(null)
+
+  /** Drops any pending or in-flight suggestion fetch; returns the id for the next one. */
+  function cancelSuggestion(): number {
+    if (suggestTimerRef.current) clearTimeout(suggestTimerRef.current)
+    suggestAbortRef.current?.abort()
+    suggestAbortRef.current = null
+    return ++suggestReqRef.current
+  }
+
+  // A run can also start from a follow-up chip, which bypasses handleSubmit.
+  useEffect(() => { if (disabled) cancelSuggestion() }, [disabled])
 
   function handleModeChange(m: FocusMode) {
     onFocusModeChange(m)
@@ -94,9 +122,11 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
   // local and offered everywhere. Either alone is enough to show the picker, which then renders
   // whichever groups apply — the trigger names what is currently in force.
   const categoriesAvailable = !lockedSpace && (focusMode === 'balanced' || focusMode === 'thorough')
-  const sourcesPicker = categoriesAvailable || collections.length > 0
-  const sourcesActive = searchCategories.length > 0 || selectedCollections.length > 0
+  const notesOffered = notesAvailable && focusMode !== 'image' && !!onNotesFirstChange
+  const sourcesPicker = categoriesAvailable || collections.length > 0 || notesOffered
+  const sourcesActive = searchCategories.length > 0 || selectedCollections.length > 0 || (notesOffered && notesFirst)
   const pickedNames = [
+    ...(notesOffered && notesFirst ? [t('notesFirst.label')] : []),
     ...(categoriesAvailable && searchCategories.length > 0 ? [searchCategories.map(c => t(CATEGORY_LABEL_KEYS[c])).join('+')] : []),
     ...collections.filter(c => selectedCollections.includes(c.id)).map(c => c.name),
   ]
@@ -109,15 +139,17 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
       : t('collection.plural')
 
   function handleSuggestionFetch(text: string) {
-    if (suggestTimerRef.current) clearTimeout(suggestTimerRef.current)
-    const reqId = ++suggestReqRef.current
-    if (!suggestionsEnabled || focusMode === 'flash' || text.trim().length < 8) {
+    const reqId = cancelSuggestion()
+    // While an answer is being generated the model is busy with it; a suggestion would only queue.
+    if (!suggestionsEnabled || disabled || focusMode === 'flash' || text.trim().length < 8) {
       setSuggestions([])
       return
     }
     suggestTimerRef.current = setTimeout(async () => {
+      const ctrl = new AbortController()
+      suggestAbortRef.current = ctrl
       try {
-        const results = await fetchSuggestions(text.trim())
+        const results = await fetchSuggestions(text.trim(), ctrl.signal)
         if (suggestReqRef.current === reqId) setSuggestions(results)
       } catch { if (suggestReqRef.current === reqId) setSuggestions([]) }
     }, 500)
@@ -137,9 +169,8 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
     setValue('')
     setAttachments([])
     // The query is sent: any suggestion for how to phrase it is now obsolete. Cancel a pending
-    // debounce and invalidate an in-flight fetch so neither can repopulate the list afterwards.
-    if (suggestTimerRef.current) clearTimeout(suggestTimerRef.current)
-    suggestReqRef.current++
+    // debounce and abort an in-flight fetch so neither can repopulate the list afterwards.
+    cancelSuggestion()
     setSuggestions([])
   }
 
@@ -165,6 +196,27 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
     }
   }
 
+  /** Swaps a cut-short attachment for the whole document in the library, where questions find the
+   *  relevant parts. Not offered in a locked space: the library is reachable from every chat. */
+  async function moveToLibrary(index: number) {
+    const att = attachments[index]
+    if (!att?.file) return
+    setExtractStatus('loading')
+    setExtractError('')
+    try {
+      const { fileId } = await uploadFile(att.file)
+      if (spaceId) await tagFileToSpace(spaceId, fileId)
+      setAttachments(prev => prev.filter((_, j) => j !== index))
+      setLibraryNotice(t('input.addedToLibrary', { filename: att.filename }))
+      setExtractStatus('idle')
+      onAddedToLibrary?.()
+    } catch (err: unknown) {
+      setExtractStatus('error')
+      setExtractError(err instanceof Error ? err.message : t('input.readFileFailed'))
+      setTimeout(() => setExtractStatus('idle'), 4000)
+    }
+  }
+
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
@@ -172,7 +224,7 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
     setExtractError('')
     try {
       const att = await extractFileForContext(file)
-      setAttachments(prev => [...prev, att])
+      setAttachments(prev => [...prev, { ...att, file: att.truncated ? file : undefined }])
       setExtractStatus('idle')
     } catch (err: unknown) {
       setExtractStatus('error')
@@ -278,6 +330,20 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
               ))}
             </div>
           )}
+          {notesOffered && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-xs text-gray-500 mr-0.5">{t('notesFirst.group')}</span>
+              <button
+                type="button"
+                aria-pressed={notesFirst}
+                title={t('notesFirst.title')}
+                onClick={() => onNotesFirstChange?.(!notesFirst)}
+                className={`px-2 py-0.5 rounded text-xs ${notesFirst ? 'bg-emerald-700 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'}`}
+              >
+                {t('notesFirst.label')}
+              </button>
+            </div>
+          )}
           {collections.length > 0 && (
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-xs text-gray-500 mr-0.5">{t('collection.plural')}</span>
@@ -315,6 +381,12 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
           ))}
         </div>
       )}
+      {libraryNotice && (
+        <div className="flex items-center gap-2 text-xs text-emerald-400">
+          <Library size={12} className="shrink-0" /> <span>{libraryNotice}</span>
+          <button type="button" onClick={() => setLibraryNotice('')} aria-label={t('common.close')} className="text-gray-500 hover:text-gray-300"><X size={11} /></button>
+        </div>
+      )}
       {suggestions.length > 0 && (
         <div className="flex items-center gap-1.5 flex-wrap">
           {suggestions.map((s, i) => (
@@ -332,9 +404,20 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {attachments.map((att, i) => (
-            <div key={i} className="flex items-center gap-1 px-2 py-1 rounded bg-gray-700 text-xs text-gray-200">
+            <div key={i} className="flex flex-wrap items-center gap-1 px-2 py-1 rounded bg-gray-700 text-xs text-gray-200">
               <Paperclip size={10} className="shrink-0 text-gray-400" />
               <span className="truncate max-w-40">{att.filename}</span>
+              {att.truncated && (
+                <span className="text-amber-400" title={t('input.truncatedTitle')}>
+                  {t('input.truncated', { shown: Math.round(att.content.length / 1000), total: Math.round((att.totalChars ?? 0) / 1000) })}
+                </span>
+              )}
+              {att.truncated && att.file && !lockedSpace && (
+                <button type="button" onClick={() => moveToLibrary(i)} disabled={extractStatus === 'loading'}
+                  className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-600 text-gray-100 hover:bg-gray-500 disabled:opacity-50">
+                  <Library size={10} /> {t('input.toLibrary')}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setAttachments(prev => prev.filter((_, j) => j !== i))}

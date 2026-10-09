@@ -3,6 +3,7 @@ import { useConfirm } from './confirm.tsx'
 import { listUsers, setUserRole, deleteUser, createInvite, listInvites, revokeInvite, resetUserPassword, testModels, fetchAdminSettings, updateAdminSettings, triggerDream, reindexChats, type ModelTestResult, type Invite } from '../lib/api.ts'
 import { Modal } from './Modal.tsx'
 import { AdminSearchPanel } from './AdminSearchPanel.tsx'
+import { AdminSimilarityPanel } from './AdminSimilarityPanel.tsx'
 
 interface Props {
   currentUserId: string
@@ -11,7 +12,7 @@ interface Props {
 }
 
 type UserRow = { id: string; email: string; name: string | null; role: string; createdAt: number }
-type Tab = 'settings' | 'search' | 'users'
+type Tab = 'settings' | 'search' | 'similarity' | 'users'
 
 export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   const confirm = useConfirm()
@@ -27,10 +28,15 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   const [rerankTopNDraft, setRerankTopNDraft] = useState('15')
   const [ragTopKDraft, setRagTopKDraft] = useState('15')
   const [ragMinRelevanceDraft, setRagMinRelevanceDraft] = useState('0')
+  const [relatedMinSimilarityDraft, setRelatedMinSimilarityDraft] = useState('0.5')
+  const [relatedMinRelevanceDraft, setRelatedMinRelevanceDraft] = useState('0.5')
+  const [topicMinSimilarityDraft, setTopicMinSimilarityDraft] = useState('0.6')
+  const [rerankConfigured, setRerankConfigured] = useState(false)
   // Derived server-side from the model context env vars; two settings below are clamped by them.
   const [limits, setLimits] = useState<{ smallModelInputChars: number; embedInputChars: number; scrapeMaxChars: number; minUrlContextChars: number } | null>(null)
   const [attachmentCharsDraft, setAttachmentCharsDraft] = useState('20000')
   const [spaceRagBudgetDraft, setSpaceRagBudgetDraft] = useState('500')
+  const [notesRagBudgetDraft, setNotesRagBudgetDraft] = useState('1500')
   const [userMemoryBudgetDraft, setUserMemoryBudgetDraft] = useState('300')
   const [queryReformulationDraft, setQueryReformulationDraft] = useState(true)
   const [rssFeedCharsBudgetDraft, setRssFeedCharsBudgetDraft] = useState('50000')
@@ -69,9 +75,14 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
       setRerankTopNDraft(String(s.rerankTopN))
       setRagTopKDraft(String(s.ragTopK))
       setRagMinRelevanceDraft(String(s.ragMinRelevance))
+      setRelatedMinSimilarityDraft(String(s.relatedMinSimilarity))
+      setRelatedMinRelevanceDraft(String(s.relatedMinRelevance))
+      setTopicMinSimilarityDraft(String(s.topicMinSimilarity))
+      setRerankConfigured(s.rerankEnabled)
       setLimits(s.limits)
       setAttachmentCharsDraft(String(s.attachmentChars))
       setSpaceRagBudgetDraft(String(s.spaceRagBudget))
+      setNotesRagBudgetDraft(String(s.notesRagBudget))
       setUserMemoryBudgetDraft(String(s.userMemoryTokenBudget))
       setQueryReformulationDraft(s.queryReformulation)
       setRssFeedCharsBudgetDraft(String(s.rssFeedCharsBudget))
@@ -99,8 +110,12 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     const rerankTopN = parseInt(rerankTopNDraft)
     const ragTopK = parseInt(ragTopKDraft)
     const ragMinRelevance = parseFloat(ragMinRelevanceDraft)
+    const relatedMinSimilarity = parseFloat(relatedMinSimilarityDraft)
+    const relatedMinRelevance = parseFloat(relatedMinRelevanceDraft)
+    const topicMinSimilarity = parseFloat(topicMinSimilarityDraft)
     const attachmentChars = parseInt(attachmentCharsDraft)
     const spaceRagBudget = parseInt(spaceRagBudgetDraft)
+    const notesRagBudget = parseInt(notesRagBudgetDraft)
     const userMemoryTokenBudget = parseInt(userMemoryBudgetDraft)
     const rssFeedCharsBudget = parseInt(rssFeedCharsBudgetDraft)
     const fetchMaxPages = parseInt(fetchMaxPagesDraft)
@@ -114,8 +129,12 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     if (isNaN(extractChars) || extractChars < 500) return
     if (isNaN(rerankTopN) || rerankTopN < 1) return
     if (isNaN(ragMinRelevance) || ragMinRelevance < 0 || ragMinRelevance > 1) return
+    if (isNaN(relatedMinSimilarity) || relatedMinSimilarity < 0 || relatedMinSimilarity > 1) return
+    if (isNaN(relatedMinRelevance) || relatedMinRelevance < 0 || relatedMinRelevance > 1) return
+    if (isNaN(topicMinSimilarity) || topicMinSimilarity < 0 || topicMinSimilarity > 1) return
     if (isNaN(attachmentChars) || attachmentChars < 1000) return
     if (isNaN(spaceRagBudget) || spaceRagBudget < 0) return
+    if (isNaN(notesRagBudget) || notesRagBudget < 0) return
     if (isNaN(userMemoryTokenBudget) || userMemoryTokenBudget < 0) return
     if (isNaN(rssFeedCharsBudget) || rssFeedCharsBudget < 5000) return
     if (isNaN(fetchMaxPages) || fetchMaxPages < 0) return
@@ -126,7 +145,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     setError('')
     setSavingBudget(true)
     try {
-      await updateAdminSettings({ memoryTokenBudget: budget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, ragTopK, ragMinRelevance, attachmentChars, spaceRagBudget, queryReformulation: queryReformulationDraft, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow: fetchSummarizeOverflowDraft, compressHistoryOverflow: compressHistoryOverflowDraft, resourceSummary: resourceSummaryDraft })
+      await updateAdminSettings({ memoryTokenBudget: budget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, ragTopK, ragMinRelevance, relatedMinSimilarity, relatedMinRelevance, topicMinSimilarity, attachmentChars, spaceRagBudget, notesRagBudget, queryReformulation: queryReformulationDraft, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow: fetchSummarizeOverflowDraft, compressHistoryOverflow: compressHistoryOverflowDraft, resourceSummary: resourceSummaryDraft })
 
       onBudgetChange?.(budget)
       setBudgetSaved(true)
@@ -243,7 +262,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   }
 
   const tabBtn = (t: Tab, _label: string) =>
-    `px-4 py-2 text-sm font-medium border-b-2 transition-colors ${tab === t ? 'border-indigo-500 text-gray-100' : 'border-transparent text-gray-500 hover:text-gray-300'}`
+    `px-4 py-2 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${tab === t ? 'border-indigo-500 text-gray-100' : 'border-transparent text-gray-500 hover:text-gray-300'}`
 
   return (
     <Modal title="Admin" onClose={onClose} maxWidth="max-w-2xl">
@@ -251,13 +270,15 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
         {error && <p className="text-xs text-red-400 mb-3">{error}</p>}
 
         {/* Tabs */}
-        <div className="flex border-b border-gray-800 mb-5 -mt-2">
+        <div className="flex border-b border-gray-800 mb-5 -mt-2 overflow-x-auto">
           <button className={tabBtn('settings', 'System settings')} onClick={() => setTab('settings')}>System settings</button>
           <button className={tabBtn('search', 'Search')} onClick={() => setTab('search')}>Search</button>
+          <button className={tabBtn('similarity', 'Similarity')} onClick={() => setTab('similarity')}>Similarity</button>
           <button className={tabBtn('users', 'Users')} onClick={() => setTab('users')}>Users</button>
         </div>
 
         {tab === 'search' && <AdminSearchPanel />}
+        {tab === 'similarity' && <AdminSimilarityPanel />}
 
         {tab === 'settings' && (
           <div className="flex flex-col gap-6">
@@ -336,6 +357,11 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                 <input type="number" min={0} max={10000} step={100} value={spaceRagBudgetDraft}
                   onChange={e => setSpaceRagBudgetDraft(e.target.value)}
                   className="w-32 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
+                <p className="text-xs text-gray-400 font-medium mt-2">Notes-first budget (tokens)</p>
+                <p className="text-xs text-gray-500">Tokens of the user&apos;s own notes (and the notes they link with) injected when a question is sent with <em>Notes first</em>. Larger than the RAG budget: there the notes are what the answer rests on.</p>
+                <input type="number" min={0} max={10000} step={100} value={notesRagBudgetDraft}
+                  onChange={e => setNotesRagBudgetDraft(e.target.value)}
+                  className="w-32 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
                 <p className="text-xs text-gray-500 mt-1">Re-index all chat sessions across all users. Run this after changing embedding models or dimensions.</p>
                 <button onClick={handleReindexChats} disabled={reindexing}
                   className="w-fit px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-xs text-gray-200 transition-colors">
@@ -371,6 +397,27 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                 <p className="text-xs text-gray-500">Reranker score (0–1) a resource/collection excerpt must clear to be injected at all, instead of always filling out the chunk count above regardless of match quality. 0 disables the floor. Only applies when a reranker model is configured.</p>
                 <input type="number" min={0} max={1} step={0.05} value={ragMinRelevanceDraft}
                   onChange={e => setRagMinRelevanceDraft(e.target.value)}
+                  className="w-24 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <p className="text-xs text-gray-400 font-medium">Minimum similarity for "Similar content"</p>
+                <p className="text-xs text-gray-500">Cosine similarity (0–1) another resource must reach to be suggested as similar in a resource's detail view{rerankConfigured ? ' — used only when the reranker is unavailable' : ''}. What counts as similar depends on the embedding model: the server logs <code>[related] similarities</code> for every view, so raise this until unrelated resources drop out. 0 shows the nearest regardless.</p>
+                <input type="number" min={0} max={1} step={0.05} value={relatedMinSimilarityDraft}
+                  onChange={e => setRelatedMinSimilarityDraft(e.target.value)}
+                  className="w-24 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <p className="text-xs text-gray-400 font-medium">Minimum reranker relevance for "Similar content"</p>
+                <p className="text-xs text-gray-500">When a reranker is configured it judges the candidates instead, comparing titles and summaries; this is the relevance (0–1) one must reach. Scores are logged as <code>[reranker]</code> lines.{!rerankConfigured && <span className="text-amber-400"> No reranker is configured (RERANK_MODEL), so this has no effect.</span>}</p>
+                <input type="number" min={0} max={1} step={0.05} value={relatedMinRelevanceDraft}
+                  onChange={e => setRelatedMinRelevanceDraft(e.target.value)}
+                  className="w-24 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <p className="text-xs text-gray-400 font-medium">Topic map similarity</p>
+                <p className="text-xs text-gray-500">Average cosine similarity at which Explore → Topics stops merging notes into a topic. Higher gives more, tighter topics; lower gives fewer, broader ones. Users can step it coarser or finer per view. Like the similar-content floor it depends on the embedding model — the Cosine column in the Similarity tab shows the values your related and unrelated notes get.</p>
+                <input type="number" min={0} max={1} step={0.05} value={topicMinSimilarityDraft}
+                  onChange={e => setTopicMinSimilarityDraft(e.target.value)}
                   className="w-24 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
               </div>
             </div>

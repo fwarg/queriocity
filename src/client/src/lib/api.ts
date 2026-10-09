@@ -1,4 +1,5 @@
 import type { Lang } from '@shared/i18n/index.ts'
+import type { ContextReport } from '@shared/context.ts'
 import type { ApiErrorBody, ErrorCode } from '@shared/error-codes.ts'
 
 /** An API failure, carrying the server's stable code where the route sends one.
@@ -68,12 +69,18 @@ export interface Source { title: string; url: string; content?: string }
 export interface FileSource { title: string; url: string; label: string }
 
 export interface Message {
+  /** The stored row's id; absent on a message still streaming or not yet reloaded. */
+  id?: string
   role: 'user' | 'assistant'
   content: string
   sources?: Source[]
   fileSources?: FileSource[]
   thinking?: string
   images?: Array<{ url: string; alt: string }>
+  /** Kept in full when the conversation outgrows the model's context. */
+  pinned?: boolean
+  /** Notes saved from this answer. */
+  savedNotes?: Array<{ id: string; title: string }>
 }
 
 // Auth — cookies are sent automatically by the browser
@@ -113,13 +120,14 @@ export async function logout(): Promise<void> {
   await fetch(`${BASE}/auth/logout`, { method: 'POST' })
 }
 
-export async function fetchSuggestions(text: string): Promise<string[]> {
+/** `signal` cancels a suggestion that has gone stale; the server then frees the model at once. */
+export async function fetchSuggestions(text: string, signal?: AbortSignal): Promise<string[]> {
   try {
     const res = await fetch(`${BASE}/chat/suggest`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text }),
-      signal: AbortSignal.timeout(7000),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(7000)]) : AbortSignal.timeout(7000),
     })
     if (!res.ok) return []
     return res.json()
@@ -213,6 +221,7 @@ export async function* streamChat(
   includeMemoryIds?: string[],
   collectionIds?: string[],
   regenerate?: boolean,
+  notesFirst?: boolean,
 ): AsyncGenerator<{ type: string; [k: string]: unknown }> {
   const res = await fetch(`${BASE}/chat`, {
     method: 'POST',
@@ -223,6 +232,7 @@ export async function* streamChat(
         content: m.images?.length
           ? m.content + m.images.map(img => `\n\n![${img.alt}](${img.url})`).join('')
           : m.content,
+        ...(m.pinned ? { pinned: true } : {}),
       })),
       focusMode,
       sessionId,
@@ -233,6 +243,7 @@ export async function* streamChat(
       ...(includeMemoryIds?.length ? { includeMemoryIds } : {}),
       ...(collectionIds?.length ? { collectionIds } : {}),
       ...(regenerate ? { regenerate: true } : {}),
+      ...(notesFirst ? { notesFirst: true } : {}),
     }),
     signal,
   })
@@ -349,19 +360,52 @@ export async function fetchRelatedQuestions(question: string, answer: string): P
   }
 }
 
-export async function fetchSession(id: string): Promise<Message[]> {
+/** A stored chat: its messages, and what the model saw of them on the latest turn. */
+export async function fetchSession(id: string): Promise<{ messages: Message[]; context: ContextReport | null }> {
   const res = await fetch(`${BASE}/history/${id}`)
-  const { messages } = await res.json()
+  const { session, messages } = await res.json()
+  return { messages: toMessages(messages), context: parseContext(session?.contextReport) }
+}
+
+function parseContext(raw: string | null | undefined): ContextReport | null {
+  if (!raw) return null
+  try {
+    const report = JSON.parse(raw) as ContextReport
+    // A report stored before sizes were counted in characters is not comparable; skip it.
+    return typeof report.budgetChars === 'number' ? report : null
+  } catch { return null }
+}
+
+function toMessages(messages: unknown): Message[] {
   const FIRST_PNG_RE = /!\[([^\]]*)\]\(([^)]+\.png)\)/
-  return (messages as Array<{ role: 'user' | 'assistant'; content: string; sources?: string; fileSources?: string }>).map(m => {
+  return (messages as Array<{ id: string; role: 'user' | 'assistant'; content: string; sources?: string; fileSources?: string; pinned?: boolean; savedNotes?: Array<{ id: string; title: string }> }>).map(m => {
     const sources = m.sources ? JSON.parse(m.sources) : undefined
     const fileSources = m.fileSources ? JSON.parse(m.fileSources) : undefined
     if (m.role === 'assistant') {
       const match = FIRST_PNG_RE.exec(m.content)
-      return { role: m.role, content: m.content, sources, fileSources, images: match ? [{ alt: match[1], url: match[2] }] : undefined }
+      return { id: m.id, role: m.role, content: m.content, sources, fileSources, pinned: m.pinned, savedNotes: m.savedNotes?.length ? m.savedNotes : undefined, images: match ? [{ alt: match[1], url: match[2] }] : undefined }
     }
-    return { role: m.role, content: m.content, sources, fileSources }
+    return { id: m.id, role: m.role, content: m.content, sources, fileSources, pinned: m.pinned }
   })
+}
+
+export async function setMessagePinned(sessionId: string, messageId: string, pinned: boolean): Promise<void> {
+  const res = await fetch(`${BASE}/history/${sessionId}/messages/${messageId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pinned }),
+  })
+  if (!res.ok) throw await apiError(res, 'Could not update the pin')
+}
+
+/** Deletes one turn (a question and its answer) from a stored chat. */
+export async function deleteMessages(sessionId: string, ids: string[]): Promise<void> {
+  const res = await fetch(`${BASE}/history/${sessionId}/messages`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  })
+  if (!res.ok) throw await apiError(res, 'Could not delete the messages')
 }
 
 export async function updateSessionTitle(id: string, title: string): Promise<void> {
@@ -504,11 +548,11 @@ export async function ingestUrl(url: string): Promise<{ fileId: string; filename
   return res.json()
 }
 
-export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; userMemoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; ragTopK: number; ragMinRelevance: number; attachmentChars: number; spaceRagBudget: number; queryReformulation: boolean; rssFeedCharsBudget: number; fetchMaxPages: number; fetchMaxUrlContextChars: number; fetchSummarizeOverflow: boolean; compressHistoryOverflow: boolean; resourceSummary: boolean; limits: { smallModelInputChars: number; embedInputChars: number; scrapeMaxChars: number; minUrlContextChars: number } }> {
+export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; userMemoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; ragTopK: number; ragMinRelevance: number; relatedMinSimilarity: number; relatedMinRelevance: number; rerankEnabled: boolean; attachmentChars: number; spaceRagBudget: number; notesRagBudget: number; topicMinSimilarity: number; queryReformulation: boolean; rssFeedCharsBudget: number; fetchMaxPages: number; fetchMaxUrlContextChars: number; fetchSummarizeOverflow: boolean; compressHistoryOverflow: boolean; resourceSummary: boolean; limits: { smallModelInputChars: number; embedInputChars: number; scrapeMaxChars: number; minUrlContextChars: number } }> {
   return fetch(`${BASE}/admin/settings`).then(r => r.json())
 }
 
-export async function updateAdminSettings(s: { memoryTokenBudget?: number; userMemoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; dreamDeep?: boolean; memoryExtractChars?: number; rerankTopN?: number; ragTopK?: number; ragMinRelevance?: number; attachmentChars?: number; spaceRagBudget?: number; queryReformulation?: boolean; rssFeedCharsBudget?: number; fetchMaxPages?: number; fetchMaxUrlContextChars?: number; fetchSummarizeOverflow?: boolean; compressHistoryOverflow?: boolean; resourceSummary?: boolean }): Promise<void> {
+export async function updateAdminSettings(s: { memoryTokenBudget?: number; userMemoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; dreamDeep?: boolean; memoryExtractChars?: number; rerankTopN?: number; ragTopK?: number; ragMinRelevance?: number; relatedMinSimilarity?: number; relatedMinRelevance?: number; attachmentChars?: number; spaceRagBudget?: number; notesRagBudget?: number; topicMinSimilarity?: number; queryReformulation?: boolean; rssFeedCharsBudget?: number; fetchMaxPages?: number; fetchMaxUrlContextChars?: number; fetchSummarizeOverflow?: boolean; compressHistoryOverflow?: boolean; resourceSummary?: boolean }): Promise<void> {
   await fetch(`${BASE}/admin/settings`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -556,6 +600,29 @@ export interface SearchProviderStats {
   consecutiveFailures: number
   lastError: { reason: string; at: number } | null
   engines: Record<string, number>
+}
+
+export interface SimilarityPair {
+  from: { id: string; title: string }
+  to: { id: string; title: string }
+  cosine: number
+  /** Null when the reranker did not judge the pair. */
+  relevance: number | null
+}
+
+export interface SimilarityReport {
+  pairs: SimilarityPair[]
+  resources: number
+  limit: number
+  reranker: boolean
+  minSimilarity: number
+  minRelevance: number
+}
+
+export async function fetchSimilarityReport(): Promise<SimilarityReport> {
+  const res = await fetch(`${BASE}/admin/similarity`)
+  if (!res.ok) throw await apiError(res, 'Could not compute similarities')
+  return res.json()
 }
 
 export async function fetchSearchPolicy(): Promise<{ policy: SearchPolicy; stored: boolean; providers: SearchProviderInfo[]; telemetry: Record<string, SearchProviderStats>; usage: Record<string, number> }> {
@@ -744,7 +811,8 @@ export async function* suggestUserMemories(
   }
 }
 
-export async function extractFileForContext(file: File): Promise<{ filename: string; content: string }> {
+/** The text of a file for one message. `truncated`: cut to the admin's attachment limit. */
+export async function extractFileForContext(file: File): Promise<{ filename: string; content: string; truncated?: boolean; totalChars?: number }> {
   const form = new FormData()
   form.append('file', file)
   const res = await fetch(`${BASE}/files/extract`, { method: 'POST', body: form })
@@ -775,7 +843,12 @@ export interface Resource {
   size: number
   kind: 'file' | 'note'
   summary: string | null
+  /** The small model's topics — shown only as tag suggestions now. */
   topics: string[]
+  /** The user's own hierarchical tags (`ml/rag`). They organise and filter; retrieval ignores them. */
+  tags: string[]
+  /** Resolved wikilinks in and out; 0 marks an unlinked resource. */
+  linkCount: number
   /** The spaces this resource is tagged to — the library's grouping, used to filter the list. */
   spaces: Array<{ id: string; name: string }>
   /** Where it came from: the URL for an ingested page, the original filename for an upload, null
@@ -794,6 +867,33 @@ export interface ResourceDetail extends Resource {
   /** The resource a transform produced this note from, if any, and the notes produced from it. */
   derivedFrom: ResourceRef | null
   derived: ResourceRef[]
+  /** Topics not yet adopted as tags, normalised — offered as one-tap suggestions. */
+  suggestedTags: string[]
+  /** This note's `[[links]]` in order; `target` is null while no resource carries the title. */
+  links: Array<{ title: string; target: ResourceRef | null }>
+  /** Notes linking here. */
+  backlinks: ResourceRef[]
+  /** The chat the note was saved from, while that chat still exists. */
+  originChat: { id: string; title: string; messageId: string | null } | null
+}
+
+export interface NoteOptions {
+  derivedFrom?: string
+  originSessionId?: string
+  originMessageId?: string
+  tags?: string[]
+}
+
+/** A proposed split of a long answer or note into short notes, with a title and summary for an
+ *  overview note when the model gave one; nothing is saved. */
+export async function proposeNoteSplit(title: string, body: string, hint = ''): Promise<{ parts: Array<{ title: string; body: string; tags?: string[] }>; overview?: { title: string; body: string; tags?: string[] } }> {
+  const res = await fetch(`${BASE}/files/split`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, body, ...(hint.trim() ? { hint: hint.trim() } : {}) }),
+  })
+  if (!res.ok) throw await apiError(res, 'Could not split')
+  return res.json()
 }
 
 export async function fetchFiles(): Promise<Resource[]> {
@@ -813,11 +913,11 @@ export async function fetchNoteText(id: string): Promise<{ filename: string; con
   return res.json()
 }
 
-export async function createNote(title: string, body: string, derivedFrom?: string): Promise<{ id: string }> {
+export async function createNote(title: string, body: string, options: NoteOptions = {}): Promise<{ id: string }> {
   const res = await fetch(`${BASE}/files/notes`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title, body, derivedFrom }),
+    body: JSON.stringify({ title, body, ...options }),
   })
   if (!res.ok) throw await apiError(res, 'Could not save note')
   return res.json()
@@ -834,13 +934,207 @@ export async function renameResource(id: string, filename: string): Promise<void
   if (!res.ok) throw await apiError(res, 'Could not rename')
 }
 
-export async function updateNote(id: string, patch: { title?: string; body?: string }): Promise<void> {
+export async function updateNote(id: string, patch: { title?: string; body?: string; tags?: string[] }): Promise<void> {
   const res = await fetch(`${BASE}/files/notes/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
   })
   if (!res.ok) throw await apiError(res, 'Could not save note')
+}
+
+export async function setResourceTags(id: string, tags: string[]): Promise<string[]> {
+  const res = await fetch(`${BASE}/files/${id}/tags`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tags }),
+  })
+  if (!res.ok) throw await apiError(res, 'Could not save tags')
+  return (await res.json()).tags
+}
+
+export interface RelatedResource extends ResourceRef {
+  /** Already linked either way, or one made from the other. */
+  linked: boolean
+  tags: string[]
+}
+
+/** Resources similar in content, and tags several of them share that this one lacks. */
+export async function fetchRelated(id: string): Promise<{ related: RelatedResource[]; tags: Array<{ path: string; count: number }> }> {
+  const res = await fetch(`${BASE}/files/${id}/related`)
+  if (!res.ok) throw await apiError(res, 'Could not load similar resources')
+  return res.json()
+}
+
+export interface GraphNode { id: string; label: string; kind: 'note' | 'file' | 'chat'; depth: number }
+export interface GraphEdge {
+  source: string
+  target: string
+  /** `similar` (notes alike in content) and `related` (topics alike) are drawn only by the topic map. */
+  kind: 'link' | 'derived' | 'chat' | 'similar' | 'related'
+  /** 0–1 strength, drawn as line width where given. */
+  weight?: number
+}
+
+/** A resource's explicit neighbourhood. Chat nodes have ids `chat:<sessionId>`. */
+export async function fetchGraph(id: string, depth: 1 | 2): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> {
+  const res = await fetch(`${BASE}/files/${id}/graph?depth=${depth}`)
+  if (!res.ok) throw await apiError(res, 'Could not load connections')
+  return res.json()
+}
+
+export interface TopicMember { id: string; title: string; kind: 'file' | 'note' }
+
+/** One group of the topic map; `name`/`tag` are present once it has been named. */
+export interface Topic {
+  key: string
+  members: TopicMember[]
+  name?: string
+  tag?: string | null
+  topTag: { path: string; count: number } | null
+  tagSpread: number
+  unlinked: number
+  duplicates: Array<[string, string]>
+}
+
+export interface TopicMapData {
+  topics: Topic[]
+  /** Pairs of related topics, for the bubble map. */
+  relations: Array<{ a: string; b: string; similarity: number }>
+  loose: TopicMember[]
+  threshold: number
+  considered: number
+  capped: boolean
+}
+
+export interface NoteMapData {
+  nodes: Array<TopicMember & { topic: string | null }>
+  similar: Array<{ a: string; b: string; similarity: number }>
+  links: Array<{ a: string; b: string }>
+  truncated: boolean
+}
+
+/** Every note (or one topic's) with lines to its most similar notes; null when the topic is gone. */
+export async function fetchNoteMap(opts: { threshold: number; all?: boolean; topic?: string }): Promise<NoteMapData | null> {
+  const q = new URLSearchParams({ threshold: opts.threshold.toFixed(2) })
+  if (opts.all) q.set('scope', 'all')
+  if (opts.topic) q.set('topic', opts.topic)
+  const res = await fetch(`${BASE}/files/topics/notes?${q}`)
+  if (res.status === 404) return null
+  if (!res.ok) throw await apiError(res, 'Could not draw the map')
+  return res.json()
+}
+
+/** The topic map; without `threshold` the admin default applies. */
+export async function fetchTopicMap(opts: { threshold?: number; all?: boolean } = {}): Promise<TopicMapData> {
+  const q = new URLSearchParams()
+  if (opts.threshold !== undefined) q.set('threshold', opts.threshold.toFixed(2))
+  if (opts.all) q.set('scope', 'all')
+  const res = await fetch(`${BASE}/files/topics?${q}`)
+  if (!res.ok) throw await apiError(res, 'Could not build the topic map')
+  return res.json()
+}
+
+export async function nameTopic(ids: string[]): Promise<{ key: string; name: string; tag: string | null }> {
+  const res = await fetch(`${BASE}/files/topics/name`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  })
+  if (!res.ok) throw await apiError(res, 'Could not name the topic')
+  return res.json()
+}
+
+/** Adds a tag to several resources, keeping their other tags. */
+export async function addTagToMany(path: string, ids: string[]): Promise<number> {
+  const res = await fetch(`${BASE}/files/tags/bulk`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, ids }),
+  })
+  if (!res.ok) throw await apiError(res, 'Could not add the tag')
+  return (await res.json()).tagged
+}
+
+export interface LinkSuggestion {
+  targetId: string
+  title: string
+  /** Text in the note to link from; null means the link goes under See also. */
+  phrase: string | null
+  reason: string
+}
+
+/** Links the small model proposes for a note, from its similar resources. */
+export async function fetchLinkSuggestions(noteId: string): Promise<LinkSuggestion[]> {
+  const res = await fetch(`${BASE}/files/${noteId}/link-suggestions`)
+  if (!res.ok) throw await apiError(res, 'Could not suggest links')
+  return res.json()
+}
+
+export async function acceptLinkSuggestion(noteId: string, s: LinkSuggestion, heading: string): Promise<void> {
+  const res = await fetch(`${BASE}/files/${noteId}/link-suggestions/accept`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ targetId: s.targetId, phrase: s.phrase, heading }),
+  })
+  if (!res.ok) throw await apiError(res, 'Could not add the link')
+}
+
+export async function dismissLinkSuggestion(noteId: string, targetId: string): Promise<void> {
+  const res = await fetch(`${BASE}/files/${noteId}/link-suggestions/dismiss`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ targetId }),
+  })
+  if (!res.ok) throw await apiError(res, 'Could not dismiss the suggestion')
+}
+
+export interface LibraryGraphNode extends GraphNode {
+  /** Top-level tag, for colouring. */
+  group?: string
+}
+
+/** The whole library's connections, optionally narrowed to a tag subtree or a space. */
+export async function fetchLibraryGraph(opts: { tag?: string; spaceId?: string; chats?: boolean }): Promise<{ nodes: LibraryGraphNode[]; edges: GraphEdge[]; total: number; truncated: boolean }> {
+  const q = new URLSearchParams()
+  if (opts.tag) q.set('tag', opts.tag)
+  if (opts.spaceId) q.set('space', opts.spaceId)
+  if (opts.chats) q.set('chats', '1')
+  const res = await fetch(`${BASE}/files/graph?${q}`)
+  if (!res.ok) throw await apiError(res, 'Could not load the graph')
+  return res.json()
+}
+
+/** Adds `- [[target]]` under the note's "See also" heading (`heading`, in the reader's language). */
+export async function addSeeAlso(noteId: string, targetId: string, heading: string): Promise<void> {
+  const res = await fetch(`${BASE}/files/${noteId}/see-also`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ targetId, heading }),
+  })
+  if (!res.ok) throw await apiError(res, 'Could not add the link')
+}
+
+/** The user's tags with how many resources carry each directly. */
+export async function fetchTags(): Promise<Array<{ path: string; count: number }>> {
+  const res = await fetch(`${BASE}/files/tags`)
+  if (!res.ok) throw await apiError(res, 'Could not load tags')
+  return res.json()
+}
+
+/** Renames a tag and everything under it; an existing target merges. */
+export async function renameTag(from: string, to: string): Promise<void> {
+  const res = await fetch(`${BASE}/files/tags`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ from, to }),
+  })
+  if (!res.ok) throw await apiError(res, 'Could not rename tag')
+}
+
+export async function deleteTag(path: string): Promise<void> {
+  const res = await fetch(`${BASE}/files/tags?path=${encodeURIComponent(path)}`, { method: 'DELETE' })
+  if (!res.ok) throw await apiError(res, 'Could not delete tag')
 }
 
 export type TransformOperation = 'summarize' | 'keypoints' | 'questions' | 'outline'

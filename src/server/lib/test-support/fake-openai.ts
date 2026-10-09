@@ -13,6 +13,8 @@ export interface ScriptedStep {
   reasoning?: string[]
   /** A tool call to emit instead of, or alongside, text. */
   toolCall?: { id: string; name: string; args: unknown }
+  /** Wait this long before answering, e.g. to stop a run while the model is still "thinking". */
+  delayMs?: number
 }
 
 /** Serves one scripted step per request, in order, so a multi-step tool loop can be driven. */
@@ -31,6 +33,7 @@ export function startFakeOpenAI(script: ScriptedStep[]) {
       requests.push(body)
       const step = script[Math.min(call, script.length - 1)]
       call++
+      if (step.delayMs) await Bun.sleep(step.delayMs)
 
       // generateText omits `stream` (or sends false) and expects a single JSON body rather than
       // an SSE stream; only streamText sets it true.

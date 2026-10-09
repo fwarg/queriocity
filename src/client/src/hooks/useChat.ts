@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react'
-import { streamChat, stopChat, fetchRelatedQuestions, decideEgress } from '../lib/api.ts'
+import { streamChat, stopChat, fetchRelatedQuestions, decideEgress, setMessagePinned, deleteMessages } from '../lib/api.ts'
+import { hasAttachment, type ContextReport } from '@shared/context.ts'
 import type { Message, Source, FileSource } from '../lib/api.ts'
 import type { LogStep } from '../components/ProgressLog.tsx'
 import { useT } from '../lib/i18n.tsx'
@@ -18,6 +19,8 @@ interface UseChatOptions {
   sessionId: string | undefined
   focusMode: 'flash' | 'balanced' | 'thorough' | 'image'
   searchCategories?: Array<'news' | 'science' | 'discussions' | 'tech'>
+  /** Answer from the user's own notes before the web. */
+  notesFirst?: boolean
   includeFileIds?: string[]
   collectionIds?: string[]
   includeMemoryIds?: string[]
@@ -27,7 +30,14 @@ interface UseChatOptions {
   onSessionCreated: (id: string, title: string) => void
 }
 
-export function useChat({ sessionId, focusMode, searchCategories, includeFileIds, includeMemoryIds, collectionIds, spaceId, followUpSuggestions = true, onSessionCreated }: UseChatOptions) {
+/** Gives the just-sent question its stored id, so it can be pinned without reloading the chat. */
+function withStoredId(messages: Message[], id: string | undefined): Message[] {
+  const last = messages[messages.length - 1]
+  if (!id || !last || last.role !== 'user' || last.id) return messages
+  return [...messages.slice(0, -1), { ...last, id }]
+}
+
+export function useChat({ sessionId, focusMode, searchCategories, notesFirst, includeFileIds, includeMemoryIds, collectionIds, spaceId, followUpSuggestions = true, onSessionCreated }: UseChatOptions) {
   const t = useT()
   const [messages, setMessages] = useState<Message[]>([])
   const [streaming, setStreaming] = useState('')
@@ -43,6 +53,8 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
   /** Outbound request awaiting the user's decision, or null. At most one is ever parked: the
    *  generation blocks on it, so a second cannot be raised until this one resolves. */
   const [approval, setApproval] = useState<EgressApproval | null>(null)
+  /** What the model saw of the conversation on the latest turn; null until a turn reports it. */
+  const [context, setContext] = useState<ContextReport | null>(null)
 
   const abortRef = useRef<AbortController | null>(null)
   const rafRef = useRef<number>(0)
@@ -66,7 +78,7 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
   }
 
   async function submit(text: string) {
-    const next: Message[] = [...messages, { role: 'user', content: text }]
+    const next: Message[] = [...messages, { role: 'user', content: text, ...(hasAttachment(text) ? { pinned: true } : {}) }]
     setMessages(next)
     await run(next, text, false)
   }
@@ -116,9 +128,10 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
     const images: Array<{ url: string; alt: string }> = []
     const blockedEngines: Array<{ engine: string; reason: string }> = []
     let wasAborted = false
+    let storedIds: { user?: string; assistant?: string } = {}
 
     try {
-      for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId, undefined, searchCategories, includeFileIds, includeMemoryIds, collectionIds, regenerating)) {
+      for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId, undefined, searchCategories, includeFileIds, includeMemoryIds, collectionIds, regenerating, notesFirst)) {
         if (chunk.type === 'text') {
           accumulated += chunk.delta as string
           cancelAnimationFrame(rafRef.current)
@@ -164,6 +177,8 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
             : a)
         } else if (chunk.type === 'approval_closed') {
           setApproval(a => (a && a.id === chunk.id ? null : a))
+        } else if (chunk.type === 'context') {
+          setContext(chunk as unknown as ContextReport)
         } else if (chunk.type === 'search_warning') {
           blockedEngines.push(...(chunk.engines as Array<{ engine: string; reason: string }>))
         } else if (chunk.type === 'done') {
@@ -181,6 +196,7 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
             setAnswerTime(t('answer.time', { label, seconds: (chunk.elapsedMs as number / 1000).toFixed(1) }) + srcLabel + '.')
           }
           liveSessionRef.current = chunk.sessionId as string
+          storedIds = { user: chunk.userMessageId as string | undefined, assistant: chunk.assistantMessageId as string | undefined }
           onSessionCreated(chunk.sessionId as string, (chunk.title as string | undefined) ?? text.slice(0, 60))
         }
       }
@@ -194,7 +210,8 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
       cancelAnimationFrame(rafRef.current)
       abortRef.current = null
       if (accumulated || images.length > 0) {
-        setMessages(prev => [...prev, {
+        setMessages(prev => [...withStoredId(prev, storedIds.user), {
+          id: storedIds.assistant,
           role: 'assistant',
           content: accumulated,
           sources,
@@ -227,7 +244,39 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
     }
   }
 
+  /** Pins are stored per message; one not yet stored (an ephemeral chat) is pinned for this tab only. */
+  async function togglePin(index: number) {
+    const msg = messages[index]
+    if (!msg) return
+    const pinned = !msg.pinned
+    const apply = (value: boolean) => setMessages(prev => prev.map((m, i) => (i === index ? { ...m, pinned: value } : m)))
+    apply(pinned)
+    const sid = liveSessionRef.current ?? sessionId
+    if (msg.id && sid) await setMessagePinned(sid, msg.id, pinned).catch(() => apply(!pinned))
+  }
+
+  /** Removes a question and its answer. Messages not yet stored (an ephemeral chat) go locally only.
+   *  The context report is dropped: its indices point into the old list until the next turn. */
+  async function deleteTurn(index: number) {
+    if (busy || messages[index]?.role !== 'user') return
+    const count = messages[index + 1]?.role === 'assistant' ? 2 : 1
+    const removed = messages.slice(index, index + count)
+    const before = messages
+    setMessages(prev => [...prev.slice(0, index), ...prev.slice(index + count)])
+    setContext(null)
+    const ids = removed.map(m => m.id).filter((id): id is string => !!id)
+    const sid = liveSessionRef.current ?? sessionId
+    if (!ids.length || !sid) return
+    try {
+      await deleteMessages(sid, ids)
+    } catch (err) {
+      setMessages(before)
+      setStatus(err instanceof Error ? err.message : t('answer.requestFailed'))
+    }
+  }
+
   function reset() {
+    setContext(null)
     setMessages([])
     setStreaming('')
     setStreamingThinking('')
@@ -238,5 +287,5 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
     liveSessionRef.current = undefined
   }
 
-  return { messages, setMessages, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, regenerate, cancel, reset, related, setRelated, steps, runStartedAt, approval, decideApproval }
+  return { messages, setMessages, context, setContext, togglePin, deleteTurn, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, regenerate, cancel, reset, related, setRelated, steps, runStartedAt, approval, decideApproval }
 }

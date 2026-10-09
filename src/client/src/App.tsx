@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { BookOpen, RotateCcw, Lock, ShieldCheck, Trash2, X } from 'lucide-react'
 import { MessageList, ImageCaptionContext } from './components/MessageList.tsx'
+import { ContextMeter } from './components/ContextIndicators.tsx'
 import { ProgressLog, Elapsed } from './components/ProgressLog.tsx'
 import { ApprovalPrompt } from './components/ApprovalPrompt.tsx'
 import { ChatInput } from './components/ChatInput.tsx'
@@ -8,6 +9,9 @@ import { LoginPage } from './components/LoginPage.tsx'
 import { RegisterPage } from './components/RegisterPage.tsx'
 import { SettingsPanel } from './components/SettingsPanel.tsx'
 import { AdminPanel } from './components/AdminPanel.tsx'
+import { ViewTabs } from './components/ViewTabs.tsx'
+import { ExploreView } from './components/ExploreView.tsx'
+import type { ResourceFilter } from './components/ResourceFilters.tsx'
 import { MonitorsView } from './components/MonitorsView.tsx'
 import { ChatRow } from './components/ChatRow.tsx'
 import { useConfirm } from './components/confirm.tsx'
@@ -35,7 +39,10 @@ import { useLang, useT } from './lib/i18n.tsx'
 const EXAMPLE_KEYS = ['guide.example1', 'guide.example2', 'guide.example3'] as const
 
 type AuthView = 'loading' | 'login' | 'register'
-type MainView = 'chat' | 'chats' | 'files' | 'spaces' | 'monitors'
+type MainView = 'chat' | 'chats' | 'files' | 'spaces' | 'explore'
+type ChatsTab = 'chats' | 'monitors'
+const CHATS_TAB_KEY = 'queriocity.chatsTab'
+const NOTES_FIRST_KEY = 'queriocity.notesFirst'
 type Session = { id: string; title: string; spaceId: string | null; locked?: boolean }
 
 const MEMORY_HEADER_TOKENS = 30
@@ -73,6 +80,12 @@ export default function App() {
 
   const [focusMode, setFocusMode] = useState<'flash' | 'balanced' | 'thorough' | 'image'>('balanced')
   const [searchCategories, setSearchCategories] = useState<Array<'news' | 'science' | 'discussions' | 'tech'>>([])
+  // "Notes first" is a habit rather than a per-question choice, so it is remembered.
+  const [notesFirst, setNotesFirstState] = useState(() => { try { return localStorage.getItem(NOTES_FIRST_KEY) === '1' } catch { return false } })
+  const setNotesFirst = useCallback((on: boolean) => {
+    setNotesFirstState(on)
+    try { localStorage.setItem(NOTES_FIRST_KEY, on ? '1' : '0') } catch { /* not remembered in private mode */ }
+  }, [])
   /** Collections picked for the next message — per request, never stored on the chat.
    *
    *  Held here rather than in ChatInput, which remounts per session, so a selection survives asking
@@ -123,10 +136,22 @@ export default function App() {
   const [recreating, setRecreating] = useState(false)
   const [recreateProgress, setRecreateProgress] = useState<string | null>(null)
   const [view, setView] = useState<MainView>('chat')
+  const [focusMessageId, setFocusMessageId] = useState<string | null>(null)
+  // Monitors live as a tab of Chats: a monitor is a recurring chat, and its runs are chats.
+  const [chatsTab, setChatsTabState] = useState<ChatsTab>(() => {
+    try { return localStorage.getItem(CHATS_TAB_KEY) === 'monitors' ? 'monitors' : 'chats' } catch { return 'chats' }
+  })
+  const setChatsTab = useCallback((tab: ChatsTab) => {
+    setChatsTabState(tab)
+    try { localStorage.setItem(CHATS_TAB_KEY, tab) } catch { /* private mode: the tab just isn't remembered */ }
+  }, [])
   // Which resource's detail panel is open in the Resources view. Lives here rather than inside
   // ResourcesView so a chat citation's [F1]/[C1] reference can open one directly from outside it.
   const [openResourceId, setOpenResourceId] = useState<string | null>(null)
+  // The filter the library opens with when Explore sends the user there (a tag, or "untagged").
+  const [resourceSeed, setResourceSeed] = useState<Partial<ResourceFilter> | null>(null)
   const openResource = useCallback((id: string) => {
+    setResourceSeed(null)
     setOpenResourceId(id)
     setView('files')
     setSidebarOpen(false)
@@ -146,9 +171,10 @@ export default function App() {
     if (target === 'settings') { setShowSettings(true); return }
     if (target === 'spaces') setCurrentSpaceId(null)
     if (target === 'files') setOpenResourceId(null)
-    setView(target)
+    if (target === 'monitors' || target === 'chats') setChatsTab(target)
+    setView(target === 'monitors' ? 'chats' : target)
     setSidebarOpen(false)
-  }, []))
+  }, [setChatsTab]))
   const [chatHasMore, setChatHasMore] = useState(false)
   const [chatLoadingMore, setChatLoadingMore] = useState(false)
   const chatOffsetRef = useRef(0)
@@ -170,10 +196,11 @@ export default function App() {
    *  refuses a collection either way; this keeps the UI from proposing what it will refuse. */
   const chatSpaces = spaces.filter(sp => sp.kind === 'space')
 
-  const { messages, setMessages, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, regenerate, cancel, reset, related, setRelated, steps, runStartedAt, approval, decideApproval } = useChat({
+  const { messages, setMessages, context, setContext, togglePin, deleteTurn, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, regenerate, cancel, reset, related, setRelated, steps, runStartedAt, approval, decideApproval } = useChat({
     sessionId,
     focusMode,
     searchCategories,
+    notesFirst,
     includeFileIds: pinnedFileIds.length ? pinnedFileIds : undefined,
     collectionIds: selectedCollections.length ? selectedCollections : undefined,
     includeMemoryIds: pinnedMemoryIds.length ? pinnedMemoryIds : undefined,
@@ -358,18 +385,25 @@ export default function App() {
 
 
   function loadSession(id: string, title: string, addToHistory = true, fromMonitor = false) {
+    setFocusMessageId(null)
     setSessionId(id)
     setEditingTitle(false)
     setIsMonitorSession(fromMonitor)
     reset()
     setView('chat')
-    fetchSession(id).then(setMessages).catch(() => {})
+    fetchSession(id).then(s => { setMessages(s.messages); setContext(s.context) }).catch(() => {})
     if (addToHistory) {
       setSessions(prev => {
         const existing = prev.find(s => s.id === id)
         return [{ id, title, spaceId: existing?.spaceId ?? null }, ...prev.filter(s => s.id !== id)]
       })
     }
+  }
+
+  /** Opens a chat at a given answer — "Saved from chat" on a note. */
+  function openChatAt(id: string, title: string, messageId?: string) {
+    loadSession(id, title)
+    setFocusMessageId(messageId ?? null)
   }
 
   function newChat(inSpaceId?: string) {
@@ -648,6 +682,10 @@ export default function App() {
 
   /** ResourcesView mutates the library; the list stays here because the space panel tags from it. */
   const reloadFiles = useCallback(() => { fetchFiles().then(setFiles).catch(() => {}) }, [])
+  // Refreshed whenever a view that lists the library opens: notes are also created from chat
+  // answers, splits and the server side, none of which pass through these views.
+  useEffect(() => { if (view === 'files' || view === 'explore') reloadFiles() }, [view, reloadFiles])
+  const tagCount = useMemo(() => new Set(files.flatMap(f => f.tags)).size, [files])
 
   // Auth screens
   if (authView === 'loading' && !currentUser) {
@@ -747,7 +785,7 @@ export default function App() {
           {t('nav.chats')} ({chatTotal || sessions.length})
         </button>
         <button
-          onClick={() => { setView(v => v === 'files' ? 'chat' : 'files'); setOpenResourceId(null); setSidebarOpen(false) }}
+          onClick={() => { setView(v => v === 'files' ? 'chat' : 'files'); setOpenResourceId(null); setResourceSeed(null); setSidebarOpen(false) }}
           className={`w-full text-left px-3 py-2 rounded text-sm font-medium ${view === 'files' ? 'bg-indigo-700 text-white' : 'text-indigo-400 hover:bg-gray-800'}`}
         >
           {t('nav.resources')} ({files.length})
@@ -759,10 +797,10 @@ export default function App() {
           {t('nav.workspaces')} ({spaces.length})
         </button>
         <button
-          onClick={() => { setView(v => v === 'monitors' ? 'chat' : 'monitors'); setSidebarOpen(false) }}
-          className={`w-full text-left px-3 py-2 rounded text-sm font-medium ${view === 'monitors' ? 'bg-indigo-700 text-white' : 'text-indigo-400 hover:bg-gray-800'}`}
+          onClick={() => { setView(v => v === 'explore' ? 'chat' : 'explore'); setSidebarOpen(false) }}
+          className={`w-full text-left px-3 py-2 rounded text-sm font-medium ${view === 'explore' ? 'bg-indigo-700 text-white' : 'text-indigo-400 hover:bg-gray-800'}`}
         >
-          {t('nav.monitors')} ({monitorCount})
+          {t('nav.explore')} ({tagCount})
         </button>
         <div className="border-t border-gray-800 my-1" />
         <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-1">
@@ -827,6 +865,24 @@ export default function App() {
           <span className="font-semibold text-white text-sm">Queriocity</span>
         </div>
         {view === 'chats' ? (
+          <div className="flex flex-col flex-1 min-h-0">
+          <ViewTabs
+            tabs={[
+              { id: 'chats' as const, label: `${t('nav.chats')} (${chatTotal || sessions.length})` },
+              { id: 'monitors' as const, label: `${t('nav.monitors')} (${monitorCount})` },
+            ]}
+            active={chatsTab}
+            onChange={setChatsTab}
+          />
+          {chatsTab === 'monitors' ? (
+            <MonitorsView
+              spaces={spaces}
+              isAdmin={currentUser?.role === 'admin'}
+              timezone={currentUser?.settings?.timezone ?? ''}
+              onCountChange={setMonitorCount}
+              onOpenSession={(id, title) => { loadSession(id, title, false, true); setSidebarOpen(false) }}
+            />
+          ) : (
           <div className="flex flex-col flex-1 overflow-y-auto p-6 gap-3" onClick={() => setSpacePickerOpen(null)}>
             <div className="mb-2">
             <SectionHeader title={t('nav.chats')} intro={t('chat.intro')} about={t('chat.aboutTitle')} topic="gettingStarted">
@@ -872,6 +928,8 @@ export default function App() {
                 {chatLoadingMore ? t('common.loading') : ''}
               </div>
             )}
+          </div>
+          )}
           </div>
         ) : view === 'spaces' ? (
           currentSpaceId ? (
@@ -1272,14 +1330,16 @@ export default function App() {
             />
           )
         ) : view === 'files' ? (
-          <ResourcesView resources={files} onChanged={reloadFiles} openId={openResourceId} onOpenIdChange={setOpenResourceId} />
-        ) : view === 'monitors' ? (
-          <MonitorsView
+          <ResourcesView resources={files} onChanged={reloadFiles} openId={openResourceId} onOpenIdChange={setOpenResourceId} onOpenChat={openChatAt} initialFilter={resourceSeed ?? undefined} />
+        ) : view === 'explore' ? (
+          <ExploreView
+            resources={files}
             spaces={spaces}
-            isAdmin={currentUser?.role === 'admin'}
-            timezone={currentUser?.settings?.timezone ?? ''}
-            onCountChange={setMonitorCount}
-            onOpenSession={(id, title) => { loadSession(id, title, false, true); setSidebarOpen(false) }}
+            onOpenTag={tag => { setResourceSeed({ tag }); setOpenResourceId(null); setView('files') }}
+            onShow={show => { setResourceSeed({ show }); setOpenResourceId(null); setView('files') }}
+            onOpenResource={openResource}
+            onOpenChat={(id, title) => loadSession(id, title)}
+            onTagsChanged={reloadFiles}
           />
         ) : (
           <>
@@ -1468,6 +1528,12 @@ export default function App() {
                   searchActiveIndex={chatSearchOpen && chatMatchIndices.length > 0 ? chatMatchIndices[chatSearchCursor] : -1}
                   searchMatchIndices={chatSearchOpen ? chatMatchIndices : []}
                   onOpenResource={openResource}
+                  sessionId={sessionId}
+                  context={context}
+                  onTogglePin={togglePin}
+                  onDeleteTurn={busy ? undefined : deleteTurn}
+                  focusMessageId={focusMessageId}
+                  onNotesChanged={reloadFiles}
                 />
               </ImageCaptionContext.Provider>
             )}
@@ -1521,6 +1587,7 @@ export default function App() {
                     </div>
                   )}
                 </div>
+                {context && <div className="ml-auto"><ContextMeter report={context} /></div>}
               </div>
             )}
             <div ref={bottomRef} />
@@ -1539,8 +1606,13 @@ export default function App() {
               collections={spaces.filter(sp => sp.kind === 'collection')}
               selectedCollections={selectedCollections}
               onCollectionsChange={setSelectedCollections}
+              notesAvailable={files.some(f => f.kind === 'note')}
+              notesFirst={notesFirst}
+              onNotesFirstChange={setNotesFirst}
               suggestionsEnabled={currentUser?.settings?.querySuggestions !== false}
               lockedSpace={activeSpaceLocked}
+              spaceId={activeSpaceId ?? undefined}
+              onAddedToLibrary={reloadFiles}
               related={related}
               onRelatedSelect={q => { setRelated([]); submit(q) }}
             />
