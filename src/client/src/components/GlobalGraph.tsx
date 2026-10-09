@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useElementSize } from '../lib/use-element-size.ts'
 import { fetchLibraryGraph, type GraphEdge, type LibraryGraphNode, type Space } from '../lib/api.ts'
 import { useT } from '../lib/i18n.tsx'
 import { EdgeLegend, GraphCanvas, NODE_FILL } from './GraphCanvas.tsx'
@@ -8,8 +9,12 @@ import { EmptyState } from './ui.tsx'
  *  background and distinct from each other at dot size. */
 const GROUP_COLOURS = ['#34d399', '#60a5fa', '#f472b6', '#fbbf24', '#a78bfa', '#f87171', '#2dd4bf', '#fb923c']
 const OTHER_COLOUR = '#d1d5db'
-/** Past this many nodes, labels wait until zoomed in. */
-const LABEL_LIMIT = 60
+/** Labels show from the start when each node has at least this much room (px²); otherwise once
+ *  zoomed in. A wide monitor thus labels a graph a phone would not. */
+const LABEL_AREA_PER_NODE = 12_000
+const MIN_HEIGHT = 400
+/** Room kept below the drawing for the legends, so the page doesn't scroll. */
+const BELOW = 80
 
 type Graph = { nodes: LibraryGraphNode[]; edges: GraphEdge[]; total: number; truncated: boolean }
 
@@ -29,6 +34,10 @@ export function GlobalGraph({ tags, spaces, tag, onTagChange, onOpenResource, on
   const [chats, setChats] = useState(false)
   const [graph, setGraph] = useState<Graph | null>(null)
   const [error, setError] = useState(false)
+  const area = useElementSize()
+  // Real pixels rather than a fixed drawing scaled to fit: a wider or taller screen gives the
+  // nodes more room instead of magnifying them.
+  const height = Math.max(MIN_HEIGHT, area.viewport - area.top - BELOW)
 
   useEffect(() => {
     let live = true
@@ -70,16 +79,18 @@ export function GlobalGraph({ tags, spaces, tag, onTagChange, onOpenResource, on
         : (
           <>
             {graph.truncated && <p className="text-xs text-amber-400">{t('explore.truncated', { shown: graph.nodes.length, total: graph.total })}</p>}
-            <GraphCanvas
+            <div ref={area.ref}>
+            {area.width > 0 && <GraphCanvas
               nodes={graph.nodes}
               edges={graph.edges}
-              width={800}
-              height={560}
+              width={area.width}
+              height={height}
               zoomable
-              showLabels={graph.nodes.length <= LABEL_LIMIT}
+              showLabels={(area.width * height) / graph.nodes.length >= LABEL_AREA_PER_NODE}
               fillOf={n => n.group ? colourOf.get(n.group) ?? OTHER_COLOUR : NODE_FILL[n.kind]}
               onOpen={open}
-            />
+            />}
+            </div>
             <div className="flex flex-wrap gap-3 text-[11px] text-gray-400">
               {[...colourOf].map(([g, c]) => (
                 <span key={g} className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: c }} />#{g}</span>

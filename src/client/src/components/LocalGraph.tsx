@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react'
+import { useElementSize } from '../lib/use-element-size.ts'
 import { fetchGraph, type GraphEdge, type GraphNode } from '../lib/api.ts'
 import { useT } from '../lib/i18n.tsx'
 import { EdgeLegend, GraphCanvas } from './GraphCanvas.tsx'
+
+const HEIGHT = 260
 
 /** The resource's explicit neighbourhood — links, notes made from it, the chat a note came from — as
  *  a small diagram. Tapping a node opens it; one or two steps out. */
@@ -13,6 +16,7 @@ export function LocalGraph({ rootId, onOpen, onOpenChat }: {
   const t = useT()
   const [depth, setDepth] = useState<1 | 2>(1)
   const [graph, setGraph] = useState<{ nodes: GraphNode[]; edges: GraphEdge[] } | null>(null)
+  const area = useElementSize()
 
   useEffect(() => { fetchGraph(rootId, depth).then(setGraph).catch(() => setGraph({ nodes: [], edges: [] })) }, [rootId, depth])
 
@@ -23,7 +27,7 @@ export function LocalGraph({ rootId, onOpen, onOpenChat }: {
 
   if (!graph) return null
   return (
-    <div className="flex flex-col gap-1.5">
+    <div ref={area.ref} className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between">
         <h3 className="text-xs font-medium uppercase tracking-wide text-gray-500">{t('graph.title')}</h3>
         <div className="flex gap-1">
@@ -41,7 +45,8 @@ export function LocalGraph({ rootId, onOpen, onOpenChat }: {
       </div>
       {graph.nodes.length <= 1 ? <p className="text-sm text-gray-500">{t('graph.empty')}</p> : (
         <>
-          <GraphCanvas nodes={graph.nodes} edges={graph.edges} width={360} height={260} rootId={rootId} onOpen={open} />
+          {/* Drawn in the panel's own pixels: full width, fixed height, text the same size everywhere. */}
+          {area.width > 0 && <GraphCanvas nodes={graph.nodes} edges={graph.edges} width={area.width} height={HEIGHT} rootId={rootId} onOpen={open} />}
           <EdgeLegend />
         </>
       )}

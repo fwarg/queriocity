@@ -95,7 +95,7 @@ export function GraphCanvas<N extends GraphNode>({ nodes, edges, width, height, 
   return (
     <div className="relative">
       <svg ref={svgRef} viewBox={`0 0 ${width} ${height}`} {...pan}
-        className={`w-full rounded-lg bg-gray-900 border border-gray-800 ${zoomable ? 'touch-none cursor-grab' : 'max-w-xl'}`}
+        className={`w-full rounded-lg bg-gray-900 border border-gray-800 ${zoomable ? 'touch-none cursor-grab' : ''}`}
         role="img" aria-label={t('graph.title')}>
         <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
           {edges.map((e, i) => {
