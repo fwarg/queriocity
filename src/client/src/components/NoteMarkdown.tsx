@@ -5,7 +5,8 @@ import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import { linkNoteCitations, noteSources } from '@shared/note-citations.ts'
 import { wikilinksToMarkdown, wikilinkTitle } from '../lib/wikilinks.ts'
-import { blockMdComponents, escapeCurrencyDollars } from './markdown.tsx'
+import { blockMdComponents } from './markdown.tsx'
+import { prepareMath } from '../lib/math-markdown.ts'
 
 const CITE_PREFIX = '#cite='
 
@@ -23,7 +24,7 @@ export function NoteMarkdown({ body, onWikilink }: { body: string; onWikilink?: 
 
   const sources = useMemo(() => noteSources(body), [body])
   const markdown = useMemo(() => wikilinksToMarkdown(
-    linkNoteCitations(escapeCurrencyDollars(body), new Set(sources.keys()), t => `${CITE_PREFIX}${encodeURIComponent(t)}`),
+    linkNoteCitations(prepareMath(body), new Set(sources.keys()), t => `${CITE_PREFIX}${encodeURIComponent(t)}`),
   ), [body, sources])
 
   return (

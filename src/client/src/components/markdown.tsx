@@ -15,11 +15,6 @@ import { useT } from '../lib/i18n.tsx'
  *  because the markdown component map is module-level, so there is nothing to drill through. */
 export const ImageCaptionContext = createContext(true)
 
-/** Escape $ signs immediately preceding a digit (currency amounts) so remark-math doesn't treat them as math delimiters. */
-export function escapeCurrencyDollars(content: string): string {
-  return content.replace(/\$(?=\d)/g, '\\$')
-}
-
 type C = { children?: React.ReactNode }
 
 /** Visible AI disclosure. Shown on every generated image rather than only on the ones that would

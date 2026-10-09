@@ -7,7 +7,8 @@ import rehypeKatex from 'rehype-katex'
 import { ExternalLink, FileText, Volume2, VolumeX, NotebookPen } from 'lucide-react'
 import type { Message, Source, FileSource } from '../lib/api.ts'
 import { splitGroupedCitations } from '@shared/citations.ts'
-import { blockMdComponents, escapeCurrencyDollars, ImageBlock, ImageCaptionContext } from './markdown.tsx'
+import { blockMdComponents, ImageBlock, ImageCaptionContext } from './markdown.tsx'
+import { prepareMath } from '../lib/math-markdown.ts'
 import { useT } from '../lib/i18n.tsx'
 import { NoteEditor } from './NoteEditor.tsx'
 import { answerAsNoteBody } from '../lib/note-from-answer.ts'
@@ -322,7 +323,7 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
             {msg.content && (() => {
               const cited = (msg.sources?.length || msg.fileSources?.length) ? insertCitationLinks(msg.content, msg.sources ?? [], msg.fileSources ?? []) : splitGroupedCitations(msg.content)
               const cleaned = msg.images?.length ? cited.replace(/!\[.*?\]\([^)]+\.png\)/g, '') : cited
-              return cleaned.trim() ? <ReactMarkdown components={mdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{wrapSvgBlocks(escapeCurrencyDollars(cleaned))}</ReactMarkdown> : null
+              return cleaned.trim() ? <ReactMarkdown components={mdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{wrapSvgBlocks(prepareMath(cleaned))}</ReactMarkdown> : null
             })()}
             {msg.images?.map((img, i) => <ImageBlock key={i} url={img.url} alt={img.alt} />)}
             {msg.content && (
@@ -438,7 +439,7 @@ export const MessageList = memo(function MessageList({ messages, streaming, stre
             {streamingThinking && <ThinkingBlock content={streamingThinking} open />}
             {streaming && (
               <>
-                <ReactMarkdown components={baseMdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{wrapSvgBlocks(escapeCurrencyDollars(splitGroupedCitations(streaming.replace(/!\[.*?\]\([^)]+\.png\)/g, ''))))}</ReactMarkdown>
+                <ReactMarkdown components={baseMdComponents} remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{wrapSvgBlocks(prepareMath(splitGroupedCitations(streaming.replace(/!\[.*?\]\([^)]+\.png\)/g, ''))))}</ReactMarkdown>
                 <span className="animate-pulse">▋</span>
               </>
             )}
