@@ -884,15 +884,16 @@ export interface NoteOptions {
   tags?: string[]
 }
 
-/** A proposed split of a long answer or note into short notes; nothing is saved. */
-export async function proposeNoteSplit(title: string, body: string): Promise<Array<{ title: string; body: string }>> {
+/** A proposed split of a long answer or note into short notes, with a title and summary for an
+ *  overview note when the model gave one; nothing is saved. */
+export async function proposeNoteSplit(title: string, body: string, hint = ''): Promise<{ parts: Array<{ title: string; body: string }>; overview?: { title: string; body: string } }> {
   const res = await fetch(`${BASE}/files/split`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title, body }),
+    body: JSON.stringify({ title, body, ...(hint.trim() ? { hint: hint.trim() } : {}) }),
   })
   if (!res.ok) throw await apiError(res, 'Could not split')
-  return (await res.json()).parts
+  return res.json()
 }
 
 export async function fetchFiles(): Promise<Resource[]> {

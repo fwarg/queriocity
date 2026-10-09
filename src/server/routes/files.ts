@@ -273,10 +273,12 @@ filesRouter.get('/:id/related', async (c) => {
 filesRouter.post('/split', zValidator('json', z.object({
   title: z.string().max(500),
   body: z.string().min(1).max(200_000),
+  /** How the user wants it split, after a proposal they did not like. */
+  hint: z.string().max(500).optional(),
 })), async (c) => {
-  const { title, body } = c.req.valid('json')
+  const { title, body, hint } = c.req.valid('json')
   try {
-    return c.json({ parts: await proposeSplit(title, body) })
+    return c.json(await proposeSplit(title, body, hint))
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : 'Could not split' }, 422)
   }

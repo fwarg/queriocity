@@ -23,7 +23,7 @@ let restoreEnv: () => void
 
 beforeAll(() => {
   model = startFakeOpenAI([
-    { text: ['=== Bees and orchards\nBees pollinate orchards [1].\n=== Wild bees\nWild bees matter in cold springs [2].'] },
+    { text: ['=== OVERVIEW: Bees in orchards\nHow bees pollinate orchards.\n=== Bees and orchards\nBees pollinate orchards [1].\n=== Wild bees\nWild bees matter in cold springs [2].'] },
     { text: ['=== Only one\nx'] },
   ])
   restoreEnv = envOverride({ CHAT_BASE_URL: model.baseURL, CHAT_API_KEY: 'test', CHAT_MODEL: 'fake' })
@@ -32,7 +32,8 @@ afterAll(() => { model?.stop(); restoreEnv?.() })
 
 describe('proposeSplit', () => {
   test('returns the parts, each with only the sources it cites, and the model never sees the list', async () => {
-    const parts = await proposeSplit('Bees', BODY)
+    const { parts, overview } = await proposeSplit('What do bees do?', BODY)
+    expect(overview).toEqual({ title: 'Bees in orchards', body: 'How bees pollinate orchards.' })
     expect(parts).toEqual([
       { title: 'Bees and orchards', body: 'Bees pollinate orchards [1].\n\n---\n\n## Sources\n\n- **[1]** [Orchards](https://a.example)\n' },
       { title: 'Wild bees', body: 'Wild bees matter in cold springs [2].\n\n---\n\n## Sources\n\n- **[2]** [Wild bees](https://b.example)\n' },
@@ -54,5 +55,28 @@ describe('proposeSplit', () => {
 
   test('a body without a sources list is left whole', () => {
     expect(splitSources('Just text.')).toEqual({ text: 'Just text.', heading: null, lines: new Map() })
+  })
+})
+
+describe('mergeParts', () => {
+  test('joins texts, keeps the first title, and lists each cited source once', async () => {
+    const { mergeParts } = await import('../../../shared/note-split.ts')
+    const a = { title: 'Bees', body: 'Bees [1].\n\n---\n\n## Sources\n\n- **[1]** [A](https://a.example)\n' }
+    const b = { title: 'Wild', body: 'Wild [2] and again [1].\n\n---\n\n## Sources\n\n- **[1]** [A](https://a.example)\n- **[2]** [B](https://b.example)\n' }
+    expect(mergeParts(a, b)).toEqual({
+      title: 'Bees',
+      body: 'Bees [1].\n\nWild [2] and again [1].\n\n---\n\n## Sources\n\n- **[1]** [A](https://a.example)\n- **[2]** [B](https://b.example)\n',
+    })
+  })
+})
+
+describe('hint', () => {
+  test('is passed to the model ahead of the text', async () => {
+    model.stop()
+    model = startFakeOpenAI([{ text: ['=== One\nBees pollinate orchards [1].\n=== Two\nWild bees [2].'] }])
+    process.env.CHAT_BASE_URL = model.baseURL
+    await proposeSplit('Bees', BODY, 'one note per bee type')
+    expect(JSON.stringify(model.requests[0])).toContain('HOW THE USER WANTS IT SPLIT')
+    expect(JSON.stringify(model.requests[0])).toContain('one note per bee type')
   })
 })

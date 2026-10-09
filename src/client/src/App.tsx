@@ -682,6 +682,9 @@ export default function App() {
 
   /** ResourcesView mutates the library; the list stays here because the space panel tags from it. */
   const reloadFiles = useCallback(() => { fetchFiles().then(setFiles).catch(() => {}) }, [])
+  // Refreshed whenever a view that lists the library opens: notes are also created from chat
+  // answers, splits and the server side, none of which pass through these views.
+  useEffect(() => { if (view === 'files' || view === 'explore') reloadFiles() }, [view, reloadFiles])
   const tagCount = useMemo(() => new Set(files.flatMap(f => f.tags)).size, [files])
 
   // Auth screens
@@ -1530,6 +1533,7 @@ export default function App() {
                   onTogglePin={togglePin}
                   onDeleteTurn={busy ? undefined : deleteTurn}
                   focusMessageId={focusMessageId}
+                  onNotesChanged={reloadFiles}
                 />
               </ImageCaptionContext.Provider>
             )}

@@ -417,8 +417,11 @@ Three ways to make one:
 - **Transform a resource.** See below.
 - **Split a long one.** The scissors beside a long answer (or **Split into notes** on a long note)
   has the chat model propose it as several short notes, one idea each, keeping the citation markers;
-  each part gets only the sources it cites. Tick the ones to keep, edit their titles, and save. From
-  an answer an optional overview note links the parts; from a note the parts are *made from* it, keep
+  each part gets only the sources it cites. Untick parts you don't want, edit titles and text (✎, with
+a preview), **merge** a part with the next one, or describe how you want it split ("fewer notes",
+"one per section") and **Try again**. Nothing is saved until **Save**. From
+  an answer an optional overview note links the parts — its title and a short summary are proposed
+  from the answer itself (not the chat's question) and can be edited; from a note the parts are *made from* it, keep
   its tags, and can be linked from it under See also. At most 24 000 characters per split.
 
 A note reaches a conversation three ways: as retrieved excerpts, like any other resource; in full

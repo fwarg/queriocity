@@ -123,7 +123,8 @@ den att redigera efteråt.
   ifylld med svaret, frågan som titel och källorna listade sist.
 - **Omvandla en resurs.** Sammanfatta ett dokument och behåll sammanfattningen.
 - **Dela upp en lång.** Saxen bredvid ett långt svar, eller *Dela upp i anteckningar* på en lång
-  anteckning, föreslår flera korta anteckningar, en idé i varje, som du väljer bland.
+  anteckning, föreslår flera korta anteckningar, en idé i varje. Ta bort, redigera eller slå ihop
+  dem, eller säg hur du vill ha den uppdelad och försök igen.
 
 En anteckning når ett samtal på tre sätt: automatiskt som utdrag, likt vilken resurs som helst;
 hel genom anteckningsikonen bredvid gemet (bara anteckningar kan bifogas så — en fils text lagras

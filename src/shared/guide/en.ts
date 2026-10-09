@@ -123,7 +123,8 @@ in your library, so the assistant finds it on its own, but unlike a file it stay
   filled in with the answer, the question as its title, and the sources listed at the bottom.
 - **Transform a resource.** Summarise a document, then keep the summary.
 - **Split a long one.** The scissors beside a long answer, or *Split into notes* on a long note,
-  proposes several short notes, one idea each, for you to pick from.
+  proposes several short notes, one idea each. Drop, edit or merge them, or say how you want it
+  split and try again.
 
 A note reaches a conversation three ways: found automatically as excerpts, like any resource;
 attached whole from the notebook icon beside the paperclip (only notes can be — a file's text is

@@ -54,6 +54,8 @@ interface Props {
   /** What the model saw on the latest turn; draws the dividers where its view begins. */
   context?: ContextReport | null
   onTogglePin?: (index: number) => void
+  /** A note was saved from an answer; the parent refreshes the library list. */
+  onNotesChanged?: () => void
   /** A stored message to bring into view once, e.g. the answer a note was saved from. */
   focusMessageId?: string | null
   /** Absent while a run is streaming: deleting then would race the turn being stored. */
@@ -259,7 +261,7 @@ function HighlightedText({ text, query }: { text: string; query: string }) {
   )}</>
 }
 
-function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, searchQuery, noteTitle, onOpenResource, sessionId, onTogglePin, onDeleteTurn, keptInFull }: { msg: Message; isFirst?: boolean; defaultCollapsed?: boolean; isMatch?: boolean; isActive?: boolean; searchQuery?: string; noteTitle?: string; onOpenResource?: (id: string) => void; sessionId?: string; onTogglePin?: () => void; onDeleteTurn?: () => void; keptInFull?: boolean }) {
+function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, searchQuery, noteTitle, onOpenResource, sessionId, onTogglePin, onDeleteTurn, onNotesChanged, keptInFull }: { msg: Message; isFirst?: boolean; defaultCollapsed?: boolean; isMatch?: boolean; isActive?: boolean; searchQuery?: string; noteTitle?: string; onOpenResource?: (id: string) => void; sessionId?: string; onTogglePin?: () => void; onDeleteTurn?: () => void; onNotesChanged?: () => void; keptInFull?: boolean }) {
   const t = useT()
   const [highlighted, setHighlighted] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState(!!defaultCollapsed)
@@ -383,7 +385,7 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
                 body={answerAsNoteBody(msg, t('note.sources'))}
                 options={{ originSessionId: sessionId, originMessageId: msg.id }}
                 onClose={() => setSplitting(false)}
-                onSaved={notes => { setSplitting(false); setSavedHere(prev => [...prev, ...notes]) }}
+                onSaved={notes => { setSplitting(false); setSavedHere(prev => [...prev, ...notes]); onNotesChanged?.() }}
               />
             )}
             {savingNote && (
@@ -396,6 +398,7 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
                 onSaved={(id, title) => {
                   setSavingNote(false)
                   setSavedHere(prev => [...prev, { id, title }])
+                  onNotesChanged?.()
                   setNoteSaved(true)
                   setTimeout(() => setNoteSaved(false), 3000)
                 }}
@@ -448,7 +451,7 @@ function noteTitleFor(messages: Message[], index: number): string | undefined {
 const unpinnedIn = (messages: Message[], from: number, to: number) =>
   messages.slice(from, to).filter(m => !m.pinned).length
 
-export const MessageList = memo(function MessageList({ messages, streaming, streamingThinking, collapseFirstQuestion, searchQuery, searchMatchIndices, searchActiveIndex, onOpenResource, sessionId, context, onTogglePin, onDeleteTurn, focusMessageId }: Props) {
+export const MessageList = memo(function MessageList({ messages, streaming, streamingThinking, collapseFirstQuestion, searchQuery, searchMatchIndices, searchActiveIndex, onOpenResource, sessionId, context, onTogglePin, onDeleteTurn, focusMessageId, onNotesChanged }: Props) {
   const msgRefs = useRef<Map<number, HTMLDivElement>>(new Map())
   const matchSet = useMemo(() => new Set(searchMatchIndices ?? []), [searchMatchIndices])
 
@@ -496,6 +499,7 @@ export const MessageList = memo(function MessageList({ messages, streaming, stre
             sessionId={sessionId}
             onTogglePin={onTogglePin ? () => onTogglePin(i) : undefined}
             onDeleteTurn={onDeleteTurn ? () => onDeleteTurn(i) : undefined}
+            onNotesChanged={onNotesChanged}
             keptInFull={!!context && i < context.cut}
           />
         </div>
