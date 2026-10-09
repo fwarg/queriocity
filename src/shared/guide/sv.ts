@@ -97,6 +97,9 @@ bilaga **fästs** så att det stannar kvar — nålen under varje meddelande gö
 **Kontext** under det senaste svaret visar hur fullt modellens fönster är. Bifogat i fel chatt?
 Papperskorgen i frågan tar bort den och dess svar.
 
+Ett dokument som är längre än en bilaga får vara visar hur mycket som kapades, med **Lägg i
+biblioteket i stället** — då hittar frågor alla delar av det, inte bara början.
+
 Skillnaden som betyder något: en **bilaga** läses hel, en gång. En **biblioteksresurs** hittas i
 bitar, för alltid. Fråga om ett dokument i sin helhet med gemet; bygg en hylla du kan fråga tvärs
 över med biblioteket.
@@ -119,6 +122,8 @@ den att redigera efteråt.
 - **Spara ett svar.** Anteckningsikonen bredvid ett assistentmeddelande öppnar redigeraren redan
   ifylld med svaret, frågan som titel och källorna listade sist.
 - **Omvandla en resurs.** Sammanfatta ett dokument och behåll sammanfattningen.
+- **Dela upp en lång.** Saxen bredvid ett långt svar, eller *Dela upp i anteckningar* på en lång
+  anteckning, föreslår flera korta anteckningar, en idé i varje, som du väljer bland.
 
 En anteckning når ett samtal på tre sätt: automatiskt som utdrag, likt vilken resurs som helst;
 hel genom anteckningsikonen bredvid gemet (bara anteckningar kan bifogas så — en fils text lagras
@@ -321,7 +326,7 @@ vardag:
   en gång för att se hur ett svar kom till.
 - **Textstorlek** och **Tidszon** — den senare avgör vad *02:00* betyder för en bevakning.
 - **Export** — laddar ner dina anteckningar och resurser som ett Obsidian-valv, med länkar och
-  taggar kvar.
+  taggar kvar; kryssa i rutan för att även få med chattar och skapade bilder.
 - **Lösenord** — att byta det loggar ut dina andra enheter och behåller den här.`,
   },
 } satisfies Guide

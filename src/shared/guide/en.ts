@@ -98,6 +98,9 @@ attachment is **pinned** so it stays — the pin icon under any message does the
 **Context** meter under the latest answer shows how full the model's view is. Attached to the
 wrong chat? The bin icon in the question deletes it and its answer.
 
+A document longer than an attachment may be shows how much was cut, with **Add to library
+instead** — then questions find every part of it, not just the beginning.
+
 The difference that matters: an **attachment** is read whole, once. A **library resource** is
 found in pieces, forever. Ask about a document as a whole with the paperclip; build a shelf you can
 ask across with the library.
@@ -119,6 +122,8 @@ in your library, so the assistant finds it on its own, but unlike a file it stay
 - **Save an answer.** The notebook icon beside an assistant message opens the editor already
   filled in with the answer, the question as its title, and the sources listed at the bottom.
 - **Transform a resource.** Summarise a document, then keep the summary.
+- **Split a long one.** The scissors beside a long answer, or *Split into notes* on a long note,
+  proposes several short notes, one idea each, for you to pick from.
 
 A note reaches a conversation three ways: found automatically as excerpts, like any resource;
 attached whole from the notebook icon beside the paperclip (only notes can be — a file's text is
@@ -315,7 +320,8 @@ your day:
 - **Show search process** — displays the searches and snippets above the answer, folded shut.
   Worth turning on once to see how an answer was arrived at.
 - **Font size** and **Timezone** — the latter decides what *02:00* means to a monitor.
-- **Export** — downloads your notes and resources as an Obsidian vault, links and tags intact.
+- **Export** — downloads your notes and resources as an Obsidian vault, links and tags intact;
+  tick the box to include your chats and generated images too.
 - **Password** — changing it signs out your other devices and keeps this one.`,
   },
 } as const

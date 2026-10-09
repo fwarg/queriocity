@@ -4,11 +4,15 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
-import { ExternalLink, FileText, Volume2, VolumeX, NotebookPen, Trash2 } from 'lucide-react'
+import { ExternalLink, FileText, Volume2, VolumeX, NotebookPen, Trash2, Scissors } from 'lucide-react'
 import type { Message, Source, FileSource } from '../lib/api.ts'
 import { splitGroupedCitations } from '@shared/citations.ts'
 import { blockMdComponents, ImageBlock, ImageCaptionContext } from './markdown.tsx'
 import { prepareMath } from '../lib/math-markdown.ts'
+import { SplitNotesDialog } from './SplitNotesDialog.tsx'
+
+/** Answers shorter than this are one idea already; splitting is offered only above it. */
+const SPLIT_MIN_CHARS = 1500
 import { useT } from '../lib/i18n.tsx'
 import { NoteEditor } from './NoteEditor.tsx'
 import { answerAsNoteBody } from '../lib/note-from-answer.ts'
@@ -261,6 +265,7 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
   const [collapsed, setCollapsed] = useState(!!defaultCollapsed)
   const [speaking, setSpeaking] = useState(false)
   const [savingNote, setSavingNote] = useState(false)
+  const [splitting, setSplitting] = useState(false)
   const [noteSaved, setNoteSaved] = useState(false)
   // Notes saved from this answer: those stored with the chat, plus any saved since it was loaded.
   const [savedHere, setSavedHere] = useState<Array<{ id: string; title: string }>>([])
@@ -352,6 +357,15 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
                 >
                   <NotebookPen size={13} />
                 </button>
+                {msg.content.length >= SPLIT_MIN_CHARS && (
+                  <button
+                    onClick={() => setSplitting(true)}
+                    className="p-0.5 rounded text-gray-600 hover:text-amber-400 transition-colors"
+                    title={t('split.fromAnswer')}
+                  >
+                    <Scissors size={13} />
+                  </button>
+                )}
                 {'speechSynthesis' in window && (
                   <button
                     onClick={handleSpeak}
@@ -362,6 +376,15 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
                   </button>
                 )}
               </div>
+            )}
+            {splitting && (
+              <SplitNotesDialog
+                title={noteTitle ?? ''}
+                body={answerAsNoteBody(msg, t('note.sources'))}
+                options={{ originSessionId: sessionId, originMessageId: msg.id }}
+                onClose={() => setSplitting(false)}
+                onSaved={notes => { setSplitting(false); setSavedHere(prev => [...prev, ...notes]) }}
+              />
             )}
             {savingNote && (
               <NoteEditor

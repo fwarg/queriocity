@@ -746,7 +746,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     const { block: scopedBlock, fileSources } = spaceId
       ? await buildMemoryBlock(spaceId, memoryBudget, effectiveRag, userQuery, includeFileIds, includeMemoryIds)
       : (hasFiles && parsedSettings.useChatRag !== false)
-        ? await buildChatFileBlock(userId, userQuery, ragBudget)
+        ? await buildChatFileBlock(userId, userQuery, ragBudget, !!notesBlock.block)
         : { block: '', fileSources: [] }
     const collectionBlock = await buildCollectionBlock(collections, userQuery, await collectionRagBudget(collections))
     // User memory applies to every chat, including those with no space at all.

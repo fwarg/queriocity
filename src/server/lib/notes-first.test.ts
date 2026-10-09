@@ -10,7 +10,7 @@ import { envOverride } from './test-support/env-override.ts'
 const { db, users, uploadedFiles, setAppSetting, EMBED_DIMS } = await import('./db.ts')
 const { saveNote } = await import('./files/notes.ts')
 const { indexResourceText } = await import('./files/ingest.ts')
-const { buildNotesBlock } = await import('./memory.ts')
+const { buildNotesBlock, buildChatFileBlock } = await import('./memory.ts')
 
 const ME = 'nf-user'
 const OTHER = 'nf-other'
@@ -41,6 +41,12 @@ describe('buildNotesBlock', () => {
     expect(fileSources.map(s => s.title)).toEqual(['[N1] Bees', '[N2] Soil'])
     expect(block).toContain('Loam drains well')
     expect(block).toContain('from their own notes first')
+  })
+
+  test('the library block leaves notes out when Notes first already supplies them', async () => {
+    const titles = async (withoutNotes: boolean) => (await buildChatFileBlock(ME, TEXT, 1500, withoutNotes)).fileSources.map(f => f.title)
+    expect((await titles(false)).some(t => t.endsWith(' Bees'))).toBe(true)
+    expect(await titles(true)).toEqual(['[F1] paper.pdf'])
   })
 
   test('is empty without a query or budget', async () => {

@@ -8,7 +8,7 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { Hono } from 'hono'
 import { startFakeEmbeddings } from '../lib/test-support/fake-embeddings.ts'
 import { envOverride } from '../lib/test-support/env-override.ts'
-import { db, sqlite, users, chatSessions, setAppSetting, EMBED_DIMS } from '../lib/db.ts'
+import { db, sqlite, users, chatSessions, messages, setAppSetting, EMBED_DIMS } from '../lib/db.ts'
 import { filesRouter } from './files.ts'
 import { signToken, AUTH_COOKIE } from '../lib/auth.ts'
 
@@ -121,5 +121,34 @@ describe('Obsidian export', () => {
     expect(text).toContain('tags:\n  - "bio"')
     expect(text).toContain('[[A B odd|A/B: odd]] and [[A B odd|that]]')
     expect(text).not.toContain('Secret.')
+  })
+})
+
+describe('full Obsidian export', () => {
+  test('adds chats as markdown with image links into Images/, and notes link to their chat', async () => {
+    const now = new Date()
+    await db.insert(messages).values([
+      { id: 'exp-q', sessionId: 'tags-chat', role: 'user', content: 'Draw a bee', createdAt: now },
+      { id: 'exp-a', sessionId: 'tags-chat', role: 'assistant', content: 'Here: ![bee](/images/tags-owner/bee-1.png)', sources: JSON.stringify([{ title: 'Bees', url: 'https://bees.example' }]), createdAt: now },
+    ])
+    await createNote({ title: 'From chat', body: 'Body.', originSessionId: 'tags-chat' })
+
+    const plain = new TextDecoder().decode(new Uint8Array(await (await call('/export/obsidian')).arrayBuffer()))
+    expect(plain).not.toContain('Chats/')
+    const full = new TextDecoder().decode(new Uint8Array(await (await call('/export/obsidian?full=1')).arrayBuffer()))
+    expect(full).toContain('Chats/Bees.md')
+    expect(full).toContain('## You\n\nDraw a bee\n\n## Assistant\n\nHere: ![bee](../Images/bee-1.png)\n\n- **[1]** [Bees](https://bees.example)')
+    expect(full).toContain('saved_from_chat: "[[Bees]]"')
+  })
+})
+
+describe('POST /files/extract', () => {
+  test('says when the attachment was cut to the limit', async () => {
+    await setAppSetting('attachment_chars', '10')
+    const form = new FormData()
+    form.append('file', new File(['Line of text. '.repeat(5)], 'long.txt', { type: 'text/plain' }))
+    const res = await app.request('/files/extract', { method: 'POST', headers: { Cookie: cookies[OWNER] }, body: form })
+    expect(await res.json()).toMatchObject({ filename: 'long.txt', content: 'Line of te', truncated: true, totalChars: 70 })
+    await setAppSetting('attachment_chars', '20000')
   })
 })

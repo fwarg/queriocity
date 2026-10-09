@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
-import { ArrowLeft, ChevronRight, ExternalLink, FileText, MessageSquare, NotebookPen, Plus, X } from 'lucide-react'
+import { ArrowLeft, ChevronRight, ExternalLink, FileText, MessageSquare, NotebookPen, Plus, Scissors, X } from 'lucide-react'
 import { NoteEditor } from './NoteEditor.tsx'
 import { NoteMarkdown } from './NoteMarkdown.tsx'
 import { TagEditor } from './TagEditor.tsx'
 import { LocalGraph } from './LocalGraph.tsx'
 import { RelatedResources } from './RelatedResources.tsx'
 import { LinkSuggestions } from './LinkSuggestions.tsx'
+import { SplitNotesDialog } from './SplitNotesDialog.tsx'
 import {
   fetchResource, fetchCustomTemplates, fetchSpaces, renameResource, setResourceTags, tagFileToSpace, transformResource, untagFileFromSpace,
   type CustomTemplate, type ResourceDetail as Detail, type ResourceRef, type Space, type TransformOperation,
@@ -17,6 +18,8 @@ import { GuideLink } from './GuideView.tsx'
 import type { TopicId } from '@shared/guide/index.ts'
 
 const OPERATIONS: TransformOperation[] = ['summarize', 'keypoints', 'questions', 'outline']
+/** Notes shorter than this are one idea already; splitting is offered only above it. */
+const SPLIT_MIN_CHARS = 1500
 
 /** Built-in transform labels are assembled at runtime; i18n.test.ts holds the catalogue to the list
  *  above so a fifth operation cannot ship without its label. */
@@ -43,6 +46,7 @@ export function ResourceDetail({ id, onBack, onChanged, onOpen, onOpenChat, onTa
   const [detail, setDetail] = useState<Detail | null>(null)
   const [loadError, setLoadError] = useState('')
   const [editing, setEditing] = useState(false)
+  const [splitting, setSplitting] = useState(false)
   // A note being created from a link to a title nothing has yet.
   const [creating, setCreating] = useState<string | null>(null)
 
@@ -131,7 +135,22 @@ export function ResourceDetail({ id, onBack, onChanged, onOpen, onOpenChat, onTa
       {isNote && detail.body && (
         <Section title={t('note.body')}>
           <NoteMarkdown body={detail.body} onWikilink={followLink} onTag={onTag} />
+          {detail.body.length >= SPLIT_MIN_CHARS && (
+            <button onClick={() => setSplitting(true)} className="self-start flex items-center gap-1.5 px-2 py-1.5 rounded text-sm text-gray-300 border border-gray-700 hover:border-gray-500">
+              <Scissors size={13} className="text-amber-300" /> {t('split.fromNote')}
+            </button>
+          )}
         </Section>
+      )}
+      {splitting && detail.body && (
+        <SplitNotesDialog
+          title={detail.filename}
+          body={detail.body}
+          options={{ derivedFrom: detail.id, tags: detail.tags }}
+          fromNoteId={detail.id}
+          onClose={() => setSplitting(false)}
+          onSaved={() => { setSplitting(false); changed() }}
+        />
       )}
 
       <LinksSection detail={detail} onOpen={onOpen} onCreate={setCreating}>

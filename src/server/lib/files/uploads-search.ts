@@ -52,8 +52,8 @@ export async function searchSpaceFiles(spaceId: string, query: string, embedding
   return indices.map(i => rows[i])
 }
 
-/** `kind: 'note'` limits the search to the user's notes ("Notes first"). */
-export async function searchUploads(query: string, userId: string, limit?: number, minScore?: number, kind?: 'note'): Promise<ChunkResult[]> {
+/** `kind` limits the search to the user's notes, or to everything else (files and pages). */
+export async function searchUploads(query: string, userId: string, limit?: number, minScore?: number, kind?: 'note' | 'file'): Promise<ChunkResult[]> {
   const topK = limit ?? await ragTopK()
   const embedding = await embedText(query)
   const embeddingJson = JSON.stringify(embedding)

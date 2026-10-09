@@ -13,6 +13,7 @@ import { deleteTag, listTags, MAX_TAG_CHARS, renameTag, resourceTagList, setReso
 import { linksOf } from '../lib/files/links.ts'
 import { exportVault } from '../lib/files/obsidian-export.ts'
 import { acceptLink, dismissLink, suggestLinks } from '../lib/files/link-suggest.ts'
+import { proposeSplit } from '../lib/files/note-split.ts'
 import { collectResourceText } from '../lib/files/resource-context.ts'
 import { operationPrompt, transformPrompt, TRANSFORM_MAX_CHARS, TRANSFORM_OPERATIONS } from '../lib/files/transforms.ts'
 import { getChatModel } from '../lib/llm.ts'
@@ -93,7 +94,8 @@ filesRouter.post('/extract', async (c) => {
     return c.json({ error: 'Could not extract readable text from this file. It may be corrupted or in an unsupported encoding.' }, 400)
   }
   console.log(`  [extract] done → ${text.length} chars`)
-  return c.json({ filename: file.name, content: text.slice(0, maxChars) })
+  // Says when the text was cut, so the client can offer the library instead of a silent loss.
+  return c.json({ filename: file.name, content: text.slice(0, maxChars), truncated: text.length > maxChars, totalChars: text.length })
 })
 
 filesRouter.get('/', async (c) => {
@@ -210,9 +212,10 @@ filesRouter.patch('/notes/:id', zValidator('json', noteBody.partial()), async (c
 
 /** The user's tags with direct counts, for autocomplete and the tag tree. Registered before the
  *  `/:id` routes, which would otherwise take `tags` for an id. */
-/** The caller's library as an Obsidian vault (zip of markdown files). */
-filesRouter.get('/export/obsidian', (c) => {
-  const zip = exportVault(c.get('userId') as string)
+/** The caller's library as an Obsidian vault (zip of markdown files), optionally with chats and images. */
+filesRouter.get('/export/obsidian', async (c) => {
+  // `?full=1` adds chats and generated images.
+  const zip = await exportVault(c.get('userId') as string, { full: c.req.query('full') === '1' })
   const stamp = new Date().toISOString().slice(0, 10)
   return c.body(zip.buffer as ArrayBuffer, 200, {
     'Content-Type': 'application/zip',
@@ -264,6 +267,19 @@ filesRouter.get('/:id/related', async (c) => {
   if (!resource) return c.json({ error: 'Not found' }, 404)
   const [minSimilarity, minRelevance] = await Promise.all([relatedMinSimilarity(), relatedMinRelevance()])
   return c.json(await relatedResources(userId, resource.id, { minSimilarity, minRelevance }))
+})
+
+/** Proposes how to split a long answer or note into several short ones; nothing is saved. */
+filesRouter.post('/split', zValidator('json', z.object({
+  title: z.string().max(500),
+  body: z.string().min(1).max(200_000),
+})), async (c) => {
+  const { title, body } = c.req.valid('json')
+  try {
+    return c.json({ parts: await proposeSplit(title, body) })
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : 'Could not split' }, 422)
+  }
 })
 
 /** Links the small model proposes for a note, picked from its similar resources. */

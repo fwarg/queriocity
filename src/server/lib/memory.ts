@@ -190,17 +190,19 @@ function renderFileBlock(
   return { block, fileSources }
 }
 
-/** Build a file RAG block for non-space chats from the user's own uploaded files. */
+/** Build a file RAG block for non-space chats from the user's own uploaded files. `withoutNotes`
+ *  when "Notes first" already supplies the notes, so they are not injected twice. */
 export async function buildChatFileBlock(
   userId: string,
   query: string,
   ragBudget = 500,
+  withoutNotes = false,
 ): Promise<MemoryBlock> {
   if (!query.trim() || ragBudget <= 0) return { block: '', fileSources: [] }
 
   let fileRows: ChunkResult[] = []
   try {
-    fileRows = await searchUploads(query, userId, await ragTopK(), await ragMinRelevance())
+    fileRows = await searchUploads(query, userId, await ragTopK(), await ragMinRelevance(), withoutNotes ? 'file' : undefined)
   } catch (e) {
     console.error('  [memory] chat file RAG failed:', e)
     return { block: '', fileSources: [] }

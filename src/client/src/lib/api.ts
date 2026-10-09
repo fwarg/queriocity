@@ -811,7 +811,8 @@ export async function* suggestUserMemories(
   }
 }
 
-export async function extractFileForContext(file: File): Promise<{ filename: string; content: string }> {
+/** The text of a file for one message. `truncated`: cut to the admin's attachment limit. */
+export async function extractFileForContext(file: File): Promise<{ filename: string; content: string; truncated?: boolean; totalChars?: number }> {
   const form = new FormData()
   form.append('file', file)
   const res = await fetch(`${BASE}/files/extract`, { method: 'POST', body: form })
@@ -881,6 +882,17 @@ export interface NoteOptions {
   originSessionId?: string
   originMessageId?: string
   tags?: string[]
+}
+
+/** A proposed split of a long answer or note into short notes; nothing is saved. */
+export async function proposeNoteSplit(title: string, body: string): Promise<Array<{ title: string; body: string }>> {
+  const res = await fetch(`${BASE}/files/split`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, body }),
+  })
+  if (!res.ok) throw await apiError(res, 'Could not split')
+  return (await res.json()).parts
 }
 
 export async function fetchFiles(): Promise<Resource[]> {

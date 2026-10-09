@@ -278,7 +278,8 @@ asks for an answer from your own notes before the web — "ask your Zettelkasten
 relevant to the question are retrieved, plus the opening of each note they link to or are linked
 from, and cited as `[N1]`, `[N2]`… In Balanced and Thorough the initial web search is skipped when
 the notes hold anything relevant; the researcher can still search for what they don't cover and is
-told to say which parts come from the notes. Flash answers from the notes alone. Budget: Admin →
+told to say which parts come from the notes. The general library excerpts then leave notes out, so
+the same note is not sent twice. Flash answers from the notes alone. Budget: Admin →
 Settings → *Notes-first budget*.
 
 ### Search category filtering
@@ -344,7 +345,12 @@ you are about to send. The file itself is **not stored** and never enters the li
 message is saved with the chat like any other, so the extracted text is part of that conversation.
 In a space it is also indexed for chat-history search, once, on the turn you attach it.
 
-The character limit is configurable in **Admin > System settings > Attachments**.
+The character limit is configurable in **Admin > System settings > Attachments**. When a document
+is longer, the attachment chip says so (*only 20k of 85k characters*) and offers **Add to library
+instead**: the whole file is uploaded to your library (and tagged to the chat's space, if any), where
+questions find the relevant parts rather than reading only the beginning. Not offered in a locked
+space, since a library resource is reachable from every chat. Outside a space the library is
+searched when *Chat RAG* is on (Settings).
 
 Use this when you want to ask a one-off question about a document: *"Summarise this
 contract"*, *"What are the key findings in this paper?"*
@@ -409,6 +415,11 @@ Three ways to make one:
   written once and the note stays easy to edit. Notes saved before this were converted at startup,
   wherever the list already held the URL.
 - **Transform a resource.** See below.
+- **Split a long one.** The scissors beside a long answer (or **Split into notes** on a long note)
+  has the chat model propose it as several short notes, one idea each, keeping the citation markers;
+  each part gets only the sources it cites. Tick the ones to keep, edit their titles, and save. From
+  an answer an optional overview note links the parts; from a note the parts are *made from* it, keep
+  its tags, and can be linked from it under See also. At most 24 000 characters per split.
 
 A note reaches a conversation three ways: as retrieved excerpts, like any other resource; in full
 by picking it from the notebook icon beside the paperclip in the chat input; and with
@@ -757,7 +768,7 @@ Open **Settings** from the bottom of the sidebar. Settings are saved per user.
 | **Language** | Interface language, with a flag selector. Also offered on the sign-up form, so a new account starts in the right language. Signed out, the login page follows your browser's language (or your last choice on this device). This changes the interface only — the assistant still answers in whatever language you write in. See [Languages](#languages). |
 | **Font size** | UI font size: Small (15 px), Normal (17 px), Large (19 px), XL (21 px). Sizes scale up automatically on narrow viewports. |
 | **Timezone** | IANA timezone (e.g. `Europe/Stockholm`) used when scheduling monitors at a specific hour of the day. Defaults to server time (UTC in Docker) if not set. |
-| **Export** | **Download vault (.zip)**: your notes and resources as an Obsidian vault. One markdown file per item named by its title, so `[[links]]` resolve (titles with characters a file name can't hold are renamed, links rewritten to match and the original kept as an alias); `Notes/` and `Resources/` folders; tags, spaces and collections, dates, source URL, "made from" and the chat a note was saved from in YAML frontmatter. Uploaded files and pages are included as their extracted text. |
+| **Export** | **Download vault (.zip)**: your notes and resources as an Obsidian vault. Tick *Also include every chat and the images generated in them* for a full export: `Chats/` holds one markdown file per chat (each turn under *You* / *Assistant*, sources listed), `Images/` the generated images they show, and a note's *saved from chat* links to its chat file. The app keeps only the text of uploads, not the original files. One markdown file per item named by its title, so `[[links]]` resolve (titles with characters a file name can't hold are renamed, links rewritten to match and the original kept as an alias); `Notes/` and `Resources/` folders; tags, spaces and collections, dates, source URL, "made from" and the chat a note was saved from in YAML frontmatter. Uploaded files and pages are included as their extracted text. |
 | **Password** | Change your password. Requires the current one; the new one needs 8+ characters with upper and lower case, a digit and a symbol. Changing it signs out your other devices but keeps the current session. |
 
 ### Languages

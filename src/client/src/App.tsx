@@ -1607,6 +1607,8 @@ export default function App() {
               onNotesFirstChange={setNotesFirst}
               suggestionsEnabled={currentUser?.settings?.querySuggestions !== false}
               lockedSpace={activeSpaceLocked}
+              spaceId={activeSpaceId ?? undefined}
+              onAddedToLibrary={reloadFiles}
               related={related}
               onRelatedSelect={q => { setRelated([]); submit(q) }}
             />

@@ -1,6 +1,7 @@
 import { sqlite } from '../db.ts'
 import { tagsByResource } from './tags.ts'
 import { createZip, type ZipEntry } from '../zip.ts'
+import { imageFilePath, imageUrlsIn } from '../image-store.ts'
 
 /** A user's library as an Obsidian vault: notes and other resources as markdown files whose names
  *  are their titles, so `[[Title]]` links resolve as they do in the app. Tags, spaces, dates and
@@ -70,23 +71,35 @@ function frontmatter(fields: Record<string, string | string[] | undefined>): str
   return `---\n${lines.join('\n')}\n---\n\n`
 }
 
-/** The vault as a zip archive. */
-export function exportVault(userId: string): Uint8Array {
+/** The vault as a zip archive. `full` adds every chat as a markdown file and the generated images
+ *  the chats show; notes saved from a chat then link to it. Originals of uploads are not kept by
+ *  the app, so files are always their extracted text. */
+export async function exportVault(userId: string, { full = false } = {}): Promise<Uint8Array> {
   const rows = sqlite.query(`
     SELECT id, kind, filename AS title, body, summary, origin, mime_type AS mimeType, derived_from AS derivedFrom,
            origin_session_id AS originSessionId, created_at AS createdAt, updated_at AS updatedAt
     FROM uploaded_files WHERE user_id = ? ORDER BY created_at
   `).all(userId) as Row[]
-  const names = fileNames(rows.map(r => r.title))
+  const sessions = full ? chatRows(userId) : []
+  // One namespace for everything: Obsidian resolves [[Name]] by file name across folders.
+  const names = fileNames([...rows.map(r => r.title), ...sessions.map(c => c.title)])
+  const chatName = new Map(sessions.map((c, i) => [c.id, names[rows.length + i]]))
+  const entries = resourceEntries(userId, rows, names.slice(0, rows.length), chatName)
+  if (full) entries.push(...chatEntries(sessions, chatName), ...await imageEntries(userId, sessions))
+  return createZip(entries)
+}
+
+const encoder = new TextEncoder()
+
+function resourceEntries(userId: string, rows: Row[], names: string[], chatName: Map<string, string>): ZipEntry[] {
   const nameOf = new Map(rows.map((r, i) => [r.title.trim().toLowerCase(), names[i]]))
   const nameById = new Map(rows.map((r, i) => [r.id, names[i]]))
   const tags = tagsByResource(userId)
   const spaces = spacesByResource(userId)
   const chats = chatTitles(userId)
-  const encoder = new TextEncoder()
-
-  const entries: ZipEntry[] = rows.map((r, i) => {
+  return rows.map((r, i) => {
     const derived = r.derivedFrom ? nameById.get(r.derivedFrom) : undefined
+    const linkedChat = r.originSessionId ? chatName.get(r.originSessionId) : undefined
     const meta = frontmatter({
       aliases: names[i] !== r.title.trim() ? [r.title] : undefined,
       tags: tags.get(r.id),
@@ -96,14 +109,62 @@ export function exportVault(userId: string): Uint8Array {
       source: r.origin ?? undefined,
       type: r.kind === 'note' ? undefined : r.mimeType,
       derived_from: derived ? `[[${derived}]]` : undefined,
-      saved_from_chat: r.originSessionId ? chats.get(r.originSessionId) : undefined,
+      saved_from_chat: linkedChat ? `[[${linkedChat}]]` : r.originSessionId ? chats.get(r.originSessionId) : undefined,
       summary: r.kind === 'note' ? undefined : r.summary ?? undefined,
     })
     const text = r.kind === 'note' ? relink(r.body ?? '', nameOf) : joinChunks(chunksOf(r.id))
     const folder = r.kind === 'note' ? 'Notes' : 'Resources'
     return { path: `${folder}/${names[i]}.md`, data: encoder.encode(meta + text + '\n'), modified: new Date((r.updatedAt ?? r.createdAt) * 1000) }
   })
-  return createZip(entries)
+}
+
+interface ChatRow { id: string; title: string; space: string | null; createdAt: number; updatedAt: number }
+interface MessageRow { role: 'user' | 'assistant'; content: string; sources: string | null }
+
+function chatRows(userId: string): ChatRow[] {
+  return sqlite.query(`
+    SELECT c.id, c.title, s.name AS space, c.created_at AS createdAt, c.updated_at AS updatedAt
+    FROM chat_sessions c LEFT JOIN spaces s ON s.id = c.space_id WHERE c.user_id = ? ORDER BY c.created_at
+  `).all(userId) as ChatRow[]
+}
+
+/** Generated images are referenced by their app URL; in the vault they sit in `Images/`. */
+const IMAGE_LINK = /\(\/images\/[\w-]+\/([\w-]+\.png)\)/g
+
+/** One chat as markdown: each turn under a heading, an answer's sources listed below it. */
+export function chatMarkdown(chat: ChatRow, messages: MessageRow[]): string {
+  const meta = frontmatter({ title: chat.title, created: isoDate(chat.createdAt), updated: isoDate(chat.updatedAt), space: chat.space ?? undefined })
+  const turns = messages.map(m => {
+    const body = m.content.replace(IMAGE_LINK, '(../Images/$1)')
+    const sources = m.sources ? (JSON.parse(m.sources) as Array<{ title?: string; url: string }>) : []
+    const list = sources.length ? `\n\n${sources.map((src, i) => `- **[${i + 1}]** [${src.title || src.url}](${src.url})`).join('\n')}` : ''
+    return `## ${m.role === 'user' ? 'You' : 'Assistant'}\n\n${body.trim()}${list}`
+  })
+  return meta + turns.join('\n\n')
+}
+
+function chatEntries(sessions: ChatRow[], chatName: Map<string, string>): ZipEntry[] {
+  return sessions.map(chat => {
+    const messages = sqlite.query('SELECT role, content, sources FROM messages WHERE session_id = ? ORDER BY created_at')
+      .all(chat.id) as MessageRow[]
+    return { path: `Chats/${chatName.get(chat.id)}.md`, data: encoder.encode(chatMarkdown(chat, messages) + '\n'), modified: new Date(chat.updatedAt * 1000) }
+  })
+}
+
+/** The generated images the user's chats show, read from the image store; a missing file is skipped. */
+async function imageEntries(userId: string, sessions: ChatRow[]): Promise<ZipEntry[]> {
+  if (!sessions.length) return []
+  const contents = (sqlite.query(`
+    SELECT m.content FROM messages m JOIN chat_sessions c ON c.id = m.session_id WHERE c.user_id = ?
+  `).all(userId) as Array<{ content: string }>).map(m => m.content)
+  const entries: ZipEntry[] = []
+  for (const url of imageUrlsIn(contents)) {
+    const path = imageFilePath(userId, url)
+    if (!path) continue
+    const file = Bun.file(path)
+    if (await file.exists()) entries.push({ path: `Images/${url.split('/').pop()}`, data: new Uint8Array(await file.arrayBuffer()) })
+  }
+  return entries
 }
 
 function chunksOf(fileId: string): string[] {
