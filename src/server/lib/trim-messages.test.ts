@@ -90,6 +90,33 @@ describe('compressMessages', () => {
     expect(report.summaryChars).toBeGreaterThan(0)
   })
 
+  test('carries the summary between turns: reused, extended with only new messages, rebuilt on a change', async () => {
+    const first = await compressMessages(conversation(), 450, '', 2000, new Set([0]))
+    expect(first.stored?.hashes).toHaveLength(6)
+
+    let calls = server.callCount
+    const same = await compressMessages(conversation(), 450, '', 2000, new Set([0]), first.stored)
+    expect(server.callCount).toBe(calls)
+    expect(same.stored).toBe(first.stored)
+
+    // Two more turns: only the two newly trimmed messages are summarised, with the old summary.
+    const longer = [...conversation(), msg('user', 'q10'), msg('assistant', 'a11')]
+    calls = server.callCount
+    const extended = await compressMessages(longer, 450, '', 2000, new Set([0]), first.stored)
+    expect(server.callCount).toBe(calls + 1)
+    const prompt = JSON.stringify(server.requests.at(-1))
+    expect(prompt).toContain('Existing summary')
+    expect(prompt).toContain('q8 ')
+    expect(prompt).not.toContain('a1 ')
+    expect(extended.stored?.hashes).toHaveLength(8)
+    expect(extended.report.lostBefore).toBe(0)
+
+    // A trimmed message changed (here: a deleted turn), so the summary starts over.
+    const edited = [conversation()[0], ...conversation().slice(3), msg('user', 'q10'), msg('assistant', 'a11')]
+    await compressMessages(edited, 450, '', 2000, new Set([0]), extended.stored)
+    expect(JSON.stringify(server.requests.at(-1))).not.toContain('Existing summary')
+  })
+
   test('reports as lost the oldest messages that fall outside what the summary covers', async () => {
     // Each message is a third of the summariser's whole input window, so the oldest of many fall out.
     const big = Math.ceil((6 * SMALL_MODEL_INPUT_CHARS) / 3 / 4)

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { generateText } from 'ai'
 import type { ModelMessage } from 'ai'
 import type { ContextReport } from '../../shared/context.ts'
@@ -127,6 +128,18 @@ export function trimMessages(messages: ModelMessage[], maxTokens: number, system
 export interface CompressResult extends TrimResult {
   /** Present only when messages were dropped AND successfully compressed into a summary. */
   summary?: string
+  /** The summary to carry into the next turn; the same object as `previous` when it was reused as is. */
+  stored?: HistorySummary
+}
+
+/** A summary carried between turns of one chat. It covers the first trimmed messages, one hash
+ *  each, so a change in that range (a deleted turn, a pin or unpin) forces a rebuild rather than
+ *  extending a summary of messages that are no longer there. */
+export interface HistorySummary {
+  summary: string
+  hashes: string[]
+  /** Leading trimmed messages the summary never covered: too many to fit when it was built. */
+  lost: number
 }
 
 // Async sibling of trimMessages for the agentic researcher path: when messages must be dropped,
@@ -147,6 +160,7 @@ export async function compressMessages(
   systemPrompt: string,
   summaryBudgetChars: number,
   pinned = NO_PINS,
+  previous?: HistorySummary,
 ): Promise<CompressResult> {
   const { kept, dropped, droppedIdx, systemCost, budget, report } = splitForTrim(messages, maxTokens, systemPrompt, pinned)
   const hardDrop = (why: string) => {
@@ -162,24 +176,69 @@ export async function compressMessages(
 
   const start = performance.now()
   const parts = dropped.map(m => `${m.role}: ${typeof m.content === 'string' ? m.content : JSON.stringify(m.content)}`)
+  try {
+    const { stored, how } = await updateSummary(parts, summaryBudgetChars, previous)
+    console.log(`  [chat] history compressed: dropped ${dropped.length} messages → summary ${stored.summary.length}c (${how}) in ${(performance.now() - start).toFixed(0)}ms`)
+    const lost = Math.min(stored.lost, droppedIdx.length)
+    return {
+      messages: kept,
+      summary: stored.summary,
+      stored,
+      report: { ...report, summary: stored.summary, summaryChars: stored.summary.length, lostBefore: lost ? droppedIdx[lost - 1] + 1 : 0 },
+    }
+  } catch (err) {
+    return hardDrop(`compression failed (${err})`)
+  }
+}
+
+const hashPart = (part: string) => createHash('sha256').update(part).digest('hex').slice(0, 16)
+
+/** Reuses, extends or rebuilds the summary of the trimmed messages `parts`. Reused as is when the
+ *  trimmed range shrank (the budget varies a little per turn): covering a message that is also
+ *  kept in full costs a few summary words, not a rebuild. */
+async function updateSummary(
+  parts: string[], budgetChars: number, previous?: HistorySummary,
+): Promise<{ stored: HistorySummary; how: 'reused' | 'extended' | 'rebuilt' }> {
+  const hashes = parts.map(hashPart)
+  if (previous && previous.hashes.every((h, i) => i >= hashes.length || h === hashes[i])) {
+    if (hashes.length <= previous.hashes.length) return { stored: previous, how: 'reused' }
+    const summary = await extendSummary(previous.summary, parts.slice(previous.hashes.length), budgetChars)
+    if (summary !== null) return { stored: { summary, hashes, lost: previous.lost }, how: 'extended' }
+  }
+  return { stored: await buildSummary(parts, hashes, budgetChars), how: 'rebuilt' }
+}
+
+/** Summarises the whole trimmed range from scratch; only its most recent part if it is too large. */
+async function buildSummary(parts: string[], hashes: string[], budgetChars: number): Promise<HistorySummary> {
   const fullInput = parts.join('\n\n')
   const maxInputChars = MAX_HISTORY_COMPRESS_CHUNKS * SMALL_MODEL_INPUT_CHARS
   const input = fullInput.length > maxInputChars ? fullInput.slice(fullInput.length - maxInputChars) : fullInput
   if (fullInput.length > maxInputChars) {
     console.log(`  [chat] history compression: dropped range too large (${fullInput.length}c) for ${MAX_HISTORY_COMPRESS_CHUNKS} chunks — summarizing only the most recent ${maxInputChars}c`)
   }
-  try {
-    const summary = await summarizeHistory(input, summaryBudgetChars)
-    const lost = lostCount(parts, fullInput.length - input.length)
-    console.log(`  [chat] history compressed: dropped ${dropped.length} messages (${input.length}c) → summary ${summary.length}c in ${(performance.now() - start).toFixed(0)}ms`)
-    return {
-      messages: kept,
-      summary,
-      report: { ...report, summary, summaryChars: summary.length, lostBefore: lost ? droppedIdx[lost - 1] + 1 : 0 },
-    }
-  } catch (err) {
-    return hardDrop(`compression failed (${err})`)
+  const summary = await summarizeHistory(input, budgetChars)
+  return { summary, hashes, lost: lostCount(parts, fullInput.length - input.length) }
+}
+
+/** Folds newly trimmed messages into an existing summary, a window at a time. Null when they are
+ *  too many for the chunk cap, so the caller rebuilds instead. */
+async function extendSummary(summary: string, fresh: string[], budgetChars: number): Promise<string | null> {
+  const input = fresh.join('\n\n')
+  if (input.length > MAX_HISTORY_COMPRESS_CHUNKS * SMALL_MODEL_INPUT_CHARS) return null
+  const window = Math.max(SMALL_MODEL_INPUT_CHARS - summary.length, Math.floor(SMALL_MODEL_INPUT_CHARS / 2))
+  let current = summary
+  for (let i = 0; i < input.length; i += window) {
+    const { text } = await generateText({
+      model: getSmallModel(),
+      system: `${COMPACT_RULES}
+You are given the existing summary, then newer messages. Return ONE updated summary that keeps what still matters from the existing one and adds the newer messages.
+Output ONLY the summary, no preamble. Target approximately ${budgetChars} characters.`,
+      prompt: `Existing summary:\n${current}\n\nNewer messages:\n${input.slice(i, i + window)}`,
+      maxOutputTokens: Math.ceil(budgetChars / CHARS_PER_TOKEN),
+    })
+    current = text.trim()
   }
+  return current
 }
 
 /** How many of the leading dropped messages fall wholly before `sliceStart`, outside the summary. */
@@ -194,6 +253,11 @@ function lostCount(parts: string[], sliceStart: number): number {
   return lost
 }
 
+const COMPACT_RULES = `You are compacting an earlier portion of a long conversation so it can be dropped from the active context without losing important information.
+1. Preserve names, decisions, facts, and numbers a later turn might refer back to.
+2. Omit pleasantries, repeated context, and anything superseded by a later message.
+3. Write as a compact third-person briefing note, not a transcript.`
+
 /** Summarizes `input` in serial small-model chunks, to roughly `budgetChars` in total. */
 async function summarizeHistory(input: string, budgetChars: number): Promise<string> {
   const numChunks = Math.min(MAX_HISTORY_COMPRESS_CHUNKS, Math.ceil(input.length / SMALL_MODEL_INPUT_CHARS))
@@ -203,10 +267,7 @@ async function summarizeHistory(input: string, budgetChars: number): Promise<str
     const chunk = input.slice(i * SMALL_MODEL_INPUT_CHARS, (i + 1) * SMALL_MODEL_INPUT_CHARS)
     const { text } = await generateText({
       model: getSmallModel(),
-      system: `You are compacting an earlier portion of a long conversation so it can be dropped from the active context without losing important information.
-1. Preserve names, decisions, facts, and numbers a later turn might refer back to.
-2. Omit pleasantries, repeated context, and anything superseded by a later message.
-3. Write as a compact third-person briefing note, not a transcript.
+      system: `${COMPACT_RULES}
 Output ONLY the summary, no preamble. Target approximately ${perChunkChars} characters.`,
       prompt: chunk,
       maxOutputTokens: Math.ceil(perChunkChars / CHARS_PER_TOKEN),

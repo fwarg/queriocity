@@ -89,6 +89,8 @@ export const chatSessions = sqliteTable('chat_sessions', {
   graduated: integer('graduated').notNull().default(0),
   /** JSON ContextReport of the latest turn, so the context meter survives switching chats. */
   contextReport: text('context_report'),
+  /** JSON HistorySummary: the compressed-history summary, extended turn by turn. */
+  historySummary: text('history_summary'),
 })
 
 export const spaceMemories = sqliteTable('space_memories', {
@@ -582,6 +584,7 @@ function initSchema() {
   try { sqlite.run('ALTER TABLE messages ADD COLUMN file_sources TEXT') } catch {}
   try { sqlite.run('ALTER TABLE messages ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0') } catch {}
   try { sqlite.run('ALTER TABLE chat_sessions ADD COLUMN context_report TEXT') } catch {}
+  try { sqlite.run('ALTER TABLE chat_sessions ADD COLUMN history_summary TEXT') } catch {}
   // Migrate: backfill timezone from owner's settings for personal monitors that have none
   try {
     sqlite.run(`
