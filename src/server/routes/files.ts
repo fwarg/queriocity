@@ -278,7 +278,7 @@ filesRouter.post('/split', zValidator('json', z.object({
 })), async (c) => {
   const { title, body, hint } = c.req.valid('json')
   try {
-    return c.json(await proposeSplit(title, body, hint))
+    return c.json(await proposeSplit(title, body, hint, listTags(c.get('userId') as string)))
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : 'Could not split' }, 422)
   }

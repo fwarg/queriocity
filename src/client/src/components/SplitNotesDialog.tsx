@@ -7,8 +7,9 @@ import { useT } from '../lib/i18n.tsx'
 import { errorMessage } from '../lib/errors.ts'
 import { Modal } from './Modal.tsx'
 import { NoteMarkdown } from './NoteMarkdown.tsx'
+import { TagEditor } from './TagEditor.tsx'
 
-interface Part { title: string; body: string; keep: boolean; editing: boolean }
+interface Part { title: string; body: string; tags: string[]; keep: boolean; editing: boolean }
 
 /** Proposes a long answer or note as several short notes, one idea each, for the user to shape and
  *  save: drop, retitle, edit or merge parts, or ask again with a hint. From an answer, an optional
@@ -32,6 +33,7 @@ export function SplitNotesDialog({ title, body, options, fromNoteId, onClose, on
   // from the chat it came from; editable like the parts.
   const [overviewTitle, setOverviewTitle] = useState(title)
   const [overviewSummary, setOverviewSummary] = useState('')
+  const [overviewTags, setOverviewTags] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
@@ -41,7 +43,10 @@ export function SplitNotesDialog({ title, body, options, fromNoteId, onClose, on
     setParts(null)
     try {
       const proposal = await proposeNoteSplit(title, body, withHint)
-      setParts(proposal.parts.map(p => ({ ...p, keep: true, editing: false })))
+      // A split note's own tags carry over to every part, alongside what the model proposes.
+      const inherited = options.tags ?? []
+      setParts(proposal.parts.map(p => ({ ...p, tags: [...new Set([...inherited, ...p.tags ?? []])], keep: true, editing: false })))
+      setOverviewTags(proposal.overview?.tags ?? [])
       setOverviewTitle(proposal.overview?.title ?? title)
       setOverviewSummary(proposal.overview?.body ?? '')
     } catch (err) { setError(errorMessage(t, err, t('split.failed'))) }
@@ -53,7 +58,7 @@ export function SplitNotesDialog({ title, body, options, fromNoteId, onClose, on
   const update = (i: number, patch: Partial<Part>) => setParts(ps => ps?.map((p, j) => j === i ? { ...p, ...patch } : p) ?? null)
   const mergeWithNext = (i: number) => setParts(ps => {
     if (!ps || !ps[i + 1]) return ps
-    const merged = { ...ps[i], ...mergeParts(ps[i], ps[i + 1]), keep: true }
+    const merged = { ...ps[i], tags: [], ...mergeParts(ps[i], ps[i + 1]), keep: true }
     return [...ps.slice(0, i), merged, ...ps.slice(i + 2)]
   })
   const kept = parts?.filter(p => p.keep && p.title.trim() && p.body.trim()) ?? []
@@ -63,14 +68,14 @@ export function SplitNotesDialog({ title, body, options, fromNoteId, onClose, on
     setError('')
     try {
       const saved: Array<{ id: string; title: string }> = []
-      for (const p of kept) saved.push({ id: (await createNote(p.title.trim(), p.body, options)).id, title: p.title.trim() })
+      for (const p of kept) saved.push({ id: (await createNote(p.title.trim(), p.body, { ...options, tags: p.tags })).id, title: p.title.trim() })
       if (overview && fromNoteId) {
         for (const s of saved) await addSeeAlso(fromNoteId, s.id, t('links.seeAlso'))
       } else if (overview) {
         const links = `${t('split.overviewIntro')}\n\n${saved.map(s => `- ${wikilinkFor(s.title)}`).join('\n')}`
         const hub = overviewSummary.trim() ? `${overviewSummary.trim()}\n\n${links}` : links
         const hubTitle = overviewTitle.trim() || title.trim() || t('split.overviewTitle')
-        saved.push({ id: (await createNote(hubTitle, hub, options)).id, title: hubTitle })
+        saved.push({ id: (await createNote(hubTitle, hub, { ...options, tags: overviewTags })).id, title: hubTitle })
       }
       onSaved(saved)
     } catch (err) {
@@ -96,6 +101,8 @@ export function SplitNotesDialog({ title, body, options, fromNoteId, onClose, on
             {p.editing
               ? <textarea value={p.body} onChange={e => update(i, { body: e.target.value })} rows={8} aria-label={t('split.partBody')} className={`font-mono ${field}`} />
               : <div className="max-h-40 overflow-y-auto rounded bg-gray-900 px-2 py-1"><NoteMarkdown body={p.body} /></div>}
+            {/* Edited locally; nothing is stored until Save. */}
+            <TagEditor tags={p.tags} onChange={tags => update(i, { tags })} />
             {i < parts.length - 1 && (
               <button onClick={() => mergeWithNext(i)} className="self-start flex items-center gap-1 text-xs text-gray-400 hover:text-gray-200">
                 <ArrowDownToLine size={12} /> {t('split.mergeNext')}
@@ -122,6 +129,7 @@ export function SplitNotesDialog({ title, body, options, fromNoteId, onClose, on
           <div className="flex flex-col gap-1.5 rounded border border-gray-700 p-2">
             <input value={overviewTitle} onChange={e => setOverviewTitle(e.target.value)} aria-label={t('split.overviewTitleLabel')} placeholder={t('split.overviewTitleLabel')} className={field} />
             <textarea value={overviewSummary} onChange={e => setOverviewSummary(e.target.value)} rows={3} aria-label={t('split.overviewSummaryLabel')} placeholder={t('split.overviewSummaryLabel')} className={field} />
+            <TagEditor tags={overviewTags} onChange={setOverviewTags} />
           </div>
         )}
         {error && <p className="text-sm text-red-400">{error}</p>}

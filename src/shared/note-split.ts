@@ -4,6 +4,8 @@
 export interface NotePart {
   title: string
   body: string
+  /** Proposed tags, normalised; the user edits them before saving. */
+  tags?: string[]
 }
 
 /** A note body split from its trailing sources list (`---` then `## Heading` then `- **[n]** …`). */
@@ -28,5 +30,6 @@ export function withSources(part: NotePart, heading: string | null, lines: Map<s
 export function mergeParts(a: NotePart, b: NotePart): NotePart {
   const [sa, sb] = [splitSources(a.body), splitSources(b.body)]
   const lines = new Map([...sa.lines, ...sb.lines])
-  return withSources({ title: a.title, body: `${sa.text}\n\n${sb.text}` }, sa.heading ?? sb.heading, lines)
+  const tags = [...new Set([...a.tags ?? [], ...b.tags ?? []])]
+  return { ...withSources({ title: a.title, body: `${sa.text}\n\n${sb.text}` }, sa.heading ?? sb.heading, lines), ...(tags.length ? { tags } : {}) }
 }

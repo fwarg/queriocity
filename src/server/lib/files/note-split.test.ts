@@ -23,7 +23,7 @@ let restoreEnv: () => void
 
 beforeAll(() => {
   model = startFakeOpenAI([
-    { text: ['=== OVERVIEW: Bees in orchards\nHow bees pollinate orchards.\n=== Bees and orchards\nBees pollinate orchards [1].\n=== Wild bees\nWild bees matter in cold springs [2].'] },
+    { text: ['=== OVERVIEW: Bees in orchards\ntags: bees\nHow bees pollinate orchards.\n=== Bees and orchards\ntags: Bees/Pollination, #orchards\nBees pollinate orchards [1].\n=== Wild bees\nWild bees matter in cold springs [2].'] },
     { text: ['=== Only one\nx'] },
   ])
   restoreEnv = envOverride({ CHAT_BASE_URL: model.baseURL, CHAT_API_KEY: 'test', CHAT_MODEL: 'fake' })
@@ -32,13 +32,14 @@ afterAll(() => { model?.stop(); restoreEnv?.() })
 
 describe('proposeSplit', () => {
   test('returns the parts, each with only the sources it cites, and the model never sees the list', async () => {
-    const { parts, overview } = await proposeSplit('What do bees do?', BODY)
-    expect(overview).toEqual({ title: 'Bees in orchards', body: 'How bees pollinate orchards.' })
+    const { parts, overview } = await proposeSplit('What do bees do?', BODY, '', [{ path: 'bees', count: 3 }])
+    expect(overview).toEqual({ title: 'Bees in orchards', body: 'How bees pollinate orchards.', tags: ['bees'] })
     expect(parts).toEqual([
-      { title: 'Bees and orchards', body: 'Bees pollinate orchards [1].\n\n---\n\n## Sources\n\n- **[1]** [Orchards](https://a.example)\n' },
+      { title: 'Bees and orchards', tags: ['bees/pollination', 'orchards'], body: 'Bees pollinate orchards [1].\n\n---\n\n## Sources\n\n- **[1]** [Orchards](https://a.example)\n' },
       { title: 'Wild bees', body: 'Wild bees matter in cold springs [2].\n\n---\n\n## Sources\n\n- **[2]** [Wild bees](https://b.example)\n' },
     ])
     expect(JSON.stringify(model.requests[0])).not.toContain('https://a.example')
+    expect(JSON.stringify(model.requests[0])).toContain('EXISTING TAGS: bees')
   })
 
   test('refuses a "split" into a single note', async () => {
@@ -61,10 +62,11 @@ describe('proposeSplit', () => {
 describe('mergeParts', () => {
   test('joins texts, keeps the first title, and lists each cited source once', async () => {
     const { mergeParts } = await import('../../../shared/note-split.ts')
-    const a = { title: 'Bees', body: 'Bees [1].\n\n---\n\n## Sources\n\n- **[1]** [A](https://a.example)\n' }
-    const b = { title: 'Wild', body: 'Wild [2] and again [1].\n\n---\n\n## Sources\n\n- **[1]** [A](https://a.example)\n- **[2]** [B](https://b.example)\n' }
+    const a = { title: 'Bees', tags: ['bees'], body: 'Bees [1].\n\n---\n\n## Sources\n\n- **[1]** [A](https://a.example)\n' }
+    const b = { title: 'Wild', tags: ['bees', 'wild'], body: 'Wild [2] and again [1].\n\n---\n\n## Sources\n\n- **[1]** [A](https://a.example)\n- **[2]** [B](https://b.example)\n' }
     expect(mergeParts(a, b)).toEqual({
       title: 'Bees',
+      tags: ['bees', 'wild'],
       body: 'Bees [1].\n\nWild [2] and again [1].\n\n---\n\n## Sources\n\n- **[1]** [A](https://a.example)\n- **[2]** [B](https://b.example)\n',
     })
   })

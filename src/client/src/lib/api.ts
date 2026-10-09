@@ -886,7 +886,7 @@ export interface NoteOptions {
 
 /** A proposed split of a long answer or note into short notes, with a title and summary for an
  *  overview note when the model gave one; nothing is saved. */
-export async function proposeNoteSplit(title: string, body: string, hint = ''): Promise<{ parts: Array<{ title: string; body: string }>; overview?: { title: string; body: string } }> {
+export async function proposeNoteSplit(title: string, body: string, hint = ''): Promise<{ parts: Array<{ title: string; body: string; tags?: string[] }>; overview?: { title: string; body: string; tags?: string[] } }> {
   const res = await fetch(`${BASE}/files/split`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

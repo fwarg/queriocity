@@ -417,7 +417,8 @@ Three ways to make one:
 - **Transform a resource.** See below.
 - **Split a long one.** The scissors beside a long answer (or **Split into notes** on a long note)
   has the chat model propose it as several short notes, one idea each, keeping the citation markers;
-  each part gets only the sources it cites. Untick parts you don't want, edit titles and text (✎, with
+  each part gets only the sources it cites. Each part comes with 1–3 proposed tags, preferring tags you already
+use, editable in place. Untick parts you don't want, edit titles and text (✎, with
 a preview), **merge** a part with the next one, or describe how you want it split ("fewer notes",
 "one per section") and **Try again**. Nothing is saved until **Save**. From
   an answer an optional overview note links the parts — its title and a short summary are proposed
