@@ -89,7 +89,8 @@ video's transcript is, and stored exactly like an upload.
 
 In a long chat the oldest messages eventually drop out of what the model reads. A message with an
 attachment is **pinned** so it stays — the pin icon under any message does the same — and the
-**Context** meter under the latest answer shows how full the model's view is.
+**Context** meter under the latest answer shows how full the model's view is. Attached to the
+wrong chat? The bin icon in the question deletes it and its answer.
 
 The difference that matters: an **attachment** is read whole, once. A **library resource** is
 found in pieces, forever. Ask about a document as a whole with the paperclip; build a shelf you can

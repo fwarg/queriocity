@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
-import { ExternalLink, FileText, Volume2, VolumeX, NotebookPen } from 'lucide-react'
+import { ExternalLink, FileText, Volume2, VolumeX, NotebookPen, Trash2 } from 'lucide-react'
 import type { Message, Source, FileSource } from '../lib/api.ts'
 import { splitGroupedCitations } from '@shared/citations.ts'
 import { blockMdComponents, ImageBlock, ImageCaptionContext } from './markdown.tsx'
@@ -50,6 +50,8 @@ interface Props {
   /** What the model saw on the latest turn; draws the dividers where its view begins. */
   context?: ContextReport | null
   onTogglePin?: (index: number) => void
+  /** Absent while a run is streaming: deleting then would race the turn being stored. */
+  onDeleteTurn?: (index: number) => void
 }
 
 /** Normalize SVG blocks: unwrap any existing ```svg fences, then rewrap consistently. */
@@ -251,7 +253,7 @@ function HighlightedText({ text, query }: { text: string; query: string }) {
   )}</>
 }
 
-function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, searchQuery, noteTitle, onOpenResource, sessionId, onTogglePin, keptInFull }: { msg: Message; isFirst?: boolean; defaultCollapsed?: boolean; isMatch?: boolean; isActive?: boolean; searchQuery?: string; noteTitle?: string; onOpenResource?: (id: string) => void; sessionId?: string; onTogglePin?: () => void; keptInFull?: boolean }) {
+function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, searchQuery, noteTitle, onOpenResource, sessionId, onTogglePin, onDeleteTurn, keptInFull }: { msg: Message; isFirst?: boolean; defaultCollapsed?: boolean; isMatch?: boolean; isActive?: boolean; searchQuery?: string; noteTitle?: string; onOpenResource?: (id: string) => void; sessionId?: string; onTogglePin?: () => void; onDeleteTurn?: () => void; keptInFull?: boolean }) {
   const t = useT()
   const [highlighted, setHighlighted] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState(!!defaultCollapsed)
@@ -366,9 +368,19 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
         ) : (
           <>
             <HighlightedText text={msg.content} query={searchQuery ?? ''} />
-            {onTogglePin && (
-              <div className="flex justify-end mt-1 whitespace-normal">
-                <PinButton pinned={msg.pinned} keptInFull={keptInFull} onToggle={onTogglePin} onBlue />
+            {(onTogglePin || onDeleteTurn) && (
+              <div className="flex justify-end gap-3 mt-1 whitespace-normal">
+                {onDeleteTurn && (
+                  <button
+                    onClick={() => { if (window.confirm(t('message.deleteTurnConfirm'))) onDeleteTurn() }}
+                    title={t('message.deleteTurn')}
+                    aria-label={t('message.deleteTurn')}
+                    className="p-1 -m-0.5 rounded text-blue-300 hover:text-white opacity-60 hover:opacity-100 transition-colors"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                )}
+                {onTogglePin && <PinButton pinned={msg.pinned} keptInFull={keptInFull} onToggle={onTogglePin} onBlue />}
               </div>
             )}
           </>
@@ -399,7 +411,7 @@ function noteTitleFor(messages: Message[], index: number): string | undefined {
 const unpinnedIn = (messages: Message[], from: number, to: number) =>
   messages.slice(from, to).filter(m => !m.pinned).length
 
-export const MessageList = memo(function MessageList({ messages, streaming, streamingThinking, collapseFirstQuestion, searchQuery, searchMatchIndices, searchActiveIndex, onOpenResource, sessionId, context, onTogglePin }: Props) {
+export const MessageList = memo(function MessageList({ messages, streaming, streamingThinking, collapseFirstQuestion, searchQuery, searchMatchIndices, searchActiveIndex, onOpenResource, sessionId, context, onTogglePin, onDeleteTurn }: Props) {
   const msgRefs = useRef<Map<number, HTMLDivElement>>(new Map())
   const matchSet = useMemo(() => new Set(searchMatchIndices ?? []), [searchMatchIndices])
 
@@ -429,6 +441,7 @@ export const MessageList = memo(function MessageList({ messages, streaming, stre
             onOpenResource={onOpenResource}
             sessionId={sessionId}
             onTogglePin={onTogglePin ? () => onTogglePin(i) : undefined}
+            onDeleteTurn={onDeleteTurn ? () => onDeleteTurn(i) : undefined}
             keptInFull={!!context && i < context.cut}
           />
         </div>

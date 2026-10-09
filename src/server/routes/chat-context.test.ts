@@ -103,3 +103,39 @@ describe('PATCH /history/:id/messages/:mid', () => {
     expect(await pinnedNow()).toBe(false)
   })
 })
+
+describe('stopping a run before any answer', () => {
+  test('stores nothing, as the client withdraws the question too', async () => {
+    fake.stop()
+    fake = startFakeOpenAI([{ text: ['Too late.'], delayMs: 500 }])
+    process.env.CHAT_BASE_URL = fake.baseURL
+    const pending = chat({ focusMode: 'flash', sessionId: 'ctx-stop', messages: [{ role: 'user', content: 'q' }] })
+    await Bun.sleep(150)
+    const stop = await app.request('/chat/ctx-stop/stop', { method: 'POST', headers: { Cookie: cookies[USER] } })
+    expect(await stop.json()).toEqual({ stopped: true })
+    await pending
+    expect(await db.select().from(messages).where(eq(messages.sessionId, 'ctx-stop'))).toEqual([])
+  })
+})
+
+describe('DELETE /history/:id/messages', () => {
+  test('deletes a question and its answer, clears the stored report, and refuses anyone else', async () => {
+    const now = new Date()
+    await db.insert(chatSessions).values({ id: 'del-chat', title: 'c', userId: USER, contextReport: '{}', createdAt: now, updatedAt: now })
+    await db.insert(messages).values(['q1', 'a1', 'q2', 'a2'].map((id, i) => ({ id, sessionId: 'del-chat', role: (i % 2 ? 'assistant' : 'user') as 'user' | 'assistant', content: id, createdAt: now })))
+    const del = (who: string, ids: string[]) => app.request('/history/del-chat/messages', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', Cookie: cookies[who] },
+      body: JSON.stringify({ ids }),
+    })
+    const left = async () => (await db.select().from(messages).where(eq(messages.sessionId, 'del-chat'))).map(m => m.id).sort()
+
+    expect((await del(OTHER, ['q2', 'a2'])).status).toBe(404)
+    expect((await del(USER, ['no-such-message'])).status).toBe(404)
+    expect(await left()).toEqual(['a1', 'a2', 'q1', 'q2'])
+
+    expect((await del(USER, ['q2', 'a2'])).status).toBe(200)
+    expect(await left()).toEqual(['a1', 'q1'])
+    expect((await db.select().from(chatSessions).where(eq(chatSessions.id, 'del-chat')).get())?.contextReport).toBeNull()
+  })
+})

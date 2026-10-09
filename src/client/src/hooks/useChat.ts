@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react'
-import { streamChat, stopChat, fetchRelatedQuestions, decideEgress, setMessagePinned } from '../lib/api.ts'
+import { streamChat, stopChat, fetchRelatedQuestions, decideEgress, setMessagePinned, deleteMessages } from '../lib/api.ts'
 import { hasAttachment, type ContextReport } from '@shared/context.ts'
 import type { Message, Source, FileSource } from '../lib/api.ts'
 import type { LogStep } from '../components/ProgressLog.tsx'
@@ -253,6 +253,26 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
     if (msg.id && sid) await setMessagePinned(sid, msg.id, pinned).catch(() => apply(!pinned))
   }
 
+  /** Removes a question and its answer. Messages not yet stored (an ephemeral chat) go locally only.
+   *  The context report is dropped: its indices point into the old list until the next turn. */
+  async function deleteTurn(index: number) {
+    if (busy || messages[index]?.role !== 'user') return
+    const count = messages[index + 1]?.role === 'assistant' ? 2 : 1
+    const removed = messages.slice(index, index + count)
+    const before = messages
+    setMessages(prev => [...prev.slice(0, index), ...prev.slice(index + count)])
+    setContext(null)
+    const ids = removed.map(m => m.id).filter((id): id is string => !!id)
+    const sid = liveSessionRef.current ?? sessionId
+    if (!ids.length || !sid) return
+    try {
+      await deleteMessages(sid, ids)
+    } catch (err) {
+      setMessages(before)
+      setStatus(err instanceof Error ? err.message : t('answer.requestFailed'))
+    }
+  }
+
   function reset() {
     setContext(null)
     setMessages([])
@@ -265,5 +285,5 @@ export function useChat({ sessionId, focusMode, searchCategories, includeFileIds
     liveSessionRef.current = undefined
   }
 
-  return { messages, setMessages, context, setContext, togglePin, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, regenerate, cancel, reset, related, setRelated, steps, runStartedAt, approval, decideApproval }
+  return { messages, setMessages, context, setContext, togglePin, deleteTurn, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, regenerate, cancel, reset, related, setRelated, steps, runStartedAt, approval, decideApproval }
 }

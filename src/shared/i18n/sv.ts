@@ -353,6 +353,8 @@ export const sv: Catalog = {
   'message.readAloud': 'Läs upp',
   'message.stopReading': 'Sluta läsa',
   'message.downloadPng': 'Ladda ner PNG',
+  'message.deleteTurn': 'Ta bort frågan och dess svar',
+  'message.deleteTurnConfirm': 'Ta bort frågan och dess svar från chatten? Det går inte att ångra.',
   'message.downloadSvg': 'Ladda ner SVG',
   'message.downloadFailed': 'Nedladdningen misslyckades',
   'message.uncitedSources': { one: '{count} ociterad källa', other: '{count} ociterade källor' },

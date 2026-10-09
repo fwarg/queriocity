@@ -182,6 +182,10 @@ model's view of it.
   stored with the chat. If the pinned messages alone no longer fit, the oldest is shortened (its
   beginning kept) and the meter says so — for a document that large, add it to the library
   instead, where it is searched rather than read whole.
+- **Deleting a turn** — the bin icon in a question removes it and its answer from the chat, e.g.
+  a document attached to the wrong chat. Its chat-search entries and generated images go too;
+  memories already extracted from it stay (delete them under Memories). The meter reappears on
+  the next turn. Stopping a run before any answer arrives stores nothing.
 
 ## Research modes
 

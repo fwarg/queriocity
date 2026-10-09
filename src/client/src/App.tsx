@@ -171,7 +171,7 @@ export default function App() {
    *  refuses a collection either way; this keeps the UI from proposing what it will refuse. */
   const chatSpaces = spaces.filter(sp => sp.kind === 'space')
 
-  const { messages, setMessages, context, setContext, togglePin, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, regenerate, cancel, reset, related, setRelated, steps, runStartedAt, approval, decideApproval } = useChat({
+  const { messages, setMessages, context, setContext, togglePin, deleteTurn, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, regenerate, cancel, reset, related, setRelated, steps, runStartedAt, approval, decideApproval } = useChat({
     sessionId,
     focusMode,
     searchCategories,
@@ -1472,6 +1472,7 @@ export default function App() {
                   sessionId={sessionId}
                   context={context}
                   onTogglePin={togglePin}
+                  onDeleteTurn={busy ? undefined : deleteTurn}
                 />
               </ImageCaptionContext.Provider>
             )}

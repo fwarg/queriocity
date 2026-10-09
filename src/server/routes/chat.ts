@@ -382,8 +382,8 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       }
       await emitFlash(flashExtractor.flush().text)
       console.log(`  [flash] done in ${Date.now() - t0}ms, ${fullContent.length} chars`)
-      if (fullContent.length >= 50) setCached(ck, { content: fullContent, sources: [], fileSources: flashSources })
-      await finishTurn(out, { sid, userId, msgs, fullContent, sources: [], fileSources: flashSources, spaceId, regenerate, ephemeral, t0, context: lastContext })
+      if (!abortSignal.aborted && fullContent.length >= 50) setCached(ck, { content: fullContent, sources: [], fileSources: flashSources })
+      await finishTurn(out, { sid, userId, msgs, fullContent, sources: [], fileSources: flashSources, spaceId, regenerate, ephemeral, t0, context: lastContext, aborted: abortSignal.aborted })
     })
   }
 
@@ -663,7 +663,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         clearInterval(keepalive)
       }
       console.log(`  [image] done in ${Date.now() - t0}ms, ${fullContent.length} chars`)
-      await finishTurn(out, { sid, userId, msgs, fullContent, sources: imageSources, fileSources: [], spaceId, regenerate, ephemeral, t0, context: lastContext })
+      await finishTurn(out, { sid, userId, msgs, fullContent, sources: imageSources, fileSources: [], spaceId, regenerate, ephemeral, t0, context: lastContext, aborted: abortSignal.aborted })
     })
   }
 
@@ -1001,7 +1001,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     // Last line of defence: nothing survived the main pass or the fallback. Name the failure in
     // the answer body — an empty `done` reads to the client as an unreachable server.
     const emptyAnswer = !fullContent.trim()
-    if (emptyAnswer) {
+    if (emptyAnswer && !abortSignal.aborted) {
       console.error(`  [${focusMode}] empty answer after fallback — reporting failure to the client`)
       fullContent = EMPTY_ANSWER_MESSAGE
       await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: fullContent }) })
@@ -1012,8 +1012,8 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
 
     // Never cache the failure notice — it would be replayed as the answer for every repeat of
     // this question until the entry expires.
-    if (!emptyAnswer && fullContent.length >= 50) setCached(ck, { content: fullContent, sources, fileSources: allFileSources })
-    await finishTurn(out, { sid, userId, msgs, fullContent, sources, fileSources: allFileSources, spaceId, regenerate, ephemeral, t0, context: lastContext })
+    if (!emptyAnswer && !abortSignal.aborted && fullContent.length >= 50) setCached(ck, { content: fullContent, sources, fileSources: allFileSources })
+    await finishTurn(out, { sid, userId, msgs, fullContent, sources, fileSources: allFileSources, spaceId, regenerate, ephemeral, t0, context: lastContext, aborted: abortSignal.aborted })
   })
 })
 
@@ -1030,7 +1030,7 @@ interface CachedAnswer {
  *  background memory/index work. Centralised because four branches ran their own copy and the
  *  cached-answer path quietly omitted all of it — losing the turn from the conversation. */
 async function finishTurn(out: SSEStream, {
-  sid, userId, msgs, fullContent, sources, fileSources, spaceId, regenerate, ephemeral, t0, context,
+  sid, userId, msgs, fullContent, sources, fileSources, spaceId, regenerate, ephemeral, t0, context, aborted,
 }: {
   sid: string
   userId: string
@@ -1044,9 +1044,12 @@ async function finishTurn(out: SSEStream, {
   t0: number
   /** Absent for a cached answer, which leaves the stored report of the last real turn in place. */
   context?: ContextReport
+  /** Stopped by the user. With nothing produced, the client withdraws the question, so the
+   *  server must not store it either — it would reappear as a phantom turn on reload. */
+  aborted?: boolean
 }): Promise<void> {
   const elapsedMs = Date.now() - t0
-  if (ephemeral) {
+  if (ephemeral || (aborted && !fullContent.trim())) {
     await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, elapsedMs }) })
     return
   }

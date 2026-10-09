@@ -357,6 +357,8 @@ export const en = {
   'message.readAloud': 'Read aloud',
   'message.stopReading': 'Stop reading',
   'message.downloadPng': 'Download PNG',
+  'message.deleteTurn': 'Delete this question and its answer',
+  'message.deleteTurnConfirm': 'Delete this question and its answer from the chat? This cannot be undone.',
   'message.downloadSvg': 'Download SVG',
   'message.downloadFailed': 'Download failed',
   'message.uncitedSources': { one: '{count} uncited source', other: '{count} uncited sources' },

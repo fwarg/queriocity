@@ -394,6 +394,16 @@ export async function setMessagePinned(sessionId: string, messageId: string, pin
   if (!res.ok) throw await apiError(res, 'Could not update the pin')
 }
 
+/** Deletes one turn (a question and its answer) from a stored chat. */
+export async function deleteMessages(sessionId: string, ids: string[]): Promise<void> {
+  const res = await fetch(`${BASE}/history/${sessionId}/messages`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  })
+  if (!res.ok) throw await apiError(res, 'Could not delete the messages')
+}
+
 export async function updateSessionTitle(id: string, title: string): Promise<void> {
   await fetch(`${BASE}/history/${id}`, {
     method: 'PATCH',
