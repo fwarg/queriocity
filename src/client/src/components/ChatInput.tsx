@@ -394,7 +394,7 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
               key={i}
               type="button"
               onClick={() => { setValue(s); setSuggestions([]) }}
-              className="px-2 py-0.5 rounded-full text-xs bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white border border-gray-600 truncate max-w-60"
+              className="px-2 py-0.5 rounded-full text-xs bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-gray-50 border border-gray-600 truncate max-w-60"
             >
               {s}
             </button>
@@ -421,7 +421,7 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
               <button
                 type="button"
                 onClick={() => setAttachments(prev => prev.filter((_, j) => j !== i))}
-                className="text-gray-400 hover:text-white ml-0.5"
+                className="text-gray-400 hover:text-gray-50 ml-0.5"
               >
                 <X size={10} />
               </button>

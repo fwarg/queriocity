@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useConfirm } from './confirm.tsx'
 import { ArrowLeft, Pencil, Trash2, Plus } from 'lucide-react'
-import { TEMPLATES, type Template, type FocusMode, type TemplateField } from '../lib/templates.ts'
+import { MODE_COLORS, TEMPLATES, type Template, type FocusMode, type TemplateField } from '../lib/templates.ts'
 import { fetchCustomTemplates, deleteCustomTemplate, type CustomTemplate } from '../lib/api.ts'
 import { PromptStudio } from './PromptStudio.tsx'
 import { useT } from '../lib/i18n.tsx'
@@ -32,13 +32,6 @@ const MODE_LABEL_KEYS: Record<FocusMode, TranslationKey> = {
 interface Props {
   onSelect: (text: string, mode: FocusMode) => void
   onClose: () => void
-}
-
-const MODE_COLORS: Record<FocusMode, string> = {
-  flash: 'bg-yellow-700 text-yellow-100',
-  balanced: 'bg-blue-700 text-blue-100',
-  thorough: 'bg-purple-700 text-purple-100',
-  image: 'bg-pink-700 text-pink-100',
 }
 
 const PLACEHOLDER_RE = /\{\{(\w+)\}\}/g
@@ -164,7 +157,7 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
                   className="text-left p-3 rounded-md bg-gray-800 hover:bg-gray-700 transition-colors"
                 >
                   <div className="flex items-start justify-between gap-2 mb-1">
-                    <span className="text-sm font-medium text-white leading-tight">{t(templateKey(tpl.id, 'name'))}</span>
+                    <span className="text-sm font-medium text-gray-50 leading-tight">{t(templateKey(tpl.id, 'name'))}</span>
                     <span className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium ${MODE_COLORS[tpl.suggestedMode]}`}>
                       {t(MODE_LABEL_KEYS[tpl.suggestedMode])}
                     </span>
@@ -187,7 +180,7 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
                         className="w-full text-left p-3 rounded-md bg-gray-800 hover:bg-gray-700 transition-colors pr-14"
                       >
                         <div className="flex items-start justify-between gap-2 mb-1">
-                          <span className="text-sm font-medium text-white leading-tight">{ct.name}</span>
+                          <span className="text-sm font-medium text-gray-50 leading-tight">{ct.name}</span>
                           <span className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium ${MODE_COLORS[ct.suggestedMode as FocusMode] ?? MODE_COLORS.balanced}`}>
                             {t(MODE_LABEL_KEYS[ct.suggestedMode])}
                           </span>
@@ -241,12 +234,12 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
               <button
                 type="button"
                 onClick={back}
-                className="text-gray-400 hover:text-white p-1 -ml-1 rounded"
+                className="text-gray-400 hover:text-gray-50 p-1 -ml-1 rounded"
                 aria-label={t('template.back')}
               >
                 <ArrowLeft size={14} />
               </button>
-              <span className="text-sm font-medium text-white">{activeName}</span>
+              <span className="text-sm font-medium text-gray-50">{activeName}</span>
               <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded font-medium ${MODE_COLORS[active.suggestedMode]}`}>
                 {t(MODE_LABEL_KEYS[active.suggestedMode])}
               </span>

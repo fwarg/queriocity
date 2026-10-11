@@ -1,10 +1,11 @@
 import React, { createContext, useContext, useState } from 'react'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
+import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { Download, Sparkles } from 'lucide-react'
 import { downloadGeneratedImage } from '../lib/image-download.ts'
 import { markSvg } from '@shared/ai-provenance.ts'
 import { useT } from '../lib/i18n.tsx'
+import { useTheme } from '../lib/theme.ts'
 
 /** Markdown rendering shared by chat answers and notes, so a saved answer reads the same in both.
  *  Element styles are explicit rather than Tailwind's `prose`: the typography plugin is not
@@ -77,30 +78,38 @@ function SvgBlock({ svg }: { svg: string }) {
 }
 
 /** Every element except `a`, styled as in the chat. */
+/** A highlighted code block in the style matching the theme. `code-block` lets index.css turn
+ *  the token colours black on e-ink. */
+function CodeBlock({ language, src }: { language: string; src: string }) {
+  const theme = useTheme()
+  return (
+    <SyntaxHighlighter
+      style={theme === 'dark' ? oneDark : oneLight}
+      language={language}
+      PreTag="div"
+      className="code-block"
+      customStyle={{ margin: '0 0 0.5rem', borderRadius: '0.375rem', padding: '0.75rem', fontSize: '0.75rem' }}
+    >
+      {src}
+    </SyntaxHighlighter>
+  )
+}
+
 export const blockMdComponents = {
   p: ({ children }: C) => <p className="mb-2 last:mb-0">{children}</p>,
   ul: ({ children }: C) => <ul className="list-disc pl-4 mb-2 space-y-0.5">{children}</ul>,
   ol: ({ children }: C) => <ol className="list-decimal pl-4 mb-2 space-y-0.5">{children}</ol>,
   li: ({ children }: C) => <li>{children}</li>,
-  strong: ({ children }: C) => <strong className="font-semibold text-white">{children}</strong>,
-  h1: ({ children }: C) => <h1 className="text-base font-semibold text-white mb-1 mt-2">{children}</h1>,
-  h2: ({ children }: C) => <h2 className="text-sm font-semibold text-white mb-1 mt-2">{children}</h2>,
-  h3: ({ children }: C) => <h3 className="text-sm font-medium text-white mb-1 mt-1">{children}</h3>,
+  strong: ({ children }: C) => <strong className="font-semibold text-gray-50">{children}</strong>,
+  h1: ({ children }: C) => <h1 className="text-base font-semibold text-gray-50 mb-1 mt-2">{children}</h1>,
+  h2: ({ children }: C) => <h2 className="text-sm font-semibold text-gray-50 mb-1 mt-2">{children}</h2>,
+  h3: ({ children }: C) => <h3 className="text-sm font-medium text-gray-50 mb-1 mt-1">{children}</h3>,
   code: ({ children, className }: { children?: React.ReactNode; className?: string }) => {
     const match = /language-(\w+)/.exec(className || '')
     if (match) {
       const src = String(children).replace(/\n$/, '')
       if (match[1] === 'svg') return <SvgBlock svg={src} />
-      return (
-        <SyntaxHighlighter
-          style={oneDark}
-          language={match[1]}
-          PreTag="div"
-          customStyle={{ margin: '0 0 0.5rem', borderRadius: '0.375rem', padding: '0.75rem', fontSize: '0.75rem' }}
-        >
-          {src}
-        </SyntaxHighlighter>
-      )
+      return <CodeBlock language={match[1]} src={src} />
     }
     return <code className="bg-gray-700 text-gray-100 rounded px-1 py-0.5 text-xs font-mono">{children}</code>
   },

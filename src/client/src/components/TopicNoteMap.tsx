@@ -62,7 +62,7 @@ export function TopicNoteMap({ threshold, all, topic, topics, onBack, onShowCard
     const y = mine.reduce((s, p) => s + p.y, 0) / mine.length
     return (
       <text key={tp.key} x={x} y={y} textAnchor="middle" fontSize={12 / Math.sqrt(zoom)} fontWeight={600} fill={groupColour(i)}
-        stroke="#111827" strokeWidth={3 / Math.sqrt(zoom)} paintOrder="stroke" pointerEvents="none">
+        stroke="var(--color-gray-900, #111827)" strokeWidth={3 / Math.sqrt(zoom)} paintOrder="stroke" pointerEvents="none">
         {tp.name ?? tp.members[0].title}
       </text>
     )
@@ -87,7 +87,7 @@ export function TopicNoteMap({ threshold, all, topic, topics, onBack, onShowCard
       </div>
       {map && (
         <div className="flex flex-wrap gap-3 text-[11px] text-gray-500">
-          <span className="flex items-center gap-1"><svg width="18" height="6" aria-hidden><line x1="0" y1="3" x2="18" y2="3" stroke="#4b5563" strokeDasharray="2 3" strokeWidth={1.5} /></svg>{t('topics.legendSimilar')}</span>
+          <span className="flex items-center gap-1"><svg width="18" height="6" aria-hidden><line x1="0" y1="3" x2="18" y2="3" stroke="var(--color-gray-600, #4b5563)" strokeDasharray="2 3" strokeWidth={1.5} /></svg>{t('topics.legendSimilar')}</span>
           <EdgeLegend />
           {!topic && <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: DIMMED }} />{t('explore.noTopic')}</span>}
         </div>

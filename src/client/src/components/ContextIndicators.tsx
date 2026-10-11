@@ -9,7 +9,7 @@ const kChars = (n: number) => `${(n / 1000).toFixed(1)}k`
 export function PinButton({ pinned, keptInFull, onToggle, onBlue }: { pinned?: boolean; keptInFull?: boolean; onToggle: () => void; onBlue?: boolean }) {
   const t = useT()
   const tone = onBlue
-    ? (pinned ? 'text-amber-300 hover:text-amber-200' : 'text-blue-300 hover:text-white opacity-60 hover:opacity-100')
+    ? (pinned ? 'text-amber-300 hover:text-amber-200' : 'text-blue-300 hover:text-gray-50 opacity-60 hover:opacity-100')
     : (pinned ? 'text-amber-400 hover:text-amber-300' : 'text-gray-600 hover:text-gray-400')
   return (
     <button

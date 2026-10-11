@@ -13,13 +13,13 @@ const MAX_LABEL = 18
 /** Movement below this many screen pixels is a tap on a node, not a pan. */
 const DRAG_SLOP = 5
 
-export const NODE_FILL: Record<GraphNode['kind'], string> = { note: '#fbbf24', file: '#9ca3af', chat: '#818cf8' }
+export const NODE_FILL: Record<GraphNode['kind'], string> = { note: 'var(--viz-note)', file: 'var(--viz-file)', chat: 'var(--viz-chat)' }
 export const EDGE_STYLE: Record<GraphEdge['kind'], { stroke: string; dash?: string }> = {
-  link: { stroke: '#6b7280' },
-  derived: { stroke: '#6b7280', dash: '4 3' },
-  chat: { stroke: '#6366f1', dash: '1 3' },
-  similar: { stroke: '#4b5563', dash: '2 3' },
-  related: { stroke: '#6b7280' },
+  link: { stroke: 'var(--color-gray-500, #6b7280)' },
+  derived: { stroke: 'var(--color-gray-500, #6b7280)', dash: '4 3' },
+  chat: { stroke: 'var(--color-indigo-500, #6366f1)', dash: '1 3' },
+  similar: { stroke: 'var(--color-gray-600, #4b5563)', dash: '2 3' },
+  related: { stroke: 'var(--color-gray-500, #6b7280)' },
 }
 
 export type Placed<N extends GraphNode = GraphNode> = N & { x: number; y: number }
@@ -129,8 +129,8 @@ export function GraphCanvas<N extends GraphNode>({ nodes, edges, width, height, 
                 return (
                   <>
                     <circle cx={n.x} cy={n.y} r={Math.max(16 / view.k, r)} fill="transparent" />
-                    <circle cx={n.x} cy={n.y} r={r} fill={fillOf?.(n) ?? NODE_FILL[n.kind]} stroke={n.id === rootId ? '#fff' : 'none'} strokeWidth={2} />
-                    {labels && <text x={n.x} y={n.y + r + 12 / Math.sqrt(view.k)} textAnchor="middle" fontSize={9 / Math.sqrt(view.k)} fill={n.id === rootId ? '#f3f4f6' : '#9ca3af'}>{short(n.label)}</text>}
+                    <circle cx={n.x} cy={n.y} r={r} fill={fillOf?.(n) ?? NODE_FILL[n.kind]} stroke={n.id === rootId ? 'var(--color-gray-50, #f9fafb)' : 'none'} strokeWidth={2} />
+                    {labels && <text x={n.x} y={n.y + r + 12 / Math.sqrt(view.k)} textAnchor="middle" fontSize={9 / Math.sqrt(view.k)} fill={n.id === rootId ? 'var(--color-gray-100, #f3f4f6)' : 'var(--color-gray-400, #9ca3af)'}>{short(n.label)}</text>}
                   </>
                 )
               })()}
@@ -152,7 +152,7 @@ export function GraphCanvas<N extends GraphNode>({ nodes, edges, width, height, 
 
 function ZoomButton({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {
   return (
-    <button onClick={onClick} title={label} aria-label={label} className="p-2 rounded bg-gray-800/90 border border-gray-700 text-gray-300 hover:text-white">
+    <button onClick={onClick} title={label} aria-label={label} className="p-2 rounded bg-gray-800/90 border border-gray-700 text-gray-300 hover:text-gray-50">
       {children}
     </button>
   )

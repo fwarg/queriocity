@@ -318,14 +318,14 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
       <div
         className={`w-full max-w-2xl min-w-0 overflow-x-hidden rounded-lg px-4 py-2 text-sm break-words ${
           msg.role === 'user'
-            ? 'bg-blue-700 text-white whitespace-pre-wrap'
+            ? 'chat-question bg-blue-700 text-white whitespace-pre-wrap'
             : 'bg-gray-800 text-gray-100'
         } ${ringClass}`}
       >
         {collapsible && (
           <button
             onClick={() => setCollapsed(true)}
-            className="float-right ml-2 -mr-1 -mt-0.5 text-blue-300 hover:text-white opacity-60 hover:opacity-100"
+            className="float-right ml-2 -mr-1 -mt-0.5 text-blue-300 hover:text-gray-50 opacity-60 hover:opacity-100"
             title={t('message.collapse')}
           >
             <ChevronDown size={14} />
@@ -415,7 +415,7 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
                     onClick={() => { if (window.confirm(t('message.deleteTurnConfirm'))) onDeleteTurn() }}
                     title={t('message.deleteTurn')}
                     aria-label={t('message.deleteTurn')}
-                    className="p-1 -m-0.5 rounded text-blue-300 hover:text-white opacity-60 hover:opacity-100 transition-colors"
+                    className="p-1 -m-0.5 rounded text-blue-300 hover:text-gray-50 opacity-60 hover:opacity-100 transition-colors"
                   >
                     <Trash2 size={13} />
                   </button>

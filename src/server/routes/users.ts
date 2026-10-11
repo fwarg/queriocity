@@ -10,6 +10,7 @@ import {
 } from '../lib/auth.ts'
 import { getUserMemories, saveUserMemory, deleteUserMemory, embedMemory, suggestUserMemories } from '../lib/memory.ts'
 import { LANG_CODES } from '../../shared/i18n/index.ts'
+import { THEMES } from '../../shared/theme.ts'
 
 export const usersRouter = new Hono<AppEnv>()
 
@@ -24,6 +25,7 @@ const settingsSchema = z.object({
   useSpaceRag: z.boolean().optional(),
   useChatRag: z.boolean().optional(),
   fontSize: z.number().min(12).max(22).optional(),
+  theme: z.enum(THEMES).optional(),
   timezone: z.string().refine(v => !v || VALID_TIMEZONES.has(v), 'Invalid timezone').optional(),
   querySuggestions: z.boolean().optional(),
   followUpSuggestions: z.boolean().optional(),

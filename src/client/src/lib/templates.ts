@@ -249,3 +249,11 @@ export const TEMPLATES: Template[] = [
     },
   },
 ]
+
+/** Mode badge colours; the `--mode-*` variables in index.css vary per theme. */
+export const MODE_COLORS: Record<FocusMode, string> = {
+  flash: 'bg-(--mode-flash-bg) text-(--mode-flash-fg)',
+  balanced: 'bg-(--mode-balanced-bg) text-(--mode-balanced-fg)',
+  thorough: 'bg-(--mode-thorough-bg) text-(--mode-thorough-fg)',
+  image: 'bg-(--mode-image-bg) text-(--mode-image-fg)',
+}
