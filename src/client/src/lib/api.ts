@@ -1,4 +1,5 @@
 import type { Lang } from '@shared/i18n/index.ts'
+import type { Theme } from '@shared/theme.ts'
 import type { ContextReport } from '@shared/context.ts'
 import type { ApiErrorBody, ErrorCode } from '@shared/error-codes.ts'
 
@@ -26,7 +27,7 @@ export interface AuthUser {
   email: string
   name: string | null
   role: 'user' | 'admin'
-  settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; useSpaceRag?: boolean; useChatRag?: boolean; querySuggestions?: boolean; followUpSuggestions?: boolean; userMemory?: boolean; imageWatermark?: boolean; fontSize?: number; timezone?: string; language?: Lang }
+  settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; useSpaceRag?: boolean; useChatRag?: boolean; querySuggestions?: boolean; followUpSuggestions?: boolean; userMemory?: boolean; imageWatermark?: boolean; fontSize?: number; theme?: Theme; timezone?: string; language?: Lang }
   memoryTokenBudget: number
   /** True after an admin issued a temporary password — the user must set their own. */
   mustChangePassword?: boolean

@@ -335,6 +335,7 @@ vardag:
   svarar på det språk du frågade på.
 - **Visa sökprocessen** — visar sökningarna och utdragen ovanför svaret, hopfällt. Värt att slå på
   en gång för att se hur ett svar kom till.
+- **Tema** — Mörkt, Ljust eller E-ink (svart på vitt, utan animationer) för läsplattor med e-papper.
 - **Textstorlek** och **Tidszon** — den senare avgör vad *02:00* betyder för en bevakning.
 - **Export** — laddar ner dina anteckningar och resurser som ett Obsidian-valv, med länkar och
   taggar kvar; kryssa i rutan för att även få med chattar och skapade bilder.

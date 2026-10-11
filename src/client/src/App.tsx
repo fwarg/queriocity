@@ -34,6 +34,8 @@ import {
 import type { AuthUser, Message, Resource, Space, SpaceKind, SpaceMemory, SpaceFile } from './lib/api.ts'
 import { useChat } from './hooks/useChat.ts'
 import { useLang, useT } from './lib/i18n.tsx'
+import { applyTheme } from './lib/theme.ts'
+import { DEFAULT_THEME } from '@shared/theme.ts'
 
 /** One per mode worth showing off: something current, something comparative, something explained. */
 const EXAMPLE_KEYS = ['guide.example1', 'guide.example2', 'guide.example3'] as const
@@ -232,6 +234,10 @@ export default function App() {
     document.documentElement.style.fontSize =
       `clamp(${fontSize}px, calc(${fontSize}px + ${boost} * (1440px - 100vw) / 1065), ${fontSize + boost}px)`
   }, [fontSize])
+
+  // Signed out, the theme stored in this browser stays (theme-init.js applied it before paint).
+  const theme = currentUser ? currentUser.settings?.theme ?? DEFAULT_THEME : undefined
+  useEffect(() => { if (theme) applyTheme(theme) }, [theme])
 
   const PAGE_SIZE = 50
 
@@ -737,6 +743,7 @@ export default function App() {
           userMemory={currentUser.settings?.userMemory === true}
           imageWatermark={currentUser.settings?.imageWatermark !== false}
           fontSize={currentUser.settings?.fontSize ?? 17}
+          theme={currentUser.settings?.theme ?? DEFAULT_THEME}
           timezone={currentUser.settings?.timezone ?? ''}
           onClose={() => setShowSettings(false)}
           onPasswordChanged={() => setCurrentUser(u => u ? { ...u, mustChangePassword: false } : u)}
@@ -769,7 +776,7 @@ export default function App() {
         md:relative md:translate-x-0 md:w-56 md:z-auto md:transition-none
       `}>
         <div className="px-3 py-2">
-          <div className="text-base font-bold text-white tracking-wide">Queriocity</div>
+          <div className="text-base font-bold text-gray-50 tracking-wide">Queriocity</div>
           <div className="text-xs text-gray-500">v{__APP_VERSION__}</div>
         </div>
         <button
@@ -857,12 +864,12 @@ export default function App() {
         <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-800 md:hidden">
           <button
             onClick={() => setSidebarOpen(true)}
-            className="text-gray-400 hover:text-white text-xl leading-none"
+            className="text-gray-400 hover:text-gray-50 text-xl leading-none"
             aria-label={t('nav.openMenu')}
           >
             ☰
           </button>
-          <span className="font-semibold text-white text-sm">Queriocity</span>
+          <span className="font-semibold text-gray-50 text-sm">Queriocity</span>
         </div>
         {view === 'chats' ? (
           <div className="flex flex-col flex-1 min-h-0">
@@ -1204,7 +1211,7 @@ export default function App() {
                           fetchSpaceFiles(currentSpaceId!).then(setTaggedFiles).catch(() => {})
                           setFilePickerOpen(false)
                         }}
-                        className="text-left text-xs text-gray-300 hover:text-white px-1 py-0.5 hover:bg-gray-800 rounded truncate"
+                        className="text-left text-xs text-gray-300 hover:text-gray-50 px-1 py-0.5 hover:bg-gray-800 rounded truncate"
                       >
                         {f.filename}
                       </button>

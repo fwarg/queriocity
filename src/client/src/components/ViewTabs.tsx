@@ -13,7 +13,7 @@ export function ViewTabs<T extends string>({ tabs, active, onChange }: {
           role="tab"
           aria-selected={tab.id === active}
           onClick={() => onChange(tab.id)}
-          className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px ${tab.id === active ? 'border-indigo-500 text-white' : 'border-transparent text-gray-400 hover:text-gray-200'}`}
+          className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px ${tab.id === active ? 'border-indigo-500 text-gray-50' : 'border-transparent text-gray-400 hover:text-gray-200'}`}
         >
           {tab.label}
         </button>

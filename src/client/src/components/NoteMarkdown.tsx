@@ -70,9 +70,9 @@ export function NoteMarkdown({ body, onWikilink, onTag }: { body: string; onWiki
           // The `**[1]**` label of a sources-list line: lit up with its markers, and a toggle too.
           strong: ({ children }: C) => {
             const token = /^\[(\w+)\]$/.exec(String(children))?.[1]
-            if (!token || !sources.has(token)) return <strong className="font-semibold text-white">{children}</strong>
+            if (!token || !sources.has(token)) return <strong className="font-semibold text-gray-50">{children}</strong>
             return (
-              <button type="button" onClick={() => toggle(token)} className={`font-semibold ${highlighted === token ? 'text-yellow-400 bg-yellow-400/10 rounded px-0.5' : 'text-white'}`}>
+              <button type="button" onClick={() => toggle(token)} className={`font-semibold ${highlighted === token ? 'text-yellow-400 bg-yellow-400/10 rounded px-0.5' : 'text-gray-50'}`}>
                 {children}
               </button>
             )

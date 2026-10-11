@@ -54,10 +54,10 @@ export function TagTree({ resources, onOpenTag, onShowInGraph, onShow, onTagsCha
       {error && <p className="text-xs text-red-400">{error}</p>}
       <div className="flex flex-col gap-1 border-t border-gray-800 pt-3">
         <h3 className="text-xs font-medium uppercase tracking-wide text-gray-500">{t('explore.toOrganise')}</h3>
-        <button onClick={() => onShow('noTags')} className="flex justify-between py-2 text-sm text-gray-300 hover:text-white">
+        <button onClick={() => onShow('noTags')} className="flex justify-between py-2 text-sm text-gray-300 hover:text-gray-50">
           <span>{t('explore.untagged')}</span><span className="text-gray-500">{untagged}</span>
         </button>
-        <button onClick={() => onShow('unlinked')} className="flex justify-between py-2 text-sm text-gray-300 hover:text-white">
+        <button onClick={() => onShow('unlinked')} className="flex justify-between py-2 text-sm text-gray-300 hover:text-gray-50">
           <span>{t('explore.unlinked')}</span><span className="text-gray-500">{unlinked}</span>
         </button>
       </div>

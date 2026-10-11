@@ -11,7 +11,7 @@ import {
 import { MonitorEditor } from './MonitorEditor.tsx'
 import { useT, type TFunction } from '../lib/i18n.tsx'
 import type { TranslationKey } from '@shared/i18n/index.ts'
-import type { FocusMode } from '../lib/templates.ts'
+import { MODE_COLORS, type FocusMode } from '../lib/templates.ts'
 
 const MODE_LABEL_KEYS: Record<FocusMode, TranslationKey> = {
   flash: 'mode.flash',
@@ -96,12 +96,6 @@ function MonitorCard({ monitor, onEdit, onDelete, onRun, onOpenSession, isGlobal
     }
   }
 
-  const modeColors: Record<string, string> = {
-    flash: 'bg-yellow-700 text-yellow-100',
-    balanced: 'bg-blue-700 text-blue-100',
-    thorough: 'bg-purple-700 text-purple-100',
-  }
-
   return (
     <div className="rounded-lg bg-gray-800 border border-gray-700 overflow-hidden">
       <div className="flex items-start gap-2 p-3">
@@ -116,8 +110,8 @@ function MonitorCard({ monitor, onEdit, onDelete, onRun, onOpenSession, isGlobal
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-medium text-white truncate">{monitor.name}</span>
-            <span className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium ${modeColors[monitor.focusMode] ?? 'bg-gray-700 text-gray-300'}`}>
+            <span className="text-sm font-medium text-gray-50 truncate">{monitor.name}</span>
+            <span className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium ${MODE_COLORS[monitor.focusMode as FocusMode] ?? 'bg-gray-700 text-gray-300'}`}>
               {t(MODE_LABEL_KEYS[monitor.focusMode])}
             </span>
             {!monitor.enabled && (
@@ -341,7 +335,7 @@ export function MonitorsView({ spaces, isAdmin, timezone, onOpenSession, onCount
                 return (
                   <div key={m.id} className="flex items-center gap-2 p-2.5 rounded bg-gray-800 border border-gray-700">
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-white truncate">{m.name}</div>
+                      <div className="text-sm font-medium text-gray-50 truncate">{m.name}</div>
                       <div className="text-xs text-gray-500">{formatInterval(t, m.intervalMinutes, m.preferredHour)}</div>
                     </div>
                     {alreadySubscribed ? (
@@ -388,7 +382,7 @@ export function MonitorsView({ spaces, isAdmin, timezone, onOpenSession, onCount
               {globalMonitors.map(m => (
                 <div key={m.id} className="flex items-center gap-2 p-2.5 rounded bg-gray-800 border border-gray-700">
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium text-white truncate">{m.name}</div>
+                    <div className="text-sm font-medium text-gray-50 truncate">{m.name}</div>
                     <div className="text-xs text-gray-500">{formatInterval(t, m.intervalMinutes)}</div>
                   </div>
                   <RowAction icon={<Pencil size={14} />} label={t('monitor.edit')} persistent onClick={() => setGlobalEditor(m)} />

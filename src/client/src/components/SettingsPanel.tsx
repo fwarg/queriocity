@@ -11,6 +11,7 @@ import { LanguageSelect } from './LanguageSelect.tsx'
 import { useLang, useT } from '../lib/i18n.tsx'
 import { errorMessage } from '../lib/errors.ts'
 import type { Lang, TranslationKey } from '@shared/i18n/index.ts'
+import { THEMES, type Theme } from '@shared/theme.ts'
 import { GuideLink } from './GuideView.tsx'
 
 /** Inline CRUD for the user-level memory list. Kept in this panel because these facts are
@@ -181,6 +182,8 @@ function UserMemoryList() {
   )
 }
 
+const THEME_LABEL: Record<Theme, TranslationKey> = { dark: 'settings.themeDark', light: 'settings.themeLight', eink: 'settings.themeEink' }
+
 const FONT_SIZES: Array<{ labelKey: TranslationKey; value: number }> = [
   { labelKey: 'settings.fontSmall', value: 15 },
   { labelKey: 'settings.fontNormal', value: 17 },
@@ -213,6 +216,7 @@ export interface UserSettingsForm {
   userMemory: boolean
   imageWatermark: boolean
   fontSize: number
+  theme: Theme
   timezone: string
   language: Lang
 }
@@ -227,7 +231,7 @@ interface Props extends Omit<UserSettingsForm, 'language'> {
   onSave: (settings: UserSettingsForm) => void
 }
 
-export function SettingsPanel({ customPrompt: initial, showThinking: initialShowThinking, useThinking: initialUseThinking, useSpaceRag: initialUseSpaceRag, useChatRag: initialUseChatRag, querySuggestions: initialQuerySuggestions, followUpSuggestions: initialFollowUpSuggestions, userMemory: initialUserMemory, imageWatermark: initialImageWatermark, fontSize: initialFontSize, timezone: initialTimezone, onClose, onPasswordChanged, onSave }: Props) {
+export function SettingsPanel({ customPrompt: initial, showThinking: initialShowThinking, useThinking: initialUseThinking, useSpaceRag: initialUseSpaceRag, useChatRag: initialUseChatRag, querySuggestions: initialQuerySuggestions, followUpSuggestions: initialFollowUpSuggestions, userMemory: initialUserMemory, imageWatermark: initialImageWatermark, fontSize: initialFontSize, theme: initialTheme, timezone: initialTimezone, onClose, onPasswordChanged, onSave }: Props) {
   const t = useT()
   const { lang, setLang } = useLang()
   const [customPrompt, setCustomPrompt] = useState(initial)
@@ -240,6 +244,7 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
   const [userMemory, setUserMemory] = useState(initialUserMemory)
   const [imageWatermark, setImageWatermark] = useState(initialImageWatermark)
   const [fontSize, setFontSize] = useState(initialFontSize)
+  const [theme, setTheme] = useState(initialTheme)
   const [timezone, setTimezone] = useState(initialTimezone)
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -272,7 +277,7 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
     e.preventDefault()
     setBusy(true)
     try {
-      const form = { customPrompt, showThinking, useThinking, useSpaceRag, useChatRag, querySuggestions, followUpSuggestions, userMemory, imageWatermark, fontSize, timezone, language: lang }
+      const form = { customPrompt, showThinking, useThinking, useSpaceRag, useChatRag, querySuggestions, followUpSuggestions, userMemory, imageWatermark, fontSize, theme, timezone, language: lang }
       await updateSettings({ ...form, timezone: timezone || undefined })
       onSave(form)
       setSaved(true)
@@ -434,6 +439,23 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
                   className={`px-3 py-1 rounded text-sm ${fontSize === value ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}
                 >
                   {t(labelKey)}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="border-t border-gray-800" />
+          <div className="flex flex-col gap-2">
+            <label className="text-xs text-gray-400 font-medium">{t('settings.theme')}</label>
+            <p className="text-xs text-gray-500">{t('settings.themeDesc')}</p>
+            <div className="flex gap-2">
+              {THEMES.map(value => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setTheme(value)}
+                  className={`px-3 py-1 rounded text-sm ${theme === value ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}
+                >
+                  {t(THEME_LABEL[value])}
                 </button>
               ))}
             </div>

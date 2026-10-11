@@ -58,7 +58,7 @@ export function ApprovalPrompt({ approval, onDecide }: Props) {
       <div className="mt-3 flex items-center gap-2">
         <button
           onClick={() => onDecide(approval.id, false)}
-          className="rounded bg-gray-700 px-3 py-1.5 text-white hover:bg-gray-600"
+          className="rounded bg-gray-700 px-3 py-1.5 text-gray-50 hover:bg-gray-600"
         >
           {t('approval.decline')}
         </button>
