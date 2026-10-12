@@ -329,7 +329,7 @@ your day:
   assistant replies in whichever language you asked.
 - **Show search process** — displays the searches and snippets above the answer, folded shut.
   Worth turning on once to see how an answer was arrived at.
-- **Theme** — Dark, Light, or E-ink (black on white, no animations) for e-paper readers.
+- **Theme** — Dark, Light, or E-ink (black on white, no animations) for e-paper readers; graphs and badges keep a few colours that also work in greyscale.
 - **Font size** and **Timezone** — the latter decides what *02:00* means to a monitor.
 - **Export** — downloads your notes and resources as an Obsidian vault, links and tags intact;
   tick the box to include your chats and generated images too.
