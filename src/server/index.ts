@@ -35,7 +35,7 @@ import { validateConfig, checkEmbeddingDimensions, checkAttachmentBudget } from 
 import { purgeOrphanVectors } from './lib/vector-cleanup.ts'
 import { reindexNotes, simplifyNoteCitations } from './lib/files/notes.ts'
 import { reembedMissingVectors } from './lib/reembed.ts'
-import { EMBED_BATCH_CHARS, EMBED_MAX_INPUT_CHARS } from './lib/llm.ts'
+import { describeModels, modelTarget, EMBED_BATCH_CHARS, EMBED_MAX_INPUT_CHARS } from './lib/llm.ts'
 
 import { IMAGE_API, IMAGE_STEPS, imageStorageDir, imageUrlsIn, purgeOrphanImages } from './lib/image-store.ts'
 
@@ -133,13 +133,12 @@ app.get('*', serveStatic({ path: './dist/client/index.html' }))
 
 const PORT = parseInt(process.env.PORT ?? '3000')
 console.log(`queriocity listening on http://localhost:${PORT}`)
-const _baseURL = process.env.BASE_URL
-const _defaultProvider = process.env.BASE_PROVIDER ?? 'openai'
-const _defaultBase = _baseURL ?? 'http://localhost:11434/api'
-console.log(`  chat:   ${process.env.CHAT_PROVIDER ?? _defaultProvider}  ${process.env.CHAT_BASE_URL ?? _defaultBase}  model=${process.env.CHAT_MODEL ?? 'llama3.2'}`)
-console.log(`  small:  ${process.env.SMALL_PROVIDER ?? process.env.CHAT_PROVIDER ?? _defaultProvider}  ${process.env.SMALL_BASE_URL ?? process.env.CHAT_BASE_URL ?? _defaultBase}  model=${process.env.SMALL_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2'}`)
-console.log(`  thinking: ${process.env.THINKING_PROVIDER ?? process.env.CHAT_PROVIDER ?? _defaultProvider}  ${process.env.THINKING_BASE_URL ?? process.env.CHAT_BASE_URL ?? _defaultBase}  model=${process.env.THINKING_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2'}`)
-console.log(`  embed:  ${process.env.EMBED_PROVIDER ?? process.env.CHAT_PROVIDER ?? _defaultProvider}  ${process.env.EMBED_BASE_URL ?? process.env.CHAT_BASE_URL ?? _defaultBase}  model=${process.env.EMBED_MODEL ?? 'nomic-embed-text'}  dims=${process.env.EMBED_DIMENSIONS ?? '1536'}  ctx=${process.env.EMBED_CONTEXT_TOKENS ?? '1024'}tok → ${EMBED_BATCH_CHARS}c/request, ${EMBED_MAX_INPUT_CHARS}c/vector`)
+for (const t of describeModels()) {
+  const embedInfo = t.role === 'embed'
+    ? `  dims=${process.env.EMBED_DIMENSIONS ?? '1536'}  ctx=${t.contextTokens}tok → ${EMBED_BATCH_CHARS}c/request, ${EMBED_MAX_INPUT_CHARS}c/vector`
+    : ''
+  console.log(`  ${t.role}:${' '.repeat(Math.max(1, 7 - t.role.length))}${t.provider}  ${t.baseURL}  model=${t.model}${embedInfo}`)
+}
 console.log(`  searxng: ${process.env.SEARXNG_URL ?? 'http://localhost:4000'}`)
 if (process.env.IMAGE_BASE_URL) {
   const imageDir = imageStorageDir()
@@ -163,7 +162,7 @@ async function preflight() {
     console.warn(`  [preflight] searxng unreachable at ${searxngUrl} — search will fail`)
   }
 
-  const chatBase = process.env.CHAT_BASE_URL ?? process.env.BASE_URL ?? 'http://localhost:11434/api'
+  const chatBase = modelTarget('chat').baseURL
   try {
     const res = await fetch(chatBase, { signal: AbortSignal.timeout(3000) })
     if (res.status < 500) console.log(`  [preflight] chat LLM OK`)

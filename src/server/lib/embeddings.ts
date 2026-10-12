@@ -1,8 +1,7 @@
 import { embed, embedMany } from 'ai'
-import { getEmbeddingModel, EMBED_BATCH_CHARS, EMBED_MAX_INPUT_CHARS } from './llm.ts'
+import { getEmbeddingModel, modelTarget, targetLabel, EMBED_BATCH_CHARS, EMBED_MAX_INPUT_CHARS } from './llm.ts'
 import { timed } from './log.ts'
 
-const EMBED_TARGET = `${process.env.EMBED_BASE_URL ?? process.env.CHAT_BASE_URL ?? process.env.BASE_URL ?? 'openai'} model=${process.env.EMBED_MODEL ?? 'nomic-embed-text'}`
 
 /** How much of one string becomes one vector — a *quality* bound, see llm.ts.
  *
@@ -39,7 +38,7 @@ function bound(text: string): string {
 }
 
 export async function embedText(text: string): Promise<number[]> {
-  return timed('embed', EMBED_TARGET, async () => {
+  return timed('embed', targetLabel(modelTarget('embed')), async () => {
     const { embedding } = await embed({ model: getEmbeddingModel(), value: bound(text) })
     return embedding
   })
@@ -78,7 +77,7 @@ export async function embedTexts(texts: string[]): Promise<number[][]> {
   // the whole point of the split — raising the server's context buys bigger batches without
   // quietly making each vector blurrier.
   const batches = batchByTotalChars(texts.map(bound), EMBED_BATCH_CHARS)
-  return timed('embed', `${EMBED_TARGET} ×${texts.length}${batches.length > 1 ? ` in ${batches.length} batches` : ''}`, async () => {
+  return timed('embed', `${targetLabel(modelTarget('embed'))} ×${texts.length}${batches.length > 1 ? ` in ${batches.length} batches` : ''}`, async () => {
     const out: number[][] = []
     // Serial rather than parallel: these servers are usually a single local process, and firing
     // every batch at once is how a working configuration turns into timeouts under load.

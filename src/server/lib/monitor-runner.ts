@@ -112,7 +112,6 @@ async function runMonitorForUser(
 
   console.log(`  [monitor] running "${monitor.name}" for user=${userId}`)
   const sessionId = randomUUID()
-  const focusMode = monitor.focusMode as 'flash' | 'balanced' | 'thorough'
 
   let feedItems: SearchResult[] | undefined
   if (monitor.feedSources) {
@@ -130,7 +129,8 @@ async function runMonitorForUser(
     userId,
     title: monitor.name,
     promptText: monitor.promptText,
-    focusMode: ['flash', 'balanced', 'thorough'].includes(focusMode) ? focusMode : 'balanced',
+    // Anything else, including a flash monitor saved before flash was withdrawn, runs as balanced.
+    focusMode: monitor.focusMode === 'thorough' ? 'thorough' : 'balanced',
     spaceId: monitor.spaceId ?? undefined,
     feedItems,
   })

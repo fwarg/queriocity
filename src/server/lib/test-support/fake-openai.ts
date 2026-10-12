@@ -6,6 +6,12 @@
  *  (textDelta -> text, args/result -> input/output) still fails these tests, whereas a
  *  typecheck would not. */
 
+import type { ModelTarget } from '../llm.ts'
+
+/** A chat-role target pointing at a fake server, for code that takes the turn's model as a parameter. */
+export const fakeTarget = (baseURL: string, contextTokens = 8192): ModelTarget =>
+  ({ role: 'chat', provider: 'openai', baseURL, apiKey: 't', model: 'm', contextTokens, configured: true })
+
 export interface ScriptedStep {
   /** Text deltas emitted for this step, in order. */
   text?: string[]

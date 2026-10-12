@@ -7,7 +7,7 @@
  *  the capability exists. */
 
 import { describe, test, expect, afterEach } from 'bun:test'
-import { startFakeOpenAI, type ScriptedStep } from './test-support/fake-openai.ts'
+import { startFakeOpenAI, fakeTarget, type ScriptedStep } from './test-support/fake-openai.ts'
 import { envOverride } from './test-support/env-override.ts'
 
 let fake: ReturnType<typeof startFakeOpenAI> | null = null
@@ -32,9 +32,8 @@ async function toolNamesOffered(locked: boolean): Promise<string[][]> {
   process.env.SEARXNG_URL = searxng.url
   fake = startFakeOpenAI([{ text: ['An answer from the document.'] }])
 
-  const { createOpenAI } = await import('@ai-sdk/openai')
   const { runResearcher } = await import('./researcher.ts')
-  const model = createOpenAI({ baseURL: fake.baseURL, apiKey: 't' }).chat('m')
+  const model = fakeTarget(fake.baseURL)
 
   const res = await runResearcher({
     messages: [{ role: 'user', content: 'what does the attached contract say about termination?' }],
@@ -72,9 +71,8 @@ describe('locked space', () => {
     searxng = startFakeSearxng()
     process.env.SEARXNG_URL = searxng.url
     fake = startFakeOpenAI([{ text: ['Answer.'] }])
-    const { createOpenAI } = await import('@ai-sdk/openai')
     const { runResearcher } = await import('./researcher.ts')
-    const model = createOpenAI({ baseURL: fake.baseURL, apiKey: 't' }).chat('m')
+    const model = fakeTarget(fake.baseURL)
     const res = await runResearcher({
       messages: [{ role: 'user', content: 'q' }],
       focusMode: 'balanced', userId: 'u1', model, spaceId: 'space-1', locked: true,
@@ -111,9 +109,8 @@ describe('locked space with SPEJAREN_TRUSTED', () => {
     undoEnv = envOverride({ SEARXNG_URL: searxng.url, SPEJAREN_URL: spejaren.url, SPEJAREN_TRUSTED: trusted })
     fake = startFakeOpenAI(script)
 
-    const { createOpenAI } = await import('@ai-sdk/openai')
     const { runResearcher } = await import('./researcher.ts')
-    const model = createOpenAI({ baseURL: fake.baseURL, apiKey: 't' }).chat('m')
+    const model = fakeTarget(fake.baseURL)
     const res = await runResearcher({
       messages: [{ role: 'user', content: 'what do small sites say about bee keeping?' }],
       focusMode: 'balanced', userId: 'u1', model, spaceId: 'space-1', locked: true,

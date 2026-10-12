@@ -181,6 +181,8 @@ export const sv: Catalog = {
   'guide.readMore': 'Läs mer',
   'guide.tryOne': 'Prova en:',
   'guide.newHere': 'Ny här? Läs guiden',
+  'guide.loadFailed': 'Guiden kunde inte laddas — troligen har appen uppdaterats sedan sidan öppnades.',
+  'guide.reload': 'Ladda om sidan',
   'guide.example1': 'Vad har hänt inom AI-reglering den här månaden?',
   'guide.example2': 'Jämför värmepump och fjärrvärme för ett 50-talshus',
   'guide.example3': 'Förklara enkelt vad en vektordatabas är',

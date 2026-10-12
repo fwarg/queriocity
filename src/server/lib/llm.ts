@@ -57,7 +57,19 @@ export const CHARS_PER_TOKEN = parseFloat(process.env.CHARS_PER_TOKEN ?? '') || 
 export const estimateTokens = (s: string): number => Math.ceil(s.length / CHARS_PER_TOKEN)
 export const tokensToChars = (tokens: number): number => Math.floor(tokens * CHARS_PER_TOKEN)
 
-const SMALL_MODEL_CONTEXT_TOKENS = parseInt(process.env.SMALL_MODEL_CONTEXT_TOKENS ?? '4096')
+export type ModelRole = 'chat' | 'small' | 'thinking' | 'embed'
+
+const CONTEXT_ENV: Record<ModelRole, string> = {
+  chat: 'CONTEXT_TOKEN_LIMIT', small: 'SMALL_MODEL_CONTEXT_TOKENS', thinking: 'CONTEXT_TOKEN_LIMIT', embed: 'EMBED_CONTEXT_TOKENS',
+}
+// The thinking model has no context setting of its own; it shares the chat model's.
+const DEFAULT_CONTEXT_TOKENS: Record<ModelRole, number> = { chat: 8192, small: 4096, thinking: 8192, embed: 1024 }
+
+/** Declared context window of a role's model, in tokens. */
+const contextTokensFor = (role: ModelRole): number =>
+  parseInt(process.env[CONTEXT_ENV[role]] ?? '', 10) || DEFAULT_CONTEXT_TOKENS[role]
+
+const SMALL_MODEL_CONTEXT_TOKENS = contextTokensFor('small')
 // Usable input budget for one small-model call, in chars: reserves 30% of its context for the
 // system prompt + output.
 export const SMALL_MODEL_INPUT_CHARS = Math.floor(SMALL_MODEL_CONTEXT_TOKENS * 0.7 * CHARS_PER_TOKEN)
@@ -82,7 +94,7 @@ export const SMALL_MODEL_INPUT_CHARS = Math.floor(SMALL_MODEL_CONTEXT_TOKENS * 0
  *  ~2500 chars is about 600 tokens at CHARS_PER_TOKEN — inside the 512–1024 band the research
  *  recommends, and above the 2000-char chunks in files/ingest.ts so stored vectors are never
  *  clipped. */
-const EMBED_CONTEXT_TOKENS = parseInt(process.env.EMBED_CONTEXT_TOKENS ?? '', 10) || 1024
+const EMBED_CONTEXT_TOKENS = contextTokensFor('embed')
 export const EMBED_BATCH_CHARS = Math.floor(EMBED_CONTEXT_TOKENS * 0.9 * CHARS_PER_TOKEN)
 
 // EMBED_MAX_CHARS is the superseded name; honoured so an existing setting keeps working, and it
@@ -97,38 +109,59 @@ export const EMBED_MAX_INPUT_CHARS = Math.min(EMBED_QUALITY_CHARS, EMBED_BATCH_C
 // import order — the same trap search/providers/searxng.ts documents, and the reason a test could not point the
 // chat model at a stub server. Providers are memoised per resolved target so the per-call cost
 // stays a Map lookup.
-const chatConfig = (): ProviderConfig => ({
-  provider: process.env.CHAT_PROVIDER ?? process.env.BASE_PROVIDER ?? 'openai',
-  baseURL: process.env.CHAT_BASE_URL ?? process.env.BASE_URL ?? 'http://localhost:11434/api',
-  apiKey: process.env.CHAT_API_KEY,
-})
+export const DEFAULT_BASE_URL = 'http://localhost:11434/api'
+export const DEFAULT_CHAT_MODEL = 'llama3.2'
+export const DEFAULT_EMBED_MODEL = 'nomic-embed-text'
 
-const embedConfig = (): ProviderConfig => {
-  const chat = chatConfig()
+/** Where a role's model lives and what it is. The one place model env vars are read. */
+export interface ModelTarget extends ProviderConfig {
+  role: ModelRole
+  model: string
+  contextTokens: number
+  /** The role names its own model rather than borrowing the chat model (or the embed default). */
+  configured: boolean
+}
+
+const ROLE_ENV_PREFIX: Record<Exclude<ModelRole, 'chat'>, string> = { small: 'SMALL', thinking: 'THINKING', embed: 'EMBED' }
+
+function chatTarget(): ModelTarget {
   return {
-    provider: process.env.EMBED_PROVIDER ?? chat.provider,
-    baseURL: process.env.EMBED_BASE_URL ?? chat.baseURL,
-    apiKey: process.env.EMBED_API_KEY ?? chat.apiKey,
+    role: 'chat',
+    provider: process.env.CHAT_PROVIDER ?? process.env.BASE_PROVIDER ?? 'openai',
+    baseURL: process.env.CHAT_BASE_URL ?? process.env.BASE_URL ?? DEFAULT_BASE_URL,
+    apiKey: process.env.CHAT_API_KEY,
+    model: process.env.CHAT_MODEL ?? DEFAULT_CHAT_MODEL,
+    contextTokens: contextTokensFor('chat'),
+    configured: true,
   }
 }
 
-const smallConfig = (): ProviderConfig => {
-  const chat = chatConfig()
+/** A role's resolved model config; every unset field falls back to the chat model's. */
+export function modelTarget(role: ModelRole): ModelTarget {
+  const chat = chatTarget()
+  if (role === 'chat') return chat
+  const prefix = ROLE_ENV_PREFIX[role]
+  const model = process.env[`${prefix}_MODEL`]
   return {
-    provider: process.env.SMALL_PROVIDER ?? chat.provider,
-    baseURL: process.env.SMALL_BASE_URL ?? chat.baseURL,
-    apiKey: process.env.SMALL_API_KEY ?? chat.apiKey,
+    role,
+    provider: process.env[`${prefix}_PROVIDER`] ?? chat.provider,
+    baseURL: process.env[`${prefix}_BASE_URL`] ?? chat.baseURL,
+    apiKey: process.env[`${prefix}_API_KEY`] ?? chat.apiKey,
+    model: model ?? (role === 'embed' ? DEFAULT_EMBED_MODEL : chat.model),
+    contextTokens: contextTokensFor(role),
+    configured: model !== undefined,
   }
 }
 
-const thinkingConfig = (): ProviderConfig => {
-  const chat = chatConfig()
-  return {
-    provider: process.env.THINKING_PROVIDER ?? chat.provider,
-    baseURL: process.env.THINKING_BASE_URL ?? chat.baseURL,
-    apiKey: process.env.THINKING_API_KEY ?? chat.apiKey,
-  }
-}
+/** Every role's target, for startup logs, admin checks and the locked-space warning. */
+export const describeModels = (): ModelTarget[] =>
+  (['chat', 'small', 'thinking', 'embed'] as const).map(role => modelTarget(role))
+
+/** Short `<url> model=<name>` label for log lines. */
+export const targetLabel = (t: ModelTarget): string => `${t.baseURL} model=${t.model}`
+
+/** The model flash mode runs on: the small model when FLASH_MODEL=small, else the chat model. */
+export const flashTarget = (): ModelTarget => modelTarget(process.env.FLASH_MODEL === 'small' ? 'small' : 'chat')
 
 const providers = new Map<string, ReturnType<typeof createOpenAI>>()
 function provider(config: ProviderConfig) {
@@ -144,31 +177,34 @@ function provider(config: ProviderConfig) {
 // `.chat(...)` rather than `provider(...)`: from @ai-sdk/openai v2 the bare call means the
 // OpenAI *Responses* API (/v1/responses), which self-hosted backends — LiteLLM, llama.cpp,
 // Ollama's /v1 — do not implement. They speak Chat Completions, so pin to it explicitly.
-export function getChatModel() {
-  return provider(chatConfig()).chat(process.env.CHAT_MODEL ?? 'llama3.2')
+export const languageModel = (t: ModelTarget) => provider(t).chat(t.model)
+
+/** Background helpers (titles, reformulation, memory, summaries) use these and always run locally. */
+export const getChatModel = () => languageModel(modelTarget('chat'))
+export const getSmallModel = () => languageModel(modelTarget('small'))
+export const getThinkingModel = () => languageModel(modelTarget('thinking'))
+export const getFlashModel = () => languageModel(flashTarget())
+
+/** The models that answer one user turn. Resolved once per request and passed down, so a turn can
+ *  run on a different model than the background helpers — the hook for per-request model choice. */
+export interface TurnModels {
+  chat: ModelTarget
+  /** The chat model when no thinking model is configured. */
+  thinking: ModelTarget
+  flash: ModelTarget
 }
 
-export function getSmallModel() {
-  return provider(smallConfig()).chat(process.env.SMALL_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2')
+/** The env-configured local models for a turn: the default, and the only set monitors use. */
+export function localTurnModels(): TurnModels {
+  const chat = modelTarget('chat')
+  const thinking = modelTarget('thinking')
+  return { chat, thinking: thinking.configured ? thinking : chat, flash: flashTarget() }
 }
 
-export function getThinkingModel() {
-  return provider(thinkingConfig()).chat(process.env.THINKING_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2')
-}
-
-export function getThinkingModelOrFallback() {
-  if (!process.env.THINKING_MODEL) {
-    console.warn('[llm] THINKING_MODEL not set — falling back to CHAT_MODEL for thinking')
-    return getChatModel()
-  }
-  return getThinkingModel()
-}
-
-export function getFlashModel() {
-  return process.env.FLASH_MODEL === 'small' ? getSmallModel() : getChatModel()
-}
+/** The thinking model, or the chat model when none is configured (config-check warns at startup). */
+export const getThinkingModelOrFallback = () => languageModel(localTurnModels().thinking)
 
 export function getEmbeddingModel(): EmbeddingModel {
-  const model = process.env.EMBED_MODEL ?? 'nomic-embed-text'
-  return provider(embedConfig()).textEmbeddingModel(model) as EmbeddingModel
+  const t = modelTarget('embed')
+  return provider(t).textEmbeddingModel(t.model) as EmbeddingModel
 }

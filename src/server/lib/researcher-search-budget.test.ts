@@ -2,7 +2,7 @@
  *  queries beyond it are not run — asserted on the wire, against fake model and SearXNG servers. */
 
 import { describe, test, expect, afterEach } from 'bun:test'
-import { startFakeOpenAI } from './test-support/fake-openai.ts'
+import { startFakeOpenAI, fakeTarget } from './test-support/fake-openai.ts'
 import { envOverride } from './test-support/env-override.ts'
 import type { SearchBudget } from './search/index.ts'
 
@@ -28,9 +28,8 @@ async function research(searchBudget: SearchBudget) {
   ])
   cleanups.push(() => fake.stop())
 
-  const { createOpenAI } = await import('@ai-sdk/openai')
   const { runResearcher } = await import('./researcher.ts')
-  const model = createOpenAI({ baseURL: fake.baseURL, apiKey: 't' }).chat('m')
+  const model = fakeTarget(fake.baseURL)
   const res = await runResearcher({ messages: [{ role: 'user', content: 'tell me about bees' }], focusMode: 'balanced', userId: 'u1', model, searchBudget })
   for await (const part of res.stream) void part
 

@@ -805,7 +805,7 @@ Open **Settings** from the bottom of the sidebar. Settings are saved per user.
 | **About you** | Off by default. Keeps a short list of facts about you that apply in *every* chat, space or not, and lets you build it by hand or from a reviewed scan of your recent chats. See [Memory about you](#memory-about-you). |
 | **Language** | Interface language, with a flag selector. Also offered on the sign-up form, so a new account starts in the right language. Signed out, the login page follows your browser's language (or your last choice on this device). This changes the interface only — the assistant still answers in whatever language you write in. See [Languages](#languages). |
 | **Font size** | UI font size: Small (15 px), Normal (17 px), Large (19 px), XL (21 px). Sizes scale up automatically on narrow viewports. |
-| **Theme** | Dark (default), Light, or E-ink: black on white with no animations, for e-paper readers such as Boox. Remembered in the browser too, so the sign-in screen uses it. |
+| **Theme** | Dark (default), Light, or E-ink: black on white with no animations, for e-paper readers such as Boox. Colour stays only where it carries meaning (graph topics, mode badges, errors), in strong hues that read as tints on a colour panel and distinct greys on a mono one. Remembered in the browser too, so the sign-in screen uses it. |
 | **Timezone** | IANA timezone (e.g. `Europe/Stockholm`) used when scheduling monitors at a specific hour of the day. Defaults to server time (UTC in Docker) if not set. |
 | **Export** | **Download vault (.zip)**: your notes and resources as an Obsidian vault. Tick *Also include every chat and the images generated in them* for a full export: `Chats/` holds one markdown file per chat (each turn under *You* / *Assistant*, sources listed), `Images/` the generated images they show, and a note's *saved from chat* links to its chat file. The app keeps only the text of uploads, not the original files. One markdown file per item named by its title, so `[[links]]` resolve (titles with characters a file name can't hold are renamed, links rewritten to match and the original kept as an alias); `Notes/` and `Resources/` folders; tags, spaces and collections, dates, source URL, "made from" and the chat a note was saved from in YAML frontmatter. Uploaded files and pages are included as their extracted text. |
 | **Password** | Change your password. Requires the current one; the new one needs 8+ characters with upper and lower case, a digit and a symbol. Changing it signs out your other devices but keeps the current session. |
@@ -1118,7 +1118,7 @@ It is **off by default**, and deliberately narrower than space memory:
 Each monitor has:
 
 - A **prompt** — the query sent to the model on each run
-- A **research mode** — Flash, Balanced, or Thorough
+- A **research mode** — Balanced or Thorough. Flash is not offered: it never searches, so a fixed prompt would get much the same answer every run
 - A **schedule** — how often to run (e.g. every 6 hours, daily, weekly)
 - An optional **run time** — for daily/weekly monitors, the hour of day to run (e.g. 02:00)
 - A **keep count** — rolling window; older runs are pruned automatically once the limit is reached (default 3)
