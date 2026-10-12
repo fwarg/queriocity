@@ -12,7 +12,7 @@ import { DEFAULT_MAX_URL_CONTEXT_CHARS, MIN_URL_CONTEXT_CHARS, SCRAPE_MAX_CHARS 
 import { randomUUID, randomInt } from 'crypto'
 import { hashPassword } from '../lib/auth.ts'
 import { authMiddleware, adminMiddleware, type AppEnv } from '../middleware/auth.ts'
-import { getChatModel, getSmallModel, getThinkingModel, getEmbeddingModel } from '../lib/llm.ts'
+import { getChatModel, getSmallModel, getThinkingModel, getEmbeddingModel, modelTarget } from '../lib/llm.ts'
 import { rerank, rerankEnabled } from '../lib/reranker.ts'
 import { runDream, deleteMemoryEmbeddings } from '../lib/memory.ts'
 import { deleteFileChunks } from '../lib/vector-cleanup.ts'
@@ -270,20 +270,17 @@ adminRouter.get('/models-test', async (c) => {
     }
   }
 
-  const chatModel = process.env.CHAT_MODEL ?? 'llama3.2'
-  const smallModel = process.env.SMALL_MODEL ?? chatModel
-  const thinkingModel = process.env.THINKING_MODEL
-  const embedModel = process.env.EMBED_MODEL ?? 'nomic-embed-text'
+  const thinking = modelTarget('thinking')
   const rerankModel = process.env.RERANK_MODEL
 
-  await testChat('chat', chatModel, getChatModel)
-  await testChat('small', smallModel, getSmallModel)
-  if (thinkingModel) {
-    await testChat('thinking', thinkingModel, getThinkingModel, 2000)
+  await testChat('chat', modelTarget('chat').model, getChatModel)
+  await testChat('small', modelTarget('small').model, getSmallModel)
+  if (thinking.configured) {
+    await testChat('thinking', thinking.model, getThinkingModel, 2000)
   } else {
     results.push({ role: 'thinking', model: '(not configured — uses chat)', ok: true, ms: 0, info: 'skipped' })
   }
-  await testEmbed(embedModel)
+  await testEmbed(modelTarget('embed').model)
 
   if (rerankEnabled() && rerankModel) {
     const t = performance.now()

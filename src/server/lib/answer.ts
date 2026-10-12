@@ -1,5 +1,5 @@
 import { streamText } from 'ai'
-import { getChatModel, RESEARCH_MAX_TOKENS } from './llm.ts'
+import { languageModel, RESEARCH_MAX_TOKENS, type ModelTarget } from './llm.ts'
 import type { SearchResult } from './search/index.ts'
 
 /** Pieces shared by every path that produces an answer — the interactive chat route and the
@@ -33,7 +33,8 @@ const SYNTHESIS_SNIPPET_CHARS = 500
  *  either because it spent its steps on tool calls, or because everything it emitted was markup
  *  the extractor dropped. Deliberately insistent about not refusing: the model is being handed
  *  results it may not recognise, and its instinct is to disclaim rather than report them. */
-export function runSynthesisFallback({ results, messages, memoryBlock, abortSignal }: {
+export function runSynthesisFallback({ model, results, messages, memoryBlock, abortSignal }: {
+  model: ModelTarget
   results: SearchResult[]
   messages: Array<{ role: 'user' | 'assistant'; content: string }>
   memoryBlock?: string
@@ -47,7 +48,7 @@ export function runSynthesisFallback({ results, messages, memoryBlock, abortSign
     : ''
 
   return streamText({
-    model: getChatModel(),
+    model: languageModel(model),
     system: `Today's date is ${new Date().toISOString().split('T')[0]}. Synthesize the search results below into a direct answer with inline [N] citations using the index values shown.
 Do NOT say you lack internet access, and do NOT decline to answer: the results below are what the search returned, and reporting them partially is far more useful than refusing.
 If they only partially cover the question, answer with whatever they do support and close with one short line naming what was missing. Never reply with only a refusal.

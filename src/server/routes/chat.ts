@@ -17,7 +17,7 @@ import { readFile } from 'node:fs/promises'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { webSearch, webSearchMulti, hasTrustedSearch, newSearchBudget, type SearchResult, type EngineError, type SearchBudget } from '../lib/search/index.ts'
 import { fetchUrlAllPages, processUrlsForContext, describeOutcome, DEFAULT_MAX_URL_CONTEXT_CHARS, type UrlOutcome, type ProcessedUrl } from '../lib/fetch-url.ts'
-import { getFlashModel, getChatModel, getThinkingModelOrFallback, RESEARCH_MAX_TOKENS, DEFAULT_MEMORY_TOKEN_BUDGET } from '../lib/llm.ts'
+import { languageModel, localTurnModels, modelTarget, getFlashModel, RESEARCH_MAX_TOKENS, DEFAULT_MEMORY_TOKEN_BUDGET } from '../lib/llm.ts'
 import { ThinkExtractor } from '../lib/think-extractor.ts'
 import { findLeakedToolCall, stripLeakedToolCall, coerceNumericArgs, findLeakedImageMarkdown, stripLeakedImageMarkdown } from '../lib/leaked-tool-call.ts'
 import { CitationNormalizer } from '../lib/citation-normalizer.ts'
@@ -254,6 +254,8 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   // Pins travel as indices, so the messages handed to the model carry nothing but role and content.
   const pinned: ReadonlySet<number> = new Set(requestMsgs.flatMap((m, i) => m.pinned ? [i] : []))
   const msgs = requestMsgs.map(({ role, content }) => ({ role, content }))
+  // Resolved once so every phase of this turn runs on the same models.
+  const models = localTurnModels()
   // The latest report is also stored with the chat, so the meter reappears when it is reopened.
   let lastContext: ContextReport | undefined
   const sendContext = (out: SSEStream, report: ContextReport) => {
@@ -363,17 +365,17 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
       const flashSystem = FLASH_SYSTEM
         + (customPrompt ? `\n\nAdditional instructions:\n${customPrompt}` : '')
         + (resolvedMemoryBlock ? '\n\n' + resolvedMemoryBlock : '')
-      const ctxLimit = parseInt(process.env.CONTEXT_TOKEN_LIMIT ?? '8192')
+      const ctxLimit = models.flash.contextTokens
       const flashHistory = trimMessages(msgs, Math.floor(ctxLimit * CONTEXT_RESERVE_FRACTION), flashSystem, pinned)
       await sendContext(out, flashHistory.report)
       const result = streamText({
-        model: getFlashModel(),
+        model: languageModel(models.flash),
         abortSignal,
         system: flashSystem,
         messages: flashHistory.messages,
         maxOutputTokens: FLASH_MAX_TOKENS,
       })
-      // Flash runs getFlashModel(), which is the full chat model unless FLASH_MODEL=small — the
+      // Flash runs models.flash, which is the full chat model unless FLASH_MODEL=small — the
       // same reasoning-capable model whose <think> output the other modes strip. Flash has no
       // thinking channel, so the extracted thinking is discarded rather than shown.
       const flashExtractor = new ThinkExtractor()
@@ -541,14 +543,16 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     let fullContent = ''
     return streamRun(c, run, async (out) => {
       await out.writeSSE({ data: JSON.stringify({ type: 'session', sessionId: sid }) })
-      const ctxLimit = parseInt(process.env.CONTEXT_TOKEN_LIMIT ?? '8192')
+      // Always the local chat model, not the turn's: a per-request model choice does not apply to image mode.
+      const imageModel = modelTarget('chat')
+      const ctxLimit = imageModel.contextTokens
       const imageHistory = trimMessages(msgs, Math.floor(ctxLimit * CONTEXT_RESERVE_FRACTION), imageSystem, pinned)
       await sendContext(out, imageHistory.report)
       // Not the flash model: this drives a multi-step tool loop with five typed parameters, and
       // with FLASH_MODEL=small that is a small model doing the least reliable thing asked of it —
       // a misparsed size/steps degrades the image with no visible error.
       const result = streamText({
-        model: getChatModel(),
+        model: languageModel(imageModel),
         abortSignal,
         system: imageSystem,
         messages: imageHistory.messages,
@@ -762,7 +766,9 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
                        : false
     const useThinking: boolean = !!(parsedSettings.useThinking) && focusMode === 'thorough'
 
-    const ctxTokenLimit = parseInt(process.env.CONTEXT_TOKEN_LIMIT ?? '8192')
+    // URL text goes into the researcher's context, so it is budgeted against the model that runs it.
+    const researchModel = useThinking ? models.thinking : models.chat
+    const ctxTokenLimit = researchModel.contextTokens
     const estSystemChars = 500 + (memoryBlock?.length ?? 0) + (customPrompt?.length ?? 0)
     const estMsgsChars = msgs.reduce((s, m) => s + (typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content).length), 0)
     const urlBudgetChars = Math.max(0, contextCharBudget(ctxTokenLimit) - estSystemChars - estMsgsChars)
@@ -831,7 +837,6 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
           .join('\n')
         await out.writeSSE({ data: JSON.stringify({ type: 'thinking', delta: snippets + '\n\n' }) })
       }
-      const researchModel = useThinking ? getThinkingModelOrFallback() : getChatModel()
       const allSources: SearchResult[] = [...(initialResults ?? [])]
       // URLs the user pointed at or the model chose to read in full — kept out of the reranker's
       // prune below so a page that was explicitly fetched always reaches the writer.
@@ -878,7 +883,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
 
       // Phase 2: Writer pass
       await emitStep({ kind: 'write' })
-      const writerResult = runWriter(finalSources, msgs, researcherNotes.slice(0, RESEARCHER_NOTES_CAP), abortSignal, { customPrompt, memoryBlock })
+      const writerResult = runWriter(models.chat, finalSources, msgs, researcherNotes.slice(0, RESEARCHER_NOTES_CAP), abortSignal, { customPrompt, memoryBlock })
       const writerExtractor = new ThinkExtractor()
       const writerCitations = new CitationNormalizer()
       const emitAnswer = async (raw: string) => {
@@ -934,7 +939,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         sources.push(toStoredSource(s))
         await out.writeSSE({ data: JSON.stringify({ type: 'sources', sources: [s] }) })
       }
-      const result = await runResearcher({ messages: msgs, focusMode, userId, model: getChatModel(), abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, onUrlRead: emitUrlOutcome, onSource: emitFetchedSource, searchBudget, requestApproval, locked, pinned, onContext: r => sendContext(out, r) })
+      const result = await runResearcher({ messages: msgs, focusMode, userId, model: models.chat, abortSignal, initialQueries, initialResults, prefetchedUrls: processedUrls, customPrompt, hasFiles, spaceId, sessionId: sid, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory, searchCategory, onEngineErrors: warnEngineErrors, onUrlRead: emitUrlOutcome, onSource: emitFetchedSource, searchBudget, requestApproval, locked, pinned, onContext: r => sendContext(out, r) })
       const extractor = new ThinkExtractor()   // see thoroughExtractor above
       const citations = new CitationNormalizer()
 
@@ -978,6 +983,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
         fullContent = ''
         await emitStep({ kind: 'write', detail: 'Synthesising answer…', detailKey: 'log.synthesise' })
         const fallback = runSynthesisFallback({
+          model: models.chat,
           results: [...(initialResults ?? []), ...fullSources],
           messages: msgs,
           memoryBlock,

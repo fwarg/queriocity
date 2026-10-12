@@ -6,7 +6,7 @@ import { db, chatSessions, messages, users, parseSettings, getAppSetting } from 
 import { eq } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { webSearch, webSearchMulti, newSearchBudget, type SearchResult, type SearchBudget } from './search/index.ts'
-import { getFlashModel, getChatModel, DEFAULT_MEMORY_TOKEN_BUDGET } from './llm.ts'
+import { languageModel, localTurnModels, DEFAULT_MEMORY_TOKEN_BUDGET } from './llm.ts'
 import { buildMemoryBlock, extractMemoriesPostHoc, userMemoryBlockIfEnabled, joinMemoryBlocks, toMemorySources } from './memory.ts'
 import { ThinkExtractor } from './think-extractor.ts'
 import { CitationNormalizer } from './citation-normalizer.ts'
@@ -35,6 +35,8 @@ export async function executeChatAndSave({
   feedItems?: SearchResult[]
 }): Promise<void> {
   const msgs = [{ role: 'user' as const, content: promptText }]
+  // Monitors always run on the local models, whatever the user may pick for interactive chats.
+  const models = localTurnModels()
   const now = new Date()
 
   await db.insert(chatSessions)
@@ -60,8 +62,8 @@ export async function executeChatAndSave({
     const system = FLASH_SYSTEM
       + (customPrompt ? `\n\nAdditional instructions:\n${customPrompt}` : '')
       + (memBlock ? '\n\n' + memBlock : '')
-    const result = streamText({ model: getFlashModel(), system, messages: msgs, maxOutputTokens: FLASH_MAX_TOKENS })
-    // getFlashModel() is the full chat model unless FLASH_MODEL=small, so the same <think> markup
+    const result = streamText({ model: languageModel(models.flash), system, messages: msgs, maxOutputTokens: FLASH_MAX_TOKENS })
+    // models.flash is the full chat model unless FLASH_MODEL=small, so the same <think> markup
     // the other paths strip can appear here too.
     const flashExtractor = new ThinkExtractor()
     for await (const part of result.stream) {
@@ -97,14 +99,14 @@ export async function executeChatAndSave({
 
     if (focusMode === 'thorough') {
       const researcherResult = await runResearcher({
-        messages: msgs, focusMode, userId, model: getChatModel(), abortSignal: AbortSignal.timeout(300_000),
+        messages: msgs, focusMode, userId, model: models.chat, abortSignal: AbortSignal.timeout(300_000),
         initialQueries, initialResults, customPrompt, hasFiles: false, spaceId, sessionId, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory, searchBudget,
       })
       let researcherNotes = ''
       const { sources: rs } = await collectStream(researcherResult, s => { researcherNotes += s })
       sources.push(...rs)
 
-      const writerResult = runWriter(rs, msgs, researcherNotes.slice(0, RESEARCHER_NOTES_CAP), AbortSignal.timeout(300_000), { customPrompt, memoryBlock })
+      const writerResult = runWriter(models.chat, rs, msgs, researcherNotes.slice(0, RESEARCHER_NOTES_CAP), AbortSignal.timeout(300_000), { customPrompt, memoryBlock })
       const writerExtractor = new ThinkExtractor()
       for await (const part of writerResult.stream) {
         if (part.type === 'text-delta') {
@@ -117,7 +119,7 @@ export async function executeChatAndSave({
     } else {
       sources.push(...(initialResults ?? []))
       const researcherResult = await runResearcher({
-        messages: msgs, focusMode, userId, model: getChatModel(), abortSignal: AbortSignal.timeout(300_000),
+        messages: msgs, focusMode, userId, model: models.chat, abortSignal: AbortSignal.timeout(300_000),
         initialQueries, initialResults, customPrompt, hasFiles: false, spaceId, sessionId, memoryBlock, userMemoryEnabled: parsedSettings.userMemory === true, fetchSummarize, urlContextChars, compressHistory,
         maxStepsOverride: 6, searchBudget,
       })
@@ -132,6 +134,7 @@ export async function executeChatAndSave({
         console.warn(`  [monitor-executor] no answer (finish=${finishReason}, ${fullContent.length} chars) — running no-tool synthesis fallback`)
         fullContent = ''
         const fallback = runSynthesisFallback({
+          model: models.chat,
           results: rs,
           messages: msgs,
           memoryBlock,

@@ -5,18 +5,14 @@
 import '../lib/test-support/test-env.ts'
 
 import { describe, test, expect, afterEach } from 'bun:test'
-import { startFakeOpenAI } from './test-support/fake-openai.ts'
+import { startFakeOpenAI, fakeTarget } from './test-support/fake-openai.ts'
 import { runWriter } from './writer.ts'
 import type { SearchResult } from './search/index.ts'
 
 let fake: ReturnType<typeof startFakeOpenAI> | null = null
-const originalBaseUrl = process.env.CHAT_BASE_URL
 afterEach(() => {
   fake?.stop()
   fake = null
-  // Restore: CHAT_BASE_URL is process-wide and bun test runs every file in one process.
-  if (originalBaseUrl === undefined) delete process.env.CHAT_BASE_URL
-  else process.env.CHAT_BASE_URL = originalBaseUrl
 })
 
 const sources = (n: number, contentChars = 40): SearchResult[] =>
@@ -26,14 +22,17 @@ const sources = (n: number, contentChars = 40): SearchResult[] =>
     content: `s${i + 1}-`.padEnd(contentChars, 'x'),
   }))
 
-/** Runs the writer against the fake server and returns the request body it sent. */
-async function captureRequest(...args: Parameters<typeof runWriter>) {
+type WriterArgs = Parameters<typeof runWriter> extends [unknown, ...infer Rest] ? Rest : never
+
+/** Runs the writer on a fake model with `contextTokens` of context; returns the request body it sent. */
+async function captureWithContext(contextTokens: number, ...args: WriterArgs) {
   fake = startFakeOpenAI([{ text: ['ok'] }])
-  process.env.CHAT_BASE_URL = fake.baseURL
-  const result = runWriter(...args)
+  const result = runWriter(fakeTarget(fake.baseURL, contextTokens), ...args)
   await result.consumeStream()
   return fake.requests[0] as { messages: Array<{ role: string; content: string }> }
 }
+
+const captureRequest = (...args: WriterArgs) => captureWithContext(8192, ...args)
 
 const systemOf = (req: { messages: Array<{ role: string; content: string }> }) =>
   req.messages.find(m => m.role === 'system')?.content ?? ''
@@ -86,18 +85,12 @@ describe('runWriter', () => {
   // Previously the writer inlined every source at full length with no cap, so a long thorough
   // run could overflow its context with no error anywhere.
   test('drops the weakest sources rather than overflowing the context', async () => {
-    const originalCtx = process.env.CONTEXT_TOKEN_LIMIT
-    process.env.CONTEXT_TOKEN_LIMIT = '1000'   // ~3200 chars of budget
-    try {
-      const user = userOf(await captureRequest(sources(40, 2000), QUESTION))
-      const kept = user.match(/<result /g)?.length ?? 0
-      expect(kept).toBeGreaterThan(0)
-      expect(kept).toBeLessThan(40)
-      // Sources arrive best-first from the reranker, so what survives is the top of the list.
-      expect(user).toContain('Source 1')
-    } finally {
-      if (originalCtx === undefined) delete process.env.CONTEXT_TOKEN_LIMIT
-      else process.env.CONTEXT_TOKEN_LIMIT = originalCtx
-    }
+    // ~3200 chars of budget, from the model's own context window.
+    const user = userOf(await captureWithContext(1000, sources(40, 2000), QUESTION))
+    const kept = user.match(/<result /g)?.length ?? 0
+    expect(kept).toBeGreaterThan(0)
+    expect(kept).toBeLessThan(40)
+    // Sources arrive best-first from the reranker, so what survives is the top of the list.
+    expect(user).toContain('Source 1')
   })
 })

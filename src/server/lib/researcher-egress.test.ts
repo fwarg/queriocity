@@ -5,7 +5,7 @@
  *  never went out and the model was told so. */
 
 import { describe, test, expect, afterEach } from 'bun:test'
-import { startFakeOpenAI } from './test-support/fake-openai.ts'
+import { startFakeOpenAI, fakeTarget } from './test-support/fake-openai.ts'
 
 let fake: ReturnType<typeof startFakeOpenAI> | null = null
 let searxng: { url: string; stop: () => void } | null = null
@@ -42,9 +42,8 @@ async function toolResultsFor(
   process.env.SEARXNG_URL = searxng.url
   fake = startFakeOpenAI([{ toolCall: { id: 'c1', ...call } }, { text: ['Done.'] }])
 
-  const { createOpenAI } = await import('@ai-sdk/openai')
   const { runResearcher } = await import('./researcher.ts')
-  const model = createOpenAI({ baseURL: fake.baseURL, apiKey: 't' }).chat('m')
+  const model = fakeTarget(fake.baseURL)
 
   const res = await runResearcher({
     messages: [{ role: 'user', content: 'summarise the attached document' }],

@@ -7,7 +7,7 @@
 
 import './test-support/test-env.ts'
 import { describe, test, expect, afterEach } from 'bun:test'
-import { startFakeOpenAI } from './test-support/fake-openai.ts'
+import { startFakeOpenAI, fakeTarget } from './test-support/fake-openai.ts'
 import type { SearchResult } from './search/index.ts'
 
 let fake: ReturnType<typeof startFakeOpenAI> | null = null
@@ -32,9 +32,8 @@ async function run(opts: {
   process.env.SEARXNG_URL = searxng.url
   fake = startFakeOpenAI([{ text: ['The page says X [1].'] }])
 
-  const { createOpenAI } = await import('@ai-sdk/openai')
   const { runResearcher } = await import('./researcher.ts')
-  const model = createOpenAI({ baseURL: fake.baseURL, apiKey: 't' }).chat('m')
+  const model = fakeTarget(fake.baseURL)
 
   const sources: Array<SearchResult & { index: number }> = []
   const res = await runResearcher({

@@ -1,5 +1,5 @@
 import { generateText } from 'ai'
-import { getSmallModel } from './llm.ts'
+import { getSmallModel, modelTarget, targetLabel } from './llm.ts'
 import { queryTerms, querySimilarity, hasMangledToken, QUERY_DUPLICATE_THRESHOLD } from './query-terms.ts'
 
 const PRONOUN_RE = /\b(it|its|they|their|them|this|that|these|those|he|him|his|she|her|hers|we|us|our|ours)\b/i
@@ -110,8 +110,7 @@ export async function reformulateLLM(
 
   const userPrompt = `Rewrite into ${count} complementary search queries covering different angles, one per line: "${contextPart}"`
 
-  const SMALL_TARGET = `${process.env.SMALL_BASE_URL ?? process.env.CHAT_BASE_URL ?? process.env.BASE_URL ?? 'openai'} model=${process.env.SMALL_MODEL ?? process.env.CHAT_MODEL ?? 'llama3.2'}`
-  console.log(`  [reformulate] ${SMALL_TARGET} mode=${mode} count=${count}`)
+  console.log(`  [reformulate] ${targetLabel(modelTarget('small'))} mode=${mode} count=${count}`)
   const start = performance.now()
 
   const timeout = AbortSignal.timeout(REFORMULATE_TIMEOUT_MS)

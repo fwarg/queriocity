@@ -1,5 +1,5 @@
 import { embed } from 'ai'
-import { getEmbeddingModel, EMBED_MAX_INPUT_CHARS, SMALL_MODEL_INPUT_CHARS } from './llm.ts'
+import { getEmbeddingModel, modelTarget, EMBED_MAX_INPUT_CHARS, SMALL_MODEL_INPUT_CHARS } from './llm.ts'
 import { IMAGE_API } from './image-store.ts'
 import { LARGEST_CHUNK_CHARS } from './files/ingest.ts'
 import { remoteModelEndpoints } from './space-lock.ts'
@@ -27,6 +27,9 @@ export function validateConfig(): void {
   }
   if (!process.env.SMALL_MODEL_CONTEXT_TOKENS) {
     warn('SMALL_MODEL_CONTEXT_TOKENS is unset, defaulting to 4096 — set it to the small model\'s real context, or summarisation calls may overflow it.')
+  }
+  if (!modelTarget('thinking').configured) {
+    warn('THINKING_MODEL is unset — thorough mode with thinking and memory consolidation use CHAT_MODEL instead.')
   }
   if (process.env.ALLOWED_ORIGIN === '*') {
     warn('ALLOWED_ORIGIN=* allows any website to call this API with the user\'s cookie. Unset it for same-origin only.')

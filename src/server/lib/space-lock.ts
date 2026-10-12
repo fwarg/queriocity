@@ -2,6 +2,7 @@ import { isIP } from 'node:net'
 import { and, count, eq, ne } from 'drizzle-orm'
 import { db, spaces, chatSessions, spaceMemories, spaceFiles, monitors } from './db.ts'
 import { isBlockedAddress } from './url-guard.ts'
+import { describeModels } from './llm.ts'
 
 /** Locked ("offline") spaces: no web search, no URL fetching, no image generation.
  *
@@ -108,11 +109,16 @@ export async function hasOtherLockedSpace(userId: string, exceptId: string): Pro
  *  Reuses `isBlockedAddress` from url-guard, which classifies loopback/RFC1918/CGNAT/link-local.
  *  That function exists to decide what a fetch must *not* reach; inverted, it is exactly "this is
  *  my own machine or my own network". Hostnames are not resolved: this is advisory text on a
- *  settings screen, not an access decision, and a DNS round-trip per request is not worth it. */
+ *  settings screen, not an access decision, and a DNS round-trip per request is not worth it.
+ *  Every model role is checked: the small and thinking models are sent the document too. */
 export function remoteModelEndpoints(): string[] {
   const remote: string[] = []
-  for (const name of ['CHAT_BASE_URL', 'EMBED_BASE_URL', 'RERANK_BASE_URL', 'BASE_URL'] as const) {
-    const raw = process.env[name]
+  const rerankURL = process.env.RERANK_BASE_URL ?? process.env.BASE_URL
+  const endpoints: Array<[string, string | undefined]> = [
+    ...describeModels().map(t => [t.role, t.baseURL] as [string, string]),
+    ['rerank', rerankURL],
+  ]
+  for (const [name, raw] of endpoints) {
     if (!raw) continue
     let host: string
     try { host = new URL(raw).hostname.replace(/^\[|\]$/g, '').toLowerCase() } catch { continue }

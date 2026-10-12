@@ -10,7 +10,7 @@
  *  the whole point is what the model is offered. */
 
 import { describe, test, expect, afterEach } from 'bun:test'
-import { startFakeOpenAI } from './test-support/fake-openai.ts'
+import { startFakeOpenAI, fakeTarget } from './test-support/fake-openai.ts'
 
 // A stub SearXNG so web_search resolves without touching the network.
 function startFakeSearxng() {
@@ -42,9 +42,8 @@ async function requestsPerStep(focusMode: 'balanced' | 'thorough', maxSteps?: nu
   // Enough scripted search steps to exhaust the budget, then prose.
   fake = startFakeOpenAI([...Array.from({ length: scripted - 1 }, (_, i) => searchStep(i)), { text: ['Final answer.'] }])
 
-  const { createOpenAI } = await import('@ai-sdk/openai')
   const { runResearcher } = await import('./researcher.ts')
-  const model = createOpenAI({ baseURL: fake.baseURL, apiKey: 't' }).chat('m')
+  const model = fakeTarget(fake.baseURL)
 
   const res = await runResearcher({
     messages: [{ role: 'user', content: 'a question' }],

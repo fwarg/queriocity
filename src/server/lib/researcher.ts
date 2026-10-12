@@ -1,6 +1,6 @@
 import { streamText, tool, type ToolSet, stepCountIs, hasToolCall } from 'ai'
 import { z } from 'zod'
-import type { LanguageModel, ModelMessage } from 'ai'
+import type { ModelMessage } from 'ai'
 import { webSearchMulti, trustedSearchMulti, hasTrustedSearch, hasFallbackSearch, type SearchResult, type EngineError, type SearchBudget } from './search/index.ts'
 import { searchUploads } from './files/uploads-search.ts'
 import { saveMemories, saveUserMemory, searchSpaceHistory, MEMORY_MAX_SOURCES, type MemorySource } from './memory.ts'
@@ -13,7 +13,7 @@ import { queryTerms, querySimilarity, QUERY_DUPLICATE_THRESHOLD } from './query-
 import {
   applyEgressMode, createEgressContext, inspectQuery, inspectUrl, noteSeenUrl, noteTaint, noteUserText,
 } from './egress-guard.ts'
-import { RESEARCH_MAX_TOKENS, CHARS_PER_TOKEN, tokensToChars } from './llm.ts'
+import { languageModel, RESEARCH_MAX_TOKENS, CHARS_PER_TOKEN, tokensToChars, type ModelTarget } from './llm.ts'
 
 
 export const SYSTEM_PROMPTS = {
@@ -144,7 +144,8 @@ export interface ResearchOptions {
   messages: Array<{ role: 'user' | 'assistant'; content: string }>
   focusMode: 'balanced' | 'thorough'
   userId: string
-  model: LanguageModel
+  /** The model that runs the tool loop; its context window sets every budget below. */
+  model: ModelTarget
   abortSignal?: AbortSignal
   initialQueries?: string[]
   initialResults?: SearchResult[]
@@ -256,7 +257,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
   const reserveWritingStep = focusMode === 'balanced' && maxSteps > 1
   const isFinalStep = (stepNumber: number) => stepNumber >= maxSteps - 1
   const start = performance.now()
-  console.log(`  [chat] model=${(model as LanguageModel & { modelId?: string }).modelId ?? String(model)} focusMode=${focusMode} maxSteps=${maxSteps}`)
+  console.log(`  [chat] model=${model.model} focusMode=${focusMode} maxSteps=${maxSteps}`)
 
   let system = `Today's date is ${new Date().toISOString().split('T')[0]}.`
   if (memoryBlock) system += '\n\n' + memoryBlock
@@ -322,7 +323,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
     }
   }
 
-  const ctxLimit = parseInt(process.env.CONTEXT_TOKEN_LIMIT ?? '8192')
+  const ctxLimit = model.contextTokens
   // Reserve TOOL_BUDGET_RESERVE_FRACTION of the total input budget for tools up front, so history
   // trimming can never eat into the room tools need, however long the conversation is.
   const totalInputTokens = ctxLimit * CONTEXT_RESERVE_FRACTION
@@ -537,7 +538,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
       const toolChars = initialToolBudget - toolBudgetRemaining
       if (toolChars > 0) await onContext?.({ ...contextReport, searchChars: contextReport.searchChars + toolChars })
     },
-    model,
+    model: languageModel(model),
     abortSignal,
     system,
     messages: augmentedMessages,

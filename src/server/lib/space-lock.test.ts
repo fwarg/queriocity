@@ -2,7 +2,7 @@ import './test-support/test-env.ts'
 import { describe, expect, it, beforeEach, beforeAll } from 'bun:test'
 import { randomUUID } from 'node:crypto'
 import { db, users, spaces, chatSessions, spaceMemories, monitors } from './db.ts'
-import { canMoveChat, canUnlock, describeContents, isSpaceLocked, monitorsInSpace, sessionIdsInSpace } from './space-lock.ts'
+import { canMoveChat, canUnlock, describeContents, isSpaceLocked, monitorsInSpace, remoteModelEndpoints, sessionIdsInSpace } from './space-lock.ts'
 
 const USER = 'u-lock'
 
@@ -132,5 +132,23 @@ describe('monitorsInSpace', () => {
     const [space, other] = [await makeSpace(false), await makeSpace(false)]
     await makeMonitor(other)
     expect(await monitorsInSpace(space)).toBe(0)
+  })
+})
+
+describe('remoteModelEndpoints', () => {
+  it('reports a hosted small or thinking model, not only chat and embed', () => {
+    const saved = { small: process.env.SMALL_BASE_URL, thinking: process.env.THINKING_BASE_URL }
+    process.env.SMALL_BASE_URL = 'https://api.example.com/v1'
+    process.env.THINKING_BASE_URL = 'http://192.168.1.5:8080/v1'
+    try {
+      const remote = remoteModelEndpoints()
+      expect(remote).toContain('small=api.example.com')
+      expect(remote.some(r => r.startsWith('thinking='))).toBe(false)
+    } finally {
+      for (const [k, v] of [['SMALL_BASE_URL', saved.small], ['THINKING_BASE_URL', saved.thinking]] as const) {
+        if (v === undefined) delete process.env[k]
+        else process.env[k] = v
+      }
+    }
   })
 })

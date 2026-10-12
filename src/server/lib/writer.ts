@@ -1,5 +1,5 @@
 import { streamText } from 'ai'
-import { getChatModel, RESEARCH_MAX_TOKENS } from './llm.ts'
+import { languageModel, RESEARCH_MAX_TOKENS, type ModelTarget } from './llm.ts'
 import { contextCharBudget } from './trim-messages.ts'
 import type { SearchResult } from './search/index.ts'
 
@@ -55,6 +55,7 @@ function fitSources(sources: SearchResult[], budgetChars: number): { block: stri
  *  entire visible answer in thorough mode. Without them a user instruction like "always answer in
  *  Swedish" is honoured everywhere except the mode where it matters most. */
 export function runWriter(
+  model: ModelTarget,
   sources: SearchResult[],
   messages: Array<{ role: 'user' | 'assistant'; content: string }>,
   researcherNotes?: string,
@@ -78,7 +79,7 @@ export function runWriter(
   const question = `\n\nQuestion: ${lastUser?.content ?? ''}`
 
   // Everything except the sources block is fixed cost; the sources absorb whatever is left.
-  const ctxLimit = parseInt(process.env.CONTEXT_TOKEN_LIMIT ?? '8192')
+  const ctxLimit = model.contextTokens
   const budget = contextCharBudget(ctxLimit) - system.length - notesBlock.length - question.length - 'Research results:\n'.length
   const { block: sourcesBlock, used } = fitSources(sources, Math.max(0, budget))
   if (used < sources.length) {
@@ -88,7 +89,7 @@ export function runWriter(
   const userContent = `Research results:\n${sourcesBlock}${notesBlock}${question}`
 
   return streamText({
-    model: getChatModel(),
+    model: languageModel(model),
     abortSignal,
     system,
     messages: [{ role: 'user', content: userContent }],
