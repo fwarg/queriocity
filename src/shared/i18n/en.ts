@@ -185,6 +185,8 @@ export const en = {
   'guide.readMore': 'Read more',
   'guide.tryOne': 'Try one:',
   'guide.newHere': 'New here? Read the guide',
+  'guide.loadFailed': 'The guide could not be loaded — most likely the app was updated since this page was opened.',
+  'guide.reload': 'Reload the page',
   'guide.example1': 'What has happened in AI regulation this month?',
   'guide.example2': 'Compare heat pumps and district heating for a 1950s house',
   'guide.example3': 'Explain what a vector database is, simply',

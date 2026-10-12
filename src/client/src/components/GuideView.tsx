@@ -106,10 +106,12 @@ function GuidePanel({ initial, onClose, onNavigate }: {
   const [mod, setMod] = useState<GuideModule | null>(null)
   const [selected, setSelected] = useState<TopicId | null>(initial)
   const [query, setQuery] = useState('')
+  const [failed, setFailed] = useState(false)
 
   useEffect(() => {
     let alive = true
-    import('@shared/guide/index.ts').then(m => { if (alive) setMod(m) }).catch(() => {})
+    // Fails when the app was redeployed after this page loaded: the chunk's old hashed name is gone.
+    import('@shared/guide/index.ts').then(m => { if (alive) setMod(m) }).catch(() => { if (alive) setFailed(true) })
     return () => { alive = false }
   }, [])
 
@@ -144,7 +146,14 @@ function GuidePanel({ initial, onClose, onNavigate }: {
 
   return (
     <Modal title={t('nav.guide')} onClose={onClose} maxWidth="max-w-3xl">
-      {!guide || !mod ? (
+      {failed ? (
+        <div className="flex flex-col items-start gap-3">
+          <p className="text-sm text-gray-400">{t('guide.loadFailed')}</p>
+          <button onClick={() => window.location.reload()} className="px-4 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-sm font-medium">
+            {t('guide.reload')}
+          </button>
+        </div>
+      ) : !guide || !mod ? (
         <p className="text-sm text-gray-500">{t('common.loading')}</p>
       ) : (
         <div className="grid gap-4 md:grid-cols-[13rem_1fr]">
