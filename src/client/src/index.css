@@ -51,23 +51,23 @@ html[data-theme="light"] {
 
 html[data-theme="eink"] {
   color-scheme: light;
-  --color-gray-950: #fff; --color-gray-900: #fff; --color-gray-800: #f2f2f2; --color-gray-700: #e0e0e0; --color-gray-600: #c4c4c4;
+  --color-gray-950: #fff; --color-gray-900: #fff; --color-gray-800: #dcdcdc; --color-gray-700: #c4c4c4; --color-gray-600: #a8a8a8;
   --color-gray-500: #333; --color-gray-400: #000; --color-gray-300: #000; --color-gray-200: #000; --color-gray-100: #000; --color-gray-50: #000;
-  --color-red-100: #000; --color-red-200: #b91c1c; --color-red-300: #b91c1c; --color-red-400: #b91c1c; --color-red-500: #000; --color-red-600: #000; --color-red-700: #000; --color-red-800: #e8e8e8; --color-red-900: #f2f2f2; --color-red-950: #f2f2f2;
-  --color-orange-100: #000; --color-orange-200: #000; --color-orange-300: #000; --color-orange-400: #000; --color-orange-500: #000; --color-orange-600: #000; --color-orange-700: #000; --color-orange-800: #e8e8e8; --color-orange-900: #f2f2f2; --color-orange-950: #f2f2f2;
-  --color-amber-100: #000; --color-amber-200: #b45309; --color-amber-300: #b45309; --color-amber-400: #b45309; --color-amber-500: #000; --color-amber-600: #000; --color-amber-700: #000; --color-amber-800: #e8e8e8; --color-amber-900: #f2f2f2; --color-amber-950: #f2f2f2;
-  --color-yellow-100: #000; --color-yellow-200: #000; --color-yellow-300: #000; --color-yellow-400: #000; --color-yellow-500: #000; --color-yellow-600: #000; --color-yellow-700: #000; --color-yellow-800: #e8e8e8; --color-yellow-900: #f2f2f2; --color-yellow-950: #f2f2f2;
-  --color-green-100: #000; --color-green-200: #000; --color-green-300: #000; --color-green-400: #000; --color-green-500: #000; --color-green-600: #000; --color-green-700: #000; --color-green-800: #e8e8e8; --color-green-900: #f2f2f2; --color-green-950: #f2f2f2;
-  --color-emerald-100: #000; --color-emerald-200: #000; --color-emerald-300: #000; --color-emerald-400: #000; --color-emerald-500: #000; --color-emerald-600: #000; --color-emerald-700: #000; --color-emerald-800: #e8e8e8; --color-emerald-900: #f2f2f2; --color-emerald-950: #f2f2f2;
-  --color-teal-100: #000; --color-teal-200: #000; --color-teal-300: #000; --color-teal-400: #000; --color-teal-500: #000; --color-teal-600: #000; --color-teal-700: #000; --color-teal-800: #e8e8e8; --color-teal-900: #f2f2f2; --color-teal-950: #f2f2f2;
-  --color-cyan-100: #000; --color-cyan-200: #000; --color-cyan-300: #000; --color-cyan-400: #000; --color-cyan-500: #000; --color-cyan-600: #000; --color-cyan-700: #000; --color-cyan-800: #e8e8e8; --color-cyan-900: #f2f2f2; --color-cyan-950: #f2f2f2;
-  --color-sky-100: #000; --color-sky-200: #000; --color-sky-300: #000; --color-sky-400: #000; --color-sky-500: #000; --color-sky-600: #000; --color-sky-700: #000; --color-sky-800: #e8e8e8; --color-sky-900: #f2f2f2; --color-sky-950: #f2f2f2;
-  --color-blue-100: #000; --color-blue-200: #000; --color-blue-300: #000; --color-blue-400: #000; --color-blue-500: #000; --color-blue-600: #000; --color-blue-700: #000; --color-blue-800: #e8e8e8; --color-blue-900: #f2f2f2; --color-blue-950: #f2f2f2;
-  --color-indigo-100: #000; --color-indigo-200: #000; --color-indigo-300: #000; --color-indigo-400: #000; --color-indigo-500: #000; --color-indigo-600: #000; --color-indigo-700: #000; --color-indigo-800: #e8e8e8; --color-indigo-900: #f2f2f2; --color-indigo-950: #f2f2f2;
-  --color-violet-100: #000; --color-violet-200: #000; --color-violet-300: #000; --color-violet-400: #000; --color-violet-500: #000; --color-violet-600: #000; --color-violet-700: #000; --color-violet-800: #e8e8e8; --color-violet-900: #f2f2f2; --color-violet-950: #f2f2f2;
-  --color-purple-100: #000; --color-purple-200: #000; --color-purple-300: #000; --color-purple-400: #000; --color-purple-500: #000; --color-purple-600: #000; --color-purple-700: #000; --color-purple-800: #e8e8e8; --color-purple-900: #f2f2f2; --color-purple-950: #f2f2f2;
-  --color-pink-100: #000; --color-pink-200: #000; --color-pink-300: #000; --color-pink-400: #000; --color-pink-500: #000; --color-pink-600: #000; --color-pink-700: #000; --color-pink-800: #e8e8e8; --color-pink-900: #f2f2f2; --color-pink-950: #f2f2f2;
-  --color-rose-100: #000; --color-rose-200: #000; --color-rose-300: #000; --color-rose-400: #000; --color-rose-500: #000; --color-rose-600: #000; --color-rose-700: #000; --color-rose-800: #e8e8e8; --color-rose-900: #f2f2f2; --color-rose-950: #f2f2f2;
+  --color-red-100: #000; --color-red-200: #b91c1c; --color-red-300: #b91c1c; --color-red-400: #b91c1c; --color-red-500: #000; --color-red-600: #000; --color-red-700: #000; --color-red-800: #d4d4d4; --color-red-900: #dcdcdc; --color-red-950: #dcdcdc;
+  --color-orange-100: #000; --color-orange-200: #000; --color-orange-300: #000; --color-orange-400: #000; --color-orange-500: #000; --color-orange-600: #000; --color-orange-700: #000; --color-orange-800: #d4d4d4; --color-orange-900: #dcdcdc; --color-orange-950: #dcdcdc;
+  --color-amber-100: #000; --color-amber-200: #b45309; --color-amber-300: #b45309; --color-amber-400: #b45309; --color-amber-500: #000; --color-amber-600: #000; --color-amber-700: #000; --color-amber-800: #d4d4d4; --color-amber-900: #dcdcdc; --color-amber-950: #dcdcdc;
+  --color-yellow-100: #000; --color-yellow-200: #000; --color-yellow-300: #000; --color-yellow-400: #000; --color-yellow-500: #000; --color-yellow-600: #000; --color-yellow-700: #000; --color-yellow-800: #d4d4d4; --color-yellow-900: #dcdcdc; --color-yellow-950: #dcdcdc;
+  --color-green-100: #000; --color-green-200: #000; --color-green-300: #000; --color-green-400: #000; --color-green-500: #000; --color-green-600: #000; --color-green-700: #000; --color-green-800: #d4d4d4; --color-green-900: #dcdcdc; --color-green-950: #dcdcdc;
+  --color-emerald-100: #000; --color-emerald-200: #000; --color-emerald-300: #000; --color-emerald-400: #000; --color-emerald-500: #000; --color-emerald-600: #000; --color-emerald-700: #000; --color-emerald-800: #d4d4d4; --color-emerald-900: #dcdcdc; --color-emerald-950: #dcdcdc;
+  --color-teal-100: #000; --color-teal-200: #000; --color-teal-300: #000; --color-teal-400: #000; --color-teal-500: #000; --color-teal-600: #000; --color-teal-700: #000; --color-teal-800: #d4d4d4; --color-teal-900: #dcdcdc; --color-teal-950: #dcdcdc;
+  --color-cyan-100: #000; --color-cyan-200: #000; --color-cyan-300: #000; --color-cyan-400: #000; --color-cyan-500: #000; --color-cyan-600: #000; --color-cyan-700: #000; --color-cyan-800: #d4d4d4; --color-cyan-900: #dcdcdc; --color-cyan-950: #dcdcdc;
+  --color-sky-100: #000; --color-sky-200: #000; --color-sky-300: #000; --color-sky-400: #000; --color-sky-500: #000; --color-sky-600: #000; --color-sky-700: #000; --color-sky-800: #d4d4d4; --color-sky-900: #dcdcdc; --color-sky-950: #dcdcdc;
+  --color-blue-100: #000; --color-blue-200: #000; --color-blue-300: #000; --color-blue-400: #000; --color-blue-500: #000; --color-blue-600: #000; --color-blue-700: #000; --color-blue-800: #d4d4d4; --color-blue-900: #dcdcdc; --color-blue-950: #dcdcdc;
+  --color-indigo-100: #000; --color-indigo-200: #000; --color-indigo-300: #000; --color-indigo-400: #000; --color-indigo-500: #000; --color-indigo-600: #000; --color-indigo-700: #000; --color-indigo-800: #d4d4d4; --color-indigo-900: #dcdcdc; --color-indigo-950: #dcdcdc;
+  --color-violet-100: #000; --color-violet-200: #000; --color-violet-300: #000; --color-violet-400: #000; --color-violet-500: #000; --color-violet-600: #000; --color-violet-700: #000; --color-violet-800: #d4d4d4; --color-violet-900: #dcdcdc; --color-violet-950: #dcdcdc;
+  --color-purple-100: #000; --color-purple-200: #000; --color-purple-300: #000; --color-purple-400: #000; --color-purple-500: #000; --color-purple-600: #000; --color-purple-700: #000; --color-purple-800: #d4d4d4; --color-purple-900: #dcdcdc; --color-purple-950: #dcdcdc;
+  --color-pink-100: #000; --color-pink-200: #000; --color-pink-300: #000; --color-pink-400: #000; --color-pink-500: #000; --color-pink-600: #000; --color-pink-700: #000; --color-pink-800: #d4d4d4; --color-pink-900: #dcdcdc; --color-pink-950: #dcdcdc;
+  --color-rose-100: #000; --color-rose-200: #000; --color-rose-300: #000; --color-rose-400: #000; --color-rose-500: #000; --color-rose-600: #000; --color-rose-700: #000; --color-rose-800: #d4d4d4; --color-rose-900: #dcdcdc; --color-rose-950: #dcdcdc;
 }
 
 /* Colour that carries meaning — topics and node kinds in graphs, mode badges. Kept apart from the
@@ -95,7 +95,7 @@ html[data-theme="light"] {
 html[data-theme="eink"] {
   --viz-1: #1d4ed8; --viz-2: #f59e0b; --viz-3: #16a34a; --viz-4: #c026d3; --viz-5: #000;
   --viz-6: #8a8a8a; --viz-7: #8a8a8a; --viz-8: #8a8a8a;
-  --viz-other: #8a8a8a; --viz-dimmed: #e0e0e0;
+  --viz-other: #8a8a8a; --viz-dimmed: #c4c4c4;
   --viz-note: #f59e0b; --viz-file: #8a8a8a; --viz-chat: #1d4ed8;
   --mode-flash-bg: #fcd34d; --mode-flash-fg: #000;
   --mode-balanced-bg: #1d4ed8; --mode-balanced-fg: #fff;
@@ -203,7 +203,8 @@ html[data-theme="eink"] {
 }
 
 /* E-ink chat: a large inverted block ghosts and tires the eye, so the question is black on white
-   in a heavy frame. Classes doubled to outrank the white-on-fill rule above. */
+   in a heavy frame. The answer's light grey does not render on e-paper anyway, so it goes white.
+   Classes doubled to outrank the white-on-fill rule above. */
 html[data-theme="eink"] .chat-question.chat-question,
 html[data-theme="eink"] .chat-question.chat-question * {
   color: #000 !important;
@@ -211,6 +212,9 @@ html[data-theme="eink"] .chat-question.chat-question * {
 html[data-theme="eink"] .chat-question.chat-question {
   background: #fff;
   border: 2px solid #000;
+}
+html[data-theme="eink"] .chat-answer.chat-answer {
+  background: transparent;
 }
 
 /* Faint grey text and borders vanish on e-ink, whatever their shade. */

@@ -319,7 +319,7 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
         className={`w-full max-w-2xl min-w-0 overflow-x-hidden rounded-lg px-4 py-2 text-sm break-words ${
           msg.role === 'user'
             ? 'chat-question bg-blue-700 text-white whitespace-pre-wrap'
-            : 'bg-gray-800 text-gray-100'
+            : 'chat-answer bg-gray-800 text-gray-100'
         } ${ringClass}`}
       >
         {collapsible && (
