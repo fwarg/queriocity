@@ -43,8 +43,9 @@ export function MonitorEditor({ initial, spaces, timezone, onSave, onClose, isGl
   const [tab, setTab] = useState<'general' | 'sources'>('general')
   const [name, setName] = useState(initial?.name ?? '')
   const [promptText, setPromptText] = useState(initial?.promptText ?? '')
-  const [focusMode, setFocusMode] = useState<'flash' | 'balanced' | 'thorough'>(
-    (initial?.focusMode as 'flash' | 'balanced' | 'thorough') ?? 'balanced'
+  // Monitors run balanced or thorough only; a legacy flash monitor opens as balanced.
+  const [focusMode, setFocusMode] = useState<'balanced' | 'thorough'>(
+    initial?.focusMode === 'thorough' ? 'thorough' : 'balanced'
   )
   const initInterval = minutesToUnit(initial?.intervalMinutes ?? 1440)
   const [intervalValue, setIntervalValue] = useState(String(initInterval.value))
@@ -204,10 +205,9 @@ export function MonitorEditor({ initial, spaces, timezone, onSave, onClose, isGl
                 <label className="block text-xs text-gray-400 mb-1">{t('monitorEdit.mode')}</label>
                 <select
                   value={focusMode}
-                  onChange={e => setFocusMode(e.target.value as 'flash' | 'balanced' | 'thorough')}
+                  onChange={e => setFocusMode(e.target.value as 'balanced' | 'thorough')}
                   className="w-full rounded bg-gray-800 border border-gray-700 px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500"
                 >
-                  <option value="flash">{t('mode.flash')}</option>
                   <option value="balanced">{t('mode.balanced')}</option>
                   <option value="thorough">{t('mode.thorough')}</option>
                 </select>

@@ -44,8 +44,7 @@ async function flashBlocks(ctx: TurnContext) {
     ctx.spaceId ? getAppSetting('memory_token_budget', DEFAULT_MEMORY_TOKEN_BUDGET).then(Number) : Promise.resolve(Number(DEFAULT_MEMORY_TOKEN_BUDGET)),
     ctx.spaceId ? getAppSetting('space_rag_budget', '500').then(Number) : Promise.resolve(0),
   ])
-  // Monitors' flash runs have never retrieved space documents, only memories.
-  const effectiveRag = (ctx.settings.useSpaceRag !== false && !ctx.monitor) ? ragBudget : 0
+  const effectiveRag = (ctx.settings.useSpaceRag !== false) ? ragBudget : 0
   const scoped = ctx.spaceId
     ? await buildMemoryBlock(ctx.spaceId, memoryBudget, effectiveRag, query, ctx.includeFileIds, ctx.includeMemoryIds)
     : { block: '', fileSources: [] }

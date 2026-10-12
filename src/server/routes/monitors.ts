@@ -8,6 +8,7 @@ import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { runMonitorNow, computeNextRunAt } from '../lib/monitor-runner.ts'
 import { COLLECTION_HOLDS_NO_CHATS, isCollection, ownsSpace } from '../lib/ownership.ts'
 import { isSpaceLocked } from '../lib/space-lock.ts'
+import { MONITOR_MODES } from '../lib/chat-executor.ts'
 
 export const monitorsRouter = new Hono<AppEnv>()
 
@@ -16,7 +17,7 @@ monitorsRouter.use('*', authMiddleware)
 const monitorBody = z.object({
   name: z.string().min(1).max(100),
   promptText: z.string().min(1).max(10000),
-  focusMode: z.enum(['flash', 'balanced', 'thorough']).default('balanced'),
+  focusMode: z.enum(MONITOR_MODES).default('balanced'),
   intervalMinutes: z.number().int().min(60),
   keepCount: z.number().int().min(1).max(20).default(3),
   preferredHour: z.number().int().min(0).max(23).nullable().optional(),

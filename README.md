@@ -1118,7 +1118,7 @@ It is **off by default**, and deliberately narrower than space memory:
 Each monitor has:
 
 - A **prompt** — the query sent to the model on each run
-- A **research mode** — Flash, Balanced, or Thorough
+- A **research mode** — Balanced or Thorough. Flash is not offered: it never searches, so a fixed prompt would get much the same answer every run
 - A **schedule** — how often to run (e.g. every 6 hours, daily, weekly)
 - An optional **run time** — for daily/weekly monitors, the hour of day to run (e.g. 02:00)
 - A **keep count** — rolling window; older runs are pruned automatically once the limit is reached (default 3)

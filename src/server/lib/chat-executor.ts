@@ -10,6 +10,10 @@ import { nullStream } from './researcher-stream.ts'
 import { EMPTY_ANSWER_MESSAGE } from './answer.ts'
 import { runTurn, createSink, type TurnContext } from './turn/index.ts'
 
+/** Flash is not offered: it never searches, so a fixed prompt on a schedule would repeat itself. */
+export const MONITOR_MODES = ['balanced', 'thorough'] as const
+export type MonitorMode = typeof MONITOR_MODES[number]
+
 const MONITOR_TIMEOUT_MS = 300_000
 const MONITOR_MAX_STEPS = 6
 
@@ -27,7 +31,7 @@ export async function executeChatAndSave({
   userId: string
   title: string
   promptText: string
-  focusMode: 'flash' | 'balanced' | 'thorough'
+  focusMode: MonitorMode
   spaceId?: string
   feedItems?: SearchResult[]
 }): Promise<void> {
@@ -54,8 +58,8 @@ export async function executeChatAndSave({
   // No client and no approval prompt: the researcher refuses any outbound request the egress guard flags.
   const result = await runTurn(ctx, createSink(nullStream))
 
-  // Flash leaves citations as written; normalising here also strips any trailing reference list
-  // the model added against instructions. Idempotent for the modes that already normalised.
+  // Normalised again as a final pass: it also strips any trailing reference list the model added
+  // against instructions, and is idempotent over text the turn already normalised.
   const normalizer = new CitationNormalizer()
   let fullContent = normalizer.process(result.content) + normalizer.flush()
 

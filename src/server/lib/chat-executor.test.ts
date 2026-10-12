@@ -9,6 +9,7 @@ import { startFakeOpenAI, type ScriptedStep } from './test-support/fake-openai.t
 import { startFakeSearxng } from './test-support/fake-searxng.ts'
 import { envOverride } from './test-support/env-override.ts'
 import type { SearchResult } from './search/index.ts'
+import type { MonitorMode } from './chat-executor.ts'
 
 const { db, users, messages, chatSessions, setAppSetting } = await import('./db.ts')
 const { eq } = await import('drizzle-orm')
@@ -36,7 +37,7 @@ function useModel(script: ScriptedStep[]) {
   return fake
 }
 
-async function run(sessionId: string, focusMode: 'flash' | 'balanced' | 'thorough', promptText: string, feedItems?: SearchResult[]) {
+async function run(sessionId: string, focusMode: MonitorMode, promptText: string, feedItems?: SearchResult[]) {
   await executeChatAndSave({ sessionId, userId: USER, title: 'Monitor', promptText, focusMode, feedItems })
   const rows = await db.select().from(messages).where(eq(messages.sessionId, sessionId))
   const answer = rows.find(r => r.role === 'assistant')
@@ -48,17 +49,13 @@ async function run(sessionId: string, focusMode: 'flash' | 'balanced' | 'thoroug
 }
 
 describe('monitor executor', () => {
-  test('flash stores the answer without sources', async () => {
-    useModel([{ text: ['<think>hm</think>Flash ', 'answer.'] }])
-    expect(await run('exec-flash', 'flash', 'What is a bee?')).toEqual({ roles: ['user', 'assistant'], content: 'Flash answer.', sources: [] })
-    const session = await db.select().from(chatSessions).where(eq(chatSessions.id, 'exec-flash')).get()
-    expect(session?.title).toBe('Monitor')
-  })
-
   test('balanced pre-searches and stores the answer with its sources and snippets', async () => {
-    const model = useModel([{ text: ['Bees make honey [1].'] }])
-    const { content, sources } = await run('exec-balanced', 'balanced', 'What do bees make?')
+    const model = useModel([{ text: ['<think>hm</think>Bees make ', 'honey [1].'] }])
+    const { roles, content, sources } = await run('exec-balanced', 'balanced', 'What do bees make?')
+    expect(roles).toEqual(['user', 'assistant'])
     expect(content).toBe('Bees make honey [1].')
+    const session = await db.select().from(chatSessions).where(eq(chatSessions.id, 'exec-balanced')).get()
+    expect(session?.title).toBe('Monitor')
     expect(searxng.queries).toContain('What do bees make?')
     expect(model.callCount).toBe(1)
     expect(sources[0]).toEqual({ title: 'Result 1', url: 'https://site1.example.com/page', content: 'Snippet about result 1.' })
@@ -105,8 +102,9 @@ describe('monitor executor', () => {
   })
 
   test('saves a failure notice rather than an empty answer', async () => {
+    // The researcher and the synthesis fallback both come back empty.
     useModel([{ text: [''] }])
-    const { content } = await run('exec-empty', 'flash', 'Anything?')
+    const { content } = await run('exec-empty', 'balanced', 'Anything?')
     const { EMPTY_ANSWER_MESSAGE } = await import('./answer.ts')
     expect(content).toBe(EMPTY_ANSWER_MESSAGE)
   })
