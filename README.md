@@ -1184,6 +1184,10 @@ No migration step is needed. The schema is created and upgraded automatically at
 idempotent DDL in `src/server/lib/db.ts`, so the database file appears on first run and
 existing installs pick up new columns when you restart.
 
+### Cloud models (in progress)
+
+**Admin → Cloud models** holds a catalogue of OpenAI-compatible cloud providers (presets for OpenRouter and Cortecs) and the models offered from them. Each model has a role (chat, thinking or both), a context size, an output cap and prices per million tokens; each provider has a currency and an optional monthly cap. API keys stay in env: a provider names its key's env var, which must end in `_API_KEY` (e.g. `OPENROUTER_API_KEY=...`). **Test** sends one tiny request with the saved settings. Users cannot pick these models yet — per-user access, budgets and the picker are still to come.
+
 ## Environment variables
 
 Create a `.env` file (or set variables in your shell):

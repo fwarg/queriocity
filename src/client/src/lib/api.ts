@@ -2,6 +2,7 @@ import type { Lang } from '@shared/i18n/index.ts'
 import type { Theme } from '@shared/theme.ts'
 import type { ContextReport } from '@shared/context.ts'
 import type { ApiErrorBody, ErrorCode } from '@shared/error-codes.ts'
+import type { LlmCatalogue } from '@shared/llm-catalogue.ts'
 
 /** An API failure, carrying the server's stable code where the route sends one.
  *
@@ -641,6 +642,35 @@ export async function saveSearchPolicy(policy: SearchPolicy): Promise<void> {
 
 export async function resetSearchPolicy(): Promise<void> {
   await fetch(`${BASE}/admin/search`, { method: 'DELETE' })
+}
+
+export async function fetchLlmCatalogue(): Promise<{ catalogue: LlmCatalogue; keys: Record<string, boolean> }> {
+  const res = await fetch(`${BASE}/admin/llm-catalogue`)
+  if (!res.ok) throw await apiError(res, 'Could not load the model catalogue')
+  return res.json()
+}
+
+export async function saveLlmCatalogue(catalogue: LlmCatalogue): Promise<void> {
+  const res = await fetch(`${BASE}/admin/llm-catalogue`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(catalogue),
+  })
+  if (res.ok) return
+  // zValidator answers with the ZodError, whose message is the issue list as JSON; surface the first.
+  const body = await res.json().catch(() => null) as { error?: { message?: string } } | null
+  let issue: { message: string; path?: unknown[] } | undefined
+  try { issue = JSON.parse(body?.error?.message ?? '')[0] } catch { issue = undefined }
+  throw new Error(issue ? `Rejected: ${issue.path?.length ? `${issue.path.join('.')}: ` : ''}${issue.message}` : 'The catalogue was rejected — check the values')
+}
+
+export async function testCloudModel(modelId: string): Promise<{ ok: boolean; ms: number; info: string }> {
+  const res = await fetch(`${BASE}/admin/llm-catalogue/test`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ modelId }),
+  })
+  return res.json()
 }
 
 export async function triggerDream(): Promise<void> {
