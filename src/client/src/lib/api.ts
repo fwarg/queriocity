@@ -2,7 +2,7 @@ import type { Lang } from '@shared/i18n/index.ts'
 import type { Theme } from '@shared/theme.ts'
 import type { ContextReport } from '@shared/context.ts'
 import type { ApiErrorBody, ErrorCode } from '@shared/error-codes.ts'
-import type { LlmCatalogue } from '@shared/llm-catalogue.ts'
+import type { LlmCatalogue, LlmAccess, UsageRow } from '@shared/llm-catalogue.ts'
 
 /** An API failure, carrying the server's stable code where the route sends one.
  *
@@ -671,6 +671,21 @@ export async function testCloudModel(modelId: string): Promise<{ ok: boolean; ms
     body: JSON.stringify({ modelId }),
   })
   return res.json()
+}
+
+export async function fetchLlmUsage(): Promise<{ month: string; access: Record<string, LlmAccess>; usage: UsageRow[] }> {
+  const res = await fetch(`${BASE}/admin/llm-usage`)
+  if (!res.ok) throw await apiError(res, 'Could not load cloud usage')
+  return res.json()
+}
+
+export async function saveLlmAccess(userId: string, access: LlmAccess): Promise<void> {
+  const res = await fetch(`${BASE}/admin/users/${userId}/llm-access`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(access),
+  })
+  if (!res.ok) throw await apiError(res, 'Cloud access was not saved')
 }
 
 export async function triggerDream(): Promise<void> {

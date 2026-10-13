@@ -1186,7 +1186,7 @@ existing installs pick up new columns when you restart.
 
 ### Cloud models (in progress)
 
-**Admin → Cloud models** holds a catalogue of OpenAI-compatible cloud providers (presets for OpenRouter and Cortecs) and the models offered from them. Each model has a role (chat, thinking or both), a context size, an output cap and prices per million tokens; each provider has a currency and an optional monthly cap. API keys stay in env: a provider names its key's env var, which must end in `_API_KEY` (e.g. `OPENROUTER_API_KEY=...`). **Test** sends one tiny request with the saved settings. Users cannot pick these models yet — per-user access, budgets and the picker are still to come.
+**Admin → Cloud models** holds a catalogue of OpenAI-compatible cloud providers (presets for OpenRouter and Cortecs) and the models offered from them. Each model has a role (chat, thinking or both), a context size, an output cap and prices per million tokens; each provider has a currency and an optional monthly cap. API keys stay in env: a provider names its key's env var, which must end in `_API_KEY` (e.g. `OPENROUTER_API_KEY=...`). **Test** sends one tiny request with the saved settings. Under **Users and spend** on the same tab, cloud models are switched on per user, with a monthly budget per provider (blank = no access to it), next to this month's spend per user and against each provider's cap. Spend is priced from the catalogue's token prices and recorded for every cloud call, the admin's test included; months are UTC. Users cannot pick these models yet — the per-message picker is still to come.
 
 ## Environment variables
 

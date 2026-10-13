@@ -21,6 +21,13 @@ export interface ScriptedStep {
   toolCall?: { id: string; name: string; args: unknown }
   /** Wait this long before answering, e.g. to stop a run while the model is still "thinking". */
   delayMs?: number
+  /** Token counts to report; streamed as a final usage chunk, as providers do. */
+  usage?: { prompt_tokens: number; completion_tokens: number }
+}
+
+const wireUsage = ({ usage }: ScriptedStep) => {
+  const { prompt_tokens = 0, completion_tokens = 0 } = usage ?? {}
+  return { prompt_tokens, completion_tokens, total_tokens: prompt_tokens + completion_tokens }
 }
 
 /** Serves one scripted step per request, in order, so a multi-step tool loop can be driven. */
@@ -66,7 +73,7 @@ export function startFakeOpenAI(script: ScriptedStep[]) {
             },
             finish_reason: step.toolCall ? 'tool_calls' : 'stop',
           }],
-          usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+          usage: wireUsage(step),
         })
       }
 
@@ -98,6 +105,9 @@ export function startFakeOpenAI(script: ScriptedStep[]) {
         parts.push(chunk({}, 'tool_calls'))
       } else {
         parts.push(chunk({}, 'stop'))
+      }
+      if (step.usage) {
+        parts.push(`data: ${JSON.stringify({ id: 'chatcmpl-test', object: 'chat.completion.chunk', created: 0, model: 'fake-model', choices: [], usage: wireUsage(step) })}\n\n`)
       }
       parts.push('data: [DONE]\n\n')
 

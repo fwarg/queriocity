@@ -1,5 +1,5 @@
 import { createOpenAI } from '@ai-sdk/openai'
-import type { EmbeddingModel } from 'ai'
+import { wrapLanguageModel, type EmbeddingModel, type LanguageModelMiddleware } from 'ai'
 
 interface ProviderConfig {
   provider: string
@@ -120,6 +120,14 @@ export interface ModelTarget extends ProviderConfig {
   contextTokens: number
   /** The role names its own model rather than borrowing the chat model (or the embed default). */
   configured: boolean
+  /** Called with each call's token usage; set for metered (cloud) targets only. */
+  onUsage?: (usage: TokenUsage) => void
+}
+
+export interface TokenUsage {
+  inputTokens: number
+  /** Includes reasoning tokens, which providers bill as output. */
+  outputTokens: number
 }
 
 const ROLE_ENV_PREFIX: Record<Exclude<ModelRole, 'chat'>, string> = { small: 'SMALL', thinking: 'THINKING', embed: 'EMBED' }
@@ -177,7 +185,40 @@ function provider(config: ProviderConfig) {
 // `.chat(...)` rather than `provider(...)`: from @ai-sdk/openai v2 the bare call means the
 // OpenAI *Responses* API (/v1/responses), which self-hosted backends — LiteLLM, llama.cpp,
 // Ollama's /v1 — do not implement. They speak Chat Completions, so pin to it explicitly.
-export const languageModel = (t: ModelTarget) => provider(t).chat(t.model)
+export function languageModel(t: ModelTarget) {
+  const model = provider(t).chat(t.model)
+  return t.onUsage ? wrapLanguageModel({ model, middleware: usageMiddleware(t.onUsage) }) : model
+}
+
+/** Reports each call's usage once it is known: from the result, or from a stream's finish part.
+ *  At the model layer rather than per call site, so every step of a tool loop is counted. */
+function usageMiddleware(onUsage: (u: TokenUsage) => void): LanguageModelMiddleware {
+  const report = (u: { inputTokens: { total: number | undefined }; outputTokens: { total: number | undefined } }) => {
+    try {
+      onUsage({ inputTokens: u.inputTokens.total ?? 0, outputTokens: u.outputTokens.total ?? 0 })
+    } catch (e) {
+      console.error('  [llm] usage recording failed:', e)
+    }
+  }
+  return {
+    specificationVersion: 'v4',
+    wrapGenerate: async ({ doGenerate }) => {
+      const result = await doGenerate()
+      report(result.usage)
+      return result
+    },
+    wrapStream: async ({ doStream }) => {
+      const result = await doStream()
+      const stream = result.stream.pipeThrough(new TransformStream({
+        transform(part, controller) {
+          if (part.type === 'finish') report(part.usage)
+          controller.enqueue(part)
+        },
+      }))
+      return { ...result, stream }
+    },
+  }
+}
 
 /** Background helpers (titles, reformulation, memory, summaries) use these and always run locally. */
 export const getChatModel = () => languageModel(modelTarget('chat'))

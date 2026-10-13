@@ -14,6 +14,8 @@ import { hashPassword } from '../lib/auth.ts'
 import { authMiddleware, adminMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { getChatModel, getSmallModel, getThinkingModel, getEmbeddingModel, modelTarget, languageModel } from '../lib/llm.ts'
 import { loadCatalogue, saveCatalogue, keyStatus, cloudTarget, catalogueSchema } from '../lib/llm-catalogue.ts'
+import { allLlmAccess, setLlmAccess, monthlyLlmUsage, meteredUsage } from '../lib/llm-usage.ts'
+import { monthKey } from '../lib/search/usage.ts'
 import { rerank, rerankEnabled } from '../lib/reranker.ts'
 import { runDream, deleteMemoryEmbeddings } from '../lib/memory.ts'
 import { deleteFileChunks } from '../lib/vector-cleanup.ts'
@@ -330,7 +332,29 @@ adminRouter.post('/llm-catalogue/test', zValidator('json', z.object({ modelId: z
   const target = cloudTarget(await loadCatalogue(), modelId)
   if (!target) return c.json({ ok: false, ms: 0, info: 'Not in the saved catalogue, or its API key env var is not set' } satisfies ProbeResult)
   console.log(`  [admin] testing cloud model ${modelId} (${target.model}) at ${target.baseURL}`)
-  return c.json(await probeChat(languageModel(target), Math.min(target.entry.maxOutputTokens, CLOUD_PROBE_MAX_TOKENS)))
+  // Metered like any other call: the probe is paid for, and counts towards the provider's cap.
+  const metered = { ...target, onUsage: meteredUsage(c.get('userId') as string, target.entry) }
+  return c.json(await probeChat(languageModel(metered), Math.min(target.entry.maxOutputTokens, CLOUD_PROBE_MAX_TOKENS)))
+})
+
+/** Cloud access of every user who has any, and this month's spend per user and provider. */
+adminRouter.get('/llm-usage', (c) =>
+  c.json({ month: monthKey(), access: allLlmAccess(), usage: monthlyLlmUsage() }))
+
+adminRouter.put('/users/:id/llm-access', zValidator('json', z.object({
+  cloudEnabled: z.boolean(),
+  budgets: z.record(z.string(), z.number().min(0).max(1_000_000)),
+})), async (c) => {
+  const { id } = c.req.param()
+  const access = c.req.valid('json')
+  if (!await db.select({ id: users.id }).from(users).where(eq(users.id, id)).get()) return c.json({ error: 'Not found' }, 404)
+  const known = new Set((await loadCatalogue()).providers.map(p => p.id))
+  const unknown = Object.keys(access.budgets).filter(p => !known.has(p))
+  if (unknown.length) return c.json({ error: `Unknown provider: ${unknown.join(', ')}` }, 400)
+  setLlmAccess(id, access)
+  const grants = Object.entries(access.budgets).map(([p, b]) => `${p}=${b}`).join(', ') || 'none'
+  console.log(`  [admin] cloud access for user ${id} set by ${c.get('userId')} — ${access.cloudEnabled ? 'enabled' : 'disabled'}, budgets: ${grants}`)
+  return c.json({ ok: true })
 })
 
 adminRouter.post('/reindex-chats', async (c) => {

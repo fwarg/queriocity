@@ -9,6 +9,7 @@ import { db, users, setAppSetting } from '../lib/db.ts'
 import { adminRouter } from './admin.ts'
 import { signToken, AUTH_COOKIE } from '../lib/auth.ts'
 import { CATALOGUE_SETTING, loadCatalogue } from '../lib/llm-catalogue.ts'
+import { userSpend, getLlmAccess } from '../lib/llm-usage.ts'
 import { startFakeOpenAI } from '../lib/test-support/fake-openai.ts'
 import { envOverride } from '../lib/test-support/env-override.ts'
 import type { LlmCatalogue } from '../../shared/llm-catalogue.ts'
@@ -25,7 +26,7 @@ beforeAll(async () => {
     settings: '{}', tokenVersion: 0, createdAt: now, updatedAt: now,
   })
   cookie = `${AUTH_COOKIE}=${await signToken({ userId: 'llm-admin', email: 'llm-admin@example.com', role: 'admin', tokenVersion: 0 })}`
-  fake = startFakeOpenAI([{ text: ['OK'] }])
+  fake = startFakeOpenAI([{ text: ['OK'], usage: { prompt_tokens: 100, completion_tokens: 10 } }])
   restoreEnv = envOverride({ TESTCLOUD_API_KEY: 'secret', MISSING_API_KEY: '' })
 })
 
@@ -83,12 +84,25 @@ describe('admin LLM catalogue', () => {
     expect(res).toMatchObject({ ok: true, info: 'OK' })
     const sent = fake.requests.at(-1) as { model: string }
     expect(sent.model).toBe('vendor/big')
+    // Paid for like any call: 100 × 3 + 10 × 15 per million, on the admin who ran it.
+    expect(userSpend('llm-admin', 'cloud')).toBeCloseTo(0.00045)
   })
 
   test('refuses to probe a model whose key is not set', async () => {
     const res = await (await request('POST', '/llm-catalogue/test', { modelId: 'orphan-key' })).json()
     expect(res.ok).toBe(false)
     expect(res.info).toContain('API key')
+  })
+
+  test('grants cloud access per provider and lists it with this month\'s usage', async () => {
+    const put = (body: unknown) => request('PUT', '/users/llm-admin/llm-access', body)
+    expect((await put({ cloudEnabled: true, budgets: { ghost: 5 } })).status).toBe(400)
+    expect((await request('PUT', '/users/nobody/llm-access', { cloudEnabled: true, budgets: {} })).status).toBe(404)
+    expect((await put({ cloudEnabled: true, budgets: { cloud: 5 } })).status).toBe(200)
+    expect(getLlmAccess('llm-admin')).toEqual({ cloudEnabled: true, budgets: { cloud: 5 } })
+    const res = await (await request('GET', '/llm-usage')).json()
+    expect(res.access['llm-admin']).toEqual({ cloudEnabled: true, budgets: { cloud: 5 } })
+    expect(res.usage.some((r: { userId: string; providerId: string }) => r.userId === 'llm-admin' && r.providerId === 'cloud')).toBe(true)
   })
 
   test('ignores a stored catalogue that no longer validates', async () => {

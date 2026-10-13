@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useConfirm } from './confirm.tsx'
+import { AdminCloudAccess } from './AdminCloudAccess.tsx'
 import { fetchLlmCatalogue, saveLlmCatalogue, testCloudModel } from '../lib/api.ts'
 import type { CloudModel, CloudModelRole, CloudProvider, LlmCatalogue } from '@shared/llm-catalogue.ts'
 
@@ -136,6 +137,13 @@ function AddProviderButtons({ existing, onAdd }: { existing: CloudProvider[]; on
   )
 }
 
+const INTRO = (
+  <p className="text-xs text-gray-500">
+    Cloud models users can pick for a single message instead of the local model. Their prompts — including memory and document excerpts — go to the provider.
+    API keys stay in env; each provider names its env var. Locked spaces, image mode, monitors and background helpers always stay local.
+  </p>
+)
+
 /** Admin tab for cloud LLM providers and the models users may pick from them. */
 export function AdminModelsPanel() {
   const confirm = useConfirm()
@@ -193,10 +201,7 @@ export function AdminModelsPanel() {
 
   return (
     <div className="flex flex-col gap-6">
-      <p className="text-xs text-gray-500">
-        Cloud models users can pick for a single message instead of the local model. Their prompts — including memory and document excerpts — go to the provider.
-        API keys stay in env; each provider names its env var. Locked spaces, image mode, monitors and background helpers always stay local.
-      </p>
+      {INTRO}
       <div className="flex flex-col gap-3">
         <p className="text-xs font-semibold text-gray-300 uppercase tracking-wider">Providers</p>
         {catalogue.providers.map((p, i) => (
@@ -219,6 +224,10 @@ export function AdminModelsPanel() {
       <div className="flex items-center gap-3">
         <button onClick={handleSave} className="px-4 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-sm font-medium">Save</button>
         {status && <span className="text-xs text-gray-400">{status}</span>}
+      </div>
+      <div className="flex flex-col gap-3 border-t border-gray-800 pt-5">
+        <p className="text-xs font-semibold text-gray-300 uppercase tracking-wider">Users and spend</p>
+        <AdminCloudAccess catalogue={saved} />
       </div>
     </div>
   )

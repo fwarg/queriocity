@@ -39,4 +39,21 @@ export interface LlmCatalogue {
   models: CloudModel[]
 }
 
+/** What an admin granted one user: the cloud switch, and a monthly budget per provider they may use. */
+export interface LlmAccess {
+  cloudEnabled: boolean
+  /** Provider id → budget in that provider's currency. A provider absent here is not allowed. */
+  budgets: Record<string, number>
+}
+
+/** One user's spend with one provider in one month. */
+export interface UsageRow {
+  userId: string
+  providerId: string
+  cost: number
+  inputTokens: number
+  outputTokens: number
+  requests: number
+}
+
 export const EMPTY_CATALOGUE: LlmCatalogue = { providers: [], models: [] }

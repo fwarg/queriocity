@@ -27,6 +27,7 @@ const SKIPPED_FILES = new Set([
   'AdminPanel.tsx',
   'AdminSearchPanel.tsx',
   'AdminModelsPanel.tsx',
+  'AdminCloudAccess.tsx',
   'AdminSimilarityPanel.tsx',
 ])
 
