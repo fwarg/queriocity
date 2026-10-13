@@ -11,7 +11,8 @@ import { eq, and, desc } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { hasTrustedSearch } from '../lib/search/index.ts'
-import { localTurnModels, getFlashModel } from '../lib/llm.ts'
+import { getFlashModel } from '../lib/llm.ts'
+import { resolveTurnModels, type ResolvedModels } from '../lib/cloud-models.ts'
 import { extractMemoriesPostHoc, toMemorySources } from '../lib/memory.ts'
 import { ownedCollectionIds } from '../lib/files/collections.ts'
 import { hasAttachment, type ContextReport } from '../../shared/context.ts'
@@ -51,6 +52,8 @@ const chatSchema = z.object({
   regenerate: z.boolean().optional(),
   /** "Notes first": answer from the user's own notes (and the notes they link with) before the web. */
   notesFirst: z.boolean().optional(),
+  /** A cloud catalogue model picked for this message only; refused picks fall back to local. */
+  modelId: z.string().max(80).optional(),
 })
 
 export const chatRouter = new Hono<AppEnv>()
@@ -181,7 +184,7 @@ chatRouter.post('/:sessionId/approve', zValidator('json', z.object({
 
 chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', chatSchema), async (c) => {
   const userId = c.get('userId') as string
-  const { sessionId, spaceId, messages: requestMsgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, collectionIds, ephemeral, regenerate, notesFirst } = c.req.valid('json')
+  const { sessionId, spaceId, messages: requestMsgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, collectionIds, ephemeral, regenerate, notesFirst, modelId } = c.req.valid('json')
   const sid = sessionId ?? randomUUID()
   const msgs = requestMsgs.map(({ role, content }) => ({ role, content }))
 
@@ -207,7 +210,10 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   // Settings are read once here rather than per branch: the cache key depends on the custom
   // prompt, so a personalised answer can never be served to a different user or context.
   const userRow = await db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get()
-  const settings = parseSettings(userRow?.settings ?? '{}')
+  // Resolved once so every phase of this turn runs on the same models.
+  const resolved = await resolveTurnModels({ userId, modelId, focusMode, locked })
+  const storedSettings = parseSettings(userRow?.settings ?? '{}')
+  const settings = resolved.forceThinking ? { ...storedSettings, useThinking: true } : storedSettings
   const customPrompt = settings.customPrompt as string | undefined
   // Everything that changes the answer for the same question belongs here. `searchCategories`
   // picks which corpus is searched and `locked` removes web search entirely, so leaving either
@@ -220,6 +226,8 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     customPrompt ?? '',
     [...(searchCategories ?? [])].sort().join(','),
     locked ? 'locked' : '',
+    // The model that actually answers, so a cloud answer is never replayed for a local request.
+    resolved.cloud?.id ?? '',
   ].join('|')
 
   // History is part of the key: without it, two unrelated conversations ending in the same
@@ -236,14 +244,13 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
 
   // A cache hit is a real turn, not a shortcut around one: it emits the same events and runs the
   // same tail as a generated answer, so the exchange is saved and its citations still resolve.
-  if (cached) return streamRun(c, run, out => replayCached(out, cached, tail))
+  if (cached) return streamRun(c, run, out => replayCached(out, cached, tail, resolved.fallback))
 
   const ctx: TurnContext = {
     userId, sid, msgs, focusMode, spaceId, locked, settings, customPrompt, collections,
     // Pins travel as indices, so the messages handed to the model carry nothing but role and content.
     pinned: new Set(requestMsgs.flatMap((m, i) => m.pinned ? [i] : [])),
-    // Resolved once so every phase of this turn runs on the same models.
-    models: localTurnModels(),
+    models: resolved.models,
     includeFileIds, includeMemoryIds, notesFirst, regenerate,
     searchCategory: toSearxngCategories(searchCategories),
     abortSignal: run.controller.signal,
@@ -251,6 +258,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   return streamRun(c, run, async (out) => {
     const sink = createSink(out, approvalRequester(run, out))
     await sink.emit({ type: 'session', sessionId: sid })
+    if (resolved.fallback) await sink.emit({ type: 'model_notice', ...resolved.fallback })
     const result = await runTurn(ctx, sink)
     const aborted = ctx.abortSignal.aborted
     if (result.cacheable && !aborted && result.content.length >= 50) {
@@ -273,8 +281,9 @@ async function isSessionLocked(sessionId: string | undefined, spaceId: string | 
 }
 
 /** Emits a cached answer with the same events and tail as a generated one. */
-async function replayCached(out: SSEStream, cached: CachedAnswer, tail: Omit<TurnTail, 'fullContent' | 'sources' | 'fileSources'>) {
+async function replayCached(out: SSEStream, cached: CachedAnswer, tail: Omit<TurnTail, 'fullContent' | 'sources' | 'fileSources'>, fallback?: ResolvedModels['fallback']) {
   await out.writeSSE({ data: JSON.stringify({ type: 'session', sessionId: tail.sid }) })
+  if (fallback) await out.writeSSE({ data: JSON.stringify({ type: 'model_notice', ...fallback }) })
   await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: cached.content }) })
   if (cached.sources.length) await out.writeSSE({ data: JSON.stringify({ type: 'sources', sources: cached.sources }) })
   if (cached.fileSources.length) await out.writeSSE({ data: JSON.stringify({ type: 'file_sources', sources: cached.fileSources }) })

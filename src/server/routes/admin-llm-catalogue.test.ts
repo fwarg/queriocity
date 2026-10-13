@@ -72,6 +72,8 @@ describe('admin LLM catalogue', () => {
     // A provider naming another secret would send it as a bearer token to its base URL.
     ['a key env var not ending in _API_KEY', (c: LlmCatalogue) => { c.providers[0].apiKeyEnv = 'JWT_SECRET' }],
     ['an unknown role', (c: LlmCatalogue) => { (c.models[0] as { role: string }).role = 'small' }],
+    // An extra may add to a request, never redirect it to another model.
+    ['an extra request field that overrides the model', (c: LlmCatalogue) => { c.providers[0].extraBody = { model: 'other' } }],
   ])('rejects %s and keeps the saved catalogue', async (_, mutate) => {
     const bad = catalogue()
     mutate(bad)

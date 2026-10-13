@@ -15,6 +15,8 @@ export interface CloudProvider {
   currency: string
   /** Global spend cap per calendar month across all users; 0 = no cap. */
   monthlyCap: number
+  /** Provider-specific request fields added to every call, e.g. Cortecs `{ "eu_native": true }`. */
+  extraBody?: Record<string, string | number | boolean>
   enabled: boolean
 }
 

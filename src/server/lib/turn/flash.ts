@@ -1,6 +1,6 @@
 import { streamText } from 'ai'
 import { getAppSetting } from '../db.ts'
-import { languageModel, DEFAULT_MEMORY_TOKEN_BUDGET } from '../llm.ts'
+import { languageModel, outputCap, DEFAULT_MEMORY_TOKEN_BUDGET } from '../llm.ts'
 import { FLASH_SYSTEM, FLASH_MAX_TOKENS } from '../answer.ts'
 import { notesRagBudget } from '../rag-settings.ts'
 import { buildMemoryBlock, buildCollectionBlock, buildNotesBlock, userMemoryBlockIfEnabled, joinMemoryBlocks } from '../memory.ts'
@@ -27,7 +27,7 @@ export async function runFlashTurn(ctx: TurnContext, sink: TurnSink): Promise<Tu
     abortSignal: ctx.abortSignal,
     system,
     messages: history.messages,
-    maxOutputTokens: FLASH_MAX_TOKENS,
+    maxOutputTokens: outputCap(ctx.models.flash, FLASH_MAX_TOKENS),
   })
   // Flash runs models.flash, which is the full chat model unless FLASH_MODEL=small — the
   // same reasoning-capable model whose <think> output the other modes strip. Flash has no

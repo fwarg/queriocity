@@ -17,6 +17,13 @@ const baseURL = z.string().url().refine(
 /** Restricted to *_API_KEY so the catalogue cannot point a provider at the server's other secrets. */
 const apiKeyEnv = z.string().regex(/^[A-Z][A-Z0-9_]{0,63}_API_KEY$/, 'an env var name ending in _API_KEY')
 
+/** Fields the request itself sets; an extra may add to a request but never redirect or reshape it. */
+const RESERVED_BODY_KEYS = new Set(['model', 'messages', 'stream', 'stream_options', 'tools', 'tool_choice', 'max_tokens', 'max_completion_tokens', 'response_format'])
+
+const extraBody = z.record(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/), z.union([z.string().max(200), z.number(), z.boolean()]))
+  .refine(b => Object.keys(b).length <= 10, 'at most 10 fields')
+  .refine(b => Object.keys(b).every(k => !RESERVED_BODY_KEYS.has(k)), 'must not set model, messages, tools or output limits')
+
 const providerSchema = z.object({
   id,
   label: z.string().min(1).max(60),
@@ -24,6 +31,7 @@ const providerSchema = z.object({
   apiKeyEnv,
   currency: z.string().regex(/^[A-Z]{3}$/, 'a three-letter currency code'),
   monthlyCap: z.number().min(0).max(1_000_000),
+  extraBody: extraBody.optional(),
   enabled: z.boolean(),
 })
 
@@ -83,6 +91,8 @@ export function cloudTarget(catalogue: LlmCatalogue, modelId: string): (ModelTar
     provider: 'openai',
     baseURL: provider.baseURL,
     apiKey,
+    extraBody: provider.extraBody,
+    maxOutputTokens: entry.maxOutputTokens,
     model: entry.model,
     contextTokens: entry.contextTokens,
     configured: true,

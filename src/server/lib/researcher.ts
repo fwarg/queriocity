@@ -13,7 +13,7 @@ import { queryTerms, querySimilarity, QUERY_DUPLICATE_THRESHOLD } from './query-
 import {
   applyEgressMode, createEgressContext, inspectQuery, inspectUrl, noteSeenUrl, noteTaint, noteUserText,
 } from './egress-guard.ts'
-import { languageModel, RESEARCH_MAX_TOKENS, CHARS_PER_TOKEN, tokensToChars, type ModelTarget } from './llm.ts'
+import { languageModel, outputCap, RESEARCH_MAX_TOKENS, CHARS_PER_TOKEN, tokensToChars, type ModelTarget } from './llm.ts'
 
 
 export const SYSTEM_PROMPTS = {
@@ -546,7 +546,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
     // returns {done:true} and the loop keeps going to the step cap, so every run that finished
     // early still paid for the remaining steps. Harmless in balanced, which registers no `done`.
     stopWhen: [stepCountIs(maxSteps), hasToolCall('done')],
-    maxOutputTokens: RESEARCH_MAX_TOKENS,
+    maxOutputTokens: outputCap(model, RESEARCH_MAX_TOKENS),
     tools,
     // Withhold the tools on the final step so it can only produce prose. `activeTools: []`
     // rather than `toolChoice: 'none'` so the schemas are not sent at all — the model cannot

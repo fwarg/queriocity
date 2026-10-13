@@ -30,6 +30,44 @@ const wireUsage = ({ usage }: ScriptedStep) => {
   return { prompt_tokens, completion_tokens, total_tokens: prompt_tokens + completion_tokens }
 }
 
+/** The SSE chunks of one streamed step: text and reasoning deltas, a tool call, usage, then [DONE]. */
+function sseParts(step: ScriptedStep): string[] {
+  const chunk = (delta: unknown, finish: string | null = null) =>
+    `data: ${JSON.stringify({
+      id: 'chatcmpl-test',
+      object: 'chat.completion.chunk',
+      created: 0,
+      model: 'fake-model',
+      choices: [{ index: 0, delta, finish_reason: finish }],
+    })}\n\n`
+
+  const parts: string[] = [chunk({ role: 'assistant', content: '' })]
+  for (const r of step.reasoning ?? []) parts.push(chunk({ reasoning_content: r }))
+  for (const t of step.text ?? []) parts.push(chunk({ content: t }))
+
+  if (step.toolCall) {
+    parts.push(chunk({
+      tool_calls: [{
+        index: 0,
+        id: step.toolCall.id,
+        type: 'function',
+        function: { name: step.toolCall.name, arguments: '' },
+      }],
+    }))
+    parts.push(chunk({
+      tool_calls: [{ index: 0, function: { arguments: JSON.stringify(step.toolCall.args) } }],
+    }))
+    parts.push(chunk({}, 'tool_calls'))
+  } else {
+    parts.push(chunk({}, 'stop'))
+  }
+  if (step.usage) {
+    parts.push(`data: ${JSON.stringify({ id: 'chatcmpl-test', object: 'chat.completion.chunk', created: 0, model: 'fake-model', choices: [], usage: wireUsage(step) })}\n\n`)
+  }
+  parts.push('data: [DONE]\n\n')
+  return parts
+}
+
 /** Serves one scripted step per request, in order, so a multi-step tool loop can be driven. */
 export function startFakeOpenAI(script: ScriptedStep[]) {
   let call = 0
@@ -77,40 +115,7 @@ export function startFakeOpenAI(script: ScriptedStep[]) {
         })
       }
 
-      const chunk = (delta: unknown, finish: string | null = null) =>
-        `data: ${JSON.stringify({
-          id: 'chatcmpl-test',
-          object: 'chat.completion.chunk',
-          created: 0,
-          model: 'fake-model',
-          choices: [{ index: 0, delta, finish_reason: finish }],
-        })}\n\n`
-
-      const parts: string[] = [chunk({ role: 'assistant', content: '' })]
-      for (const r of step.reasoning ?? []) parts.push(chunk({ reasoning_content: r }))
-      for (const t of step.text ?? []) parts.push(chunk({ content: t }))
-
-      if (step.toolCall) {
-        parts.push(chunk({
-          tool_calls: [{
-            index: 0,
-            id: step.toolCall.id,
-            type: 'function',
-            function: { name: step.toolCall.name, arguments: '' },
-          }],
-        }))
-        parts.push(chunk({
-          tool_calls: [{ index: 0, function: { arguments: JSON.stringify(step.toolCall.args) } }],
-        }))
-        parts.push(chunk({}, 'tool_calls'))
-      } else {
-        parts.push(chunk({}, 'stop'))
-      }
-      if (step.usage) {
-        parts.push(`data: ${JSON.stringify({ id: 'chatcmpl-test', object: 'chat.completion.chunk', created: 0, model: 'fake-model', choices: [], usage: wireUsage(step) })}\n\n`)
-      }
-      parts.push('data: [DONE]\n\n')
-
+      const parts = sseParts(step)
       return new Response(parts.join(''), {
         headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' },
       })

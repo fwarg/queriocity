@@ -5,6 +5,8 @@ interface ProviderConfig {
   provider: string
   baseURL: string
   apiKey?: string
+  /** Fields merged into every request body; the request's own fields win. */
+  extraBody?: Record<string, unknown>
 }
 
 const warnedOllamaUrls = new Set<string>()
@@ -24,10 +26,21 @@ export function ollamaOpenAIBase(baseURL: string): string {
   return rewritten
 }
 
-function makeProvider({ provider, baseURL, apiKey }: ProviderConfig) {
+function makeProvider({ provider, baseURL, apiKey, extraBody }: ProviderConfig) {
   const url = provider === 'ollama' ? ollamaOpenAIBase(baseURL) : baseURL
   // Ollama ignores the key but the client requires one.
-  return createOpenAI({ baseURL: url, apiKey: apiKey ?? 'sk-placeholder' })
+  return createOpenAI({ baseURL: url, apiKey: apiKey ?? 'sk-placeholder', ...(extraBody && { fetch: withExtraBody(extraBody) }) })
+}
+
+/** A fetch that adds provider-specific fields to each JSON request body; the SDK has no option for them. */
+function withExtraBody(extra: Record<string, unknown>): typeof fetch {
+  const wrapped = (input: RequestInfo | URL, init?: RequestInit) => {
+    if (typeof init?.body !== 'string') return fetch(input, init)
+    let body: unknown
+    try { body = JSON.parse(init.body) } catch { return fetch(input, init) }
+    return fetch(input, { ...init, body: JSON.stringify({ ...extra, ...(body as object) }) })
+  }
+  return Object.assign(wrapped, { preconnect: fetch.preconnect })
 }
 
 // Output cap for the research/writer generations. Backstop against runaway
@@ -122,7 +135,13 @@ export interface ModelTarget extends ProviderConfig {
   configured: boolean
   /** Called with each call's token usage; set for metered (cloud) targets only. */
   onUsage?: (usage: TokenUsage) => void
+  /** Output cap from the catalogue; unset for env models, which use the caller's default. */
+  maxOutputTokens?: number
 }
+
+/** A call's output cap: the target's own when the catalogue sets one, else the caller's default.
+ *  Reasoning models spend output tokens before answering, so a cloud entry may need far more. */
+export const outputCap = (t: ModelTarget, fallback: number): number => t.maxOutputTokens ?? fallback
 
 export interface TokenUsage {
   inputTokens: number
@@ -173,7 +192,7 @@ export const flashTarget = (): ModelTarget => modelTarget(process.env.FLASH_MODE
 
 const providers = new Map<string, ReturnType<typeof createOpenAI>>()
 function provider(config: ProviderConfig) {
-  const key = `${config.provider}|${config.baseURL}|${config.apiKey ?? ''}`
+  const key = `${config.provider}|${config.baseURL}|${config.apiKey ?? ''}|${JSON.stringify(config.extraBody ?? null)}`
   let p = providers.get(key)
   if (!p) {
     p = makeProvider(config)

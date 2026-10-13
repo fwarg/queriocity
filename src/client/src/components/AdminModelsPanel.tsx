@@ -75,7 +75,32 @@ function ProviderCard({ provider, saved, keySet, onChange, onRemove }: {
         <NumberField label={`Monthly cap, ${provider.currency} (0 = none)`} value={provider.monthlyCap} onChange={v => set('monthlyCap', v)} step={5} />
         <button onClick={onRemove} className={`${BUTTON} text-red-300`}>Remove</button>
       </div>
+      <ExtraBodyField value={provider.extraBody} onChange={v => set('extraBody', v)} />
     </div>
+  )
+}
+
+/** Provider-specific request fields as JSON; kept as typed until it parses to an object. */
+function ExtraBodyField({ value, onChange }: { value?: CloudProvider['extraBody']; onChange: (v: CloudProvider['extraBody']) => void }) {
+  const [text, setText] = useState(value ? JSON.stringify(value) : '')
+  const [invalid, setInvalid] = useState(false)
+  const update = (t: string) => {
+    setText(t)
+    if (!t.trim()) { setInvalid(false); onChange(undefined); return }
+    try {
+      const parsed = JSON.parse(t)
+      const ok = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      setInvalid(!ok)
+      if (ok) onChange(parsed)
+    } catch {
+      setInvalid(true)
+    }
+  }
+  return (
+    <label className={LABEL}>Extra request fields (JSON, sent with every call)
+      <input type="text" value={text} onChange={e => update(e.target.value)} placeholder='{"eu_native": true}' className={`${INPUT} font-mono`} />
+      {invalid && <span className="text-amber-400">Not a JSON object yet — the last valid value is kept.</span>}
+    </label>
   )
 }
 
