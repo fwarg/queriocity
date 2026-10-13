@@ -1186,10 +1186,10 @@ existing installs pick up new columns when you restart.
 
 ### Choosing a model per message
 
-Admins can offer extra models that users pick for a single message, from a menu next to the research modes (it goes back to the default after sending). There are two kinds of provider, both managed under **Admin → Cloud models**:
+Admins can offer extra models that users pick for a single message, from a menu next to the research modes (it goes back to the default after sending). There are two kinds of provider, both managed under **Admin → Models**:
 
 - **Cloud** — OpenAI-compatible services (presets for OpenRouter and Cortecs), metered against budgets. A provider has a currency and an optional monthly cap; each model has prices per million tokens. HTTPS only (HTTP to `localhost` allowed). API keys stay in env: a provider names its key's env var, which must end in `_API_KEY` (e.g. `OPENROUTER_API_KEY=...`). A cloud model is sent the whole prompt, including memory and document excerpts, so a cloud message is not private: users confirm this once before their first cloud message (stored in their settings and enforced by the server), a warning stays under the input while a cloud model is picked, and the answer's footer names the provider it went to. Each answer from a picked model is stored with it: a reopened chat shows a badge ("Cloud · Provider" for a cloud model), and a Markdown export notes the model beside each such answer.
-- **Local network** — a bigger model on your own hardware that you do not want as the default. Plain HTTP is fine and a key is optional; it is not metered. It is the only kind a locked space may use, and only when its address is on this machine or LAN.
+- **Local network** — a bigger model on your own hardware that you do not want as the default. Plain HTTP is fine and a key is optional; it is not metered and carries none of the cloud warnings, so its address must be on this machine or LAN (an IP address, or a `.lan`/`.local`/`.internal` name) or the catalogue is refused. It is the only kind a locked space may use, and only when its address is on this machine or LAN.
 
 Each model has a role — chat, thinking or both — a context size and an output cap. A chat model also answers flash; a thinking model is offered in thorough only, where it runs the research with thinking switched on and the default model writes the answer. **Test** sends one tiny request with the saved settings (metered, for a cloud model). A provider can carry extra request fields sent with every call, e.g. Cortecs `{"eu_native": true}`.
 

@@ -73,6 +73,7 @@ describe('admin LLM catalogue', () => {
     ['a key env var not ending in _API_KEY', (c: LlmCatalogue) => { c.providers[0].apiKeyEnv = 'JWT_SECRET' }],
     ['an unknown role', (c: LlmCatalogue) => { (c.models[0] as { role: string }).role = 'small' }],
     ['a cloud provider without a key env var', (c: LlmCatalogue) => { c.providers[0].apiKeyEnv = '' }],
+    ['a local provider at a remote address', (c: LlmCatalogue) => { c.providers.push({ ...c.providers[1], id: 'fake-local', kind: 'local', apiKeyEnv: '', baseURL: 'https://api.example.com/v1' }) }],
     ['a cloud provider on plain http to the LAN', (c: LlmCatalogue) => { c.providers[1].baseURL = 'http://192.168.1.20:8000/v1' }],
     // An extra may add to a request, never redirect it to another model.
     ['an extra request field that overrides the model', (c: LlmCatalogue) => { c.providers[0].extraBody = { model: 'other' } }],

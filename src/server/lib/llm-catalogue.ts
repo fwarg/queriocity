@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { getAppSetting, setAppSetting } from './db.ts'
 import type { ModelTarget } from './llm.ts'
+import { isLocalEndpoint } from './space-lock.ts'
 import { EMPTY_CATALOGUE, type CloudModel, type LlmCatalogue } from '../../shared/llm-catalogue.ts'
 
 export const CATALOGUE_SETTING = 'llm_catalogue'
@@ -56,6 +57,10 @@ export const catalogueSchema = z.object({
   models: z.array(modelSchema).max(200),
 }).superRefine((c, ctx) => {
   for (const dup of duplicates(c.providers.map(p => p.id))) ctx.addIssue({ code: 'custom', message: `duplicate provider id "${dup}"` })
+  // "Local" switches off every cloud warning, so it must not be usable for a remote endpoint.
+  for (const p of c.providers.filter(p => p.kind === 'local' && !isLocalEndpoint(p.baseURL))) {
+    ctx.addIssue({ code: 'custom', message: `local provider "${p.id}" must be on this machine or LAN (an IP address or a .lan/.local/.internal name)` })
+  }
   for (const p of c.providers.filter(p => p.kind === 'cloud')) {
     if (!httpsOrLoopback(p.baseURL)) ctx.addIssue({ code: 'custom', message: `cloud provider "${p.id}" must use https (http only for localhost)` })
     if (!p.apiKeyEnv) ctx.addIssue({ code: 'custom', message: `cloud provider "${p.id}" needs an API key env var` })

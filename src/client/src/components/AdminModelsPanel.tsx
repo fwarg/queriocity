@@ -58,7 +58,10 @@ function ProviderCard({ provider, saved, keySet, onChange, onRemove }: {
   return (
     <div className="flex flex-col gap-3 border border-gray-800 rounded p-3">
       <div className="flex items-center justify-between gap-2">
-        <EnabledToggle checked={provider.enabled} onChange={v => set('enabled', v)} title={provider.label} subtitle={provider.id} />
+        <div className="flex items-center gap-2 min-w-0">
+          <EnabledToggle checked={provider.enabled} onChange={v => set('enabled', v)} title={provider.label} subtitle={provider.id} />
+          <KindTag kind={provider.kind} />
+        </div>
         {saved && provider.apiKeyEnv && (
           <span className={`text-xs ${keySet ? 'text-green-400' : 'text-amber-400'}`}>
             {keySet ? 'key set' : `key missing — set ${provider.apiKeyEnv}`}
@@ -88,6 +91,13 @@ function ProviderCard({ provider, saved, keySet, onChange, onRemove }: {
       <ExtraBodyField value={provider.extraBody} onChange={v => set('extraBody', v)} />
     </div>
   )
+}
+
+/** Same colours as the answer badges: amber for what leaves the server, grey for what stays. */
+function KindTag({ kind }: { kind: ProviderKind }) {
+  return kind === 'cloud'
+    ? <span className="shrink-0 rounded px-1.5 text-[11px] bg-amber-900/40 text-amber-300">Cloud</span>
+    : <span className="shrink-0 rounded px-1.5 text-[11px] bg-gray-800 text-gray-400">Local</span>
 }
 
 /** Provider-specific request fields as JSON; kept as typed until it parses to an object. */
@@ -177,7 +187,7 @@ function AddProviderButtons({ existing, onAdd }: { existing: CloudProvider[]; on
 
 const INTRO = (
   <p className="text-xs text-gray-500">
-    Extra models users can pick for a single message instead of the default: cloud services, metered against budgets, or bigger models on your own network.
+    Extra models users can pick for a single message instead of the default: cloud services, metered against budgets, or bigger models on your own network (a local provider must have an address on this machine or LAN).
     A cloud model's prompts — including memory and document excerpts — go to the provider. API keys stay in env; each provider names its env var.
     Image mode, monitors and background helpers always use the default models; a locked space allows only local-network providers.
   </p>
@@ -242,7 +252,7 @@ export function AdminModelsPanel() {
     <div className="flex flex-col gap-6">
       {INTRO}
       <div className="flex flex-col gap-3">
-        <p className="text-xs font-semibold text-gray-300 uppercase tracking-wider">Providers</p>
+        <p className="text-xs font-semibold text-gray-300 uppercase tracking-wider">Providers (cloud and local)</p>
         {catalogue.providers.map((p, i) => (
           <ProviderCard key={i} provider={p} saved={isSavedProvider(p.id)} keySet={keys[p.apiKeyEnv]}
             onChange={v => setProvider(i, v)} onRemove={() => removeProvider(i)} />

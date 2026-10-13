@@ -274,7 +274,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
         <div className="flex border-b border-gray-800 mb-5 -mt-2 overflow-x-auto">
           <button className={tabBtn('settings', 'System settings')} onClick={() => setTab('settings')}>System settings</button>
           <button className={tabBtn('search', 'Search')} onClick={() => setTab('search')}>Search</button>
-          <button className={tabBtn('models', 'Cloud models')} onClick={() => setTab('models')}>Cloud models</button>
+          <button className={tabBtn('models', 'Models')} onClick={() => setTab('models')}>Models</button>
           <button className={tabBtn('similarity', 'Similarity')} onClick={() => setTab('similarity')}>Similarity</button>
           <button className={tabBtn('users', 'Users')} onClick={() => setTab('users')}>Users</button>
         </div>
