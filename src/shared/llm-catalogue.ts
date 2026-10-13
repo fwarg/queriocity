@@ -79,7 +79,16 @@ export interface PickableModel {
   allowedWhenLocked: boolean
 }
 
+/** The picked model an answer came from, stored with the message; absent for the default model. */
+export interface AnswerModel {
+  id: string
+  label: string
+  kind: ProviderKind
+  /** The provider's label, so a reopened chat can say where a cloud answer was sent. */
+  provider: string
+}
+
 /** Why a model pick was not honoured; the client words the notice from this. */
-export type ModelFallbackReason = 'locked' | 'mode' | 'unavailable' | 'not_allowed' | 'budget' | 'cap'
+export type ModelFallbackReason = 'locked' | 'mode' | 'unavailable' | 'not_allowed' | 'unacknowledged' | 'budget' | 'cap'
 
 export const EMPTY_CATALOGUE: LlmCatalogue = { providers: [], models: [] }

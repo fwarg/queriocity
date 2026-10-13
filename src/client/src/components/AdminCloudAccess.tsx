@@ -81,6 +81,12 @@ function UserAccessRow({ user, providers, usage, initial, onSaved }: {
           </label>
         ))}
       </div>
+      {draft.cloudEnabled && providers.some(p => p.kind === 'cloud' && (draft.budgets[p.id] ?? '').trim() !== '') && (
+        <p className="text-xs text-amber-400">
+          With a cloud budget this user can send their prompts — the whole conversation, memory and document excerpts — to that provider, outside this server.
+          They confirm once that they understand this before their first cloud message.
+        </p>
+      )}
       <div className="flex items-center gap-3">
         <button onClick={save} disabled={!dirty} className={BUTTON}>Save</button>
         {status && <span className="text-xs text-gray-400">{status}</span>}

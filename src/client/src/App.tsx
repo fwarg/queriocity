@@ -24,7 +24,7 @@ import { SpacesView } from './components/SpacesView.tsx'
 import { ResourcesView } from './components/ResourcesView.tsx'
 import {
   fetchHistory, fetchSession, deleteSession, updateSessionTitle,
-  fetchFiles, getMe, hasUsers, logout,
+  fetchFiles, getMe, hasUsers, logout, updateSettings,
   fetchSpaces, createSpace, promoteCollection, updateSpace, deleteSpace, assignChatToSpace, recreateChatMemories,
   fetchSpaceMemories, createSpaceMemory, updateSpaceMemory, deleteSpaceMemory, compactSpaceMemories, recreateAllSpaceMemories, clearSpaceMemories,
   fetchChatIndexStatus, rebuildChatIndex, searchHistory,
@@ -199,7 +199,18 @@ export default function App() {
    *  refuses a collection either way; this keeps the UI from proposing what it will refuse. */
   const chatSpaces = spaces.filter(sp => sp.kind === 'space')
 
-  const modelPicker = useModelPicker(focusMode, activeSpaceLocked, !!currentUser)
+  const modelPicker = useModelPicker({
+    focusMode,
+    locked: activeSpaceLocked,
+    enabled: !!currentUser,
+    cloudAcknowledged: currentUser?.settings?.cloudAcknowledged === true,
+    onAcknowledge: async () => {
+      if (!currentUser) return
+      const settings = { ...currentUser.settings, cloudAcknowledged: true }
+      await updateSettings(settings)
+      setCurrentUser({ ...currentUser, settings })
+    },
+  })
 
   const { messages, setMessages, context, setContext, togglePin, deleteTurn, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, regenerate, cancel, reset, related, setRelated, steps, runStartedAt, approval, decideApproval } = useChat({
     sessionId,
@@ -450,7 +461,9 @@ export default function App() {
     const header = `${EXPORT_FRONT_MATTER}# ${title}\n_Exported: ${date}_\n\n`
     const subset = scope === 'last' ? msgs.filter(m => m.role === 'assistant').slice(-1) : msgs
     const body = subset.map((m, msgIdx) => {
-      const label = m.role === 'user' ? '**User**' : '**Assistant**'
+      // Says which answers left the server, so a shared export does not pass a cloud answer off as local.
+      const via = m.model ? ` _(model: ${m.model.label}${m.model.kind === 'cloud' ? `, cloud — sent to ${m.model.provider}` : ''})_` : ''
+      const label = m.role === 'user' ? '**User**' : `**Assistant**${via}`
       let content = m.role === 'assistant' ? splitGroupedCitations(m.content) : m.content
       if (m.role === 'assistant' && m.sources?.length) {
         content = content.replace(/\[(\d+)\]/g, (_, n) => `[\\[${n}\\]](#ref-${msgIdx}-${n})`)
@@ -1633,7 +1646,7 @@ export default function App() {
               onRelatedSelect={q => { setRelated([]); submit(q) }}
               models={modelPicker.available}
               modelId={modelPicker.picked}
-              onModelChange={modelPicker.setPicked}
+              onModelChange={modelPicker.choose}
             />
           </>
         )}

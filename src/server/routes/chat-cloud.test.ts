@@ -12,7 +12,8 @@ import { startFakeSearxng, type SseEvent } from '../lib/test-support/fake-searxn
 import { envOverride } from '../lib/test-support/env-override.ts'
 import type { LlmCatalogue, PickableModel } from '../../shared/llm-catalogue.ts'
 
-const { db, users, spaces, setAppSetting } = await import('../lib/db.ts')
+const { db, users, spaces, messages, setAppSetting } = await import('../lib/db.ts')
+const { eq, and } = await import('drizzle-orm')
 const { chatRouter } = await import('./chat.ts')
 const { signToken, AUTH_COOKIE } = await import('../lib/auth.ts')
 const { saveCatalogue, CATALOGUE_SETTING } = await import('../lib/llm-catalogue.ts')
@@ -20,6 +21,7 @@ const { setLlmAccess, recordLlmUsage, userSpend, monthlyLlmUsage } = await impor
 const { resolveTurnModels } = await import('../lib/cloud-models.ts')
 
 const USER = 'cloud-user'
+const ACKNOWLEDGED = JSON.stringify({ cloudAcknowledged: true })
 const app = new Hono().route('/chat', chatRouter)
 // Both over the 50 characters below which the chat route does not cache an answer.
 const LONG = 'A cloud answer long enough to be cached by the chat route, which wants fifty characters.'
@@ -47,7 +49,7 @@ const catalogue = (): LlmCatalogue => ({
 
 beforeAll(async () => {
   const now = new Date()
-  await db.insert(users).values({ id: USER, email: `${USER}@example.com`, name: null, role: 'user', settings: '{}', tokenVersion: 0, createdAt: now, updatedAt: now })
+  await db.insert(users).values({ id: USER, email: `${USER}@example.com`, name: null, role: 'user', settings: ACKNOWLEDGED, tokenVersion: 0, createdAt: now, updatedAt: now })
   await db.insert(spaces).values({ id: 'cloud-locked', name: 'L', userId: USER, offline: true, createdAt: now, updatedAt: now })
   cookie = `${AUTH_COOKIE}=${await signToken({ userId: USER, email: `${USER}@example.com`, role: 'user', tokenVersion: 0 })}`
   await setAppSetting('query_reformulation', 'false')
@@ -81,7 +83,7 @@ async function chat(body: Record<string, unknown>): Promise<SseEvent[]> {
 const answerOf = (events: SseEvent[]) => events.filter(e => e.type === 'text').map(e => e.delta).join('')
 const noticeOf = (events: SseEvent[]) => events.find(e => e.type === 'model_notice')
 const pick = (modelId: string, focusMode: 'flash' | 'balanced' | 'thorough' | 'image' = 'flash', locked = false) =>
-  resolveTurnModels({ userId: USER, modelId, focusMode, locked })
+  resolveTurnModels({ userId: USER, modelId, focusMode, locked, cloudAcknowledged: true })
 
 describe('a cloud pick', () => {
   test('answers flash on the cloud model, with its extras and output cap, and is metered', async () => {
@@ -89,7 +91,7 @@ describe('a cloud pick', () => {
     const events = await chat({ modelId: 'cl-both', messages: [{ role: 'user', content: 'Pick cloud' }] })
     expect(answerOf(events)).toBe(LONG)
     expect(noticeOf(events)).toBeUndefined()
-    expect(events[1]).toEqual({ type: 'model', id: 'cl-both', label: 'Both' })
+    expect(events[1]).toEqual({ type: 'model', id: 'cl-both', label: 'Both', kind: 'cloud', provider: 'Cloud' })
     const sent = cloud.requests.at(-1) as { model: string; eu_native?: boolean; max_tokens?: number }
     expect(sent).toMatchObject({ model: 'vendor/both', eu_native: true, max_tokens: 3000 })
     expect(userSpend(USER, 'cl') - before).toBeCloseTo(0.002)
@@ -107,6 +109,11 @@ describe('a cloud pick', () => {
     expect(answerOf(await ask(3))).toBe(LOCAL)
     expect(answerOf(await ask(4, 'cl-both'))).toBe(LONG)
     expect([local.callCount, cloud.callCount]).toEqual([localCalls, cloudCalls + 1])
+    // Each stored answer records where it came from, a cached cloud replay included.
+    const storedModel = async (n: number) => (await db.select({ model: messages.model }).from(messages)
+      .where(and(eq(messages.sessionId, `cloud-cache-${n}`), eq(messages.role, 'assistant'))).get())?.model
+    const cloudModel = JSON.stringify({ id: 'cl-both', label: 'Both', kind: 'cloud', provider: 'Cloud' })
+    expect([await storedModel(1), await storedModel(2), await storedModel(3), await storedModel(4)]).toEqual([null, cloudModel, null, cloudModel])
   })
 
   test('runs only thorough research on a thinking model; the local model writes the answer', async () => {
@@ -129,6 +136,20 @@ describe('a cloud pick', () => {
     expect(local.callCount).toBe(localCalls + 1)
   })
 
+  test('is refused until the user has confirmed that cloud models are not private', async () => {
+    await db.update(users).set({ settings: '{}' }).where(eq(users.id, USER))
+    try {
+      const cloudCalls = cloud.callCount
+      const events = await chat({ modelId: 'cl-both', messages: [{ role: 'user', content: 'Unconfirmed' }] })
+      expect(noticeOf(events)).toMatchObject({ reason: 'unacknowledged' })
+      expect(cloud.callCount).toBe(cloudCalls)
+      // A local provider sends nothing off the server, so it needs no confirmation.
+      expect(noticeOf(await chat({ modelId: 'lan-big', messages: [{ role: 'user', content: 'Unconfirmed local' }] }))).toBeUndefined()
+    } finally {
+      await db.update(users).set({ settings: ACKNOWLEDGED }).where(eq(users.id, USER))
+    }
+  })
+
   test('stays local in a locked space', async () => {
     const events = await chat({ modelId: 'cl-both', spaceId: 'cloud-locked', messages: [{ role: 'user', content: 'Locked' }] })
     expect(noticeOf(events)).toMatchObject({ reason: 'locked' })
@@ -137,7 +158,7 @@ describe('a cloud pick', () => {
 
 describe('resolving a pick', () => {
   test('leaves a turn with no pick on the local models', async () => {
-    const r = await resolveTurnModels({ userId: USER, focusMode: 'flash', locked: false })
+    const r = await resolveTurnModels({ userId: USER, focusMode: 'flash', locked: false, cloudAcknowledged: true })
     expect(r.models.chat.baseURL).toBe(local.baseURL)
     expect(r.fallback).toBeUndefined()
   })

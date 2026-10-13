@@ -2,7 +2,7 @@ import type { Lang } from '@shared/i18n/index.ts'
 import type { Theme } from '@shared/theme.ts'
 import type { ContextReport } from '@shared/context.ts'
 import type { ApiErrorBody, ErrorCode } from '@shared/error-codes.ts'
-import type { LlmCatalogue, LlmAccess, UsageRow, PickableModel } from '@shared/llm-catalogue.ts'
+import type { LlmCatalogue, LlmAccess, UsageRow, PickableModel, AnswerModel } from '@shared/llm-catalogue.ts'
 
 /** An API failure, carrying the server's stable code where the route sends one.
  *
@@ -28,7 +28,7 @@ export interface AuthUser {
   email: string
   name: string | null
   role: 'user' | 'admin'
-  settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; useSpaceRag?: boolean; useChatRag?: boolean; querySuggestions?: boolean; followUpSuggestions?: boolean; userMemory?: boolean; imageWatermark?: boolean; fontSize?: number; theme?: Theme; timezone?: string; language?: Lang }
+  settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; useSpaceRag?: boolean; useChatRag?: boolean; querySuggestions?: boolean; followUpSuggestions?: boolean; userMemory?: boolean; imageWatermark?: boolean; cloudAcknowledged?: boolean; fontSize?: number; theme?: Theme; timezone?: string; language?: Lang }
   memoryTokenBudget: number
   /** True after an admin issued a temporary password — the user must set their own. */
   mustChangePassword?: boolean
@@ -83,6 +83,8 @@ export interface Message {
   pinned?: boolean
   /** Notes saved from this answer. */
   savedNotes?: Array<{ id: string; title: string }>
+  /** The picked model that wrote this answer; absent for the default model. */
+  model?: AnswerModel
 }
 
 // Auth — cookies are sent automatically by the browser
@@ -388,12 +390,12 @@ function parseContext(raw: string | null | undefined): ContextReport | null {
 
 function toMessages(messages: unknown): Message[] {
   const FIRST_PNG_RE = /!\[([^\]]*)\]\(([^)]+\.png)\)/
-  return (messages as Array<{ id: string; role: 'user' | 'assistant'; content: string; sources?: string; fileSources?: string; pinned?: boolean; savedNotes?: Array<{ id: string; title: string }> }>).map(m => {
+  return (messages as Array<{ id: string; role: 'user' | 'assistant'; content: string; sources?: string; fileSources?: string; pinned?: boolean; savedNotes?: Array<{ id: string; title: string }>; model?: string | null }>).map(m => {
     const sources = m.sources ? JSON.parse(m.sources) : undefined
     const fileSources = m.fileSources ? JSON.parse(m.fileSources) : undefined
     if (m.role === 'assistant') {
       const match = FIRST_PNG_RE.exec(m.content)
-      return { id: m.id, role: m.role, content: m.content, sources, fileSources, pinned: m.pinned, savedNotes: m.savedNotes?.length ? m.savedNotes : undefined, images: match ? [{ alt: match[1], url: match[2] }] : undefined }
+      return { id: m.id, role: m.role, content: m.content, sources, fileSources, pinned: m.pinned, savedNotes: m.savedNotes?.length ? m.savedNotes : undefined, images: match ? [{ alt: match[1], url: match[2] }] : undefined, model: m.model ? JSON.parse(m.model) as AnswerModel : undefined }
     }
     return { id: m.id, role: m.role, content: m.content, sources, fileSources, pinned: m.pinned }
   })

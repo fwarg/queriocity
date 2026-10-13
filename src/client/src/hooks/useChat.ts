@@ -4,7 +4,7 @@ import { hasAttachment, type ContextReport } from '@shared/context.ts'
 import type { Message, Source, FileSource } from '../lib/api.ts'
 import type { LogStep } from '../components/ProgressLog.tsx'
 import { useT } from '../lib/i18n.tsx'
-import type { ModelFallbackReason } from '@shared/llm-catalogue.ts'
+import type { AnswerModel, ModelFallbackReason } from '@shared/llm-catalogue.ts'
 
 export interface EgressApproval {
   id: string
@@ -134,6 +134,7 @@ export function useChat({ sessionId, focusMode, searchCategories, notesFirst, in
     const blockedEngines: Array<{ engine: string; reason: string }> = []
     // Which picked model answered, or why the pick was refused, for the answer's footer.
     let modelNote = ''
+    let answerModel: AnswerModel | undefined
     if (modelId) onModelUsed?.()
     let wasAborted = false
     let storedIds: { user?: string; assistant?: string } = {}
@@ -188,7 +189,10 @@ export function useChat({ sessionId, focusMode, searchCategories, notesFirst, in
         } else if (chunk.type === 'context') {
           setContext(chunk as unknown as ContextReport)
         } else if (chunk.type === 'model') {
-          modelNote = t('answer.byModel', { label: chunk.label as string })
+          answerModel = { id: chunk.id as string, label: chunk.label as string, kind: chunk.kind as AnswerModel['kind'], provider: chunk.provider as string }
+          modelNote = chunk.kind === 'cloud'
+            ? t('answer.byCloudModel', { label: chunk.label as string, provider: chunk.provider as string })
+            : t('answer.byModel', { label: chunk.label as string })
         } else if (chunk.type === 'model_notice') {
           modelNote = t(`modelNotice.${chunk.reason as ModelFallbackReason}`)
         } else if (chunk.type === 'search_warning') {
@@ -230,6 +234,7 @@ export function useChat({ sessionId, focusMode, searchCategories, notesFirst, in
           fileSources: fileSources.length > 0 ? fileSources : undefined,
           thinking: thinkingAccumulated || undefined,
           images: images.length > 0 ? images : undefined,
+          model: answerModel,
         }])
       }
       setStreaming('')

@@ -6,7 +6,7 @@ import { localTurnModels, type TurnModels } from './llm.ts'
 import { loadCatalogue, cloudTarget } from './llm-catalogue.ts'
 import { getLlmAccess, userSpend, providerSpend, meteredUsage } from './llm-usage.ts'
 import { isLocalEndpoint } from './space-lock.ts'
-import type { CloudModel, CloudProvider, ModelFallbackReason, PickableModel } from '../../shared/llm-catalogue.ts'
+import type { AnswerModel, CloudModel, CloudProvider, ModelFallbackReason, PickableModel } from '../../shared/llm-catalogue.ts'
 
 
 const FALLBACK_MESSAGES: Record<ModelFallbackReason, string> = {
@@ -14,14 +14,16 @@ const FALLBACK_MESSAGES: Record<ModelFallbackReason, string> = {
   mode: 'The chosen model does not apply to this mode; answered with the default model.',
   unavailable: 'The chosen model is not available; answered with the default model.',
   not_allowed: 'Choosing models is not enabled for your account; answered with the default model.',
+  unacknowledged: 'Cloud models need your confirmation first that the message leaves this server; answered with the default model.',
   budget: 'Your monthly budget for this provider is used up; answered with the default model.',
   cap: 'The monthly limit for this provider is reached; answered with the default model.',
 }
 
 export interface ResolvedModels {
   models: TurnModels
-  /** The catalogue entry the turn runs on, when the pick was honoured. */
+  /** The catalogue entry the turn runs on, and its provider, when the pick was honoured. */
   cloud?: CloudModel
+  provider?: CloudProvider
   /** Set when a pick was refused. */
   fallback?: { reason: ModelFallbackReason; message: string }
   /** A thinking-only pick switches thinking on for this turn, whatever the user's setting. */
@@ -33,10 +35,12 @@ interface PickRequest {
   modelId?: string
   focusMode: 'flash' | 'balanced' | 'thorough' | 'image'
   locked: boolean
+  /** The user has confirmed that a cloud model is sent the whole prompt. */
+  cloudAcknowledged: boolean
 }
 
 /** The turn's models: the defaults, or the picked model in the slots its role allows. */
-export async function resolveTurnModels({ userId, modelId, focusMode, locked }: PickRequest): Promise<ResolvedModels> {
+export async function resolveTurnModels({ userId, modelId, focusMode, locked, cloudAcknowledged }: PickRequest): Promise<ResolvedModels> {
   const models = localTurnModels()
   if (!modelId) return { models, forceThinking: false }
   const refuse = (reason: ModelFallbackReason): ResolvedModels => {
@@ -56,6 +60,8 @@ export async function resolveTurnModels({ userId, modelId, focusMode, locked }: 
   const access = getLlmAccess(userId)
   const budget = access.budgets[provider.id]
   if (!access.cloudEnabled || budget === undefined) return refuse('not_allowed')
+  // Enforced here as well as asked in the client, so no client path can send to the cloud unconfirmed.
+  if (provider.kind === 'cloud' && !cloudAcknowledged) return refuse('unacknowledged')
   const spendRefusal = provider.kind === 'cloud' && overSpend(userId, provider, budget)
   if (spendRefusal) return refuse(spendRefusal)
 
@@ -72,9 +78,14 @@ export async function resolveTurnModels({ userId, modelId, focusMode, locked }: 
       thinking: usesThinking ? cloud : models.thinking,
     },
     cloud: entry,
+    provider,
     forceThinking: entry.role === 'thinking',
   }
 }
+
+/** The picked model as stored with the answer and named to the client; undefined for the defaults. */
+export const answerModelOf = ({ cloud, provider }: ResolvedModels): AnswerModel | undefined =>
+  cloud && provider ? { id: cloud.id, label: cloud.label, kind: provider.kind, provider: provider.label } : undefined
 
 /** A locked space keeps its documents on this network, so only a local provider that is on it qualifies. */
 const allowedWhenLocked = (p: CloudProvider) => p.kind === 'local' && isLocalEndpoint(p.baseURL)

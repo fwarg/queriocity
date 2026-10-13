@@ -135,6 +135,9 @@ export const messages = sqliteTable('messages', {
   fileSources: text('file_sources'),
   /** Kept in full when a long conversation is trimmed to fit the model's context. */
   pinned: integer('pinned', { mode: 'boolean' }).notNull().default(false),
+  /** JSON `AnswerModel` when a picked model answered; null for the default model. Records which
+   *  answers left the server for a cloud provider. */
+  model: text('model'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 
@@ -566,6 +569,7 @@ function initSchema() {
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_monitor_runs_monitor_user ON monitor_runs(monitor_id, user_id)`)
   try { sqlite.run('ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0') } catch {}
   try { sqlite.run('ALTER TABLE users ADD COLUMN cloud_enabled INTEGER NOT NULL DEFAULT 0') } catch {}
+  try { sqlite.run('ALTER TABLE messages ADD COLUMN model TEXT') } catch {}
   try { sqlite.run('ALTER TABLE auth_credentials ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0') } catch {}
   try { sqlite.run('ALTER TABLE monitors ADD COLUMN preferred_hour INTEGER') } catch {}
   try { sqlite.run('ALTER TABLE monitors ADD COLUMN timezone TEXT') } catch {}

@@ -12,7 +12,8 @@ import { randomUUID } from 'crypto'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { hasTrustedSearch } from '../lib/search/index.ts'
 import { getFlashModel } from '../lib/llm.ts'
-import { resolveTurnModels, pickableModels, type ResolvedModels } from '../lib/cloud-models.ts'
+import { resolveTurnModels, pickableModels, answerModelOf, type ResolvedModels } from '../lib/cloud-models.ts'
+import type { AnswerModel } from '../../shared/llm-catalogue.ts'
 import { extractMemoriesPostHoc, toMemorySources } from '../lib/memory.ts'
 import { ownedCollectionIds } from '../lib/files/collections.ts'
 import { hasAttachment, type ContextReport } from '../../shared/context.ts'
@@ -213,9 +214,9 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   // Settings are read once here rather than per branch: the cache key depends on the custom
   // prompt, so a personalised answer can never be served to a different user or context.
   const userRow = await db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get()
-  // Resolved once so every phase of this turn runs on the same models.
-  const resolved = await resolveTurnModels({ userId, modelId, focusMode, locked })
   const storedSettings = parseSettings(userRow?.settings ?? '{}')
+  // Resolved once so every phase of this turn runs on the same models.
+  const resolved = await resolveTurnModels({ userId, modelId, focusMode, locked, cloudAcknowledged: storedSettings.cloudAcknowledged === true })
   const settings = resolved.forceThinking ? { ...storedSettings, useThinking: true } : storedSettings
   const customPrompt = settings.customPrompt as string | undefined
   // Everything that changes the answer for the same question belongs here. `searchCategories`
@@ -243,7 +244,8 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   // resumed instead of losing a half-finished answer. See lib/stream-buffer.ts.
   const run = startRun(sid, userId)
   c.req.raw.signal.addEventListener('abort', () => scheduleAbandon(run))
-  const tail = { sid, userId, msgs, spaceId, regenerate, ephemeral, t0: Date.now() }
+  // The cache key includes the model, so a cached answer came from this same model too.
+  const tail = { sid, userId, msgs, spaceId, regenerate, ephemeral, t0: Date.now(), model: answerModelOf(resolved) }
 
   // A cache hit is a real turn, not a shortcut around one: it emits the same events and runs the
   // same tail as a generated answer, so the exchange is saved and its citations still resolve.
@@ -273,9 +275,10 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
 })
 
 /** Which model answers, or why the pick was refused; sent right after `session`. */
-function modelEvents({ cloud, fallback }: ResolvedModels): Array<{ type: string; [k: string]: unknown }> {
-  if (fallback) return [{ type: 'model_notice', ...fallback }]
-  return cloud ? [{ type: 'model', id: cloud.id, label: cloud.label }] : []
+function modelEvents(resolved: ResolvedModels): Array<{ type: string; [k: string]: unknown }> {
+  if (resolved.fallback) return [{ type: 'model_notice', ...resolved.fallback }]
+  const model = answerModelOf(resolved)
+  return model ? [{ type: 'model', ...model }] : []
 }
 
 /** Read from the database, never from the request body — a lock the client could assert would be
@@ -342,20 +345,22 @@ interface TurnTail {
   /** Stopped by the user. With nothing produced, the client withdraws the question, so the
    *  server must not store it either — it would reappear as a phantom turn on reload. */
   aborted?: boolean
+  /** The picked model that answered; undefined for the default model. */
+  model?: AnswerModel
 }
 
 /** Common tail for every mode: persist the exchange, close the stream, and kick off the
  *  background memory/index work. Centralised because four branches ran their own copy and the
  *  cached-answer path quietly omitted all of it — losing the turn from the conversation. */
 async function finishTurn(out: SSEStream, {
-  sid, userId, msgs, fullContent, sources, fileSources, spaceId, regenerate, ephemeral, t0, context, aborted,
+  sid, userId, msgs, fullContent, sources, fileSources, spaceId, regenerate, ephemeral, t0, context, aborted, model,
 }: TurnTail): Promise<void> {
   const elapsedMs = Date.now() - t0
   if (ephemeral || (aborted && !fullContent.trim())) {
     await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, elapsedMs }) })
     return
   }
-  const { title, supersededAnswer, userMessageId, assistantMessageId } = await persistMessage(sid, userId, msgs, fullContent, sources, fileSources, spaceId, regenerate)
+  const { title, supersededAnswer, userMessageId, assistantMessageId } = await persistMessage(sid, userId, msgs, fullContent, sources, fileSources, spaceId, regenerate, model)
   if (context) await db.update(chatSessions).set({ contextReport: JSON.stringify(context) }).where(eq(chatSessions.id, sid))
   // The stored ids let the client pin these messages without reloading the chat.
   await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title, elapsedMs, userMessageId, assistantMessageId }) })
@@ -441,6 +446,7 @@ async function persistMessage(
   fileSources: unknown[],
   spaceId?: string,
   regenerate = false,
+  model?: AnswerModel,
 ): Promise<{ title: string; supersededAnswer?: string; userMessageId?: string; assistantMessageId: string }> {
   const now = new Date()
   const assistantMessageId = randomUUID()
@@ -468,7 +474,7 @@ async function persistMessage(
       userMessageId = randomUUID()
       await tx.insert(messages).values({ id: userMessageId, sessionId, role: 'user', content: lastUser.content, pinned: hasAttachment(lastUser.content), createdAt: now })
     }
-    await tx.insert(messages).values({ id: assistantMessageId, sessionId, role: 'assistant', content: assistantContent, sources: JSON.stringify(sources), fileSources: JSON.stringify(fileSources), createdAt: now })
+    await tx.insert(messages).values({ id: assistantMessageId, sessionId, role: 'assistant', content: assistantContent, sources: JSON.stringify(sources), fileSources: JSON.stringify(fileSources), model: model ? JSON.stringify(model) : null, createdAt: now })
   })
 
   return { title, supersededAnswer, userMessageId, assistantMessageId }
