@@ -42,8 +42,8 @@ const request = (method: string, path: string, body?: unknown) => app.request(`/
 function catalogue(): LlmCatalogue {
   return {
     providers: [
-      { id: 'cloud', label: 'Test cloud', baseURL: fake.baseURL, apiKeyEnv: 'TESTCLOUD_API_KEY', currency: 'EUR', monthlyCap: 20, enabled: true },
-      { id: 'nokey', label: 'No key', baseURL: 'https://api.example.com/v1', apiKeyEnv: 'MISSING_API_KEY', currency: 'USD', monthlyCap: 0, enabled: true },
+      { id: 'cloud', label: 'Test cloud', kind: 'cloud', baseURL: fake.baseURL, apiKeyEnv: 'TESTCLOUD_API_KEY', currency: 'EUR', monthlyCap: 20, enabled: true },
+      { id: 'nokey', label: 'No key', kind: 'cloud', baseURL: 'https://api.example.com/v1', apiKeyEnv: 'MISSING_API_KEY', currency: 'USD', monthlyCap: 0, enabled: true },
     ],
     models: [
       { id: 'big', providerId: 'cloud', model: 'vendor/big', label: 'Big', role: 'both', contextTokens: 128000, maxOutputTokens: 8000, priceIn: 3, priceOut: 15, enabled: true },
@@ -72,6 +72,8 @@ describe('admin LLM catalogue', () => {
     // A provider naming another secret would send it as a bearer token to its base URL.
     ['a key env var not ending in _API_KEY', (c: LlmCatalogue) => { c.providers[0].apiKeyEnv = 'JWT_SECRET' }],
     ['an unknown role', (c: LlmCatalogue) => { (c.models[0] as { role: string }).role = 'small' }],
+    ['a cloud provider without a key env var', (c: LlmCatalogue) => { c.providers[0].apiKeyEnv = '' }],
+    ['a cloud provider on plain http to the LAN', (c: LlmCatalogue) => { c.providers[1].baseURL = 'http://192.168.1.20:8000/v1' }],
     // An extra may add to a request, never redirect it to another model.
     ['an extra request field that overrides the model', (c: LlmCatalogue) => { c.providers[0].extraBody = { model: 'other' } }],
   ])('rejects %s and keeps the saved catalogue', async (_, mutate) => {
@@ -105,6 +107,21 @@ describe('admin LLM catalogue', () => {
     const res = await (await request('GET', '/llm-usage')).json()
     expect(res.access['llm-admin']).toEqual({ cloudEnabled: true, budgets: { cloud: 5 } })
     expect(res.usage.some((r: { userId: string; providerId: string }) => r.userId === 'llm-admin' && r.providerId === 'cloud')).toBe(true)
+  })
+
+  test('accepts a local provider on plain http without a key', async () => {
+    const c = catalogue()
+    c.providers.push({ id: 'lan', label: 'LAN', kind: 'local', baseURL: 'http://192.168.1.20:8000/v1', apiKeyEnv: '', currency: 'EUR', monthlyCap: 0, enabled: true })
+    expect((await request('PUT', '/llm-catalogue', c)).status).toBe(200)
+    expect((await loadCatalogue()).providers.at(-1)?.kind).toBe('local')
+    expect((await request('PUT', '/llm-catalogue', catalogue())).status).toBe(200)
+  })
+
+  test('reads a catalogue saved before provider kinds existed as cloud', async () => {
+    const c = catalogue() as { providers: Array<Partial<LlmCatalogue['providers'][number]>> }
+    for (const p of c.providers) delete p.kind
+    await setAppSetting(CATALOGUE_SETTING, JSON.stringify(c))
+    expect((await loadCatalogue()).providers.map(p => p.kind)).toEqual(['cloud', 'cloud'])
   })
 
   test('ignores a stored catalogue that no longer validates', async () => {

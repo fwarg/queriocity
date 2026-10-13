@@ -13,6 +13,9 @@ const money = (n: number, currency: string) => `${n.toFixed(2)} ${currency}`
 const spendOf = (usage: UsageRow[], providerId: string, userId?: string) =>
   usage.filter(r => r.providerId === providerId && (!userId || r.userId === userId)).reduce((s, r) => s + r.cost, 0)
 
+const withAccess = (budgets: Record<string, string>, providerId: string, on: boolean) =>
+  on ? { ...budgets, [providerId]: '0' } : Object.fromEntries(Object.entries(budgets).filter(([p]) => p !== providerId))
+
 const toDraft = (a?: LlmAccess): Draft => ({
   cloudEnabled: a?.cloudEnabled ?? false,
   budgets: Object.fromEntries(Object.entries(a?.budgets ?? {}).map(([p, b]) => [p, String(b)])),
@@ -26,7 +29,7 @@ function ProviderSpend({ providers, usage, month }: { providers: CloudProvider[]
   return (
     <div className="flex flex-col gap-1">
       <p className="text-xs text-gray-400 font-medium">Spend in {month} (UTC)</p>
-      {providers.map(p => {
+      {providers.filter(p => p.kind === 'cloud').map(p => {
         const spent = spendOf(usage, p.id)
         const over = p.monthlyCap > 0 && spent >= 0.8 * p.monthlyCap
         return (
@@ -59,10 +62,17 @@ function UserAccessRow({ user, providers, usage, initial, onSaved }: {
       <label className="flex items-center gap-2 cursor-pointer min-w-0">
         <input type="checkbox" checked={draft.cloudEnabled} onChange={e => setDraft({ ...draft, cloudEnabled: e.target.checked })} className="accent-blue-500 w-3.5 h-3.5" />
         <span className="text-sm text-gray-200 truncate">{user.email}</span>
-        <span className="text-xs text-gray-500">cloud models</span>
+        <span className="text-xs text-gray-500">may pick models</span>
       </label>
       <div className="flex flex-wrap gap-4">
-        {providers.map(p => (
+        {providers.map(p => p.kind === 'local' ? (
+          <label key={p.id} className="flex items-center gap-2 text-xs text-gray-400 cursor-pointer">
+            {/* Not metered: access is all there is to grant. Stored as a budget of 0. */}
+            <input type="checkbox" checked={draft.budgets[p.id] !== undefined} className="accent-blue-500 w-3.5 h-3.5"
+              onChange={e => setDraft({ ...draft, budgets: withAccess(draft.budgets, p.id, e.target.checked) })} />
+            {p.label || p.id}
+          </label>
+        ) : (
           <label key={p.id} className="flex flex-col gap-1 text-xs text-gray-400">
             {p.label || p.id} budget, {p.currency}
             <input type="number" min={0} step={1} placeholder="no access" value={draft.budgets[p.id] ?? ''}
@@ -98,8 +108,8 @@ export function AdminCloudAccess({ catalogue }: { catalogue: LlmCatalogue }) {
   return (
     <div className="flex flex-col gap-3">
       <p className="text-xs text-gray-500">
-        A user can pick cloud models only when cloud models are switched on for them and they have a budget for that provider.
-        Budgets and caps are per UTC month, in the provider's currency, priced from the catalogue.
+        A user can pick a model only when picking is switched on for them and they have access to its provider: a budget for a cloud provider, a tick for a local one.
+        Cloud budgets and caps are per UTC month, in the provider's currency, priced from the catalogue.
       </p>
       <ProviderSpend providers={catalogue.providers} usage={data.usage} month={data.month} />
       {users.map(u => (

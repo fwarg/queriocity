@@ -33,6 +33,7 @@ import {
 } from './lib/api.ts'
 import type { AuthUser, Message, Resource, Space, SpaceKind, SpaceMemory, SpaceFile } from './lib/api.ts'
 import { useChat } from './hooks/useChat.ts'
+import { useModelPicker } from './hooks/useModelPicker.ts'
 import { useLang, useT } from './lib/i18n.tsx'
 import { applyTheme } from './lib/theme.ts'
 import { DEFAULT_THEME } from '@shared/theme.ts'
@@ -198,9 +199,13 @@ export default function App() {
    *  refuses a collection either way; this keeps the UI from proposing what it will refuse. */
   const chatSpaces = spaces.filter(sp => sp.kind === 'space')
 
+  const modelPicker = useModelPicker(focusMode, activeSpaceLocked, !!currentUser)
+
   const { messages, setMessages, context, setContext, togglePin, deleteTurn, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, regenerate, cancel, reset, related, setRelated, steps, runStartedAt, approval, decideApproval } = useChat({
     sessionId,
     focusMode,
+    modelId: modelPicker.picked || undefined,
+    onModelUsed: modelPicker.reset,
     searchCategories,
     notesFirst,
     includeFileIds: pinnedFileIds.length ? pinnedFileIds : undefined,
@@ -220,6 +225,10 @@ export default function App() {
       }
     },
   })
+
+  // The pickable models carry what is left of each budget, which every answer spends.
+  const { refresh: refreshModels } = modelPicker
+  useEffect(() => { if (!busy) refreshModels() }, [busy, refreshModels])
 
   const bottomRef = useRef<HTMLDivElement>(null)
 
@@ -1622,6 +1631,9 @@ export default function App() {
               onAddedToLibrary={reloadFiles}
               related={related}
               onRelatedSelect={q => { setRelated([]); submit(q) }}
+              models={modelPicker.available}
+              modelId={modelPicker.picked}
+              onModelChange={modelPicker.setPicked}
             />
           </>
         )}

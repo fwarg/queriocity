@@ -8,14 +8,13 @@ export const CATALOGUE_SETTING = 'llm_catalogue'
 const id = z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/, 'lowercase letters, digits and dashes')
 const price = z.number().min(0).max(10_000)
 
-/** HTTPS only, so a key is never sent in clear; plain HTTP is allowed to this machine for a local proxy. */
-const baseURL = z.string().url().refine(
-  u => /^https:\/\//.test(u) || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/.test(u),
-  'must be https (http only for localhost)',
-)
+/** A cloud provider must be HTTPS so its key is never sent in clear (HTTP to this machine allowed,
+ *  for a local proxy); a local provider is on the admin's own network, where plain HTTP is normal. */
+const httpsOrLoopback = (u: string) => /^https:\/\//.test(u) || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/.test(u)
 
-/** Restricted to *_API_KEY so the catalogue cannot point a provider at the server's other secrets. */
-const apiKeyEnv = z.string().regex(/^[A-Z][A-Z0-9_]{0,63}_API_KEY$/, 'an env var name ending in _API_KEY')
+/** Restricted to *_API_KEY so the catalogue cannot point a provider at the server's other secrets.
+ *  Empty is allowed for a local provider only (checked below). */
+const apiKeyEnv = z.string().regex(/^([A-Z][A-Z0-9_]{0,63}_API_KEY)?$/, 'an env var name ending in _API_KEY')
 
 /** Fields the request itself sets; an extra may add to a request but never redirect or reshape it. */
 const RESERVED_BODY_KEYS = new Set(['model', 'messages', 'stream', 'stream_options', 'tools', 'tool_choice', 'max_tokens', 'max_completion_tokens', 'response_format'])
@@ -27,7 +26,9 @@ const extraBody = z.record(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/), z.union([
 const providerSchema = z.object({
   id,
   label: z.string().min(1).max(60),
-  baseURL,
+  // Default for catalogues saved before local providers existed.
+  kind: z.enum(['cloud', 'local']).default('cloud'),
+  baseURL: z.string().url().regex(/^https?:\/\//, 'must be http or https'),
   apiKeyEnv,
   currency: z.string().regex(/^[A-Z]{3}$/, 'a three-letter currency code'),
   monthlyCap: z.number().min(0).max(1_000_000),
@@ -55,6 +56,10 @@ export const catalogueSchema = z.object({
   models: z.array(modelSchema).max(200),
 }).superRefine((c, ctx) => {
   for (const dup of duplicates(c.providers.map(p => p.id))) ctx.addIssue({ code: 'custom', message: `duplicate provider id "${dup}"` })
+  for (const p of c.providers.filter(p => p.kind === 'cloud')) {
+    if (!httpsOrLoopback(p.baseURL)) ctx.addIssue({ code: 'custom', message: `cloud provider "${p.id}" must use https (http only for localhost)` })
+    if (!p.apiKeyEnv) ctx.addIssue({ code: 'custom', message: `cloud provider "${p.id}" needs an API key env var` })
+  }
   for (const dup of duplicates(c.models.map(m => m.id))) ctx.addIssue({ code: 'custom', message: `duplicate model id "${dup}"` })
   const known = new Set(c.providers.map(p => p.id))
   for (const m of c.models) {
@@ -78,14 +83,15 @@ export const saveCatalogue = (catalogue: LlmCatalogue) => setAppSetting(CATALOGU
 
 /** Whether each env var the catalogue names is set, so the admin sees a missing key before a user does. */
 export const keyStatus = (catalogue: LlmCatalogue): Record<string, boolean> =>
-  Object.fromEntries(catalogue.providers.map(p => [p.apiKeyEnv, !!process.env[p.apiKeyEnv]?.trim()]))
+  Object.fromEntries(catalogue.providers.filter(p => p.apiKeyEnv).map(p => [p.apiKeyEnv, !!process.env[p.apiKeyEnv]?.trim()]))
 
-/** A catalogue model as a target the turn can run on; null when unknown or its key is unset. */
+/** A catalogue model as a target the turn can run on; null when unknown or a key it names is unset. */
 export function cloudTarget(catalogue: LlmCatalogue, modelId: string): (ModelTarget & { entry: CloudModel }) | null {
   const entry = catalogue.models.find(m => m.id === modelId)
   const provider = entry && catalogue.providers.find(p => p.id === entry.providerId)
-  const apiKey = provider && process.env[provider.apiKeyEnv]?.trim()
-  if (!entry || !provider || !apiKey) return null
+  if (!entry || !provider) return null
+  const apiKey = provider.apiKeyEnv ? process.env[provider.apiKeyEnv]?.trim() : undefined
+  if (provider.apiKeyEnv && !apiKey) return null
   return {
     role: entry.role === 'thinking' ? 'thinking' : 'chat',
     provider: 'openai',

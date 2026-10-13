@@ -2,7 +2,7 @@ import type { Lang } from '@shared/i18n/index.ts'
 import type { Theme } from '@shared/theme.ts'
 import type { ContextReport } from '@shared/context.ts'
 import type { ApiErrorBody, ErrorCode } from '@shared/error-codes.ts'
-import type { LlmCatalogue, LlmAccess, UsageRow } from '@shared/llm-catalogue.ts'
+import type { LlmCatalogue, LlmAccess, UsageRow, PickableModel } from '@shared/llm-catalogue.ts'
 
 /** An API failure, carrying the server's stable code where the route sends one.
  *
@@ -203,6 +203,12 @@ export async function revokeInvite(token: string): Promise<void> {
   await fetch(`${BASE}/admin/invites/${token}`, { method: 'DELETE' })
 }
 
+/** Extra models the user may pick for one message; empty when picking is not enabled for them. */
+export async function fetchPickableModels(): Promise<PickableModel[]> {
+  const res = await fetch(`${BASE}/chat/models`)
+  return res.ok ? res.json() : []
+}
+
 export type ModelTestResult = { role: string; model: string; ok: boolean; ms: number; info: string }
 
 export async function testModels(): Promise<ModelTestResult[]> {
@@ -224,6 +230,7 @@ export async function* streamChat(
   collectionIds?: string[],
   regenerate?: boolean,
   notesFirst?: boolean,
+  modelId?: string,
 ): AsyncGenerator<{ type: string; [k: string]: unknown }> {
   const res = await fetch(`${BASE}/chat`, {
     method: 'POST',
@@ -246,6 +253,7 @@ export async function* streamChat(
       ...(collectionIds?.length ? { collectionIds } : {}),
       ...(regenerate ? { regenerate: true } : {}),
       ...(notesFirst ? { notesFirst: true } : {}),
+      ...(modelId ? { modelId } : {}),
     }),
     signal,
   })

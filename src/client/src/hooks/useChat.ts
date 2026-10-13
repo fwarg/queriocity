@@ -4,6 +4,7 @@ import { hasAttachment, type ContextReport } from '@shared/context.ts'
 import type { Message, Source, FileSource } from '../lib/api.ts'
 import type { LogStep } from '../components/ProgressLog.tsx'
 import { useT } from '../lib/i18n.tsx'
+import type { ModelFallbackReason } from '@shared/llm-catalogue.ts'
 
 export interface EgressApproval {
   id: string
@@ -27,6 +28,10 @@ interface UseChatOptions {
   spaceId?: string
   /** User setting; when false no related-questions call is made at all. */
   followUpSuggestions?: boolean
+  /** An extra model picked for the next message only. */
+  modelId?: string
+  /** Called once a message has been sent with `modelId`, so the pick can go back to the default. */
+  onModelUsed?: () => void
   onSessionCreated: (id: string, title: string) => void
 }
 
@@ -37,7 +42,7 @@ function withStoredId(messages: Message[], id: string | undefined): Message[] {
   return [...messages.slice(0, -1), { ...last, id }]
 }
 
-export function useChat({ sessionId, focusMode, searchCategories, notesFirst, includeFileIds, includeMemoryIds, collectionIds, spaceId, followUpSuggestions = true, onSessionCreated }: UseChatOptions) {
+export function useChat({ sessionId, focusMode, searchCategories, notesFirst, includeFileIds, includeMemoryIds, collectionIds, spaceId, followUpSuggestions = true, modelId, onModelUsed, onSessionCreated }: UseChatOptions) {
   const t = useT()
   const [messages, setMessages] = useState<Message[]>([])
   const [streaming, setStreaming] = useState('')
@@ -127,11 +132,14 @@ export function useChat({ sessionId, focusMode, searchCategories, notesFirst, in
     const fileSources: FileSource[] = []
     const images: Array<{ url: string; alt: string }> = []
     const blockedEngines: Array<{ engine: string; reason: string }> = []
+    // Which picked model answered, or why the pick was refused, for the answer's footer.
+    let modelNote = ''
+    if (modelId) onModelUsed?.()
     let wasAborted = false
     let storedIds: { user?: string; assistant?: string } = {}
 
     try {
-      for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId, undefined, searchCategories, includeFileIds, includeMemoryIds, collectionIds, regenerating, notesFirst)) {
+      for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId, undefined, searchCategories, includeFileIds, includeMemoryIds, collectionIds, regenerating, notesFirst, modelId)) {
         if (chunk.type === 'text') {
           accumulated += chunk.delta as string
           cancelAnimationFrame(rafRef.current)
@@ -179,6 +187,10 @@ export function useChat({ sessionId, focusMode, searchCategories, notesFirst, in
           setApproval(a => (a && a.id === chunk.id ? null : a))
         } else if (chunk.type === 'context') {
           setContext(chunk as unknown as ContextReport)
+        } else if (chunk.type === 'model') {
+          modelNote = t('answer.byModel', { label: chunk.label as string })
+        } else if (chunk.type === 'model_notice') {
+          modelNote = t(`modelNotice.${chunk.reason as ModelFallbackReason}`)
         } else if (chunk.type === 'search_warning') {
           blockedEngines.push(...(chunk.engines as Array<{ engine: string; reason: string }>))
         } else if (chunk.type === 'done') {
@@ -193,7 +205,7 @@ export function useChat({ sessionId, focusMode, searchCategories, notesFirst, in
             if (srcCount > 0) srcLabel = ` · ${t('answer.searchResults', { count: srcCount })}`
             else if (blockedEngines.length) srcLabel = ` · ${t('answer.enginesUnavailable', { engines: blockedEngines.map(e => e.engine).join(', ') })}`
             else srcLabel = alwaysSearches ? ` · ${t('answer.noSearchResults')}` : ''
-            setAnswerTime(t('answer.time', { label, seconds: (chunk.elapsedMs as number / 1000).toFixed(1) }) + srcLabel + '.')
+            setAnswerTime(t('answer.time', { label, seconds: (chunk.elapsedMs as number / 1000).toFixed(1) }) + srcLabel + '.' + (modelNote ? ` ${modelNote}` : ''))
           }
           liveSessionRef.current = chunk.sessionId as string
           storedIds = { user: chunk.userMessageId as string | undefined, assistant: chunk.assistantMessageId as string | undefined }

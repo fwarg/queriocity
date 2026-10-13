@@ -1,15 +1,21 @@
-/** Admin-managed catalogue of cloud LLM providers and the models users may pick from them. */
+/** Admin-managed catalogue of extra LLM providers — cloud services, or larger models on your own
+ *  network — and the models users may pick from them per message. */
 
 /** Which turn slots a model may fill: the answer (and flash), the thinking pass, or either. */
 export type CloudModelRole = 'chat' | 'thinking' | 'both'
+
+/** Cloud providers are metered against budgets; local ones run on your own hardware and are not. */
+export type ProviderKind = 'cloud' | 'local'
 
 export interface CloudProvider {
   /** Stable id; usage and access rows refer to it, so it never changes once saved. */
   id: string
   label: string
+  kind: ProviderKind
   /** OpenAI-compatible base URL, e.g. https://openrouter.ai/api/v1. */
   baseURL: string
-  /** Name of the env var that holds the key; the key itself is never stored. Must end in _API_KEY. */
+  /** Name of the env var that holds the key; the key itself is never stored. Must end in _API_KEY.
+   *  Optional for a local provider, which often needs none. */
   apiKeyEnv: string
   /** ISO 4217 code; prices, budgets and the cap of this provider are in it. */
   currency: string
@@ -57,5 +63,23 @@ export interface UsageRow {
   outputTokens: number
   requests: number
 }
+
+/** A model the current user may pick, as the chat input lists it. */
+export interface PickableModel {
+  id: string
+  label: string
+  role: CloudModelRole
+  providerId: string
+  providerLabel: string
+  kind: ProviderKind
+  /** Budget left this month in `currency`; absent for a local provider, which has none. */
+  remaining?: number
+  currency?: string
+  /** Whether a locked space may use it: only a local provider whose endpoint is on this network. */
+  allowedWhenLocked: boolean
+}
+
+/** Why a model pick was not honoured; the client words the notice from this. */
+export type ModelFallbackReason = 'locked' | 'mode' | 'unavailable' | 'not_allowed' | 'budget' | 'cap'
 
 export const EMPTY_CATALOGUE: LlmCatalogue = { providers: [], models: [] }

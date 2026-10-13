@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useConfirm } from './confirm.tsx'
 import { AdminCloudAccess } from './AdminCloudAccess.tsx'
 import { fetchLlmCatalogue, saveLlmCatalogue, testCloudModel } from '../lib/api.ts'
-import type { CloudModel, CloudModelRole, CloudProvider, LlmCatalogue } from '@shared/llm-catalogue.ts'
+import type { CloudModel, CloudModelRole, CloudProvider, LlmCatalogue, ProviderKind } from '@shared/llm-catalogue.ts'
 
 const INPUT = 'px-2 py-1 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500 disabled:opacity-60'
 const LABEL = 'flex flex-col gap-1 text-xs text-gray-400'
@@ -10,11 +10,12 @@ const BUTTON = 'px-3 py-1 rounded bg-gray-800 hover:bg-gray-700 text-xs disabled
 
 /** Known OpenAI-compatible providers. Cortecs' billing currency is assumed EUR — check it in its console. */
 const PRESETS: Array<Omit<CloudProvider, 'enabled' | 'monthlyCap'>> = [
-  { id: 'openrouter', label: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1', apiKeyEnv: 'OPENROUTER_API_KEY', currency: 'USD' },
-  { id: 'cortecs', label: 'Cortecs', baseURL: 'https://api.cortecs.ai/v1', apiKeyEnv: 'CORTECS_API_KEY', currency: 'EUR' },
+  { id: 'local-big', label: 'Local server', kind: 'local', baseURL: 'http://', apiKeyEnv: '', currency: 'EUR' },
+  { id: 'openrouter', label: 'OpenRouter', kind: 'cloud', baseURL: 'https://openrouter.ai/api/v1', apiKeyEnv: 'OPENROUTER_API_KEY', currency: 'USD' },
+  { id: 'cortecs', label: 'Cortecs', kind: 'cloud', baseURL: 'https://api.cortecs.ai/v1', apiKeyEnv: 'CORTECS_API_KEY', currency: 'EUR' },
 ]
 
-const BLANK_PROVIDER: CloudProvider = { id: '', label: '', baseURL: 'https://', apiKeyEnv: '', currency: 'USD', monthlyCap: 0, enabled: false }
+const BLANK_PROVIDER: CloudProvider = { id: '', label: '', kind: 'cloud', baseURL: 'https://', apiKeyEnv: '', currency: 'USD', monthlyCap: 0, enabled: false }
 
 const blankModel = (providerId: string): CloudModel => ({
   id: '', providerId, model: '', label: '', role: 'chat', contextTokens: 32768, maxOutputTokens: 8000, priceIn: 0, priceOut: 0, enabled: false,
@@ -58,21 +59,30 @@ function ProviderCard({ provider, saved, keySet, onChange, onRemove }: {
     <div className="flex flex-col gap-3 border border-gray-800 rounded p-3">
       <div className="flex items-center justify-between gap-2">
         <EnabledToggle checked={provider.enabled} onChange={v => set('enabled', v)} title={provider.label} subtitle={provider.id} />
-        {saved && (
+        {saved && provider.apiKeyEnv && (
           <span className={`text-xs ${keySet ? 'text-green-400' : 'text-amber-400'}`}>
             {keySet ? 'key set' : `key missing — set ${provider.apiKeyEnv}`}
           </span>
         )}
       </div>
       <div className="flex flex-wrap gap-4">
+        <label className={LABEL}>Kind
+          <select value={provider.kind} onChange={e => set('kind', e.target.value as ProviderKind)} className={INPUT}>
+            <option value="cloud">Cloud (metered)</option>
+            <option value="local">Local network</option>
+          </select>
+        </label>
         <TextField label="Id (fixed once saved)" value={provider.id} disabled={saved} onChange={v => set('id', v)} placeholder="openrouter" />
         <TextField label="Label" value={provider.label} onChange={v => set('label', v)} />
         <TextField label="Base URL" value={provider.baseURL} onChange={v => set('baseURL', v)} wide />
       </div>
       <div className="flex flex-wrap gap-4 items-end">
-        <TextField label="API key env var" value={provider.apiKeyEnv} onChange={v => set('apiKeyEnv', v.toUpperCase())} placeholder="OPENROUTER_API_KEY" />
-        <TextField label="Currency" value={provider.currency} onChange={v => set('currency', v.toUpperCase())} />
-        <NumberField label={`Monthly cap, ${provider.currency} (0 = none)`} value={provider.monthlyCap} onChange={v => set('monthlyCap', v)} step={5} />
+        <TextField label={provider.kind === 'local' ? 'API key env var (optional)' : 'API key env var'} value={provider.apiKeyEnv} onChange={v => set('apiKeyEnv', v.toUpperCase())} placeholder="OPENROUTER_API_KEY" />
+        {/* A local provider is not metered, so it has no currency or cap. */}
+        {provider.kind === 'cloud' && <>
+          <TextField label="Currency" value={provider.currency} onChange={v => set('currency', v.toUpperCase())} />
+          <NumberField label={`Monthly cap, ${provider.currency} (0 = none)`} value={provider.monthlyCap} onChange={v => set('monthlyCap', v)} step={5} />
+        </>}
         <button onClick={onRemove} className={`${BUTTON} text-red-300`}>Remove</button>
       </div>
       <ExtraBodyField value={provider.extraBody} onChange={v => set('extraBody', v)} />
@@ -109,7 +119,8 @@ function ModelCard({ model, providers, saved, result, onChange, onRemove, onTest
   onChange: (m: CloudModel) => void; onRemove: () => void; onTest: () => void
 }) {
   const set = <K extends keyof CloudModel>(k: K, v: CloudModel[K]) => onChange({ ...model, [k]: v })
-  const currency = providers.find(p => p.id === model.providerId)?.currency ?? ''
+  const provider = providers.find(p => p.id === model.providerId)
+  const currency = provider?.currency ?? ''
   return (
     <div className="flex flex-col gap-3 border border-gray-800 rounded p-3">
       <EnabledToggle checked={model.enabled} onChange={v => set('enabled', v)} title={model.label} subtitle={model.model} />
@@ -133,8 +144,10 @@ function ModelCard({ model, providers, saved, result, onChange, onRemove, onTest
         </label>
         <NumberField label="Context tokens" value={model.contextTokens} onChange={v => set('contextTokens', v)} step={1024} />
         <NumberField label="Max output tokens" value={model.maxOutputTokens} onChange={v => set('maxOutputTokens', v)} step={1000} />
-        <NumberField label={`${currency} / M input`} value={model.priceIn} onChange={v => set('priceIn', v)} step={0.01} />
-        <NumberField label={`${currency} / M output`} value={model.priceOut} onChange={v => set('priceOut', v)} step={0.01} />
+        {provider?.kind !== 'local' && <>
+          <NumberField label={`${currency} / M input`} value={model.priceIn} onChange={v => set('priceIn', v)} step={0.01} />
+          <NumberField label={`${currency} / M output`} value={model.priceOut} onChange={v => set('priceOut', v)} step={0.01} />
+        </>}
       </div>
       <div className="flex flex-wrap items-center gap-3">
         <button onClick={onTest} disabled={!saved || result === 'running'} className={BUTTON} title={saved ? 'Sends one tiny request using the saved settings' : 'Save first'}>
@@ -157,15 +170,16 @@ function AddProviderButtons({ existing, onAdd }: { existing: CloudProvider[]; on
       {PRESETS.filter(pr => !existing.some(p => p.id === pr.id)).map(pr => (
         <button key={pr.id} onClick={() => onAdd(pr)} className={BUTTON}>+ {pr.label}</button>
       ))}
-      <button onClick={() => onAdd()} className={BUTTON}>+ Other provider</button>
+      <button onClick={() => onAdd()} className={BUTTON}>+ Other cloud provider</button>
     </div>
   )
 }
 
 const INTRO = (
   <p className="text-xs text-gray-500">
-    Cloud models users can pick for a single message instead of the local model. Their prompts — including memory and document excerpts — go to the provider.
-    API keys stay in env; each provider names its env var. Locked spaces, image mode, monitors and background helpers always stay local.
+    Extra models users can pick for a single message instead of the default: cloud services, metered against budgets, or bigger models on your own network.
+    A cloud model's prompts — including memory and document excerpts — go to the provider. API keys stay in env; each provider names its env var.
+    Image mode, monitors and background helpers always use the default models; a locked space allows only local-network providers.
   </p>
 )
 

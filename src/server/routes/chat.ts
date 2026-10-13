@@ -12,7 +12,7 @@ import { randomUUID } from 'crypto'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { hasTrustedSearch } from '../lib/search/index.ts'
 import { getFlashModel } from '../lib/llm.ts'
-import { resolveTurnModels, type ResolvedModels } from '../lib/cloud-models.ts'
+import { resolveTurnModels, pickableModels, type ResolvedModels } from '../lib/cloud-models.ts'
 import { extractMemoriesPostHoc, toMemorySources } from '../lib/memory.ts'
 import { ownedCollectionIds } from '../lib/files/collections.ts'
 import { hasAttachment, type ContextReport } from '../../shared/context.ts'
@@ -164,6 +164,9 @@ chatRouter.get('/resume/:sessionId', async (c) => {
   })
 })
 
+/** The extra models this user may pick for a message now; empty when picking is not enabled for them. */
+chatRouter.get('/models', async (c) => c.json(await pickableModels(c.get('userId') as string)))
+
 chatRouter.post('/:sessionId/stop', async (c) => {
   const stopped = stopRun(c.req.param('sessionId'), c.get('userId') as string)
   return c.json({ stopped })
@@ -244,7 +247,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
 
   // A cache hit is a real turn, not a shortcut around one: it emits the same events and runs the
   // same tail as a generated answer, so the exchange is saved and its citations still resolve.
-  if (cached) return streamRun(c, run, out => replayCached(out, cached, tail, resolved.fallback))
+  if (cached) return streamRun(c, run, out => replayCached(out, cached, tail, resolved))
 
   const ctx: TurnContext = {
     userId, sid, msgs, focusMode, spaceId, locked, settings, customPrompt, collections,
@@ -258,7 +261,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   return streamRun(c, run, async (out) => {
     const sink = createSink(out, approvalRequester(run, out))
     await sink.emit({ type: 'session', sessionId: sid })
-    if (resolved.fallback) await sink.emit({ type: 'model_notice', ...resolved.fallback })
+    for (const event of modelEvents(resolved)) await sink.emit(event)
     const result = await runTurn(ctx, sink)
     const aborted = ctx.abortSignal.aborted
     if (result.cacheable && !aborted && result.content.length >= 50) {
@@ -268,6 +271,12 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     await finishTurn(out, { ...tail, fullContent: result.content, sources: result.sources, fileSources: result.fileSources, context: sink.lastContext, aborted })
   })
 })
+
+/** Which model answers, or why the pick was refused; sent right after `session`. */
+function modelEvents({ cloud, fallback }: ResolvedModels): Array<{ type: string; [k: string]: unknown }> {
+  if (fallback) return [{ type: 'model_notice', ...fallback }]
+  return cloud ? [{ type: 'model', id: cloud.id, label: cloud.label }] : []
+}
 
 /** Read from the database, never from the request body — a lock the client could assert would be
  *  decorative. Resolved from the chat's own space when it has one, so an existing chat stays
@@ -281,9 +290,9 @@ async function isSessionLocked(sessionId: string | undefined, spaceId: string | 
 }
 
 /** Emits a cached answer with the same events and tail as a generated one. */
-async function replayCached(out: SSEStream, cached: CachedAnswer, tail: Omit<TurnTail, 'fullContent' | 'sources' | 'fileSources'>, fallback?: ResolvedModels['fallback']) {
+async function replayCached(out: SSEStream, cached: CachedAnswer, tail: Omit<TurnTail, 'fullContent' | 'sources' | 'fileSources'>, resolved: ResolvedModels) {
   await out.writeSSE({ data: JSON.stringify({ type: 'session', sessionId: tail.sid }) })
-  if (fallback) await out.writeSSE({ data: JSON.stringify({ type: 'model_notice', ...fallback }) })
+  for (const event of modelEvents(resolved)) await out.writeSSE({ data: JSON.stringify(event) })
   await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: cached.content }) })
   if (cached.sources.length) await out.writeSSE({ data: JSON.stringify({ type: 'sources', sources: cached.sources }) })
   if (cached.fileSources.length) await out.writeSSE({ data: JSON.stringify({ type: 'file_sources', sources: cached.fileSources }) })

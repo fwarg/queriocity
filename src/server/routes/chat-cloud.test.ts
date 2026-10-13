@@ -10,13 +10,13 @@ import { Hono } from 'hono'
 import { startFakeOpenAI } from '../lib/test-support/fake-openai.ts'
 import { startFakeSearxng, type SseEvent } from '../lib/test-support/fake-searxng.ts'
 import { envOverride } from '../lib/test-support/env-override.ts'
-import type { LlmCatalogue } from '../../shared/llm-catalogue.ts'
+import type { LlmCatalogue, PickableModel } from '../../shared/llm-catalogue.ts'
 
 const { db, users, spaces, setAppSetting } = await import('../lib/db.ts')
 const { chatRouter } = await import('./chat.ts')
 const { signToken, AUTH_COOKIE } = await import('../lib/auth.ts')
 const { saveCatalogue, CATALOGUE_SETTING } = await import('../lib/llm-catalogue.ts')
-const { setLlmAccess, recordLlmUsage, userSpend } = await import('../lib/llm-usage.ts')
+const { setLlmAccess, recordLlmUsage, userSpend, monthlyLlmUsage } = await import('../lib/llm-usage.ts')
 const { resolveTurnModels } = await import('../lib/cloud-models.ts')
 
 const USER = 'cloud-user'
@@ -27,17 +27,21 @@ const LOCAL = 'A local answer, also long enough for the chat route to put it in 
 let cookie = ''
 let local: ReturnType<typeof startFakeOpenAI>
 let cloud: ReturnType<typeof startFakeOpenAI>
+let lan: ReturnType<typeof startFakeOpenAI>
 let searxng: ReturnType<typeof startFakeSearxng>
 let restoreEnv: () => void
 
 const catalogue = (): LlmCatalogue => ({
   providers: [
-    { id: 'cl', label: 'Cloud', baseURL: cloud.baseURL, apiKeyEnv: 'CLOUDTEST_API_KEY', currency: 'EUR', monthlyCap: 100, extraBody: { eu_native: true }, enabled: true },
+    { id: 'cl', label: 'Cloud', kind: 'cloud', baseURL: cloud.baseURL, apiKeyEnv: 'CLOUDTEST_API_KEY', currency: 'EUR', monthlyCap: 100, extraBody: { eu_native: true }, enabled: true },
+    // A bigger model on this machine: no key, not metered.
+    { id: 'lan', label: 'Big box', kind: 'local', baseURL: lan.baseURL, apiKeyEnv: '', currency: 'EUR', monthlyCap: 0, enabled: true },
   ],
   models: [
     { id: 'cl-both', providerId: 'cl', model: 'vendor/both', label: 'Both', role: 'both', contextTokens: 64000, maxOutputTokens: 3000, priceIn: 1, priceOut: 1, enabled: true },
     { id: 'cl-think', providerId: 'cl', model: 'vendor/think', label: 'Think', role: 'thinking', contextTokens: 64000, maxOutputTokens: 3000, priceIn: 1, priceOut: 1, enabled: true },
     { id: 'cl-off', providerId: 'cl', model: 'vendor/off', label: 'Off', role: 'chat', contextTokens: 64000, maxOutputTokens: 3000, priceIn: 1, priceOut: 1, enabled: false },
+    { id: 'lan-big', providerId: 'lan', model: 'big-local', label: 'Big local', role: 'both', contextTokens: 32000, maxOutputTokens: 4000, priceIn: 0, priceOut: 0, enabled: true },
   ],
 })
 
@@ -49,6 +53,7 @@ beforeAll(async () => {
   await setAppSetting('query_reformulation', 'false')
   local = startFakeOpenAI([{ text: [LOCAL] }])
   cloud = startFakeOpenAI([{ text: [LONG], usage: { prompt_tokens: 1000, completion_tokens: 1000 } }])
+  lan = startFakeOpenAI([{ text: ['From the big local model.'], usage: { prompt_tokens: 1000, completion_tokens: 1000 } }])
   searxng = startFakeSearxng()
   restoreEnv = envOverride({
     CHAT_BASE_URL: local.baseURL, CHAT_API_KEY: 'test', CHAT_MODEL: 'local', CLOUDTEST_API_KEY: 'secret',
@@ -57,10 +62,10 @@ beforeAll(async () => {
   await saveCatalogue(catalogue())
 })
 
-beforeEach(() => setLlmAccess(USER, { cloudEnabled: true, budgets: { cl: 10 } }))
+beforeEach(() => setLlmAccess(USER, { cloudEnabled: true, budgets: { cl: 10, lan: 0 } }))
 
 afterAll(async () => {
-  local.stop(); cloud.stop(); searxng.stop(); restoreEnv()
+  local.stop(); cloud.stop(); lan.stop(); searxng.stop(); restoreEnv()
   await setAppSetting(CATALOGUE_SETTING, '')
 })
 
@@ -84,6 +89,7 @@ describe('a cloud pick', () => {
     const events = await chat({ modelId: 'cl-both', messages: [{ role: 'user', content: 'Pick cloud' }] })
     expect(answerOf(events)).toBe(LONG)
     expect(noticeOf(events)).toBeUndefined()
+    expect(events[1]).toEqual({ type: 'model', id: 'cl-both', label: 'Both' })
     const sent = cloud.requests.at(-1) as { model: string; eu_native?: boolean; max_tokens?: number }
     expect(sent).toMatchObject({ model: 'vendor/both', eu_native: true, max_tokens: 3000 })
     expect(userSpend(USER, 'cl') - before).toBeCloseTo(0.002)
@@ -173,5 +179,45 @@ describe('resolving a pick', () => {
   test('refuses once the provider\'s cap is reached by anyone', async () => {
     recordLlmUsage('someone-else', 'cl', { inputTokens: 0, outputTokens: 0 }, 100)
     expect((await pick('cl-both')).fallback?.reason).toBe('cap')
+  })
+})
+
+describe('a local provider', () => {
+  test('answers without a key, unmetered, and in a locked space when on this network', async () => {
+    const before = monthlyLlmUsage()
+    const events = await chat({ modelId: 'lan-big', spaceId: 'cloud-locked', messages: [{ role: 'user', content: 'Big local' }] })
+    expect(noticeOf(events)).toBeUndefined()
+    expect(answerOf(events)).toBe('From the big local model.')
+    expect((lan.requests.at(-1) as { model: string }).model).toBe('big-local')
+    expect(monthlyLlmUsage()).toEqual(before)
+  })
+
+  test('still needs the user to be granted it', async () => {
+    setLlmAccess(USER, { cloudEnabled: true, budgets: { cl: 10 } })
+    expect((await pick('lan-big')).fallback?.reason).toBe('not_allowed')
+  })
+})
+
+describe('GET /chat/models', () => {
+  // The cap test above spent the provider's whole cap for this month; lift it for these.
+  beforeAll(() => saveCatalogue({ ...catalogue(), providers: catalogue().providers.map(p => ({ ...p, monthlyCap: 0 })) }))
+
+  const list = async () => (await app.request('/chat/models', { headers: { Cookie: cookie } })).json() as Promise<PickableModel[]>
+
+  test('lists the enabled, granted models with what is left of each cloud budget', async () => {
+    setLlmAccess(USER, { cloudEnabled: true, budgets: { cl: userSpend(USER, 'cl') + 4, lan: 0 } })
+    const models = await list()
+    expect(models.map(m => m.id)).toEqual(['cl-both', 'cl-think', 'lan-big'])
+    expect(models[0]).toMatchObject({ kind: 'cloud', currency: 'EUR', allowedWhenLocked: false })
+    expect(models[0].remaining).toBeCloseTo(4)
+    expect(models[2]).toMatchObject({ kind: 'local', allowedWhenLocked: true })
+    expect(models[2].remaining).toBeUndefined()
+  })
+
+  test('drops cloud models whose budget is spent, and lists nothing when picking is off', async () => {
+    setLlmAccess(USER, { cloudEnabled: true, budgets: { cl: userSpend(USER, 'cl'), lan: 0 } })
+    expect((await list()).map(m => m.id)).toEqual(['lan-big'])
+    setLlmAccess(USER, { cloudEnabled: false, budgets: { cl: 10, lan: 0 } })
+    expect(await list()).toEqual([])
   })
 })
