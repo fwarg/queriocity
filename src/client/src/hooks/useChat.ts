@@ -1,24 +1,17 @@
 import { useState, useRef } from 'react'
-import { streamChat, stopChat, fetchRelatedQuestions, decideEgress, setMessagePinned, deleteMessages } from '../lib/api.ts'
+import { streamChat, stopChat, fetchRelatedQuestions } from '../lib/api.ts'
 import { hasAttachment, type ContextReport } from '@shared/context.ts'
-import type { Message, Source, FileSource } from '../lib/api.ts'
-import type { LogStep } from '../components/ProgressLog.tsx'
+import type { Message } from '../lib/api.ts'
 import { useT } from '../lib/i18n.tsx'
-import type { AnswerModel, ModelFallbackReason } from '@shared/llm-catalogue.ts'
+import { ChatRun, type FocusMode } from './chat-run.ts'
+import { useEgressApproval } from './useEgressApproval.ts'
+import { useMessageActions } from './useMessageActions.ts'
+import { useLiveAnswer } from './useLiveAnswer.ts'
 
-export interface EgressApproval {
-  id: string
-  kind: 'fetch' | 'search'
-  /** Shown to the user in full. Never truncate it — a payload hides in the tail. */
-  target: string
-  reasons: string[]
-  /** Wall-clock deadline, so the countdown survives a re-render. */
-  expiresAt: number
-}
 
 interface UseChatOptions {
   sessionId: string | undefined
-  focusMode: 'flash' | 'balanced' | 'thorough' | 'image'
+  focusMode: FocusMode
   searchCategories?: Array<'news' | 'science' | 'discussions' | 'tech'>
   /** Answer from the user's own notes before the web. */
   notesFirst?: boolean
@@ -42,22 +35,22 @@ function withStoredId(messages: Message[], id: string | undefined): Message[] {
   return [...messages.slice(0, -1), { ...last, id }]
 }
 
-export function useChat({ sessionId, focusMode, searchCategories, notesFirst, includeFileIds, includeMemoryIds, collectionIds, spaceId, followUpSuggestions = true, modelId, onModelUsed, onSessionCreated }: UseChatOptions) {
+/** The conversation without its last answer, and the question to ask again; null when there is none. */
+function retryOf(messages: Message[]): { history: Message[]; question: string } | null {
+  const lastAnswer = messages.findLastIndex(m => m.role === 'assistant')
+  if (lastAnswer === -1) return null
+  const history = messages.slice(0, lastAnswer)
+  const lastUser = [...history].reverse().find(m => m.role === 'user')
+  return lastUser ? { history, question: lastUser.content } : null
+}
+
+export function useChat(options: UseChatOptions) {
+  const { sessionId, focusMode, followUpSuggestions = true, modelId, onModelUsed, onSessionCreated } = options
   const t = useT()
   const [messages, setMessages] = useState<Message[]>([])
-  const [streaming, setStreaming] = useState('')
-  const [streamingThinking, setStreamingThinking] = useState('')
-  const [status, setStatus] = useState('')
-  const [answerTime, setAnswerTime] = useState('')
   const [busy, setBusy] = useState(false)
-
-  const [related, setRelated] = useState<string[]>([])
-  const [steps, setSteps] = useState<LogStep[]>([])
-  /** Start of the current run, for the timer on the transient status line (flash has no log). */
-  const [runStartedAt, setRunStartedAt] = useState<number | null>(null)
-  /** Outbound request awaiting the user's decision, or null. At most one is ever parked: the
-   *  generation blocks on it, so a second cannot be raised until this one resolves. */
-  const [approval, setApproval] = useState<EgressApproval | null>(null)
+  const live = useLiveAnswer()
+  const { setStreaming, setStreamingThinking, setStatus, setAnswerTime, setRelated, setSteps, clearLive } = live
   /** What the model saw of the conversation on the latest turn; null until a turn reports it. */
   const [context, setContext] = useState<ContextReport | null>(null)
 
@@ -66,20 +59,14 @@ export function useChat({ sessionId, focusMode, searchCategories, notesFirst, in
   // Set from the server's first event, so Stop and resume work even on a brand-new chat
   // whose id the client did not choose.
   const liveSessionRef = useRef<string | undefined>(undefined)
+  const { approval, setApproval, decideApproval } = useEgressApproval(liveSessionRef)
+  const { togglePin, deleteTurn } = useMessageActions({ messages, setMessages, setContext, setStatus, busy, sessionId, liveSessionRef, t })
 
   function cancel() {
     abortRef.current?.abort()
     // The connection closing no longer stops the model — the run must be cancelled explicitly.
     if (liveSessionRef.current) stopChat(liveSessionRef.current)
     setApproval(null)
-  }
-
-  /** Answers a parked egress prompt. Clearing it locally regardless of the server's reply is
-   *  deliberate: if nothing was parked the request had already been refused by the timeout, and
-   *  leaving the dialog up would invite a second click that means nothing. */
-  async function decideApproval(id: string, allow: boolean) {
-    setApproval(a => (a && a.id === id ? null : a))
-    if (liveSessionRef.current) await decideEgress(liveSessionRef.current, id, allow)
   }
 
   async function submit(text: string) {
@@ -91,218 +78,67 @@ export function useChat({ sessionId, focusMode, searchCategories, notesFirst, in
   /** Re-answers the last question, replacing the previous answer. Uses whichever focus mode
    *  is selected now, so switching mode then retrying is how you "retry differently". */
   async function regenerate() {
-    if (busy) return
-    const lastAnswer = messages.findLastIndex(m => m.role === 'assistant')
-    if (lastAnswer === -1) return
-    const history = messages.slice(0, lastAnswer)
-    const lastUser = [...history].reverse().find(m => m.role === 'user')
-    if (!lastUser) return
-    setMessages(history)
-    await run(history, lastUser.content, true)
+    const retry = busy ? null : retryOf(messages)
+    if (!retry) return
+    setMessages(retry.history)
+    await run(retry.history, retry.question, true)
   }
 
   async function run(next: Message[], text: string, regenerating: boolean) {
     const ctrl = new AbortController()
     abortRef.current = ctrl
-    setRelated([])
-    setSteps([])
-    setRunStartedAt(Date.now())
+    clearLive()
+    live.setRunStartedAt(Date.now())
     setBusy(true)
     setAnswerTime('')
-    setStatus('')
-    setStreaming('')
-    setStreamingThinking('')
-
-    // Built here rather than in the component so a step's end time is the moment the next one
-    // arrives, not the moment React happened to re-render.
-    const log: LogStep[] = []
-    const closeLastStep = () => {
-      const last = log[log.length - 1]
-      if (last && last.endedAt === undefined) last.endedAt = Date.now()
-    }
-    const pushStep = (step: Omit<LogStep, 'startedAt'>) => {
-      closeLastStep()
-      log.push({ ...step, startedAt: Date.now() })
-      setSteps([...log])
-    }
-
-    let accumulated = ''
-    let thinkingAccumulated = ''
-    const sources: Source[] = []
-    const fileSources: FileSource[] = []
-    const images: Array<{ url: string; alt: string }> = []
-    const blockedEngines: Array<{ engine: string; reason: string }> = []
-    // Which picked model answered, or why the pick was refused, for the answer's footer.
-    let modelNote = ''
-    let answerModel: AnswerModel | undefined
+    const chatRun = new ChatRun({ t, setStreaming, setStreamingThinking, setStatus, setSteps, setAnswerTime, setApproval, setContext, rafRef, liveSessionRef, onSessionCreated }, text, focusMode)
     if (modelId) onModelUsed?.()
-    let wasAborted = false
-    let storedIds: { user?: string; assistant?: string } = {}
-
+    const { searchCategories, includeFileIds, includeMemoryIds, collectionIds, spaceId, notesFirst } = options
     try {
       for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId, undefined, searchCategories, includeFileIds, includeMemoryIds, collectionIds, regenerating, notesFirst, modelId)) {
-        if (chunk.type === 'text') {
-          accumulated += chunk.delta as string
-          cancelAnimationFrame(rafRef.current)
-          const snap = accumulated
-          rafRef.current = requestAnimationFrame(() => setStreaming(snap))
-          setStatus('')
-          // The answer starting is what ends the last step and collapses the log.
-          if (log.length && log[log.length - 1].endedAt === undefined) {
-            closeLastStep()
-            setSteps([...log])
-          }
-        } else if (chunk.type === 'session') {
-          // The server's first event. Stop, resume and egress approvals all address the run by
-          // session id, so a new chat has none to give them until this arrives.
-          liveSessionRef.current = chunk.sessionId as string
-        } else if (chunk.type === 'image') {
-          images.push({ url: chunk.url as string, alt: chunk.alt as string })
-          setStatus('')
-        } else if (chunk.type === 'thinking') {
-          thinkingAccumulated += chunk.delta as string
-          setStreamingThinking(thinkingAccumulated)
-        } else if (chunk.type === 'status') {
-          // A status carrying `step` is a log entry; a bare one is the transient line it has
-          // always been (errors, and flash, which has a single phase and so no log to build).
-          if (chunk.step) pushStep({ ...(chunk.step as Omit<LogStep, 'startedAt' | 'text'>), text: chunk.text as string })
-          else setStatus(chunk.text as string)
-        } else if (chunk.type === 'sources') {
-          sources.push(...(chunk.sources as Source[]))
-        } else if (chunk.type === 'file_sources') {
-          fileSources.push(...(chunk.sources as FileSource[]))
-        } else if (chunk.type === 'approval') {
-          setApproval({
-            id: chunk.id as string,
-            kind: chunk.kind as 'fetch' | 'search',
-            target: chunk.target as string,
-            reasons: chunk.reasons as string[],
-            expiresAt: Date.now() + (chunk.timeoutMs as number),
-          })
-        } else if (chunk.type === 'approval_time') {
-          // Resume correcting a replayed countdown against the server's real deadline.
-          setApproval(a => a && a.id === chunk.id
-            ? { ...a, expiresAt: Date.now() + (chunk.timeoutMs as number) }
-            : a)
-        } else if (chunk.type === 'approval_closed') {
-          setApproval(a => (a && a.id === chunk.id ? null : a))
-        } else if (chunk.type === 'context') {
-          setContext(chunk as unknown as ContextReport)
-        } else if (chunk.type === 'model') {
-          answerModel = { id: chunk.id as string, label: chunk.label as string, kind: chunk.kind as AnswerModel['kind'], provider: chunk.provider as string }
-          modelNote = chunk.kind === 'cloud'
-            ? t('answer.byCloudModel', { label: chunk.label as string, provider: chunk.provider as string })
-            : t('answer.byModel', { label: chunk.label as string })
-        } else if (chunk.type === 'model_notice') {
-          modelNote = t(`modelNotice.${chunk.reason as ModelFallbackReason}`)
-        } else if (chunk.type === 'search_warning') {
-          blockedEngines.push(...(chunk.engines as Array<{ engine: string; reason: string }>))
-        } else if (chunk.type === 'done') {
-          if (chunk.elapsedMs) {
-            const label = t(images.length > 0 ? 'answer.generatedIn' : 'answer.answeredIn')
-            const srcCount = sources.length
-            // Zero sources only means "the search came up empty" in the modes that always
-            // search. Flash never searches, and image searches at its own discretion without
-            // reporting sources, so for those a count of zero says nothing and is left out.
-            const alwaysSearches = focusMode === 'balanced' || focusMode === 'thorough'
-            let srcLabel: string
-            if (srcCount > 0) srcLabel = ` · ${t('answer.searchResults', { count: srcCount })}`
-            else if (blockedEngines.length) srcLabel = ` · ${t('answer.enginesUnavailable', { engines: blockedEngines.map(e => e.engine).join(', ') })}`
-            else srcLabel = alwaysSearches ? ` · ${t('answer.noSearchResults')}` : ''
-            setAnswerTime(t('answer.time', { label, seconds: (chunk.elapsedMs as number / 1000).toFixed(1) }) + srcLabel + '.' + (modelNote ? ` ${modelNote}` : ''))
-          }
-          liveSessionRef.current = chunk.sessionId as string
-          storedIds = { user: chunk.userMessageId as string | undefined, assistant: chunk.assistantMessageId as string | undefined }
-          onSessionCreated(chunk.sessionId as string, (chunk.title as string | undefined) ?? text.slice(0, 60))
-        }
+        chatRun.handle(chunk)
       }
     } catch (err: unknown) {
-      if (err instanceof Error && err.name === 'AbortError') {
-        wasAborted = true
-      } else {
-        setStatus(err instanceof Error ? err.message : t('answer.requestFailed'))
-      }
+      if (err instanceof Error && err.name === 'AbortError') chatRun.aborted = true
+      else setStatus(err instanceof Error ? err.message : t('answer.requestFailed'))
     } finally {
-      cancelAnimationFrame(rafRef.current)
-      abortRef.current = null
-      if (accumulated || images.length > 0) {
-        setMessages(prev => [...withStoredId(prev, storedIds.user), {
-          id: storedIds.assistant,
-          role: 'assistant',
-          content: accumulated,
-          sources,
-          fileSources: fileSources.length > 0 ? fileSources : undefined,
-          thinking: thinkingAccumulated || undefined,
-          images: images.length > 0 ? images : undefined,
-          model: answerModel,
-        }])
-      }
-      setStreaming('')
-      setStreamingThinking('')
-      closeLastStep()
-      setSteps([...log])
-      // An image is a response even when the model writes no accompanying text — image mode's
-      // system prompt tells it to stay silent unless it searched, so the common success case
-      // finishes with no text chunk at all.
-      if (!accumulated && !wasAborted && images.length === 0) setStatus(t('answer.noResponse'))
-      else if (wasAborted && !accumulated && images.length === 0) {
-        // Withdraw the turn only if this run added it. `submit` appends the user's message and
-        // then streams, so a stop before any text leaves a question with no answer — worth
-        // removing. `regenerate` re-sends a question that was already in the transcript, and
-        // popping there deleted the user's own question along with the answer they cancelled.
-        if (!regenerating) setMessages(prev => prev.slice(0, -1))
-        setStatus('')
-      }
-      setBusy(false)
-      // Fire-and-forget: chips appear a moment after the answer, or not at all.
-      if (followUpSuggestions && accumulated.length >= 200 && !wasAborted && images.length === 0) {
-        fetchRelatedQuestions(text, accumulated).then(setRelated).catch(() => {})
-      }
+      settle(chatRun, text, regenerating)
     }
   }
 
-  /** Pins are stored per message; one not yet stored (an ephemeral chat) is pinned for this tab only. */
-  async function togglePin(index: number) {
-    const msg = messages[index]
-    if (!msg) return
-    const pinned = !msg.pinned
-    const apply = (value: boolean) => setMessages(prev => prev.map((m, i) => (i === index ? { ...m, pinned: value } : m)))
-    apply(pinned)
-    const sid = liveSessionRef.current ?? sessionId
-    if (msg.id && sid) await setMessagePinned(sid, msg.id, pinned).catch(() => apply(!pinned))
-  }
-
-  /** Removes a question and its answer. Messages not yet stored (an ephemeral chat) go locally only.
-   *  The context report is dropped: its indices point into the old list until the next turn. */
-  async function deleteTurn(index: number) {
-    if (busy || messages[index]?.role !== 'user') return
-    const count = messages[index + 1]?.role === 'assistant' ? 2 : 1
-    const removed = messages.slice(index, index + count)
-    const before = messages
-    setMessages(prev => [...prev.slice(0, index), ...prev.slice(index + count)])
-    setContext(null)
-    const ids = removed.map(m => m.id).filter((id): id is string => !!id)
-    const sid = liveSessionRef.current ?? sessionId
-    if (!ids.length || !sid) return
-    try {
-      await deleteMessages(sid, ids)
-    } catch (err) {
-      setMessages(before)
-      setStatus(err instanceof Error ? err.message : t('answer.requestFailed'))
+  /** Stores the answer, or explains its absence, once the stream has ended for whatever reason. */
+  function settle(chatRun: ChatRun, question: string, regenerating: boolean) {
+    cancelAnimationFrame(rafRef.current)
+    abortRef.current = null
+    const answer = chatRun.answer()
+    if (answer) setMessages(prev => [...withStoredId(prev, chatRun.storedIds.user), answer])
+    setStreaming('')
+    setStreamingThinking('')
+    chatRun.closeSteps()
+    if (!chatRun.produced && !chatRun.aborted) setStatus(t('answer.noResponse'))
+    else if (chatRun.aborted && !chatRun.produced) {
+      // Withdraw the turn only if this run added it. `submit` appends the user's message and
+      // then streams, so a stop before any text leaves a question with no answer — worth
+      // removing. `regenerate` re-sends a question that was already in the transcript, and
+      // popping there deleted the user's own question along with the answer they cancelled.
+      if (!regenerating) setMessages(prev => prev.slice(0, -1))
+      setStatus('')
+    }
+    setBusy(false)
+    // Fire-and-forget: chips appear a moment after the answer, or not at all.
+    if (followUpSuggestions && chatRun.text.length >= 200 && !chatRun.aborted && chatRun.images.length === 0) {
+      fetchRelatedQuestions(question, chatRun.text).then(setRelated).catch(() => {})
     }
   }
 
   function reset() {
     setContext(null)
     setMessages([])
-    setStreaming('')
-    setStreamingThinking('')
-    setStatus('')
-    setRelated([])
-    setSteps([])
+    clearLive()
     setApproval(null)
     liveSessionRef.current = undefined
   }
 
+  const { streaming, streamingThinking, status, answerTime, related, steps, runStartedAt } = live
   return { messages, setMessages, context, setContext, togglePin, deleteTurn, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, regenerate, cancel, reset, related, setRelated, steps, runStartedAt, approval, decideApproval }
 }

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useT } from '../lib/i18n.tsx'
 import { ShieldAlert } from 'lucide-react'
-import type { EgressApproval } from '../hooks/useChat.ts'
+import type { EgressApproval } from '../hooks/chat-run.ts'
 
 interface Props {
   approval: EgressApproval
