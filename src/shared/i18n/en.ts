@@ -429,7 +429,7 @@ export const en = {
   'mode.imageDesc': 'Generate or edit images — researches unfamiliar topics automatically for better results.',
   'mode.blockedLocked': 'Not available in a locked space',
   'model.default': 'Default model',
-  'model.pickTitle': 'Model for this message only; it goes back to the default after sending',
+  'model.pickTitle': 'Model for this chat; it goes back to the default when you open another chat',
   'model.cloudNote': 'Not private: this message leaves your server. {provider} receives your question, the whole conversation and any memory or document excerpts.',
   'model.ackMessage': 'Cloud models are not private. Everything in the prompt — your question, the whole conversation, and any memory or document excerpts — is sent to the provider and handled under its own terms, outside this server. Your other answers stay local; locked spaces never use cloud models.',
   'model.ackConfirm': 'I understand, use cloud models',

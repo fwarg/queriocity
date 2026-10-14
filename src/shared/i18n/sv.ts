@@ -425,7 +425,7 @@ export const sv: Catalog = {
   'mode.imageDesc': 'Skapa eller redigera bilder — efterforskar okända ämnen automatiskt för bättre resultat.',
   'mode.blockedLocked': 'Inte tillgängligt i ett låst utrymme',
   'model.default': 'Standardmodell',
-  'model.pickTitle': 'Modell för bara det här meddelandet; den återgår till standard efter att du skickat',
+  'model.pickTitle': 'Modell för den här chatten; den återgår till standard när du öppnar en annan chatt',
   'model.cloudNote': 'Inte privat: meddelandet lämnar din server. {provider} får din fråga, hela konversationen och eventuella utdrag ur minnen och dokument.',
   'model.ackMessage': 'Molnmodeller är inte privata. Allt i prompten — din fråga, hela konversationen och eventuella utdrag ur minnen och dokument — skickas till leverantören och hanteras enligt dess villkor, utanför den här servern. Dina övriga svar stannar lokalt; låsta utrymmen använder aldrig molnmodeller.',
   'model.ackConfirm': 'Jag förstår, använd molnmodeller',

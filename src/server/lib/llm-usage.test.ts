@@ -8,7 +8,7 @@ import { describe, test, expect, afterEach } from 'bun:test'
 import { streamText, generateText } from 'ai'
 import { startFakeOpenAI, fakeTarget } from './test-support/fake-openai.ts'
 import { languageModel } from './llm.ts'
-import { costOf, callCost, meteredUsage, userSpend, providerSpend, monthlyLlmUsage, recordLlmUsage, getLlmAccess, setLlmAccess, allLlmAccess } from './llm-usage.ts'
+import { costOf, callCost, reconcileGeneration, meteredUsage, userSpend, providerSpend, monthlyLlmUsage, recordLlmUsage, getLlmAccess, setLlmAccess, allLlmAccess } from './llm-usage.ts'
 import { db, users } from './db.ts'
 import type { CloudModel } from '../../shared/llm-catalogue.ts'
 
@@ -22,7 +22,7 @@ const MODEL: CloudModel = {
 
 function meteredTarget(userId: string) {
   fake = startFakeOpenAI([{ text: ['Hi.'], usage: { prompt_tokens: 1000, completion_tokens: 500 } }])
-  return { ...fakeTarget(fake.baseURL), onUsage: meteredUsage(userId, MODEL, {}) }
+  return { ...fakeTarget(fake.baseURL), onUsage: meteredUsage(userId, MODEL, { currency: 'EUR' }) }
 }
 
 describe('cloud usage metering', () => {
@@ -76,5 +76,49 @@ describe('cloud access', () => {
     setLlmAccess('access-u', { cloudEnabled: true, budgets: { b: 20 } })
     expect(getLlmAccess('access-u')).toEqual({ cloudEnabled: true, budgets: { b: 20 } })
     expect(allLlmAccess()['access-u']).toEqual({ cloudEnabled: true, budgets: { b: 20 } })
+  })
+})
+
+describe('stopped calls looked up by generation id', () => {
+  test('adds the difference between the estimate and the real cost, once the stats are ready', async () => {
+    let asked = 0
+    const server = Bun.serve({
+      port: 0,
+      fetch: (req) => {
+        asked++
+        expect(new URL(req.url).searchParams.get('id')).toBe('gen-42')
+        expect(req.headers.get('authorization')).toBe('Bearer k')
+        // Not ready on the first lookup.
+        if (asked === 1) return new Response('Not Found', { status: 404 })
+        return Response.json({ data: { total_cost: 0.5, tokens_prompt: 100, tokens_completion: 40 } })
+      },
+    })
+    try {
+      recordLlmUsage('gen-user', 'gen-cloud', { inputTokens: 90, outputTokens: 10 }, 0.2)
+      const done = await reconcileGeneration({
+        userId: 'gen-user', providerId: 'gen-cloud', endpoint: { baseURL: `http://localhost:${server.port}/api/v1`, apiKey: 'k' },
+        generationId: 'gen-42', estimate: { inputTokens: 90, outputTokens: 10 }, estimatedCost: 0.2,
+      }, [0, 0])
+      expect(done).toBe(true)
+      const row = monthlyLlmUsage().find(r => r.userId === 'gen-user')
+      // The real figures, and still one request.
+      expect(row).toMatchObject({ inputTokens: 100, outputTokens: 40, requests: 1 })
+      expect(row?.cost).toBeCloseTo(0.5)
+    } finally {
+      server.stop(true)
+    }
+  })
+
+  test('leaves the estimate when the provider never reports', async () => {
+    const server = Bun.serve({ port: 0, fetch: () => new Response('Not Found', { status: 404 }) })
+    try {
+      const done = await reconcileGeneration({
+        userId: 'gen-user-2', providerId: 'gen-cloud', endpoint: { baseURL: `http://localhost:${server.port}` },
+        generationId: 'gen-43', estimate: { inputTokens: 1, outputTokens: 1 }, estimatedCost: 0.1,
+      }, [0])
+      expect(done).toBe(false)
+    } finally {
+      server.stop(true)
+    }
   })
 })

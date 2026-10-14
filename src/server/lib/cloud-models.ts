@@ -73,7 +73,7 @@ export async function resolveTurnModels({ userId, modelId, focusMode, locked, cl
   const cloud = provider.kind === 'cloud'
     ? {
         ...target,
-        onUsage: meteredUsage(userId, entry, provider, (u, cost) => observeCall(observed, u, cost)),
+        onUsage: meteredUsage(userId, entry, provider, (u, cost) => observeCall(observed, u, cost), target),
         onError: (message: string) => { observed.error ??= message },
       }
     : target

@@ -322,8 +322,8 @@ modellmenyn bredvid forskningslägena skicka ett enskilt meddelande till en moln
 meddelandet är inte privat: leverantören får din fråga, hela konversationen och eventuella utdrag ur
 minnen och dokument i prompten, och hanterar dem enligt sina egna villkor. Du bekräftar detta en
 gång före ditt första molnmeddelande, en varning står kvar under inmatningen medan en molnmodell är
-vald, och svaret anger vart det skickades. Menyn återgår till standard efter varje meddelande, och
-ett låst utrymme erbjuder aldrig molnmodeller.`,
+vald, och svaret anger vart det skickades. Ett val gäller chatten det gjordes i och återgår till
+standard när du öppnar en annan chatt, och ett låst utrymme erbjuder aldrig molnmodeller.`,
   },
 
   settings: {

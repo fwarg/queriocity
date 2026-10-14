@@ -82,3 +82,58 @@ describe('what the SDK alone would lose', () => {
     expect(calls).toEqual([])
   })
 })
+
+describe('an OpenRouter stream, as recorded', () => {
+  // The chunks OpenRouter sent for deepseek/deepseek-v4.1-flash, trimmed to the fields that matter.
+  const chunk = (delta: object, extra: object = {}) =>
+    `data: ${JSON.stringify({ id: 'gen-1', object: 'chat.completion.chunk', created: 0, model: 'deepseek/deepseek-v4.1-flash', provider: 'Sail Research', choices: [{ index: 0, delta, finish_reason: null }], ...extra })}\n\n`
+  const body = [
+    chunk({ content: '', role: 'assistant', reasoning: 'We need' }),
+    chunk({ content: '', role: 'assistant', reasoning: ' just OK.' }),
+    chunk({ content: 'OK', role: 'assistant' }),
+    chunk({ content: '', role: 'assistant', reasoning: null }),
+    chunk({ content: '', role: 'assistant' }, { usage: { prompt_tokens: 32, completion_tokens: 21, total_tokens: 53, cost: 0.000006576 } }),
+    'data: [DONE]\n\n',
+  ].join('')
+
+  test('keeps the reasoning in one block, and reads the cost and host', async () => {
+    const server = Bun.serve({ port: 0, fetch: () => new Response(body, { headers: { 'content-type': 'text/event-stream' } }) })
+    try {
+      const calls: TokenUsage[] = []
+      const model = languageModel({ ...fakeTarget(`http://localhost:${server.port}/v1`), onUsage: u => { calls.push(u) } })
+      const parts: Array<{ type: string; text?: string }> = []
+      for await (const part of streamText({ model, prompt: 'Say OK' }).fullStream) parts.push(part as { type: string; text?: string })
+      expect(parts.filter(p => p.type === 'reasoning-start')).toHaveLength(1)
+      expect(parts.filter(p => p.type === 'reasoning-delta').map(p => p.text).join('')).toBe('We need just OK.')
+      expect(parts.filter(p => p.type === 'text-delta').map(p => p.text).join('')).toBe('OK')
+      expect(calls).toEqual([{ inputTokens: 32, outputTokens: 21, reportedCost: 0.000006576, routedVia: 'Sail Research' }])
+    } finally {
+      server.stop(true)
+    }
+  })
+})
+
+describe('a call cut off mid-stream', () => {
+  test('is reported as an estimate carrying the provider\'s generation id', async () => {
+    const chunk = `data: ${JSON.stringify({ id: 'gen-9', object: 'chat.completion.chunk', created: 0, model: 'm', choices: [{ index: 0, delta: { content: 'Partial answer' }, finish_reason: null }] })}\n\n`
+    // Sends one chunk, then holds the stream open as a slow model would.
+    const server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode(chunk)) } }), {
+        headers: { 'content-type': 'text/event-stream', 'x-generation-id': 'gen-9' },
+      }),
+    })
+    try {
+      const calls: TokenUsage[] = []
+      const model = languageModel({ ...fakeTarget(`http://localhost:${server.port}/v1`), onUsage: u => { calls.push(u) } })
+      const stop = new AbortController()
+      setTimeout(() => stop.abort(), 150)
+      await streamText({ model, prompt: 'Explain', abortSignal: stop.signal }).consumeStream({ onError: () => {} })
+      expect(calls).toHaveLength(1)
+      expect(calls[0]).toMatchObject({ estimated: true, generationId: 'gen-9' })
+      expect(calls[0].outputTokens).toBeGreaterThan(0)
+    } finally {
+      server.stop(true)
+    }
+  })
+})

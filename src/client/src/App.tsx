@@ -201,6 +201,8 @@ export default function App() {
    *  refuses a collection either way; this keeps the UI from proposing what it will refuse. */
   const chatSpaces = spaces.filter(sp => sp.kind === 'space')
 
+  /** The id the server just gave a new chat, so receiving it is not taken for opening another chat. */
+  const createdSessionRef = useRef<string | undefined>(undefined)
   const modelPicker = useModelPicker({
     focusMode,
     locked: activeSpaceLocked,
@@ -219,7 +221,6 @@ export default function App() {
     sessionId,
     focusMode,
     modelId: modelPicker.picked || undefined,
-    onModelUsed: modelPicker.reset,
     searchCategories,
     notesFirst,
     includeFileIds: pinnedFileIds.length ? pinnedFileIds : undefined,
@@ -228,6 +229,7 @@ export default function App() {
     spaceId: activeSpaceId ?? undefined,
     followUpSuggestions: currentUser?.settings?.followUpSuggestions !== false,
     onSessionCreated: (id, title) => {
+      createdSessionRef.current = id
       setSessionId(id)
       setSessions(prev => prev.some(s => s.id === id) ? prev : [{ id, title, spaceId: activeSpaceId }, ...prev])
       if (activeSpaceId) {
@@ -245,9 +247,14 @@ export default function App() {
   const meterReport = (report: ContextReport): ContextReport =>
     busy || modelPicker.meterBudget === undefined ? report : { ...report, budgetChars: modelPicker.meterBudget }
 
-  // A pick is for one message in one chat: opening another chat must not carry it along.
+  // A pick lasts for the chat it was made in: opening another chat, or starting a new one, goes back
+  // to the default. A new chat receiving its id after the first message is not a switch.
   const { reset: resetModelPick } = modelPicker
-  useEffect(() => { resetModelPick() }, [sessionId, resetModelPick])
+  useEffect(() => {
+    // Matched once only: reopening that chat later from the sidebar is a switch like any other.
+    if (sessionId && sessionId === createdSessionRef.current) { createdSessionRef.current = undefined; return }
+    resetModelPick()
+  }, [sessionId, resetModelPick])
 
   // The pickable models carry what is left of each budget, which every answer spends.
   const { refresh: refreshModels } = modelPicker

@@ -21,10 +21,8 @@ interface UseChatOptions {
   spaceId?: string
   /** User setting; when false no related-questions call is made at all. */
   followUpSuggestions?: boolean
-  /** An extra model picked for the next message only. */
+  /** An extra model picked for this chat's messages. */
   modelId?: string
-  /** Called once a message has been sent with `modelId`, so the pick can go back to the default. */
-  onModelUsed?: () => void
   onSessionCreated: (id: string, title: string) => void
 }
 
@@ -45,7 +43,7 @@ function retryOf(messages: Message[]): { history: Message[]; question: string } 
 }
 
 export function useChat(options: UseChatOptions) {
-  const { sessionId, focusMode, followUpSuggestions = true, modelId, onModelUsed, onSessionCreated } = options
+  const { sessionId, focusMode, followUpSuggestions = true, modelId, onSessionCreated } = options
   const t = useT()
   const [messages, setMessages] = useState<Message[]>([])
   const [busy, setBusy] = useState(false)
@@ -92,7 +90,6 @@ export function useChat(options: UseChatOptions) {
     setBusy(true)
     setAnswerTime('')
     const chatRun = new ChatRun({ t, setStreaming, setStreamingThinking, setStatus, setSteps, setAnswerTime, setApproval, setContext, rafRef, liveSessionRef, onSessionCreated }, text, focusMode)
-    if (modelId) onModelUsed?.()
     const { searchCategories, includeFileIds, includeMemoryIds, collectionIds, spaceId, notesFirst } = options
     try {
       for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId, undefined, searchCategories, includeFileIds, includeMemoryIds, collectionIds, regenerating, notesFirst, modelId)) {

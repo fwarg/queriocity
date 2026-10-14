@@ -15,6 +15,8 @@ export interface TokenUsage {
   routedVia?: string
   /** The call was cut off before the provider reported usage; the counts are an estimate. */
   estimated?: boolean
+  /** The provider's id for the call (OpenRouter's x-generation-id), for looking up its real cost later. */
+  generationId?: string
 }
 
 /** What one model instance's latest response reported. One instance runs its calls one after
@@ -23,6 +25,7 @@ export interface TokenUsage {
 export interface ResponseProbe {
   cost?: number
   via?: string
+  generationId?: string
 }
 
 /** Response headers that name the hosting provider: Cortecs. OpenRouter says it in the body. */
@@ -31,6 +34,7 @@ const ROUTED_VIA_HEADERS = ['x-cortecs-provider']
 /** Notes the cost and routing a response reports, without changing what the SDK receives. */
 export async function observeResponse(res: Response, probe: ResponseProbe): Promise<Response> {
   probe.via = ROUTED_VIA_HEADERS.map(h => res.headers.get(h)).find(Boolean) ?? probe.via
+  probe.generationId = res.headers.get('x-generation-id') ?? undefined
   const type = res.headers.get('content-type') ?? ''
   if (type.includes('application/json')) {
     readReport(await res.clone().json().catch(() => null), probe)
@@ -82,7 +86,7 @@ const REASONING_ID = 'provider-reasoning'
 export function usageMiddleware({ onUsage, onError }: MeterHooks, probe: ResponseProbe): LanguageModelMiddleware {
   const report = (inputTokens: number, outputTokens: number, estimated = false) => {
     try {
-      onUsage({ inputTokens, outputTokens, reportedCost: probe.cost, routedVia: probe.via, ...(estimated && { estimated }) })
+      onUsage({ inputTokens, outputTokens, reportedCost: probe.cost, routedVia: probe.via, ...(estimated && { estimated, generationId: probe.generationId }) })
     } catch (e) {
       console.error('  [llm] usage recording failed:', e)
     }
@@ -156,7 +160,10 @@ function meteredStream(
       return true
     }
     if (part.type === 'reasoning-delta') { sdkReasoning = true; outputChars += part.delta.length }
-    else closeReasoning(controller)
+    // Only what follows reasoning closes it. Not every part does: OpenRouter sends `"content": ""`
+    // beside each reasoning chunk, which the SDK turns into empty text parts, and the first chunk
+    // also yields response metadata.
+    else if (endsReasoning(part)) closeReasoning(controller)
     if (part.type === 'text-delta') outputChars += part.delta.length
     if (part.type === 'error') failed(part.error)
     if (part.type === 'finish') { finished = true; report(part.usage.inputTokens.total ?? 0, part.usage.outputTokens.total ?? 0) }
@@ -194,6 +201,10 @@ function reasoningFromRaw(raw: unknown): string {
   return typeof text === 'string' ? text : ''
 }
 
+const endsReasoning = (part: StreamPart) =>
+  (part.type === 'text-delta' && !!part.delta) || part.type === 'tool-input-start' || part.type === 'tool-call'
+  || part.type === 'finish' || part.type === 'error'
+
 const isAbort = (e: unknown) => e instanceof Error && (e.name === 'AbortError' || e.name === 'TimeoutError')
 
 const estimateTokens = (prompt: unknown) => Math.ceil(JSON.stringify(prompt ?? '').length / CHARS_PER_TOKEN)
@@ -202,4 +213,26 @@ const estimateTokens = (prompt: unknown) => Math.ceil(JSON.stringify(prompt ?? '
 function errorText(e: unknown): string {
   const message = e instanceof Error ? e.message : String(e)
   return message.replace(/\s+/g, ' ').trim().slice(0, 200)
+}
+
+/** What OpenRouter's generation endpoint says a call cost. */
+export interface GenerationStats {
+  /** In USD. */
+  totalCost: number
+  inputTokens: number
+  outputTokens: number
+}
+
+/** Looks up a call's real cost by its generation id (OpenRouter `GET /generation?id=`); null while
+ *  the stats are not ready yet, or when the provider has no such endpoint. */
+export async function lookupGeneration(baseURL: string, apiKey: string | undefined, id: string): Promise<GenerationStats | null> {
+  const res = await fetch(`${baseURL.replace(/\/+$/, '')}/generation?id=${encodeURIComponent(id)}`, {
+    headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+    signal: AbortSignal.timeout(10_000),
+  }).catch(() => null)
+  if (!res?.ok) return null
+  const data = ((await res.json().catch(() => null)) as { data?: { total_cost?: unknown; tokens_prompt?: unknown; tokens_completion?: unknown } } | null)?.data
+  if (typeof data?.total_cost !== 'number') return null
+  const count = (v: unknown) => typeof v === 'number' ? v : 0
+  return { totalCost: data.total_cost, inputTokens: count(data.tokens_prompt), outputTokens: count(data.tokens_completion) }
 }

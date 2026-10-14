@@ -6,23 +6,57 @@
 import { sqlite } from './db.ts'
 import { monthKey } from './search/usage.ts'
 import type { TokenUsage } from './llm.ts'
+import { lookupGeneration } from './llm-metering.ts'
 import type { CloudModel, CloudProvider, LlmAccess, UsageRow } from '../../shared/llm-catalogue.ts'
 
 /** Cost of one call from the catalogue's per-million prices. */
 export const costOf = (u: TokenUsage, model: Pick<CloudModel, 'priceIn' | 'priceOut'>): number =>
   (u.inputTokens * model.priceIn + u.outputTokens * model.priceOut) / 1_000_000
 
-export function recordLlmUsage(userId: string, providerId: string, u: TokenUsage, cost: number, now = new Date()): void {
+/** Adds a call to the month's row. `requests` is 0 for a correction to a call already counted. */
+export function recordLlmUsage(userId: string, providerId: string, u: TokenUsage, cost: number, now = new Date(), requests = 1): void {
   sqlite.run(
     `INSERT INTO llm_usage (user_id, provider_id, month, cost, input_tokens, output_tokens, requests)
-     VALUES (?, ?, ?, ?, ?, ?, 1)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(user_id, provider_id, month) DO UPDATE SET
        cost = cost + excluded.cost,
        input_tokens = input_tokens + excluded.input_tokens,
        output_tokens = output_tokens + excluded.output_tokens,
-       requests = requests + 1`,
-    [userId, providerId, monthKey(now), cost, u.inputTokens, u.outputTokens],
+       requests = requests + excluded.requests`,
+    [userId, providerId, monthKey(now), cost, u.inputTokens, u.outputTokens, requests],
   )
+}
+
+/** Retry schedule for a generation lookup: the stats appear some time after a call ends, how long
+ *  is not documented. */
+export const GENERATION_LOOKUP_DELAYS_MS = [3_000, 15_000, 60_000]
+
+/** Replaces a stopped call's estimate with what the provider says it cost, once it says. The
+ *  estimate stays as recorded and the difference is added, so the month's totals end up exact. */
+export async function reconcileGeneration(
+  { userId, providerId, endpoint, generationId, estimate, estimatedCost }: {
+    userId: string
+    providerId: string
+    endpoint: { baseURL: string; apiKey?: string }
+    generationId: string
+    estimate: TokenUsage
+    estimatedCost: number
+  },
+  delays = GENERATION_LOOKUP_DELAYS_MS,
+): Promise<boolean> {
+  const month = new Date()
+  for (const delay of delays) {
+    await Bun.sleep(delay)
+    const stats = await lookupGeneration(endpoint.baseURL, endpoint.apiKey, generationId)
+    if (!stats) continue
+    const correction = { inputTokens: stats.inputTokens - estimate.inputTokens, outputTokens: stats.outputTokens - estimate.outputTokens }
+    // Counted in the month of the call, even if the lookup lands after midnight on the 1st.
+    recordLlmUsage(userId, providerId, correction, stats.totalCost - estimatedCost, month, 0)
+    console.log(`  [llm] ${generationId}: stopped call cost ${stats.totalCost} (estimated ${estimatedCost.toPrecision(3)})`)
+    return true
+  }
+  console.warn(`  [llm] ${generationId}: no cost reported after ${delays.length} lookups — the estimate stands`)
+  return false
 }
 
 /** A user's spend with a provider this month. */
@@ -78,9 +112,20 @@ export const callCost = (u: TokenUsage, model: Pick<CloudModel, 'priceIn' | 'pri
 
 /** Hooks a catalogue model's calls up to the meter: every call is priced and recorded; `onCall`
  *  sees each call and its cost too, e.g. to total the answer's cost and learn its hosting provider. */
-export const meteredUsage = (userId: string, model: CloudModel, provider: Pick<CloudProvider, 'reportedCostUnit'>, onCall?: (u: TokenUsage, cost: number) => void) =>
-  (u: TokenUsage) => {
-    const cost = callCost(u, model, provider.reportedCostUnit)
-    recordLlmUsage(userId, model.providerId, u, cost)
-    onCall?.(u, cost)
+export const meteredUsage = (
+  userId: string,
+  model: CloudModel,
+  provider: Pick<CloudProvider, 'reportedCostUnit' | 'currency'>,
+  onCall?: (u: TokenUsage, cost: number) => void,
+  endpoint?: { baseURL: string; apiKey?: string },
+) => (u: TokenUsage) => {
+  const cost = callCost(u, model, provider.reportedCostUnit)
+  recordLlmUsage(userId, model.providerId, u, cost)
+  onCall?.(u, cost)
+  // A stopped call was recorded as an estimate. Where the provider can say what it cost — by
+  // generation id, in USD — that is looked up in the background.
+  if (u.estimated && u.generationId && endpoint && provider.currency === 'USD') {
+    reconcileGeneration({ userId, providerId: model.providerId, endpoint, generationId: u.generationId, estimate: u, estimatedCost: cost })
+      .catch(e => console.error('  [llm] generation lookup failed:', e))
   }
+}
