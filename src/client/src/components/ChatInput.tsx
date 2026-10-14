@@ -19,6 +19,8 @@ interface Props {
   /** Extra models the user may pick for the next message, and the current pick ('' = default). */
   models?: PickableModel[]
   modelId?: string
+  /** The model the default stands for in the current mode. */
+  defaultModel?: string
   onModelChange?: (id: string) => void
   onCancel?: () => void
   disabled?: boolean
@@ -80,7 +82,7 @@ const CATEGORY_LABEL_KEYS: Record<SearchCategory, TranslationKey> = {
   tech: 'category.tech',
 }
 
-export function ChatInput({ models = [], modelId = '', onModelChange, onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, collections, selectedCollections, onCollectionsChange, notesAvailable = false, notesFirst = false, onNotesFirstChange, suggestionsEnabled, lockedSpace = false, related = [], onRelatedSelect, spaceId, onAddedToLibrary }: Props) {
+export function ChatInput({ models = [], modelId = '', defaultModel, onModelChange, onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, collections, selectedCollections, onCollectionsChange, notesAvailable = false, notesFirst = false, onNotesFirstChange, suggestionsEnabled, lockedSpace = false, related = [], onRelatedSelect, spaceId, onAddedToLibrary }: Props) {
   const t = useT()
   const [value, setValue] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
@@ -294,7 +296,7 @@ export function ChatInput({ models = [], modelId = '', onModelChange, onSubmit, 
           )
         })}
         </div>
-        {onModelChange && <ModelPicker models={models} value={modelId} onChange={onModelChange} />}
+        {onModelChange && <ModelPicker models={models} value={modelId} onChange={onModelChange} defaultModel={defaultModel} />}
         <span className="flex-1" />
         {isFlash && (
           <span className={isOverLimit ? 'text-red-400' : 'text-gray-500'}>

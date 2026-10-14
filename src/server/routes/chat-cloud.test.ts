@@ -285,7 +285,7 @@ describe('GET /chat/models', () => {
     // The input share (0.8) of the window, at 4 characters per token.
     expect(models.find(m => m.id === 'cl-both')?.budgetChars).toBe(64000 * 0.8 * 4)
     expect(models.find(m => m.id === 'lan-big')?.budgetChars).toBe(32000 * 0.8 * 4)
-    expect(defaults.chat).toBe(Math.floor(8192 * 0.8 * 4))
+    expect(defaults.chat).toEqual({ model: 'local', budgetChars: Math.floor(8192 * 0.8 * 4) })
   })
 
   test('drops cloud models whose budget is spent, and lists nothing when picking is off', async () => {
@@ -295,6 +295,6 @@ describe('GET /chat/models', () => {
     const off = await choices()
     expect(off.models).toEqual([])
     // The meter still needs the default models' sizes.
-    expect(off.defaults.chat).toBeGreaterThan(0)
+    expect(off.defaults.chat.budgetChars).toBeGreaterThan(0)
   })
 })

@@ -9,7 +9,9 @@ export type CloudModelRole = 'chat' | 'thinking' | 'both'
 export const CATALOGUE_ID_RE = /^[a-z0-9][a-z0-9-]{0,39}$/
 
 /** Request fields a provider understands beyond the OpenAI ones, e.g. Cortecs routing options. */
-export type ExtraBody = Record<string, string | number | boolean | string[]>
+export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
+/** Top-level fields with any JSON value, e.g. OpenRouter's nested `{ "provider": { "zdr": true } }`. */
+export type ExtraBody = Record<string, JsonValue>
 
 /** Cloud providers are metered against budgets; local ones run on your own hardware and are not. */
 export type ProviderKind = 'cloud' | 'local'
@@ -98,8 +100,15 @@ export interface PickableModel {
 /** What the chat input needs to offer models and size the context meter for the next message. */
 export interface ModelChoices {
   models: PickableModel[]
-  /** The default models' meter budgets: flash, the chat model, and the thinking model thorough may use. */
-  defaults: { flash: number; chat: number; thinking: number }
+  /** The default models: flash's, the chat model, and the thinking model thorough may use. */
+  defaults: { flash: DefaultModel; chat: DefaultModel; thinking: DefaultModel }
+}
+
+export interface DefaultModel {
+  /** Its name, so the menu can say which model "default" is. */
+  model: string
+  /** The context meter's whole for it, in characters. */
+  budgetChars: number
 }
 
 /** The model an answer came from, stored with the message. `default` is the env-configured model

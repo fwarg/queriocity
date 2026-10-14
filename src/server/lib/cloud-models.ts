@@ -4,7 +4,7 @@
 
 import { localTurnModels, type ModelTarget, type TokenUsage, type TurnModels } from './llm.ts'
 import { loadCatalogue, cloudTarget } from './llm-catalogue.ts'
-import { getLlmAccess, userSpend, providerSpend, meteredUsage } from './llm-usage.ts'
+import { getLlmAccess, userSpend, providerSpend, meteredUsage, addAnswerCost } from './llm-usage.ts'
 import { isLocalEndpoint } from './space-lock.ts'
 import { meterBudgetChars } from './trim-messages.ts'
 import type { AnswerModel, CloudModel, CloudProvider, ModelChoices, ModelFallbackReason, PickableModel } from '../../shared/llm-catalogue.ts'
@@ -73,7 +73,11 @@ export async function resolveTurnModels({ userId, modelId, focusMode, locked, cl
   const cloud = provider.kind === 'cloud'
     ? {
         ...target,
-        onUsage: meteredUsage(userId, entry, provider, (u, cost) => observeCall(observed, u, cost), target),
+        onUsage: meteredUsage(userId, entry, provider, {
+          onCall: (u, cost) => observeCall(observed, u, cost),
+          endpoint: target,
+          onCorrection: delta => correctAnswer(observed, delta),
+        }),
         onError: (message: string) => { observed.error ??= message },
       }
     : target
@@ -99,6 +103,25 @@ interface TurnObserved {
   cost?: number
   /** The first error a call of this turn failed with, as the provider worded it. */
   error?: string
+  /** The stored answer, once saved, so a late cost correction reaches it. */
+  messageId?: string
+  /** Corrections that arrived before the answer was saved. */
+  pendingCorrection?: number
+}
+
+/** A stopped call's real cost arrived: correct the stored answer, or hold it until it is stored. */
+function correctAnswer(observed: TurnObserved, delta: number) {
+  if (observed.messageId) addAnswerCost(observed.messageId, delta)
+  else observed.pendingCorrection = (observed.pendingCorrection ?? 0) + delta
+}
+
+/** Ties the turn to its stored answer, applying any cost correction that came in first. */
+export function attachAnswer(resolved: ResolvedModels, messageId: string) {
+  const observed = resolved.observed
+  if (!observed) return
+  observed.messageId = messageId
+  if (observed.pendingCorrection) addAnswerCost(messageId, observed.pendingCorrection)
+  observed.pendingCorrection = undefined
 }
 
 function observeCall(observed: TurnObserved, u: TokenUsage, cost: number) {
@@ -157,13 +180,7 @@ const toPickable = (m: CloudModel, p: CloudProvider, remaining: number | undefin
 
 /** The models a user may pick, and the default models' meter budgets for when they pick none. */
 export async function modelChoices(userId: string): Promise<ModelChoices> {
-  const defaults = localTurnModels()
-  return {
-    models: await pickableModels(userId),
-    defaults: {
-      flash: meterBudgetChars(defaults.flash.contextTokens),
-      chat: meterBudgetChars(defaults.chat.contextTokens),
-      thinking: meterBudgetChars(defaults.thinking.contextTokens),
-    },
-  }
+  const { flash, chat, thinking } = localTurnModels()
+  const describe = (t: ModelTarget) => ({ model: t.model, budgetChars: meterBudgetChars(t.contextTokens) })
+  return { models: await pickableModels(userId), defaults: { flash: describe(flash), chat: describe(chat), thinking: describe(thinking) } }
 }

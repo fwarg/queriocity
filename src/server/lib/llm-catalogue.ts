@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { getAppSetting, setAppSetting } from './db.ts'
 import type { ModelTarget } from './llm.ts'
 import { isLocalEndpoint } from './space-lock.ts'
-import { CATALOGUE_ID_RE, EMPTY_CATALOGUE, type CloudModel, type CloudProvider, type ExtraBody, type LlmCatalogue } from '../../shared/llm-catalogue.ts'
+import { CATALOGUE_ID_RE, EMPTY_CATALOGUE, type CloudModel, type CloudProvider, type ExtraBody, type JsonValue, type LlmCatalogue } from '../../shared/llm-catalogue.ts'
 
 export const CATALOGUE_SETTING = 'llm_catalogue'
 
@@ -20,8 +20,17 @@ const apiKeyEnv = z.string().regex(/^([A-Z][A-Z0-9_]{0,63}_API_KEY)?$/, 'an env 
 /** Fields the request itself sets; an extra may add to a request but never redirect or reshape it. */
 const RESERVED_BODY_KEYS = new Set(['model', 'messages', 'stream', 'stream_options', 'tools', 'tool_choice', 'max_tokens', 'max_completion_tokens', 'response_format'])
 
-const extraBody = z.record(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/), z.union([z.string().max(200), z.number(), z.boolean(), z.array(z.string().max(200)).max(20)]))
+const jsonValue: z.ZodType<JsonValue> = z.lazy(() => z.union([
+  z.string().max(200), z.number(), z.boolean(), z.null(), z.array(jsonValue).max(20), z.record(z.string().max(64), jsonValue),
+]))
+
+/** How deeply objects and lists nest; OpenRouter's routing options need two levels. */
+const depthOf = (v: JsonValue): number =>
+  v !== null && typeof v === 'object' ? 1 + Math.max(0, ...Object.values(v).map(depthOf)) : 0
+
+const extraBody = z.record(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/), jsonValue)
   .refine(b => Object.keys(b).length <= 10, 'at most 10 fields')
+  .refine(b => depthOf(b) <= 4 && JSON.stringify(b).length <= 2000, 'nested at most 3 levels and 2000 characters')
   .refine(b => Object.keys(b).every(k => !RESERVED_BODY_KEYS.has(k)), 'must not set model, messages, tools or output limits')
 
 const providerSchema = z.object({

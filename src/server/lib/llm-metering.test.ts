@@ -137,3 +137,12 @@ describe('a call cut off mid-stream', () => {
     }
   })
 })
+
+describe('an unmetered model', () => {
+  test('gets its separate reasoning field shown as reasoning too', async () => {
+    fake = startFakeOpenAI([{ reasoning: ['Local thought.'], text: ['OK'] }])
+    const parts: Array<{ type: string; text?: string }> = []
+    for await (const part of streamText({ model: languageModel(fakeTarget(fake.baseURL)), prompt: 'Say OK' }).fullStream) parts.push(part as { type: string; text?: string })
+    expect(parts.filter(p => p.type === 'reasoning-delta').map(p => p.text).join('')).toBe('Local thought.')
+  })
+})

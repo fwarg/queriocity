@@ -1667,6 +1667,7 @@ export default function App() {
               onRelatedSelect={q => { setRelated([]); submit(q) }}
               models={modelPicker.available}
               modelId={modelPicker.picked}
+              defaultModel={modelPicker.defaultModel}
               onModelChange={modelPicker.choose}
             />
           </>

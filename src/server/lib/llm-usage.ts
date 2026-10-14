@@ -34,13 +34,14 @@ export const GENERATION_LOOKUP_DELAYS_MS = [3_000, 15_000, 60_000]
 /** Replaces a stopped call's estimate with what the provider says it cost, once it says. The
  *  estimate stays as recorded and the difference is added, so the month's totals end up exact. */
 export async function reconcileGeneration(
-  { userId, providerId, endpoint, generationId, estimate, estimatedCost }: {
+  { userId, providerId, endpoint, generationId, estimate, estimatedCost, onCorrection }: {
     userId: string
     providerId: string
     endpoint: { baseURL: string; apiKey?: string }
     generationId: string
     estimate: TokenUsage
     estimatedCost: number
+    onCorrection?: (delta: number) => void
   },
   delays = GENERATION_LOOKUP_DELAYS_MS,
 ): Promise<boolean> {
@@ -52,6 +53,7 @@ export async function reconcileGeneration(
     const correction = { inputTokens: stats.inputTokens - estimate.inputTokens, outputTokens: stats.outputTokens - estimate.outputTokens }
     // Counted in the month of the call, even if the lookup lands after midnight on the 1st.
     recordLlmUsage(userId, providerId, correction, stats.totalCost - estimatedCost, month, 0)
+    onCorrection?.(stats.totalCost - estimatedCost)
     console.log(`  [llm] ${generationId}: stopped call cost ${stats.totalCost} (estimated ${estimatedCost.toPrecision(3)})`)
     return true
   }
@@ -112,12 +114,20 @@ export const callCost = (u: TokenUsage, model: Pick<CloudModel, 'priceIn' | 'pri
 
 /** Hooks a catalogue model's calls up to the meter: every call is priced and recorded; `onCall`
  *  sees each call and its cost too, e.g. to total the answer's cost and learn its hosting provider. */
+export interface MeterOptions {
+  /** Sees each call and its cost, e.g. to total the answer's cost and learn its hosting provider. */
+  onCall?: (u: TokenUsage, cost: number) => void
+  /** Where to look up a stopped call's real cost by generation id. */
+  endpoint?: { baseURL: string; apiKey?: string }
+  /** The difference once a stopped call's real cost is known, to correct the answer's own figure. */
+  onCorrection?: (delta: number) => void
+}
+
 export const meteredUsage = (
   userId: string,
   model: CloudModel,
   provider: Pick<CloudProvider, 'reportedCostUnit' | 'currency'>,
-  onCall?: (u: TokenUsage, cost: number) => void,
-  endpoint?: { baseURL: string; apiKey?: string },
+  { onCall, endpoint, onCorrection }: MeterOptions = {},
 ) => (u: TokenUsage) => {
   const cost = callCost(u, model, provider.reportedCostUnit)
   recordLlmUsage(userId, model.providerId, u, cost)
@@ -125,7 +135,16 @@ export const meteredUsage = (
   // A stopped call was recorded as an estimate. Where the provider can say what it cost — by
   // generation id, in USD — that is looked up in the background.
   if (u.estimated && u.generationId && endpoint && provider.currency === 'USD') {
-    reconcileGeneration({ userId, providerId: model.providerId, endpoint, generationId: u.generationId, estimate: u, estimatedCost: cost })
+    reconcileGeneration({ userId, providerId: model.providerId, endpoint, generationId: u.generationId, estimate: u, estimatedCost: cost, onCorrection })
       .catch(e => console.error('  [llm] generation lookup failed:', e))
   }
+}
+
+/** Adds to the cost stored with an answer, once a stopped call's real cost is known. */
+export function addAnswerCost(messageId: string, delta: number): void {
+  sqlite.run(
+    `UPDATE messages SET model = json_set(model, '$.cost', COALESCE(json_extract(model, '$.cost'), 0) + ?)
+     WHERE id = ? AND json_extract(model, '$.cost') IS NOT NULL`,
+    [delta, messageId],
+  )
 }

@@ -68,9 +68,9 @@ function readReport(json: unknown, probe: ResponseProbe) {
   if (typeof body?.provider === 'string' && body.provider) probe.via = body.provider
 }
 
-/** Hooks for a metered model's calls. */
+/** Hooks for a model's calls; none for an unmetered model, which only gets its reasoning converted. */
 export interface MeterHooks {
-  onUsage: (u: TokenUsage) => void
+  onUsage?: (u: TokenUsage) => void
   /** A call failed; the message is the provider's, for the user to see. */
   onError?: (message: string) => void
 }
@@ -79,12 +79,14 @@ export interface MeterHooks {
 type StreamPart = Awaited<ReturnType<NonNullable<LanguageModelMiddleware['wrapStream']>>>['stream'] extends ReadableStream<infer P> ? P : never
 const REASONING_ID = 'provider-reasoning'
 
-/** Reports each call's usage once it is known: from the result, or from a stream's finish part.
+/** Every model's middleware: converts a provider's separate reasoning field (all models), and for a
+ *  metered one reports each call's usage once it is known: from the result, or from a stream's finish part.
  *  At the model layer rather than per call site, so every step of a tool loop is counted. A
  *  stream cut off before its finish part (stopped, timed out, failed) is still billed by the
  *  provider, so it is reported with an estimate from the prompt and the text received. */
-export function usageMiddleware({ onUsage, onError }: MeterHooks, probe: ResponseProbe): LanguageModelMiddleware {
+export function modelMiddleware({ onUsage, onError }: MeterHooks, probe: ResponseProbe): LanguageModelMiddleware {
   const report = (inputTokens: number, outputTokens: number, estimated = false) => {
+    if (!onUsage) return
     try {
       onUsage({ inputTokens, outputTokens, reportedCost: probe.cost, routedVia: probe.via, ...(estimated && { estimated, generationId: probe.generationId }) })
     } catch (e) {

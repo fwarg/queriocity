@@ -1,6 +1,6 @@
 import { createOpenAI } from '@ai-sdk/openai'
 import { wrapLanguageModel, type EmbeddingModel } from 'ai'
-import { observeResponse, usageMiddleware, type ResponseProbe, type TokenUsage } from './llm-metering.ts'
+import { observeResponse, modelMiddleware, type ResponseProbe, type TokenUsage } from './llm-metering.ts'
 
 export type { TokenUsage } from './llm-metering.ts'
 
@@ -214,10 +214,11 @@ function provider(config: ProviderConfig) {
 // OpenAI *Responses* API (/v1/responses), which self-hosted backends — LiteLLM, llama.cpp,
 // Ollama's /v1 — do not implement. They speak Chat Completions, so pin to it explicitly.
 export function languageModel(t: ModelTarget) {
-  if (!t.onUsage) return provider(t).chat(t.model)
+  // Unmetered models still get a provider's separate reasoning field turned into reasoning parts.
+  if (!t.onUsage) return wrapLanguageModel({ model: provider(t).chat(t.model), middleware: modelMiddleware({}, {}) })
   // Metered: a provider of its own, so what a response reports belongs to this model instance's calls.
   const probe: ResponseProbe = {}
-  return wrapLanguageModel({ model: makeProvider(t, probe).chat(t.model), middleware: usageMiddleware({ onUsage: t.onUsage, onError: t.onError }, probe) })
+  return wrapLanguageModel({ model: makeProvider(t, probe).chat(t.model), middleware: modelMiddleware({ onUsage: t.onUsage, onError: t.onError }, probe) })
 }
 
 

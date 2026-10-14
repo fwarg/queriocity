@@ -8,8 +8,9 @@ import { describe, test, expect, afterEach } from 'bun:test'
 import { streamText, generateText } from 'ai'
 import { startFakeOpenAI, fakeTarget } from './test-support/fake-openai.ts'
 import { languageModel } from './llm.ts'
-import { costOf, callCost, reconcileGeneration, meteredUsage, userSpend, providerSpend, monthlyLlmUsage, recordLlmUsage, getLlmAccess, setLlmAccess, allLlmAccess } from './llm-usage.ts'
-import { db, users } from './db.ts'
+import { costOf, callCost, reconcileGeneration, addAnswerCost, meteredUsage, userSpend, providerSpend, monthlyLlmUsage, recordLlmUsage, getLlmAccess, setLlmAccess, allLlmAccess } from './llm-usage.ts'
+import { db, users, chatSessions, messages } from './db.ts'
+import { eq } from 'drizzle-orm'
 import type { CloudModel } from '../../shared/llm-catalogue.ts'
 
 let fake: ReturnType<typeof startFakeOpenAI> | null = null
@@ -95,11 +96,14 @@ describe('stopped calls looked up by generation id', () => {
     })
     try {
       recordLlmUsage('gen-user', 'gen-cloud', { inputTokens: 90, outputTokens: 10 }, 0.2)
+      const corrections: number[] = []
       const done = await reconcileGeneration({
         userId: 'gen-user', providerId: 'gen-cloud', endpoint: { baseURL: `http://localhost:${server.port}/api/v1`, apiKey: 'k' },
         generationId: 'gen-42', estimate: { inputTokens: 90, outputTokens: 10 }, estimatedCost: 0.2,
+        onCorrection: d => { corrections.push(d) },
       }, [0, 0])
       expect(done).toBe(true)
+      expect(corrections[0]).toBeCloseTo(0.3)
       const row = monthlyLlmUsage().find(r => r.userId === 'gen-user')
       // The real figures, and still one request.
       expect(row).toMatchObject({ inputTokens: 100, outputTokens: 40, requests: 1 })
@@ -120,5 +124,22 @@ describe('stopped calls looked up by generation id', () => {
     } finally {
       server.stop(true)
     }
+  })
+})
+
+describe('an answer\'s stored cost', () => {
+  test('is corrected by a late difference, and an answer without a cost is left alone', async () => {
+    const now = new Date()
+    await db.insert(users).values({ id: 'cost-u', email: 'cost-u@example.com', name: null, role: 'user', settings: '{}', tokenVersion: 0, createdAt: now, updatedAt: now })
+    await db.insert(chatSessions).values({ id: 'cost-chat', title: 'c', userId: 'cost-u', createdAt: now, updatedAt: now })
+    await db.insert(messages).values([
+      { id: 'cost-a', sessionId: 'cost-chat', role: 'assistant', content: 'a', model: JSON.stringify({ id: 'm', label: 'M', kind: 'cloud', provider: 'P', cost: 0.2, currency: 'USD' }), createdAt: now },
+      { id: 'cost-b', sessionId: 'cost-chat', role: 'assistant', content: 'b', model: JSON.stringify({ id: 'llama', label: 'llama', kind: 'default' }), createdAt: now },
+    ])
+    addAnswerCost('cost-a', 0.3)
+    addAnswerCost('cost-b', 0.3)
+    const stored = async (id: string) => JSON.parse((await db.select({ model: messages.model }).from(messages).where(eq(messages.id, id)).get())?.model ?? 'null')
+    expect((await stored('cost-a')).cost).toBeCloseTo(0.5)
+    expect(await stored('cost-b')).toEqual({ id: 'llama', label: 'llama', kind: 'default' })
   })
 })

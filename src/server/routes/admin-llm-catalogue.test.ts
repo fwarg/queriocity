@@ -120,6 +120,16 @@ describe('admin LLM catalogue', () => {
     expect((await request('PUT', '/llm-catalogue', catalogue())).status).toBe(200)
   })
 
+  test('accepts nested extra fields, as OpenRouter\'s routing options need, within limits', async () => {
+    const c = catalogue()
+    c.providers[0].extraBody = { provider: { data_collection: 'deny', zdr: true, order: ['a', 'b'] } }
+    expect((await request('PUT', '/llm-catalogue', c)).status).toBe(200)
+    expect((await loadCatalogue()).providers[0].extraBody).toEqual({ provider: { data_collection: 'deny', zdr: true, order: ['a', 'b'] } })
+    c.providers[0].extraBody = { a: { b: { c: { d: { e: 1 } } } } }
+    expect((await request('PUT', '/llm-catalogue', c)).status).toBe(400)
+    expect((await request('PUT', '/llm-catalogue', catalogue())).status).toBe(200)
+  })
+
   test('accepts a local provider on plain http without a key', async () => {
     const c = catalogue()
     c.providers.push({ id: 'lan', label: 'LAN', kind: 'local', baseURL: 'http://192.168.1.20:8000/v1', apiKeyEnv: '', currency: 'EUR', monthlyCap: 0, enabled: true })

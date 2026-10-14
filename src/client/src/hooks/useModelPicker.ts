@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react'
 import { fetchModelChoices } from '../lib/api.ts'
 import { useConfirm } from '../components/confirm.tsx'
 import { useT } from '../lib/i18n.tsx'
-import type { ModelChoices, PickableModel } from '@shared/llm-catalogue.ts'
+import type { DefaultModel, ModelChoices, PickableModel } from '@shared/llm-catalogue.ts'
 
 type FocusMode = 'flash' | 'balanced' | 'thorough' | 'image'
 
@@ -10,10 +10,9 @@ type FocusMode = 'flash' | 'balanced' | 'thorough' | 'image'
 export const modelFits = (m: PickableModel, focusMode: FocusMode, locked: boolean) =>
   focusMode !== 'image' && (m.role !== 'thinking' || focusMode === 'thorough') && (!locked || m.allowedWhenLocked)
 
-/** The context the next message's model has, as the meter counts it: the pick's, or the default
- *  model that mode runs on (the thinking model for thorough research when the user has it on). */
-function nextBudget(choices: ModelChoices | null, picked: PickableModel | undefined, focusMode: FocusMode, useThinking: boolean) {
-  if (picked) return picked.budgetChars
+/** The default model a mode runs on: flash's own, the thinking model for thorough research when
+ *  the user has it on, else the chat model. */
+function defaultFor(choices: ModelChoices | null, focusMode: FocusMode, useThinking: boolean): DefaultModel | undefined {
   if (!choices) return undefined
   if (focusMode === 'flash') return choices.defaults.flash
   return focusMode === 'thorough' && useThinking ? choices.defaults.thinking : choices.defaults.chat
@@ -59,9 +58,12 @@ export function useModelPicker({ focusMode, locked, enabled, useThinking, cloudA
   const available = (choices?.models ?? []).filter(m => modelFits(m, focusMode, locked))
   // A pick that no longer fits (mode switched, budget spent) is dropped rather than sent and refused.
   const pickedModel = available.find(m => m.id === picked)
+  const fallback = defaultFor(choices, focusMode, useThinking)
   return {
     available, picked: pickedModel ? picked : '', choose, reset, refresh,
-    meterBudget: nextBudget(choices, pickedModel, focusMode, useThinking),
+    /** The model the next message gets when nothing is picked. */
+    defaultModel: fallback?.model,
+    meterBudget: pickedModel?.budgetChars ?? fallback?.budgetChars,
     meterModel: pickedModel?.label,
   }
 }

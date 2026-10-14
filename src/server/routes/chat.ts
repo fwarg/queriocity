@@ -12,7 +12,7 @@ import { randomUUID } from 'crypto'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { hasTrustedSearch } from '../lib/search/index.ts'
 import { getFlashModel } from '../lib/llm.ts'
-import { resolveTurnModels, modelChoices, answerModelOf, pickedModelOf, type ResolvedModels } from '../lib/cloud-models.ts'
+import { resolveTurnModels, modelChoices, answerModelOf, attachAnswer, pickedModelOf, type ResolvedModels } from '../lib/cloud-models.ts'
 import type { AnswerModel } from '../../shared/llm-catalogue.ts'
 import { extractMemoriesPostHoc, toMemorySources } from '../lib/memory.ts'
 import { ownedCollectionIds } from '../lib/files/collections.ts'
@@ -275,7 +275,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     }
     // The latest report is also stored with the chat, so the meter reappears when it is reopened.
     // Read now, not before the turn: the hosting provider is known only once the calls report it.
-    await finishTurn(out, { ...tail, fullContent: result.content, sources: result.sources, fileSources: result.fileSources, context: sink.lastContext, aborted, model: answerModelOf(resolved, focusMode) })
+    await finishTurn(out, { ...tail, fullContent: result.content, sources: result.sources, fileSources: result.fileSources, context: sink.lastContext, aborted, model: answerModelOf(resolved, focusMode), onStored: id => attachAnswer(resolved, id) })
   })
 })
 
@@ -350,15 +350,17 @@ interface TurnTail {
   /** Stopped by the user. With nothing produced, the client withdraws the question, so the
    *  server must not store it either — it would reappear as a phantom turn on reload. */
   aborted?: boolean
-  /** The picked model that answered; undefined for the default model. */
+  /** The model that answered. */
   model?: AnswerModel
+  /** Called with the stored answer's id, e.g. so a late cost correction can reach it. */
+  onStored?: (assistantMessageId: string) => void
 }
 
 /** Common tail for every mode: persist the exchange, close the stream, and kick off the
  *  background memory/index work. Centralised because four branches ran their own copy and the
  *  cached-answer path quietly omitted all of it — losing the turn from the conversation. */
 async function finishTurn(out: SSEStream, {
-  sid, userId, msgs, fullContent, sources, fileSources, spaceId, regenerate, ephemeral, t0, context, aborted, model,
+  sid, userId, msgs, fullContent, sources, fileSources, spaceId, regenerate, ephemeral, t0, context, aborted, model, onStored,
 }: TurnTail): Promise<void> {
   const elapsedMs = Date.now() - t0
   if (ephemeral || (aborted && !fullContent.trim())) {
@@ -366,6 +368,7 @@ async function finishTurn(out: SSEStream, {
     return
   }
   const { title, supersededAnswer, userMessageId, assistantMessageId } = await persistMessage(sid, userId, msgs, fullContent, sources, fileSources, spaceId, regenerate, model)
+  onStored?.(assistantMessageId)
   if (context) await db.update(chatSessions).set({ contextReport: JSON.stringify(context) }).where(eq(chatSessions.id, sid))
   // The stored ids let the client pin these messages without reloading the chat.
   // The model again, now with the hosting provider the calls reported, for the live answer's badge.
