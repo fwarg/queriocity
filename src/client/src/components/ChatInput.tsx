@@ -33,6 +33,9 @@ interface Props {
   collections: Array<{ id: string; name: string }>
   selectedCollections: string[]
   onCollectionsChange: (ids: string[]) => void
+  /** Read every document in the picked collections rather than the excerpts nearest the question. */
+  wholeCollection?: boolean
+  onWholeCollectionChange?: (on: boolean) => void
   /** "Notes first": answer from the user's own notes before the web. Offered once they have notes. */
   notesAvailable?: boolean
   notesFirst?: boolean
@@ -82,7 +85,7 @@ const CATEGORY_LABEL_KEYS: Record<SearchCategory, TranslationKey> = {
   tech: 'category.tech',
 }
 
-export function ChatInput({ models = [], modelId = '', defaultModel, onModelChange, onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, collections, selectedCollections, onCollectionsChange, notesAvailable = false, notesFirst = false, onNotesFirstChange, suggestionsEnabled, lockedSpace = false, related = [], onRelatedSelect, spaceId, onAddedToLibrary }: Props) {
+export function ChatInput({ models = [], modelId = '', defaultModel, onModelChange, onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, collections, selectedCollections, onCollectionsChange, wholeCollection = false, onWholeCollectionChange, notesAvailable = false, notesFirst = false, onNotesFirstChange, suggestionsEnabled, lockedSpace = false, related = [], onRelatedSelect, spaceId, onAddedToLibrary }: Props) {
   const t = useT()
   const [value, setValue] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
@@ -138,6 +141,7 @@ export function ChatInput({ models = [], modelId = '', defaultModel, onModelChan
     ...(notesOffered && notesFirst ? [t('notesFirst.label')] : []),
     ...(categoriesAvailable && searchCategories.length > 0 ? [searchCategories.map(c => t(CATEGORY_LABEL_KEYS[c])).join('+')] : []),
     ...collections.filter(c => selectedCollections.includes(c.id)).map(c => c.name),
+    ...(wholeCollection && selectedCollections.length > 0 && focusMode !== 'image' ? [t('collection.whole')] : []),
   ]
   // "All" is a statement about categories only, and unqualified it reads as "everything" once
   // collections share the button — no collection is picked by default.
@@ -259,10 +263,12 @@ export function ChatInput({ models = [], modelId = '', defaultModel, onModelChan
       <div className={`overflow-hidden transition-all duration-300 flex flex-col gap-2 px-4 ${collapsed ? 'max-h-0' : 'max-h-[34rem] pb-4'}`}>
       {showTemplates && (
         <TemplateSelector
-          onSelect={(text, mode) => {
+          onSelect={(text, mode, whole) => {
             setValue(text)
             onFocusModeChange(mode)
             setShowTemplates(false)
+            // Opened too, so the collection to read is picked where the switch is.
+            if (whole && onWholeCollectionChange) { onWholeCollectionChange(true); setSourcesOpen(true) }
           }}
           onClose={() => setShowTemplates(false)}
         />
@@ -357,25 +363,13 @@ export function ChatInput({ models = [], modelId = '', defaultModel, onModelChan
             </div>
           )}
           {collections.length > 0 && (
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-xs text-gray-500 mr-0.5">{t('collection.plural')}</span>
-              {collections.map(collection => {
-                const on = selectedCollections.includes(collection.id)
-                return (
-                  <button
-                    key={collection.id}
-                    type="button"
-                    aria-pressed={on}
-                    onClick={() => onCollectionsChange(
-                      on ? selectedCollections.filter(id => id !== collection.id) : [...selectedCollections, collection.id],
-                    )}
-                    className={`px-2 py-0.5 rounded text-xs ${on ? 'bg-amber-700 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'}`}
-                  >
-                    {collection.name}
-                  </button>
-                )
-              })}
-            </div>
+            <CollectionsGroup
+              collections={collections}
+              selected={selectedCollections}
+              onChange={onCollectionsChange}
+              whole={focusMode !== 'image' ? wholeCollection : undefined}
+              onWholeChange={onWholeCollectionChange}
+            />
           )}
         </div>
       )}
@@ -555,5 +549,42 @@ function NotePicker({ onPick, onClose }: { onPick: (id: string) => void; onClose
         ))}
       </div>
     </Modal>
+  )
+}
+
+/** The collection chips, and once one is picked, whether to read the whole of them: every
+ *  document rather than the excerpts nearest the question. `whole` is undefined where it does not apply. */
+function CollectionsGroup({ collections, selected, onChange, whole, onWholeChange }: {
+  collections: Array<{ id: string; name: string }>
+  selected: string[]
+  onChange: (ids: string[]) => void
+  whole?: boolean
+  onWholeChange?: (on: boolean) => void
+}) {
+  const t = useT()
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap">
+      <span className="text-xs text-gray-500 mr-0.5">{t('collection.plural')}</span>
+      {collections.map(collection => {
+        const on = selected.includes(collection.id)
+        return (
+          <button
+            key={collection.id}
+            type="button"
+            aria-pressed={on}
+            onClick={() => onChange(on ? selected.filter(id => id !== collection.id) : [...selected, collection.id])}
+            className={`px-2 py-0.5 rounded text-xs ${on ? 'bg-amber-700 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'}`}
+          >
+            {collection.name}
+          </button>
+        )
+      })}
+      {selected.length > 0 && whole !== undefined && onWholeChange && (
+        <label className="flex items-center gap-1 text-xs text-gray-400 ml-1" title={t('collection.wholeTitle')}>
+          <input type="checkbox" checked={whole} onChange={e => onWholeChange(e.target.checked)} className="accent-amber-600" />
+          {t('collection.whole')}
+        </label>
+      )}
+    </div>
   )
 }

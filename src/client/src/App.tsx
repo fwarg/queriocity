@@ -97,6 +97,7 @@ export default function App() {
    *  are visibly lit, so an unwanted one is obvious and one click away, whereas silently clearing a
    *  shelf the user had set up would be the more surprising of the two. */
   const [selectedCollections, setSelectedCollections] = useState<string[]>([])
+  const [wholeCollection, setWholeCollection] = useState(false)
 
   const [sessionId, setSessionId] = useState<string | undefined>()
   const [sessions, setSessions] = useState<Session[]>([])
@@ -224,6 +225,7 @@ export default function App() {
     notesFirst,
     includeFileIds: pinnedFileIds.length ? pinnedFileIds : undefined,
     collectionIds: selectedCollections.length ? selectedCollections : undefined,
+    wholeCollection,
     includeMemoryIds: pinnedMemoryIds.length ? pinnedMemoryIds : undefined,
     spaceId: activeSpaceId ?? undefined,
     followUpSuggestions: currentUser?.settings?.followUpSuggestions !== false,
@@ -457,6 +459,13 @@ export default function App() {
     reset()
     setCurrentSpaceId(inSpaceId ?? null)
     setView('chat')
+  }
+
+  /** A new chat that reads every document in the collection; its answer can be saved as a note there. */
+  function analyzeCollection(collectionId: string) {
+    newChat()
+    setSelectedCollections([collectionId])
+    setWholeCollection(true)
   }
 
   /** Provenance front-matter for exported chats — EU AI Act Art 50(2).
@@ -984,7 +993,7 @@ export default function App() {
         ) : view === 'spaces' ? (
           currentSpaceId ? (
             <div className="flex flex-col flex-1 overflow-y-auto p-6 gap-3">
-              <div className="flex items-center gap-3 mb-2">
+              <div className="flex items-center flex-wrap gap-3 mb-2">
                 <button
                   onClick={() => setCurrentSpaceId(null)}
                   className="text-gray-500 hover:text-gray-300 text-sm"
@@ -1014,13 +1023,22 @@ export default function App() {
                   </h2>
                 )}
                 {activeSpaceIsCollection ? (
-                  <button
-                    onClick={handlePromoteCollection}
-                    title={t('collection.promoteTitle')}
-                    className="ml-auto px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-sm font-medium whitespace-nowrap"
-                  >
-                    {t('collection.promote')}
-                  </button>
+                  <div className="ml-auto flex flex-wrap gap-2">
+                    <button
+                      onClick={() => analyzeCollection(currentSpaceId!)}
+                      title={t('collection.analyzeTitle')}
+                      className={PRIMARY_BTN}
+                    >
+                      {t('collection.analyze')}
+                    </button>
+                    <button
+                      onClick={handlePromoteCollection}
+                      title={t('collection.promoteTitle')}
+                      className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-sm font-medium whitespace-nowrap"
+                    >
+                      {t('collection.promote')}
+                    </button>
+                  </div>
                 ) : (
                   <button
                     onClick={() => newChat(currentSpaceId!)}
@@ -1656,6 +1674,8 @@ export default function App() {
               collections={spaces.filter(sp => sp.kind === 'collection')}
               selectedCollections={selectedCollections}
               onCollectionsChange={setSelectedCollections}
+              wholeCollection={wholeCollection}
+              onWholeCollectionChange={setWholeCollection}
               notesAvailable={files.some(f => f.kind === 'note')}
               notesFirst={notesFirst}
               onNotesFirstChange={setNotesFirst}

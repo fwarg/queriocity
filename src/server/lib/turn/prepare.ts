@@ -41,17 +41,23 @@ export async function prepareResearch(ctx: TurnContext) {
   const searchBudget = await newSearchBudget(ctx.monitor ? 'monitor' : ctx.focusMode === 'thorough' ? 'thorough' : 'balanced')
   const gathered = await gatherContext(ctx, searchBudget, fetchMaxPages)
 
+  const { showThinking, researchModel } = thinkingFor(ctx)
+  // URL text goes into the researcher's context, so it is budgeted against the model that runs it.
+  const processedUrls = gathered.prefetchedUrls.length > 0
+    ? await processUrlsForContext(gathered.prefetchedUrls, urlBudgetChars(ctx, researchModel.contextTokens, gathered.memoryBlock), fetchSummarize, urlContextChars)
+    : gathered.prefetchedUrls
+  return { ...gathered, processedUrls, showThinking, researchModel, searchBudget, urlContextChars, fetchSummarize, compressHistory }
+}
+
+/** Whether the mode shows its thinking, and the model that researches: the thinking model in
+ *  thorough mode when the user has it on, else the chat model. */
+export function thinkingFor(ctx: TurnContext) {
   const showThinkingSettings = (ctx.settings.showThinking ?? { balanced: false, thorough: false }) as { balanced: boolean; thorough: boolean }
   const showThinking = ctx.focusMode === 'balanced' ? showThinkingSettings.balanced
                      : ctx.focusMode === 'thorough'  ? showThinkingSettings.thorough
                      : false
   const useThinking: boolean = !!(ctx.settings.useThinking) && ctx.focusMode === 'thorough'
-  // URL text goes into the researcher's context, so it is budgeted against the model that runs it.
-  const researchModel = useThinking ? ctx.models.thinking : ctx.models.chat
-  const processedUrls = gathered.prefetchedUrls.length > 0
-    ? await processUrlsForContext(gathered.prefetchedUrls, urlBudgetChars(ctx, researchModel.contextTokens, gathered.memoryBlock), fetchSummarize, urlContextChars)
-    : gathered.prefetchedUrls
-  return { ...gathered, processedUrls, showThinking, researchModel, searchBudget, urlContextChars, fetchSummarize, compressHistory }
+  return { showThinking, researchModel: useThinking ? ctx.models.thinking : ctx.models.chat }
 }
 
 /** Context left for prefetched page text once the system prompt and history are counted. */

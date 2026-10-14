@@ -55,6 +55,8 @@ const chatSchema = z.object({
   notesFirst: z.boolean().optional(),
   /** A cloud catalogue model picked for this message only; refused picks fall back to local. */
   modelId: z.string().max(80).optional(),
+  /** Read every document in the picked collections, not the excerpts nearest the question. */
+  wholeCollection: z.boolean().optional(),
 })
 
 export const chatRouter = new Hono<AppEnv>()
@@ -189,7 +191,7 @@ chatRouter.post('/:sessionId/approve', zValidator('json', z.object({
 
 chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', chatSchema), async (c) => {
   const userId = c.get('userId') as string
-  const { sessionId, spaceId, messages: requestMsgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, collectionIds, ephemeral, regenerate, notesFirst, modelId } = c.req.valid('json')
+  const { sessionId, spaceId, messages: requestMsgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, collectionIds, ephemeral, regenerate, notesFirst, modelId, wholeCollection } = c.req.valid('json')
   const sid = sessionId ?? randomUUID()
   const msgs = requestMsgs.map(({ role, content }) => ({ role, content }))
 
@@ -228,6 +230,8 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     [...(includeFileIds ?? [])].sort().join(','),
     [...(includeMemoryIds ?? [])].sort().join(','),
     collections.join(','),
+    // Whole-collection answers are never stored, but must not be served an excerpt answer either.
+    wholeCollection ? 'whole' : '',
     customPrompt ?? '',
     [...(searchCategories ?? [])].sort().join(','),
     locked ? 'locked' : '',
@@ -253,7 +257,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   if (cached) return streamRun(c, run, out => replayCached(out, cached, { ...tail, model: answerModelOf(resolved, focusMode) }, resolved))
 
   const ctx: TurnContext = {
-    userId, sid, msgs, focusMode, spaceId, locked, settings, customPrompt, collections,
+    userId, sid, msgs, focusMode, spaceId, locked, settings, customPrompt, collections, wholeCollection,
     // Pins travel as indices, so the messages handed to the model carry nothing but role and content.
     pinned: new Set(requestMsgs.flatMap((m, i) => m.pinned ? [i] : [])),
     models: resolved.models,
@@ -275,7 +279,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     }
     // The latest report is also stored with the chat, so the meter reappears when it is reopened.
     // Read now, not before the turn: the hosting provider is known only once the calls report it.
-    await finishTurn(out, { ...tail, fullContent: result.content, sources: result.sources, fileSources: result.fileSources, context: sink.lastContext, aborted, model: answerModelOf(resolved, focusMode), onStored: id => attachAnswer(resolved, id) })
+    await finishTurn(out, { ...tail, fullContent: result.content, sources: result.sources, fileSources: result.fileSources, context: sink.lastContext, aborted, model: answerModelOf(resolved, focusMode, result.answeredBy), onStored: id => attachAnswer(resolved, id) })
   })
 })
 

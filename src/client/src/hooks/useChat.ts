@@ -17,6 +17,8 @@ interface UseChatOptions {
   notesFirst?: boolean
   includeFileIds?: string[]
   collectionIds?: string[]
+  /** Read every document in the collections rather than the excerpts nearest the question. */
+  wholeCollection?: boolean
   includeMemoryIds?: string[]
   spaceId?: string
   /** User setting; when false no related-questions call is made at all. */
@@ -90,9 +92,9 @@ export function useChat(options: UseChatOptions) {
     setBusy(true)
     setAnswerTime('')
     const chatRun = new ChatRun({ t, setStreaming, setStreamingThinking, setStatus, setSteps, setAnswerTime, setApproval, setContext, rafRef, liveSessionRef, onSessionCreated }, text, focusMode)
-    const { searchCategories, includeFileIds, includeMemoryIds, collectionIds, spaceId, notesFirst } = options
+    const { searchCategories, includeFileIds, includeMemoryIds, collectionIds, spaceId, notesFirst, wholeCollection } = options
     try {
-      for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId, undefined, searchCategories, includeFileIds, includeMemoryIds, collectionIds, regenerating, notesFirst, modelId)) {
+      for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId, undefined, searchCategories, includeFileIds, includeMemoryIds, collectionIds, regenerating, notesFirst, modelId, wholeCollection)) {
         chatRun.handle(chunk)
       }
     } catch (err: unknown) {

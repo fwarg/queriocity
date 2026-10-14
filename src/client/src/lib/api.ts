@@ -234,6 +234,7 @@ export async function* streamChat(
   regenerate?: boolean,
   notesFirst?: boolean,
   modelId?: string,
+  wholeCollection?: boolean,
 ): AsyncGenerator<{ type: string; [k: string]: unknown }> {
   const res = await fetch(`${BASE}/chat`, {
     method: 'POST',
@@ -257,6 +258,7 @@ export async function* streamChat(
       ...(regenerate ? { regenerate: true } : {}),
       ...(notesFirst ? { notesFirst: true } : {}),
       ...(modelId ? { modelId } : {}),
+      ...(wholeCollection && collectionIds?.length ? { wholeCollection: true } : {}),
     }),
     signal,
   })

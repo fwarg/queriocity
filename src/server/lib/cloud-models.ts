@@ -138,9 +138,10 @@ export const pickedModelOf = ({ cloud, provider, observed }: ResolvedModels): An
   } : undefined
 
 /** The model stored with the answer: the pick, or the default model that wrote it. Flash answers
- *  on the flash model; every other mode's answer is written by the chat model. */
-export const answerModelOf = (resolved: ResolvedModels, focusMode: string): AnswerModel =>
-  pickedModelOf(resolved) ?? defaultAnswerModel(focusMode === 'flash' ? resolved.models.flash : resolved.models.chat)
+ *  on the flash model; every other mode's answer is written by the chat model, unless the turn
+ *  says otherwise (`answeredBy`). */
+export const answerModelOf = (resolved: ResolvedModels, focusMode: string, answeredBy?: ModelTarget): AnswerModel =>
+  pickedModelOf(resolved) ?? defaultAnswerModel(answeredBy ?? (focusMode === 'flash' ? resolved.models.flash : resolved.models.chat))
 
 export const defaultAnswerModel = (t: ModelTarget): AnswerModel => ({ id: t.model, label: displayName(t), kind: 'default' })
 

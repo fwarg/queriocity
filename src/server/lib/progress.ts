@@ -19,6 +19,7 @@ export type StepKind =
   | 'write'        // final answer pass (thorough writer, synthesis fallback)
   | 'memory'       // save_to_memory tool
   | 'image'        // diffusion generate/edit
+  | 'documents'    // digesting a collection's documents, k of N
 
 export interface ProgressStep {
   kind: StepKind
@@ -36,6 +37,8 @@ export interface ProgressStep {
    *  English `detail` rather than instead of it, so `stepText` below — which feeds PromptStudio's
    *  status line and the server log — needs no catalog of its own. */
   detailKey?: TranslationKey
+  /** Progress of the running step rather than a new one: the client updates its row in place. */
+  update?: boolean
 }
 
 /** The one-line prose form, kept identical to what the status line showed before the log existed. */
@@ -49,6 +52,7 @@ export function stepText(step: ProgressStep): string {
     case 'write':      return step.detail ?? 'Writing answer…'
     case 'memory':     return 'Saving to memory…'
     case 'image':      return step.detail ?? 'Generating image…'
+    case 'documents':  return `Reading documents (${step.index ?? 0} of ${step.total ?? 0})…`
   }
 }
 

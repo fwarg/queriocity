@@ -418,6 +418,17 @@ function initSchema() {
     PRIMARY KEY (space_id, file_id)
   )`)
 
+  // One digest per resource and model for whole-collection tasks; `text_hash` covers the text read
+  // and the digest prompt, so an edit or a prompt change makes the row stale rather than wrong.
+  sqlite.run(`CREATE TABLE IF NOT EXISTS resource_digests (
+    file_id    TEXT NOT NULL REFERENCES uploaded_files(id) ON DELETE CASCADE,
+    model      TEXT NOT NULL,
+    text_hash  TEXT NOT NULL,
+    digest     TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (file_id, model)
+  )`)
+
   // Migration: drop old memory_chunks table (replaced by chat_chunks)
   sqlite.run('DROP TABLE IF EXISTS memory_chunks')
 

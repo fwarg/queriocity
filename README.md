@@ -1028,6 +1028,25 @@ Because these excerpts are asked for explicitly, they are not made to compete wi
 itself holds: they carry their own retrieval budget rather than being ranked against it. A request
 with collections selected therefore builds a somewhat larger prompt.
 
+**Working on the whole collection.** Excerpts suit questions *answered somewhere* in a collection. For
+tasks *about* the collection (compare these papers, place my work among them, review my attached
+draft against these reviewed papers), tick **Whole collection** next to the picked collections, or use
+**Analyze in chat** on the collection's page. That turn then reads every document, not the passages
+nearest the question:
+
+- The documents go into the prompt **in full** when they fit the answering model's context.
+- Otherwise each document is first reduced to a **digest** (claims, method, results, verdict,
+  strengths, weaknesses) by the same model. Digests are made one at a time on a local model and three at
+  a time on a cloud model, and are kept per document and model, so a follow-up question reuses them. If
+  even the digests do not fit, each is shortened equally, and the footer says so.
+- Each document is cited as `[C1]`, `[C2]`, one label per document.
+- The turn makes no web search, and its answer is not cached, because the collection can change.
+- Digest calls on a cloud model count toward its cost and budget like any other call.
+
+The built-in **Collection report** template asks for a summary of each work, how they relate, where they
+agree and disagree, the pros and cons of each, and a comparison table. Choosing it turns *Whole
+collection* on. Save a good answer as a note with the answer's note action.
+
 **Promotion.** A collection can be turned into a space from its detail view, keeping every tagged
 resource — nothing moves, because both kinds tag the same way. This is one-way: a space that already
 holds chats, memories and possibly a lock has no sensible reading as a collection, so the reverse is

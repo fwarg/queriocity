@@ -48,6 +48,7 @@ export class ChatRun {
   private modelNote = ''
   private errorNote = ''
   private model: AnswerModel | undefined
+  private coverage: Coverage | undefined
   // Built here rather than in the component so a step's end time is the moment the next one
   // arrives, not the moment React happened to re-render.
   private readonly log: LogStep[] = []
@@ -116,6 +117,7 @@ export class ChatRun {
         this.setModel({ id: chunk.id as string, label: chunk.label as string, kind: chunk.kind as AnswerModel['kind'], provider: chunk.provider as string })
         return true
       case 'model_notice': this.modelNote = t(`modelNotice.${chunk.reason as ModelFallbackReason}`); return true
+      case 'coverage': this.coverage = { documents: chunk.documents as number, mode: chunk.mode as Coverage['mode'], trimmed: !!chunk.trimmed }; return true
       case 'model_error': this.errorNote = t('answer.modelError', { provider: chunk.provider as string, message: chunk.message as string }); return true
       default: return false
     }
@@ -161,8 +163,13 @@ export class ChatRun {
   }
 
   private pushStep(step: Omit<LogStep, 'startedAt'>) {
-    this.endLastStep()
-    this.log.push({ ...step, startedAt: Date.now() })
+    const last = this.log[this.log.length - 1]
+    // Progress of the running step rewrites its row, keeping its start time.
+    if (step.update && last?.kind === step.kind && last.endedAt === undefined) this.log[this.log.length - 1] = { ...last, ...step }
+    else {
+      this.endLastStep()
+      this.log.push({ ...step, startedAt: Date.now() })
+    }
     this.view.setSteps([...this.log])
   }
 
@@ -180,7 +187,7 @@ export class ChatRun {
     if (chunk.elapsedMs) {
       view.setAnswerTime(answerFooter(view.t, {
         elapsedMs: chunk.elapsedMs as number, focusMode: this.focusMode, images: this.images.length,
-        sources: this.sources.length, blockedEngines: this.blockedEngines.map(e => e.engine), modelNote: [this.modelNote, this.errorNote].filter(Boolean).join(' '),
+        sources: this.sources.length, blockedEngines: this.blockedEngines.map(e => e.engine), coverage: this.coverage, modelNote: [this.modelNote, this.errorNote].filter(Boolean).join(' '),
       }))
     }
     view.liveSessionRef.current = chunk.sessionId as string
@@ -189,23 +196,41 @@ export class ChatRun {
   }
 }
 
-/** The line under a finished answer: time taken, what the search found, and which model answered. */
-export function answerFooter(t: TFunction, { elapsedMs, focusMode, images, sources, blockedEngines, modelNote }: {
+/** How a whole-collection answer read the collection: its documents in full, or as digests. */
+export interface Coverage {
+  documents: number
+  mode: 'full' | 'digest'
+  /** The digests were shortened to fit the model. */
+  trimmed: boolean
+}
+
+/** The line under a finished answer: time taken, what the search found (or which documents were
+ *  read, for a whole-collection answer, which does not search), and which model answered. */
+export function answerFooter(t: TFunction, { elapsedMs, focusMode, images, sources, blockedEngines, coverage, modelNote }: {
   elapsedMs: number
   focusMode: FocusMode
   images: number
   sources: number
   blockedEngines: string[]
+  coverage?: Coverage
   modelNote: string
 }): string {
   const label = t(images > 0 ? 'answer.generatedIn' : 'answer.answeredIn')
+  const detail = coverage ? ` · ${coverageText(t, coverage)}` : searchText(t, focusMode, sources, blockedEngines)
+  return t('answer.time', { label, seconds: (elapsedMs / 1000).toFixed(1) }) + detail + '.' + (modelNote ? ` ${modelNote}` : '')
+}
+
+function searchText(t: TFunction, focusMode: FocusMode, sources: number, blockedEngines: string[]): string {
   // Zero sources only means "the search came up empty" in the modes that always search. Flash
   // never searches, and image searches at its own discretion without reporting sources, so for
   // those a count of zero says nothing and is left out.
   const alwaysSearches = focusMode === 'balanced' || focusMode === 'thorough'
-  let srcLabel: string
-  if (sources > 0) srcLabel = ` · ${t('answer.searchResults', { count: sources })}`
-  else if (blockedEngines.length) srcLabel = ` · ${t('answer.enginesUnavailable', { engines: blockedEngines.join(', ') })}`
-  else srcLabel = alwaysSearches ? ` · ${t('answer.noSearchResults')}` : ''
-  return t('answer.time', { label, seconds: (elapsedMs / 1000).toFixed(1) }) + srcLabel + '.' + (modelNote ? ` ${modelNote}` : '')
+  if (sources > 0) return ` · ${t('answer.searchResults', { count: sources })}`
+  if (blockedEngines.length) return ` · ${t('answer.enginesUnavailable', { engines: blockedEngines.join(', ') })}`
+  return alwaysSearches ? ` · ${t('answer.noSearchResults')}` : ''
+}
+
+function coverageText(t: TFunction, { documents, mode, trimmed }: Coverage): string {
+  if (mode === 'full') return t('answer.documentsInFull', { count: documents })
+  return t(trimmed ? 'answer.documentsDigestsTrimmed' : 'answer.documentsDigests', { count: documents })
 }

@@ -16,6 +16,8 @@ export interface Template {
   name: string
   description: string
   suggestedMode: FocusMode
+  /** Meant for the whole of the picked collections; choosing it turns that on. */
+  wholeCollection?: boolean
   fields: TemplateField[]
   assemble(values: Record<string, string>): string
 }
@@ -95,6 +97,32 @@ export const TEMPLATES: Template[] = [
     assemble(v) {
       const role = v.role?.trim() ? `Act as a ${v.role.trim()}. ` : ''
       return `${role}Compare ${v.subjectA.trim()} and ${v.subjectB.trim()} on the following criteria: ${v.criteria.trim()}. Present a side-by-side analysis with pros, cons, and a recommendation.`
+    },
+  },
+  {
+    id: 'collection-report',
+    name: 'Collection report',
+    description: 'Summarise and compare every document in a collection',
+    suggestedMode: 'balanced',
+    wholeCollection: true,
+    fields: [
+      {
+        id: 'role',
+        label: 'Your expert role',
+        placeholder: 'e.g. senior reviewer, PhD supervisor',
+        required: false,
+      },
+      {
+        id: 'focus',
+        label: 'Aspects to compare',
+        placeholder: 'e.g. methods, evaluation, threats to validity',
+        required: false,
+      },
+    ],
+    assemble(v) {
+      const role = v.role?.trim() ? `Act as a ${v.role.trim()}. ` : ''
+      const focus = v.focus?.trim() ? `: ${v.focus.trim()}` : ' on their main dimensions'
+      return `${role}Write a report on the documents in the selected collection. First, summarise each work in turn (problem, approach, main results). Then describe how the works relate to each other, where they agree and where they disagree, and the strengths and weaknesses of each. End with a table comparing the works${focus}. Cite each work by its label.`
     },
   },
   {
