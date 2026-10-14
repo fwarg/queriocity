@@ -2,11 +2,11 @@ import { z } from 'zod'
 import { getAppSetting, setAppSetting } from './db.ts'
 import type { ModelTarget } from './llm.ts'
 import { isLocalEndpoint } from './space-lock.ts'
-import { EMPTY_CATALOGUE, type CloudModel, type LlmCatalogue } from '../../shared/llm-catalogue.ts'
+import { CATALOGUE_ID_RE, EMPTY_CATALOGUE, type CloudModel, type CloudProvider, type ExtraBody, type LlmCatalogue } from '../../shared/llm-catalogue.ts'
 
 export const CATALOGUE_SETTING = 'llm_catalogue'
 
-const id = z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/, 'lowercase letters, digits and dashes')
+const id = z.string().regex(CATALOGUE_ID_RE, 'only lowercase letters, digits and dashes')
 const price = z.number().min(0).max(10_000)
 
 /** A cloud provider must be HTTPS so its key is never sent in clear (HTTP to this machine allowed,
@@ -20,7 +20,7 @@ const apiKeyEnv = z.string().regex(/^([A-Z][A-Z0-9_]{0,63}_API_KEY)?$/, 'an env 
 /** Fields the request itself sets; an extra may add to a request but never redirect or reshape it. */
 const RESERVED_BODY_KEYS = new Set(['model', 'messages', 'stream', 'stream_options', 'tools', 'tool_choice', 'max_tokens', 'max_completion_tokens', 'response_format'])
 
-const extraBody = z.record(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/), z.union([z.string().max(200), z.number(), z.boolean()]))
+const extraBody = z.record(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/), z.union([z.string().max(200), z.number(), z.boolean(), z.array(z.string().max(200)).max(20)]))
   .refine(b => Object.keys(b).length <= 10, 'at most 10 fields')
   .refine(b => Object.keys(b).every(k => !RESERVED_BODY_KEYS.has(k)), 'must not set model, messages, tools or output limits')
 
@@ -34,6 +34,7 @@ const providerSchema = z.object({
   currency: z.string().regex(/^[A-Z]{3}$/, 'a three-letter currency code'),
   monthlyCap: z.number().min(0).max(1_000_000),
   extraBody: extraBody.optional(),
+  reportedCostUnit: z.number().positive().max(1).optional(),
   enabled: z.boolean(),
 })
 
@@ -47,6 +48,7 @@ const modelSchema = z.object({
   maxOutputTokens: z.number().int().min(256).max(500_000),
   priceIn: price,
   priceOut: price,
+  extraBody: extraBody.optional(),
   enabled: z.boolean(),
 })
 
@@ -90,8 +92,14 @@ export const saveCatalogue = (catalogue: LlmCatalogue) => setAppSetting(CATALOGU
 export const keyStatus = (catalogue: LlmCatalogue): Record<string, boolean> =>
   Object.fromEntries(catalogue.providers.filter(p => p.apiKeyEnv).map(p => [p.apiKeyEnv, !!process.env[p.apiKeyEnv]?.trim()]))
 
+/** A model's own extras over its provider's; undefined when neither sets any. */
+function mergeExtras(provider?: ExtraBody, model?: ExtraBody): ExtraBody | undefined {
+  const merged = { ...provider, ...model }
+  return Object.keys(merged).length ? merged : undefined
+}
+
 /** A catalogue model as a target the turn can run on; null when unknown or a key it names is unset. */
-export function cloudTarget(catalogue: LlmCatalogue, modelId: string): (ModelTarget & { entry: CloudModel }) | null {
+export function cloudTarget(catalogue: LlmCatalogue, modelId: string): (ModelTarget & { entry: CloudModel; source: CloudProvider }) | null {
   const entry = catalogue.models.find(m => m.id === modelId)
   const provider = entry && catalogue.providers.find(p => p.id === entry.providerId)
   if (!entry || !provider) return null
@@ -102,11 +110,12 @@ export function cloudTarget(catalogue: LlmCatalogue, modelId: string): (ModelTar
     provider: 'openai',
     baseURL: provider.baseURL,
     apiKey,
-    extraBody: provider.extraBody,
+    extraBody: mergeExtras(provider.extraBody, entry.extraBody),
     maxOutputTokens: entry.maxOutputTokens,
     model: entry.model,
     contextTokens: entry.contextTokens,
     configured: true,
     entry,
+    source: provider,
   }
 }

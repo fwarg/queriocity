@@ -50,7 +50,8 @@ export function ContextDivider({ kind, count, summary }: { kind: 'lost' | 'summa
 
 /** How the context was spent on the latest turn, as a stacked bar; tapping it lists the parts —
  *  a tooltip would be unreachable on a phone. */
-export function ContextMeter({ report }: { report: ContextReport }) {
+/** `model` names a picked model the meter is sized for; absent for the default one. */
+export function ContextMeter({ report, model }: { report: ContextReport; model?: string }) {
   const t = useT()
   const [open, setOpen] = useState(false)
   const budget = Math.max(report.budgetChars, 1)
@@ -80,6 +81,7 @@ export function ContextMeter({ report }: { report: ContextReport }) {
       {open && (
         <div className="absolute bottom-full right-0 mb-1 z-10 w-64 rounded border border-gray-700 bg-gray-800 p-3 text-xs text-gray-300 shadow-lg flex flex-col gap-1">
           <p className="text-gray-500">{t('context.unit')}</p>
+          {model && <p className="text-gray-400">{t('context.forModel', { model })}</p>}
           {parts.filter(p => p.chars > 0).map(p => (
             <div key={p.key} className="flex items-center gap-2">
               <span className={`h-2 w-2 rounded-full ${p.color}`} />

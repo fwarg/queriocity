@@ -9,6 +9,10 @@ import { getSmallModel, SMALL_MODEL_INPUT_CHARS, CHARS_PER_TOKEN, estimateTokens
 export const CONTEXT_RESERVE_FRACTION = 0.8
 
 // Converts a token-based context limit into a char budget, using the same ratio as estimate().
+/** What the context meter counts as the whole: the input share of a model's window, in characters —
+ *  the total every turn's report states as `budgetChars`. */
+export const meterBudgetChars = (contextTokens: number): number => tokensToChars(contextTokens * CONTEXT_RESERVE_FRACTION)
+
 export function contextCharBudget(ctxLimitTokens: number, fraction = CONTEXT_RESERVE_FRACTION): number {
   return ctxLimitTokens * fraction * CHARS_PER_TOKEN
 }

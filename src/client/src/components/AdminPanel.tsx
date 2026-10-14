@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import { useConfirm } from './confirm.tsx'
 import { listUsers, setUserRole, deleteUser, createInvite, listInvites, revokeInvite, resetUserPassword, testModels, fetchAdminSettings, updateAdminSettings, triggerDream, reindexChats, type ModelTestResult, type Invite } from '../lib/api.ts'
 import { Modal } from './Modal.tsx'
 import { AdminSearchPanel } from './AdminSearchPanel.tsx'
 import { AdminModelsPanel } from './AdminModelsPanel.tsx'
+import { UserCloudAccess, useCloudAccessData, pickingEnabled } from './AdminCloudAccess.tsx'
 import { AdminSimilarityPanel } from './AdminSimilarityPanel.tsx'
 
 interface Props {
@@ -57,6 +58,9 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
 
   // Users tab state
   const [userList, setUserList] = useState<UserRow[]>([])
+  /** The user whose model access is folded out, if any. */
+  const [modelsOpenFor, setModelsOpenFor] = useState<string | null>(null)
+  const cloud = useCloudAccessData(tab === 'users')
   const [inviteUrl, setInviteUrl] = useState('')
   const [inviteEmail, setInviteEmail] = useState('')
   const [invites, setInvites] = useState<Invite[]>([])
@@ -572,7 +576,8 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
               </thead>
               <tbody>
                 {userList.map(u => (
-                  <tr key={u.id} className="border-b border-gray-800/50">
+                  <Fragment key={u.id}>
+                  <tr className={modelsOpenFor === u.id ? '' : 'border-b border-gray-800/50'}>
                     <td className="py-2 text-gray-200">{u.email}</td>
                     <td className="py-2 text-gray-400">{u.name ?? '—'}</td>
                     <td className="py-2">
@@ -588,6 +593,14 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                       )}
                     </td>
                     <td className="py-2 text-right whitespace-nowrap">
+                      <button
+                        onClick={() => setModelsOpenFor(id => id === u.id ? null : u.id)}
+                        aria-expanded={modelsOpenFor === u.id}
+                        className={`text-xs mr-3 ${pickingEnabled(cloud, u.id) ? 'text-amber-400 hover:text-amber-300' : 'text-gray-600 hover:text-gray-300'}`}
+                        title="Model picking, budgets and spend"
+                      >
+                        Models {modelsOpenFor === u.id ? '▴' : '▾'}
+                      </button>
                       <button
                         onClick={() => handleResetPassword(u.id)}
                         disabled={busy}
@@ -605,6 +618,14 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                       )}
                     </td>
                   </tr>
+                  {modelsOpenFor === u.id && (
+                    <tr className="border-b border-gray-800/50">
+                      <td colSpan={4} className="pl-3 border-l-2 border-gray-800">
+                        <UserCloudAccess userId={u.id} cloud={cloud} />
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>

@@ -17,7 +17,8 @@ import { useT } from '../lib/i18n.tsx'
 import { NoteEditor } from './NoteEditor.tsx'
 import { answerAsNoteBody } from '../lib/note-from-answer.ts'
 import type { ContextReport } from '@shared/context.ts'
-import type { AnswerModel } from '@shared/llm-catalogue.ts'
+import { isPicked, type AnswerModel } from '@shared/llm-catalogue.ts'
+import { formatCost } from '../lib/money.ts'
 import { ContextDivider, PinButton } from './ContextIndicators.tsx'
 
 export { ImageCaptionContext }
@@ -140,15 +141,16 @@ function makeMdComponents(highlighted: string | null, onCitationClick: (key: str
 }}
 
 /** Marks an answer a picked model wrote; a cloud one names the provider it was sent to. */
-function ModelBadge({ model }: { model: AnswerModel }) {
+function ModelBadge({ model }: { model: AnswerModel & { provider: string } }) {
   const t = useT()
   const cloud = model.kind === 'cloud'
+  const sentTo = !cloud ? t('answer.byModel', { label: model.label }) : model.via ? t('answer.byCloudModelVia', { label: model.label, provider: model.provider, via: model.via }) : t('answer.byCloudModel', { label: model.label, provider: model.provider })
   return (
     <span
-      title={cloud ? t('answer.byCloudModel', { label: model.label, provider: model.provider }) : t('answer.byModel', { label: model.label })}
+      title={model.cost !== undefined ? `${sentTo} ${t('answer.cost', { amount: formatCost(model.cost), currency: model.currency ?? '' })}` : sentTo}
       className={`mr-auto truncate max-w-[14rem] rounded px-1.5 text-[11px] ${cloud ? 'bg-amber-900/40 text-amber-300' : 'text-gray-500'}`}
     >
-      {cloud ? t('message.cloudBadge', { provider: model.provider }) : model.label}
+      {!cloud ? model.label : model.via ? t('message.cloudBadgeVia', { provider: model.provider, via: model.via }) : t('message.cloudBadge', { provider: model.provider })}
     </span>
   )
 }
@@ -357,7 +359,7 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
             {msg.images?.map((img, i) => <ImageBlock key={i} url={img.url} alt={img.alt} />)}
             {msg.content && (
               <div className="flex justify-end items-center gap-2 mt-1">
-                {msg.model && <ModelBadge model={msg.model} />}
+                {isPicked(msg.model) && <ModelBadge model={msg.model} />}
                 {savedNotes.length > 0 && onOpenResource && (
                   <span className="mr-auto flex flex-wrap items-center gap-x-2 min-w-0 text-[11px] text-gray-500">
                     {t('note.savedAs')}

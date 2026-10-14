@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useConfirm } from './confirm.tsx'
-import { AdminCloudAccess } from './AdminCloudAccess.tsx'
+import { CloudSpendSummary } from './AdminCloudAccess.tsx'
 import { fetchLlmCatalogue, saveLlmCatalogue, testCloudModel } from '../lib/api.ts'
-import type { CloudModel, CloudModelRole, CloudProvider, LlmCatalogue, ProviderKind } from '@shared/llm-catalogue.ts'
+import { CATALOGUE_ID_RE, type CloudModel, type CloudModelRole, type CloudProvider, type ExtraBody, type LlmCatalogue, type ProviderKind } from '@shared/llm-catalogue.ts'
 
 const INPUT = 'px-2 py-1 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500 disabled:opacity-60'
 const LABEL = 'flex flex-col gap-1 text-xs text-gray-400'
@@ -11,8 +11,9 @@ const BUTTON = 'px-3 py-1 rounded bg-gray-800 hover:bg-gray-700 text-xs disabled
 /** Known OpenAI-compatible providers. Cortecs' billing currency is assumed EUR — check it in its console. */
 const PRESETS: Array<Omit<CloudProvider, 'enabled' | 'monthlyCap'>> = [
   { id: 'local-big', label: 'Local server', kind: 'local', baseURL: 'http://', apiKeyEnv: '', currency: 'EUR' },
-  { id: 'openrouter', label: 'OpenRouter', kind: 'cloud', baseURL: 'https://openrouter.ai/api/v1', apiKeyEnv: 'OPENROUTER_API_KEY', currency: 'USD' },
-  { id: 'cortecs', label: 'Cortecs', kind: 'cloud', baseURL: 'https://api.cortecs.ai/v1', apiKeyEnv: 'CORTECS_API_KEY', currency: 'EUR' },
+  // Both report their own cost per response: OpenRouter in credits (= USD), Cortecs in millionths of a euro.
+  { id: 'openrouter', label: 'OpenRouter', kind: 'cloud', baseURL: 'https://openrouter.ai/api/v1', apiKeyEnv: 'OPENROUTER_API_KEY', currency: 'USD', reportedCostUnit: 1 },
+  { id: 'cortecs', label: 'Cortecs', kind: 'cloud', baseURL: 'https://api.cortecs.ai/v1', apiKeyEnv: 'CORTECS_API_KEY', currency: 'EUR', reportedCostUnit: 0.000001 },
 ]
 
 const BLANK_PROVIDER: CloudProvider = { id: '', label: '', kind: 'cloud', baseURL: 'https://', apiKeyEnv: '', currency: 'USD', monthlyCap: 0, enabled: false }
@@ -29,6 +30,20 @@ function TextField({ label, value, onChange, placeholder, disabled, wide }: {
   return (
     <label className={`${LABEL} ${wide ? 'flex-1 min-w-48' : ''}`}>{label}
       <input type="text" value={value} placeholder={placeholder} disabled={disabled} onChange={e => onChange(e.target.value)} className={INPUT} />
+    </label>
+  )
+}
+
+/** Queriocity's own id for an entry: checked as typed, since a bad one only fails on Save otherwise. */
+function IdField({ value, saved, onChange, placeholder, hint }: {
+  value: string; saved: boolean; onChange: (v: string) => void; placeholder: string; hint?: string
+}) {
+  const invalid = !!value && !CATALOGUE_ID_RE.test(value)
+  return (
+    <label className={LABEL}>Id (fixed once saved)
+      <input type="text" value={value} placeholder={placeholder} disabled={saved} onChange={e => onChange(e.target.value)}
+        className={`${INPUT} ${invalid ? 'border-red-500' : ''}`} />
+      {invalid && <span className="text-red-400 max-w-[16rem]">Only lowercase letters, digits and dashes. {hint}</span>}
     </label>
   )
 }
@@ -75,7 +90,7 @@ function ProviderCard({ provider, saved, keySet, onChange, onRemove }: {
             <option value="local">Local network</option>
           </select>
         </label>
-        <TextField label="Id (fixed once saved)" value={provider.id} disabled={saved} onChange={v => set('id', v)} placeholder="openrouter" />
+        <IdField value={provider.id} saved={saved} onChange={v => set('id', v)} placeholder="openrouter" />
         <TextField label="Label" value={provider.label} onChange={v => set('label', v)} />
         <TextField label="Base URL" value={provider.baseURL} onChange={v => set('baseURL', v)} wide />
       </div>
@@ -85,11 +100,32 @@ function ProviderCard({ provider, saved, keySet, onChange, onRemove }: {
         {provider.kind === 'cloud' && <>
           <TextField label="Currency" value={provider.currency} onChange={v => set('currency', v.toUpperCase())} />
           <NumberField label={`Monthly cap, ${provider.currency} (0 = none)`} value={provider.monthlyCap} onChange={v => set('monthlyCap', v)} step={5} />
+          <ReportedCostField value={provider.reportedCostUnit} currency={provider.currency} onChange={v => set('reportedCostUnit', v)} />
         </>}
         <button onClick={onRemove} className={`${BUTTON} text-red-300`}>Remove</button>
       </div>
-      <ExtraBodyField value={provider.extraBody} onChange={v => set('extraBody', v)} />
+      <ExtraBodyField value={provider.extraBody} onChange={v => set('extraBody', v)}
+        label="Extra request fields (JSON, sent with every call)" placeholder='{"preference": "cost", "eu_native": true}' />
     </div>
+  )
+}
+
+const REPORTED_COST_UNITS: Array<[number | undefined, string]> = [
+  [undefined, 'Not reported — estimate from prices'],
+  [1, 'In whole {currency} (OpenRouter)'],
+  [0.000001, 'In millionths of {currency} (Cortecs)'],
+]
+
+/** Whether the provider's own per-response cost is used, and in which unit. */
+function ReportedCostField({ value, currency, onChange }: { value?: number; currency: string; onChange: (v: number | undefined) => void }) {
+  return (
+    <label className={LABEL}>Cost reported by the provider
+      <select value={String(value ?? '')} onChange={e => onChange(e.target.value ? Number(e.target.value) : undefined)} className={INPUT}>
+        {REPORTED_COST_UNITS.map(([unit, label]) => (
+          <option key={String(unit)} value={String(unit ?? '')}>{label.replace('{currency}', currency)}</option>
+        ))}
+      </select>
+    </label>
   )
 }
 
@@ -101,7 +137,9 @@ function KindTag({ kind }: { kind: ProviderKind }) {
 }
 
 /** Provider-specific request fields as JSON; kept as typed until it parses to an object. */
-function ExtraBodyField({ value, onChange }: { value?: CloudProvider['extraBody']; onChange: (v: CloudProvider['extraBody']) => void }) {
+function ExtraBodyField({ value, onChange, label, placeholder }: {
+  value?: ExtraBody; onChange: (v: ExtraBody | undefined) => void; label: string; placeholder: string
+}) {
   const [text, setText] = useState(value ? JSON.stringify(value) : '')
   const [invalid, setInvalid] = useState(false)
   const update = (t: string) => {
@@ -117,8 +155,8 @@ function ExtraBodyField({ value, onChange }: { value?: CloudProvider['extraBody'
     }
   }
   return (
-    <label className={LABEL}>Extra request fields (JSON, sent with every call)
-      <input type="text" value={text} onChange={e => update(e.target.value)} placeholder='{"eu_native": true}' className={`${INPUT} font-mono`} />
+    <label className={LABEL}>{label}
+      <input type="text" value={text} onChange={e => update(e.target.value)} placeholder={placeholder} className={`${INPUT} font-mono`} />
       {invalid && <span className="text-amber-400">Not a JSON object yet — the last valid value is kept.</span>}
     </label>
   )
@@ -135,7 +173,7 @@ function ModelCard({ model, providers, saved, result, onChange, onRemove, onTest
     <div className="flex flex-col gap-3 border border-gray-800 rounded p-3">
       <EnabledToggle checked={model.enabled} onChange={v => set('enabled', v)} title={model.label} subtitle={model.model} />
       <div className="flex flex-wrap gap-4">
-        <TextField label="Id (fixed once saved)" value={model.id} disabled={saved} onChange={v => set('id', v)} placeholder="sonnet" />
+        <IdField value={model.id} saved={saved} onChange={v => set('id', v)} placeholder="glm-5-flash" hint="The provider's own name, with dots or colons, goes in “Model name at the provider”." />
         <TextField label="Label" value={model.label} onChange={v => set('label', v)} />
         <TextField label="Model name at the provider" value={model.model} onChange={v => set('model', v)} placeholder="vendor/model" wide />
       </div>
@@ -159,6 +197,10 @@ function ModelCard({ model, providers, saved, result, onChange, onRemove, onTest
           <NumberField label={`${currency} / M output`} value={model.priceOut} onChange={v => set('priceOut', v)} step={0.01} />
         </>}
       </div>
+      {provider?.kind !== 'local' && (
+        <ExtraBodyField value={model.extraBody} onChange={v => set('extraBody', v)}
+          label="Extra request fields for this model (JSON, applied over the provider's)" placeholder='{"allowed_providers": ["…"], "provider_order": "custom"}' />
+      )}
       <div className="flex flex-wrap items-center gap-3">
         <button onClick={onTest} disabled={!saved || result === 'running'} className={BUTTON} title={saved ? 'Sends one tiny request using the saved settings' : 'Save first'}>
           {result === 'running' ? 'Testing…' : 'Test'}
@@ -275,8 +317,8 @@ export function AdminModelsPanel() {
         {status && <span className="text-xs text-gray-400">{status}</span>}
       </div>
       <div className="flex flex-col gap-3 border-t border-gray-800 pt-5">
-        <p className="text-xs font-semibold text-gray-300 uppercase tracking-wider">Users and spend</p>
-        <AdminCloudAccess catalogue={saved} />
+        <p className="text-xs font-semibold text-gray-300 uppercase tracking-wider">Spend</p>
+        <CloudSpendSummary providers={saved.providers} />
       </div>
     </div>
   )

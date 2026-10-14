@@ -75,6 +75,7 @@ describe('admin LLM catalogue', () => {
     ['a cloud provider without a key env var', (c: LlmCatalogue) => { c.providers[0].apiKeyEnv = '' }],
     ['a local provider at a remote address', (c: LlmCatalogue) => { c.providers.push({ ...c.providers[1], id: 'fake-local', kind: 'local', apiKeyEnv: '', baseURL: 'https://api.example.com/v1' }) }],
     ['a cloud provider on plain http to the LAN', (c: LlmCatalogue) => { c.providers[1].baseURL = 'http://192.168.1.20:8000/v1' }],
+    ['a model extra that overrides the model', (c: LlmCatalogue) => { c.models[0].extraBody = { model: 'other' } }],
     // An extra may add to a request, never redirect it to another model.
     ['an extra request field that overrides the model', (c: LlmCatalogue) => { c.providers[0].extraBody = { model: 'other' } }],
   ])('rejects %s and keeps the saved catalogue', async (_, mutate) => {
@@ -108,6 +109,15 @@ describe('admin LLM catalogue', () => {
     const res = await (await request('GET', '/llm-usage')).json()
     expect(res.access['llm-admin']).toEqual({ cloudEnabled: true, budgets: { cloud: 5 } })
     expect(res.usage.some((r: { userId: string; providerId: string }) => r.userId === 'llm-admin' && r.providerId === 'cloud')).toBe(true)
+  })
+
+  test('accepts lists in extra request fields, on a provider and on a model', async () => {
+    const c = catalogue()
+    c.providers[0].extraBody = { preference: 'cost', eu_native: true, allow_zero_data_retention: true }
+    c.models[0].extraBody = { allowed_providers: ['host-a', 'host-b'], provider_order: 'custom' }
+    expect((await request('PUT', '/llm-catalogue', c)).status).toBe(200)
+    expect((await loadCatalogue()).models[0].extraBody).toEqual({ allowed_providers: ['host-a', 'host-b'], provider_order: 'custom' })
+    expect((await request('PUT', '/llm-catalogue', catalogue())).status).toBe(200)
   })
 
   test('accepts a local provider on plain http without a key', async () => {

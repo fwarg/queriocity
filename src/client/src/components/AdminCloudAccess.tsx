@@ -1,11 +1,10 @@
-import { useState, useEffect } from 'react'
-import { fetchLlmUsage, saveLlmAccess, listUsers } from '../lib/api.ts'
-import type { CloudProvider, LlmAccess, LlmCatalogue, UsageRow } from '@shared/llm-catalogue.ts'
+import { useState, useEffect, useCallback } from 'react'
+import { fetchLlmUsage, fetchLlmCatalogue, saveLlmAccess } from '../lib/api.ts'
+import type { CloudProvider, LlmAccess, UsageRow } from '@shared/llm-catalogue.ts'
 
 const INPUT = 'px-2 py-1 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500'
 const BUTTON = 'px-3 py-1 rounded bg-gray-800 hover:bg-gray-700 text-xs disabled:opacity-50'
 
-type User = Awaited<ReturnType<typeof listUsers>>[number]
 /** Budgets as typed: blank means no access to that provider. */
 type Draft = { cloudEnabled: boolean; budgets: Record<string, string> }
 
@@ -42,15 +41,15 @@ function ProviderSpend({ providers, usage, month }: { providers: CloudProvider[]
   )
 }
 
-function UserAccessRow({ user, providers, usage, initial, onSaved }: {
-  user: User; providers: CloudProvider[]; usage: UsageRow[]; initial: Draft; onSaved: () => void
+function UserAccessRow({ userId, providers, usage, initial, onSaved }: {
+  userId: string; providers: CloudProvider[]; usage: UsageRow[]; initial: Draft; onSaved: () => void
 }) {
   const [draft, setDraft] = useState(initial)
   const [status, setStatus] = useState('')
   const dirty = JSON.stringify(draft) !== JSON.stringify(initial)
   const save = async () => {
     try {
-      await saveLlmAccess(user.id, fromDraft(draft))
+      await saveLlmAccess(userId, fromDraft(draft))
       setStatus('Saved ✓')
       onSaved()
     } catch (e) {
@@ -58,11 +57,10 @@ function UserAccessRow({ user, providers, usage, initial, onSaved }: {
     }
   }
   return (
-    <div className="flex flex-col gap-2 border border-gray-800 rounded p-3">
+    <div className="flex flex-col gap-2 py-2">
       <label className="flex items-center gap-2 cursor-pointer min-w-0">
         <input type="checkbox" checked={draft.cloudEnabled} onChange={e => setDraft({ ...draft, cloudEnabled: e.target.checked })} className="accent-blue-500 w-3.5 h-3.5" />
-        <span className="text-sm text-gray-200 truncate">{user.email}</span>
-        <span className="text-xs text-gray-500">may pick models</span>
+        <span className="text-xs text-gray-300">May pick models for a message</span>
       </label>
       <div className="flex flex-wrap gap-4">
         {providers.map(p => p.kind === 'local' ? (
@@ -77,7 +75,7 @@ function UserAccessRow({ user, providers, usage, initial, onSaved }: {
             {p.label || p.id} budget, {p.currency}
             <input type="number" min={0} step={1} placeholder="no access" value={draft.budgets[p.id] ?? ''}
               onChange={e => setDraft({ ...draft, budgets: { ...draft.budgets, [p.id]: e.target.value } })} className={`${INPUT} w-28`} />
-            <span className="text-gray-500">spent {money(spendOf(usage, p.id, user.id), p.currency)}</span>
+            <span className="text-gray-500">spent {money(spendOf(usage, p.id, userId), p.currency)}</span>
           </label>
         ))}
       </div>
@@ -95,34 +93,46 @@ function UserAccessRow({ user, providers, usage, initial, onSaved }: {
   )
 }
 
-/** Per-user cloud access and budgets, with this month's spend against each provider's cap. */
-export function AdminCloudAccess({ catalogue }: { catalogue: LlmCatalogue }) {
+/** The saved providers and this month's access and spend: what the access panels and the spend summary show. */
+export function useCloudAccessData(enabled: boolean) {
+  const [providers, setProviders] = useState<CloudProvider[]>([])
   const [data, setData] = useState<Awaited<ReturnType<typeof fetchLlmUsage>> | null>(null)
-  const [users, setUsers] = useState<User[]>([])
   const [error, setError] = useState('')
+  const load = useCallback(() => {
+    Promise.all([fetchLlmCatalogue(), fetchLlmUsage()])
+      .then(([c, d]) => { setProviders(c.catalogue.providers); setData(d) })
+      .catch(e => setError(String(e)))
+  }, [])
+  useEffect(() => { if (enabled) load() }, [enabled, load])
+  return { providers, data, error, reload: load }
+}
 
-  const load = async () => {
-    const [d, u] = await Promise.all([fetchLlmUsage(), listUsers()])
-    setData(d)
-    setUsers(u)
-  }
-  useEffect(() => { load().catch(e => setError(String(e))) }, [])
+export type CloudAccessData = ReturnType<typeof useCloudAccessData>
 
-  if (!data) return <p className="text-xs text-gray-500">{error || 'Loading…'}</p>
-  if (!catalogue.providers.length) return <p className="text-xs text-gray-500">Save a provider to grant access to it.</p>
+/** One user's model picking, budgets and spend, folded out under their row in the Users tab. */
+export function UserCloudAccess({ userId, cloud }: { userId: string; cloud: CloudAccessData }) {
+  if (!cloud.data) return <p className="text-xs text-gray-500">{cloud.error || 'Loading…'}</p>
+  if (!cloud.providers.length) return <p className="text-xs text-gray-500">No model providers yet — add them under Admin → Models.</p>
+  const access = cloud.data.access[userId]
+  // Keyed on the stored access, so a reload after saving resets the draft.
+  return <UserAccessRow key={JSON.stringify(access ?? null)} userId={userId} providers={cloud.providers}
+    usage={cloud.data.usage} initial={toDraft(access)} onSaved={cloud.reload} />
+}
 
+/** Whether a user may pick models, for the Users tab's row button. */
+export const pickingEnabled = (cloud: CloudAccessData, userId: string) => !!cloud.data?.access[userId]?.cloudEnabled
+
+/** This month's spend per cloud provider against its cap, for the Models tab. */
+export function CloudSpendSummary({ providers }: { providers: CloudProvider[] }) {
+  const cloud = useCloudAccessData(true)
+  if (!cloud.data) return <p className="text-xs text-gray-500">{cloud.error || 'Loading…'}</p>
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-2">
+      <ProviderSpend providers={providers} usage={cloud.data.usage} month={cloud.data.month} />
       <p className="text-xs text-gray-500">
-        A user can pick a model only when picking is switched on for them and they have access to its provider: a budget for a cloud provider, a tick for a local one.
-        Cloud budgets and caps are per UTC month, in the provider's currency, priced from the catalogue.
+        Who may pick models, with a budget per cloud provider or a tick per local one, is set per user under Admin → Users.
+        Budgets and caps are per UTC month, in the provider's currency.
       </p>
-      <ProviderSpend providers={catalogue.providers} usage={data.usage} month={data.month} />
-      {users.map(u => (
-        // Keyed on the stored access too, so a reload after saving resets the row's draft.
-        <UserAccessRow key={`${u.id}:${JSON.stringify(data.access[u.id] ?? null)}`} user={u} providers={catalogue.providers}
-          usage={data.usage} initial={toDraft(data.access[u.id])} onSaved={() => { load().catch(e => setError(String(e))) }} />
-      ))}
     </div>
   )
 }

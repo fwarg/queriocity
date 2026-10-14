@@ -6,7 +6,7 @@
 import { sqlite } from './db.ts'
 import { monthKey } from './search/usage.ts'
 import type { TokenUsage } from './llm.ts'
-import type { CloudModel, LlmAccess, UsageRow } from '../../shared/llm-catalogue.ts'
+import type { CloudModel, CloudProvider, LlmAccess, UsageRow } from '../../shared/llm-catalogue.ts'
 
 /** Cost of one call from the catalogue's per-million prices. */
 export const costOf = (u: TokenUsage, model: Pick<CloudModel, 'priceIn' | 'priceOut'>): number =>
@@ -71,6 +71,16 @@ export function allLlmAccess(): Record<string, LlmAccess> {
   return out
 }
 
-/** Hooks a catalogue model's calls up to the meter: every call's tokens are priced and recorded. */
-export const meteredUsage = (userId: string, model: CloudModel) => (u: TokenUsage) =>
-  recordLlmUsage(userId, model.providerId, u, costOf(u, model))
+/** A call's cost in the provider's currency: its own figure when it reports one and the catalogue
+ *  says what that figure's unit is worth, else the estimate from the catalogue prices. */
+export const callCost = (u: TokenUsage, model: Pick<CloudModel, 'priceIn' | 'priceOut'>, reportedCostUnit?: number): number =>
+  reportedCostUnit && u.reportedCost !== undefined ? u.reportedCost * reportedCostUnit : costOf(u, model)
+
+/** Hooks a catalogue model's calls up to the meter: every call is priced and recorded; `onCall`
+ *  sees each call and its cost too, e.g. to total the answer's cost and learn its hosting provider. */
+export const meteredUsage = (userId: string, model: CloudModel, provider: Pick<CloudProvider, 'reportedCostUnit'>, onCall?: (u: TokenUsage, cost: number) => void) =>
+  (u: TokenUsage) => {
+    const cost = callCost(u, model, provider.reportedCostUnit)
+    recordLlmUsage(userId, model.providerId, u, cost)
+    onCall?.(u, cost)
+  }

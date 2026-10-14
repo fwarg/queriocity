@@ -8,7 +8,7 @@ import { describe, test, expect, afterEach } from 'bun:test'
 import { streamText, generateText } from 'ai'
 import { startFakeOpenAI, fakeTarget } from './test-support/fake-openai.ts'
 import { languageModel } from './llm.ts'
-import { costOf, meteredUsage, userSpend, providerSpend, monthlyLlmUsage, recordLlmUsage, getLlmAccess, setLlmAccess, allLlmAccess } from './llm-usage.ts'
+import { costOf, callCost, meteredUsage, userSpend, providerSpend, monthlyLlmUsage, recordLlmUsage, getLlmAccess, setLlmAccess, allLlmAccess } from './llm-usage.ts'
 import { db, users } from './db.ts'
 import type { CloudModel } from '../../shared/llm-catalogue.ts'
 
@@ -22,10 +22,17 @@ const MODEL: CloudModel = {
 
 function meteredTarget(userId: string) {
   fake = startFakeOpenAI([{ text: ['Hi.'], usage: { prompt_tokens: 1000, completion_tokens: 500 } }])
-  return { ...fakeTarget(fake.baseURL), onUsage: meteredUsage(userId, MODEL) }
+  return { ...fakeTarget(fake.baseURL), onUsage: meteredUsage(userId, MODEL, {}) }
 }
 
 describe('cloud usage metering', () => {
+  test('uses the provider\'s own cost when its unit is known, else the estimate', () => {
+    const call = { inputTokens: 14, outputTokens: 73, reportedCost: 25 }
+    expect(callCost(call, MODEL, 0.000001)).toBeCloseTo(0.000025)
+    expect(callCost(call, MODEL)).toBeCloseTo((14 * 2 + 73 * 10) / 1_000_000)
+    expect(callCost({ inputTokens: 14, outputTokens: 73 }, MODEL, 0.000001)).toBeCloseTo((14 * 2 + 73 * 10) / 1_000_000)
+  })
+
   test('prices tokens per million', () => {
     expect(costOf({ inputTokens: 1_000_000, outputTokens: 500_000 }, MODEL)).toBe(7)
   })

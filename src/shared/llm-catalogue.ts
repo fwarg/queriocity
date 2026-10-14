@@ -4,6 +4,13 @@
 /** Which turn slots a model may fill: the answer (and flash), the thinking pass, or either. */
 export type CloudModelRole = 'chat' | 'thinking' | 'both'
 
+/** Catalogue ids: Queriocity's own names for providers and models, kept simple because usage and
+ *  access rows refer to them. A provider's name for a model goes in `CloudModel.model`. */
+export const CATALOGUE_ID_RE = /^[a-z0-9][a-z0-9-]{0,39}$/
+
+/** Request fields a provider understands beyond the OpenAI ones, e.g. Cortecs routing options. */
+export type ExtraBody = Record<string, string | number | boolean | string[]>
+
 /** Cloud providers are metered against budgets; local ones run on your own hardware and are not. */
 export type ProviderKind = 'cloud' | 'local'
 
@@ -22,7 +29,11 @@ export interface CloudProvider {
   /** Global spend cap per calendar month across all users; 0 = no cap. */
   monthlyCap: number
   /** Provider-specific request fields added to every call, e.g. Cortecs `{ "eu_native": true }`. */
-  extraBody?: Record<string, string | number | boolean>
+  extraBody?: ExtraBody
+  /** What one unit of a cost the provider reports in its responses (`usage.cost`) is worth in
+   *  `currency`: 1 for OpenRouter (credits = USD), 0.000001 for Cortecs (millionths of a euro).
+   *  Unset: the provider's own figure is ignored and cost is estimated from the catalogue prices. */
+  reportedCostUnit?: number
   enabled: boolean
 }
 
@@ -39,6 +50,9 @@ export interface CloudModel {
   /** Price per million input / output tokens, in the provider's currency. */
   priceIn: number
   priceOut: number
+  /** Request fields for this model only, applied over the provider's: e.g. pinning Cortecs to the
+   *  hosting provider whose price is entered above. */
+  extraBody?: ExtraBody
   enabled: boolean
 }
 
@@ -77,16 +91,34 @@ export interface PickableModel {
   currency?: string
   /** Whether a locked space may use it: only a local provider whose endpoint is on this network. */
   allowedWhenLocked: boolean
+  /** The context meter's whole for this model, in characters. */
+  budgetChars: number
 }
 
-/** The picked model an answer came from, stored with the message; absent for the default model. */
+/** What the chat input needs to offer models and size the context meter for the next message. */
+export interface ModelChoices {
+  models: PickableModel[]
+  /** The default models' meter budgets: flash, the chat model, and the thinking model thorough may use. */
+  defaults: { flash: number; chat: number; thinking: number }
+}
+
+/** The model an answer came from, stored with the message. `default` is the env-configured model
+ *  (its name in `id` and `label`); `cloud` and `local` are catalogue picks. */
 export interface AnswerModel {
   id: string
   label: string
-  kind: ProviderKind
-  /** The provider's label, so a reopened chat can say where a cloud answer was sent. */
-  provider: string
+  kind: ProviderKind | 'default'
+  /** The provider's label, so a reopened chat can say where a cloud answer was sent; absent for `default`. */
+  provider?: string
+  /** The hosting provider a routing service (Cortecs, OpenRouter) passed the request on to. */
+  via?: string
+  /** What the answer's calls cost, in `currency`; absent when nothing was metered (local models, a cached answer). */
+  cost?: number
+  currency?: string
 }
+
+/** A picked model, as opposed to the default one. */
+export const isPicked = (m: AnswerModel | undefined): m is AnswerModel & { provider: string } => !!m && m.kind !== 'default'
 
 /** Why a model pick was not honoured; the client words the notice from this. */
 export type ModelFallbackReason = 'locked' | 'mode' | 'unavailable' | 'not_allowed' | 'unacknowledged' | 'budget' | 'cap'

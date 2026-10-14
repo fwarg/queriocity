@@ -59,6 +59,9 @@ describe('monitor executor', () => {
     expect(searxng.queries).toContain('What do bees make?')
     expect(model.callCount).toBe(1)
     expect(sources[0]).toEqual({ title: 'Result 1', url: 'https://site1.example.com/page', content: 'Snippet about result 1.' })
+    // Monitors answer on the default chat model, which is recorded with the answer.
+    const stored = await db.select({ model: messages.model }).from(messages).where(eq(messages.sessionId, 'exec-balanced')).all()
+    expect(stored.map(r => r.model).filter(Boolean)).toEqual([JSON.stringify({ id: 'fake', label: 'fake', kind: 'default' })])
   })
 
   test('balanced falls back to synthesis when the researcher answers with nothing', async () => {

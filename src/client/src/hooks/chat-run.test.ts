@@ -98,6 +98,36 @@ describe('ChatRun', () => {
     expect(seen.approval).toBeNull()
   })
 
+  test('keeps the default model on the answer without announcing it', () => {
+    const { run, seen, feed } = harness()
+    feed({ type: 'text', delta: 'x' }, done({ model: { id: 'llama', label: 'llama', kind: 'default' } }))
+    expect(run.answer()?.model).toEqual({ id: 'llama', label: 'llama', kind: 'default' })
+    expect(seen.answerTime).not.toContain('llama')
+  })
+
+  test('takes the hosting provider and cost from the end of the run', () => {
+    const { run, seen, feed } = harness()
+    feed(
+      { type: 'model', id: 'm', label: 'Big', kind: 'cloud', provider: 'Cortecs' },
+      { type: 'text', delta: 'x' },
+      done({ model: { id: 'm', label: 'Big', kind: 'cloud', provider: 'Cortecs', via: 'entrim', cost: 0.00002, currency: 'EUR' } }),
+    )
+    expect(run.answer()?.model).toMatchObject({ via: 'entrim', cost: 0.00002 })
+    expect(seen.answerTime).toContain('passed it to entrim')
+    expect(seen.answerTime).toContain('Cost: 0.000020 EUR.')
+  })
+
+  test('puts a cloud model\'s error in the footer, after the model note', () => {
+    const { seen, feed } = harness()
+    feed(
+      { type: 'model', id: 'm', label: 'Big', kind: 'cloud', provider: 'Cortecs' },
+      { type: 'model_error', provider: 'Cortecs', message: 'Model missing does not exist' },
+      done(),
+    )
+    expect(seen.answerTime).toContain('Cortecs returned an error: Model missing does not exist')
+    expect(seen.answerTime.indexOf('sent to Cortecs')).toBeLessThan(seen.answerTime.indexOf('returned an error'))
+  })
+
   test('puts a refused model pick in the footer', () => {
     const { seen, feed } = harness()
     feed({ type: 'model_notice', reason: 'budget' }, { type: 'text', delta: 'x' }, done())

@@ -1,5 +1,8 @@
 import { createOpenAI } from '@ai-sdk/openai'
-import { wrapLanguageModel, type EmbeddingModel, type LanguageModelMiddleware } from 'ai'
+import { wrapLanguageModel, type EmbeddingModel } from 'ai'
+import { observeResponse, usageMiddleware, type ResponseProbe, type TokenUsage } from './llm-metering.ts'
+
+export type { TokenUsage } from './llm-metering.ts'
 
 interface ProviderConfig {
   provider: string
@@ -26,21 +29,30 @@ export function ollamaOpenAIBase(baseURL: string): string {
   return rewritten
 }
 
-function makeProvider({ provider, baseURL, apiKey, extraBody }: ProviderConfig) {
+function makeProvider({ provider, baseURL, apiKey, extraBody }: ProviderConfig, probe?: ResponseProbe) {
   const url = provider === 'ollama' ? ollamaOpenAIBase(baseURL) : baseURL
   // Ollama ignores the key but the client requires one.
-  return createOpenAI({ baseURL: url, apiKey: apiKey ?? 'sk-placeholder', ...(extraBody && { fetch: withExtraBody(extraBody) }) })
+  const needsFetch = extraBody || probe
+  return createOpenAI({ baseURL: url, apiKey: apiKey ?? 'sk-placeholder', ...(needsFetch && { fetch: providerFetch(extraBody, probe) }) })
 }
 
-/** A fetch that adds provider-specific fields to each JSON request body; the SDK has no option for them. */
-function withExtraBody(extra: Record<string, unknown>): typeof fetch {
-  const wrapped = (input: RequestInfo | URL, init?: RequestInit) => {
-    if (typeof init?.body !== 'string') return fetch(input, init)
-    let body: unknown
-    try { body = JSON.parse(init.body) } catch { return fetch(input, init) }
-    return fetch(input, { ...init, body: JSON.stringify({ ...extra, ...(body as object) }) })
+/** A fetch that adds provider-specific fields to each request body (the SDK has no option for
+ *  them) and, when metering, notes what each response reports about cost and routing. */
+function providerFetch(extra: Record<string, unknown> | undefined, probe: ResponseProbe | undefined): typeof fetch {
+  const wrapped = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const res = await fetch(input, extra ? withExtraBody(init, extra) : init)
+    return probe ? observeResponse(res, probe) : res
   }
   return Object.assign(wrapped, { preconnect: fetch.preconnect })
+}
+
+function withExtraBody(init: RequestInit | undefined, extra: Record<string, unknown>): RequestInit | undefined {
+  if (typeof init?.body !== 'string') return init
+  try {
+    return { ...init, body: JSON.stringify({ ...extra, ...(JSON.parse(init.body) as object) }) }
+  } catch {
+    return init
+  }
 }
 
 // Output cap for the research/writer generations. Backstop against runaway
@@ -135,6 +147,8 @@ export interface ModelTarget extends ProviderConfig {
   configured: boolean
   /** Called with each call's token usage; set for metered (cloud) targets only. */
   onUsage?: (usage: TokenUsage) => void
+  /** Called with the provider's message when a metered call fails. */
+  onError?: (message: string) => void
   /** Output cap from the catalogue; unset for env models, which use the caller's default. */
   maxOutputTokens?: number
 }
@@ -143,11 +157,6 @@ export interface ModelTarget extends ProviderConfig {
  *  Reasoning models spend output tokens before answering, so a cloud entry may need far more. */
 export const outputCap = (t: ModelTarget, fallback: number): number => t.maxOutputTokens ?? fallback
 
-export interface TokenUsage {
-  inputTokens: number
-  /** Includes reasoning tokens, which providers bill as output. */
-  outputTokens: number
-}
 
 const ROLE_ENV_PREFIX: Record<Exclude<ModelRole, 'chat'>, string> = { small: 'SMALL', thinking: 'THINKING', embed: 'EMBED' }
 
@@ -205,39 +214,12 @@ function provider(config: ProviderConfig) {
 // OpenAI *Responses* API (/v1/responses), which self-hosted backends — LiteLLM, llama.cpp,
 // Ollama's /v1 — do not implement. They speak Chat Completions, so pin to it explicitly.
 export function languageModel(t: ModelTarget) {
-  const model = provider(t).chat(t.model)
-  return t.onUsage ? wrapLanguageModel({ model, middleware: usageMiddleware(t.onUsage) }) : model
+  if (!t.onUsage) return provider(t).chat(t.model)
+  // Metered: a provider of its own, so what a response reports belongs to this model instance's calls.
+  const probe: ResponseProbe = {}
+  return wrapLanguageModel({ model: makeProvider(t, probe).chat(t.model), middleware: usageMiddleware({ onUsage: t.onUsage, onError: t.onError }, probe) })
 }
 
-/** Reports each call's usage once it is known: from the result, or from a stream's finish part.
- *  At the model layer rather than per call site, so every step of a tool loop is counted. */
-function usageMiddleware(onUsage: (u: TokenUsage) => void): LanguageModelMiddleware {
-  const report = (u: { inputTokens: { total: number | undefined }; outputTokens: { total: number | undefined } }) => {
-    try {
-      onUsage({ inputTokens: u.inputTokens.total ?? 0, outputTokens: u.outputTokens.total ?? 0 })
-    } catch (e) {
-      console.error('  [llm] usage recording failed:', e)
-    }
-  }
-  return {
-    specificationVersion: 'v4',
-    wrapGenerate: async ({ doGenerate }) => {
-      const result = await doGenerate()
-      report(result.usage)
-      return result
-    },
-    wrapStream: async ({ doStream }) => {
-      const result = await doStream()
-      const stream = result.stream.pipeThrough(new TransformStream({
-        transform(part, controller) {
-          if (part.type === 'finish') report(part.usage)
-          controller.enqueue(part)
-        },
-      }))
-      return { ...result, stream }
-    },
-  }
-}
 
 /** Background helpers (titles, reformulation, memory, summaries) use these and always run locally. */
 export const getChatModel = () => languageModel(modelTarget('chat'))

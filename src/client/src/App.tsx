@@ -37,6 +37,8 @@ import { useModelPicker } from './hooks/useModelPicker.ts'
 import { useLang, useT } from './lib/i18n.tsx'
 import { applyTheme } from './lib/theme.ts'
 import { DEFAULT_THEME } from '@shared/theme.ts'
+import type { ContextReport } from '@shared/context.ts'
+import { isPicked } from '@shared/llm-catalogue.ts'
 
 /** One per mode worth showing off: something current, something comparative, something explained. */
 const EXAMPLE_KEYS = ['guide.example1', 'guide.example2', 'guide.example3'] as const
@@ -203,6 +205,7 @@ export default function App() {
     focusMode,
     locked: activeSpaceLocked,
     enabled: !!currentUser,
+    useThinking: currentUser?.settings?.useThinking === true,
     cloudAcknowledged: currentUser?.settings?.cloudAcknowledged === true,
     onAcknowledge: async () => {
       if (!currentUser) return
@@ -236,6 +239,11 @@ export default function App() {
       }
     },
   })
+
+  /** While idle the meter is sized for the next message's model, which a pick or a mode switch
+   *  changes; during a run it shows the run's own report. */
+  const meterReport = (report: ContextReport): ContextReport =>
+    busy || modelPicker.meterBudget === undefined ? report : { ...report, budgetChars: modelPicker.meterBudget }
 
   // The pickable models carry what is left of each budget, which every answer spends.
   const { refresh: refreshModels } = modelPicker
@@ -462,7 +470,9 @@ export default function App() {
     const subset = scope === 'last' ? msgs.filter(m => m.role === 'assistant').slice(-1) : msgs
     const body = subset.map((m, msgIdx) => {
       // Says which answers left the server, so a shared export does not pass a cloud answer off as local.
-      const via = m.model ? ` _(model: ${m.model.label}${m.model.kind === 'cloud' ? `, cloud — sent to ${m.model.provider}` : ''})_` : ''
+      const picked = isPicked(m.model) ? m.model : undefined
+      const sentTo = picked?.kind === 'cloud' ? `, cloud — sent to ${picked.provider}${picked.via ? ` via ${picked.via}` : ''}` : ''
+      const via = picked ? ` _(model: ${picked.label}${sentTo})_` : ''
       const label = m.role === 'user' ? '**User**' : `**Assistant**${via}`
       let content = m.role === 'assistant' ? splitGroupedCitations(m.content) : m.content
       if (m.role === 'assistant' && m.sources?.length) {
@@ -1616,7 +1626,7 @@ export default function App() {
                     </div>
                   )}
                 </div>
-                {context && <div className="ml-auto"><ContextMeter report={context} /></div>}
+                {context && <div className="ml-auto"><ContextMeter report={meterReport(context)} model={busy ? undefined : modelPicker.meterModel} /></div>}
               </div>
             )}
             <div ref={bottomRef} />

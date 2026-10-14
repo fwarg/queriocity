@@ -3,7 +3,8 @@ import type { Message, Source, FileSource } from '../lib/api.ts'
 import type { LogStep } from '../components/ProgressLog.tsx'
 import type { TFunction } from '../lib/i18n.tsx'
 import type { ContextReport } from '@shared/context.ts'
-import type { AnswerModel, ModelFallbackReason } from '@shared/llm-catalogue.ts'
+import { isPicked, type AnswerModel, type ModelFallbackReason } from '@shared/llm-catalogue.ts'
+import { formatCost } from '../lib/money.ts'
 
 export type FocusMode = 'flash' | 'balanced' | 'thorough' | 'image'
 export type ChatChunk = { type: string; [k: string]: unknown }
@@ -45,6 +46,7 @@ export class ChatRun {
   private readonly blockedEngines: Array<{ engine: string; reason: string }> = []
   // Which picked model answered, or why the pick was refused, for the answer's footer.
   private modelNote = ''
+  private errorNote = ''
   private model: AnswerModel | undefined
   // Built here rather than in the component so a step's end time is the moment the next one
   // arrives, not the moment React happened to re-render.
@@ -111,12 +113,10 @@ export class ChatRun {
       case 'file_sources': this.fileSources.push(...(chunk.sources as FileSource[])); return true
       case 'search_warning': this.blockedEngines.push(...(chunk.engines as Array<{ engine: string; reason: string }>)); return true
       case 'model':
-        this.model = { id: chunk.id as string, label: chunk.label as string, kind: chunk.kind as AnswerModel['kind'], provider: chunk.provider as string }
-        this.modelNote = this.model.kind === 'cloud'
-          ? t('answer.byCloudModel', { label: this.model.label, provider: this.model.provider })
-          : t('answer.byModel', { label: this.model.label })
+        this.setModel({ id: chunk.id as string, label: chunk.label as string, kind: chunk.kind as AnswerModel['kind'], provider: chunk.provider as string })
         return true
       case 'model_notice': this.modelNote = t(`modelNotice.${chunk.reason as ModelFallbackReason}`); return true
+      case 'model_error': this.errorNote = t('answer.modelError', { provider: chunk.provider as string, message: chunk.message as string }); return true
       default: return false
     }
   }
@@ -166,12 +166,26 @@ export class ChatRun {
     this.view.setSteps([...this.log])
   }
 
+  private setModel(model: AnswerModel) {
+    const { t } = this.view
+    this.model = model
+    // The default model is recorded but not announced: the footer names only a pick.
+    if (!isPicked(model)) return
+    if (model.kind !== 'cloud') this.modelNote = t('answer.byModel', { label: model.label })
+    else if (model.via) this.modelNote = t('answer.byCloudModelVia', { label: model.label, provider: model.provider, via: model.via })
+    else this.modelNote = t('answer.byCloudModel', { label: model.label, provider: model.provider })
+    // Known only at the end, when the turn's calls have been counted.
+    if (model.cost !== undefined) this.modelNote += ` ${t('answer.cost', { amount: formatCost(model.cost), currency: model.currency ?? '' })}`
+  }
+
   private finish(chunk: ChatChunk) {
     const { view } = this
+    // Sent again at the end with the hosting provider the calls reported, which the start could not know.
+    if (chunk.model) this.setModel(chunk.model as AnswerModel)
     if (chunk.elapsedMs) {
       view.setAnswerTime(answerFooter(view.t, {
         elapsedMs: chunk.elapsedMs as number, focusMode: this.focusMode, images: this.images.length,
-        sources: this.sources.length, blockedEngines: this.blockedEngines.map(e => e.engine), modelNote: this.modelNote,
+        sources: this.sources.length, blockedEngines: this.blockedEngines.map(e => e.engine), modelNote: [this.modelNote, this.errorNote].filter(Boolean).join(' '),
       }))
     }
     view.liveSessionRef.current = chunk.sessionId as string

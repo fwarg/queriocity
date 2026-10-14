@@ -2,11 +2,12 @@
  *  the models a turn runs on. Everything that could refuse the pick is checked here, so a refused
  *  pick falls back to the default models with a reason. */
 
-import { localTurnModels, type TurnModels } from './llm.ts'
+import { localTurnModels, type ModelTarget, type TokenUsage, type TurnModels } from './llm.ts'
 import { loadCatalogue, cloudTarget } from './llm-catalogue.ts'
 import { getLlmAccess, userSpend, providerSpend, meteredUsage } from './llm-usage.ts'
 import { isLocalEndpoint } from './space-lock.ts'
-import type { AnswerModel, CloudModel, CloudProvider, ModelFallbackReason, PickableModel } from '../../shared/llm-catalogue.ts'
+import { meterBudgetChars } from './trim-messages.ts'
+import type { AnswerModel, CloudModel, CloudProvider, ModelChoices, ModelFallbackReason, PickableModel } from '../../shared/llm-catalogue.ts'
 
 
 const FALLBACK_MESSAGES: Record<ModelFallbackReason, string> = {
@@ -24,6 +25,8 @@ export interface ResolvedModels {
   /** The catalogue entry the turn runs on, and its provider, when the pick was honoured. */
   cloud?: CloudModel
   provider?: CloudProvider
+  /** Filled in as the turn's calls report it: the hosting provider, and the cost so far. */
+  observed?: TurnObserved
   /** Set when a pick was refused. */
   fallback?: { reason: ModelFallbackReason; message: string }
   /** A thinking-only pick switches thinking on for this turn, whatever the user's setting. */
@@ -66,7 +69,14 @@ export async function resolveTurnModels({ userId, modelId, focusMode, locked, cl
   if (spendRefusal) return refuse(spendRefusal)
 
   // Local providers run on your own hardware: nothing to meter.
-  const cloud = provider.kind === 'cloud' ? { ...target, onUsage: meteredUsage(userId, entry) } : target
+  const observed: TurnObserved = {}
+  const cloud = provider.kind === 'cloud'
+    ? {
+        ...target,
+        onUsage: meteredUsage(userId, entry, provider, (u, cost) => observeCall(observed, u, cost)),
+        onError: (message: string) => { observed.error ??= message },
+      }
+    : target
   const usesChat = entry.role !== 'thinking'
   const usesThinking = entry.role !== 'chat'
   console.log(`  [cloud] turn on ${provider.id}/${entry.model} for user ${userId} (${provider.kind}, ${entry.role})`)
@@ -79,13 +89,37 @@ export async function resolveTurnModels({ userId, modelId, focusMode, locked, cl
     },
     cloud: entry,
     provider,
+    observed,
     forceThinking: entry.role === 'thinking',
   }
 }
 
-/** The picked model as stored with the answer and named to the client; undefined for the defaults. */
-export const answerModelOf = ({ cloud, provider }: ResolvedModels): AnswerModel | undefined =>
-  cloud && provider ? { id: cloud.id, label: cloud.label, kind: provider.kind, provider: provider.label } : undefined
+interface TurnObserved {
+  via?: string
+  cost?: number
+  /** The first error a call of this turn failed with, as the provider worded it. */
+  error?: string
+}
+
+function observeCall(observed: TurnObserved, u: TokenUsage, cost: number) {
+  if (u.routedVia) observed.via = u.routedVia
+  observed.cost = (observed.cost ?? 0) + cost
+}
+
+/** The picked model as named to the client when the turn starts; undefined for the defaults. */
+export const pickedModelOf = ({ cloud, provider, observed }: ResolvedModels): AnswerModel | undefined =>
+  cloud && provider ? {
+    id: cloud.id, label: cloud.label, kind: provider.kind, provider: provider.label,
+    ...(observed?.via && { via: observed.via }),
+    ...(observed?.cost !== undefined && { cost: observed.cost, currency: provider.currency }),
+  } : undefined
+
+/** The model stored with the answer: the pick, or the default model that wrote it. Flash answers
+ *  on the flash model; every other mode's answer is written by the chat model. */
+export const answerModelOf = (resolved: ResolvedModels, focusMode: string): AnswerModel =>
+  pickedModelOf(resolved) ?? defaultAnswerModel(focusMode === 'flash' ? resolved.models.flash : resolved.models.chat)
+
+export const defaultAnswerModel = (t: ModelTarget): AnswerModel => ({ id: t.model, label: t.model, kind: 'default' })
 
 /** A locked space keeps its documents on this network, so only a local provider that is on it qualifies. */
 const allowedWhenLocked = (p: CloudProvider) => p.kind === 'local' && isLocalEndpoint(p.baseURL)
@@ -118,4 +152,18 @@ const toPickable = (m: CloudModel, p: CloudProvider, remaining: number | undefin
   id: m.id, label: m.label, role: m.role, providerId: p.id, providerLabel: p.label, kind: p.kind,
   ...(remaining !== undefined && { remaining, currency: p.currency }),
   allowedWhenLocked: allowedWhenLocked(p),
+  budgetChars: meterBudgetChars(m.contextTokens),
 })
+
+/** The models a user may pick, and the default models' meter budgets for when they pick none. */
+export async function modelChoices(userId: string): Promise<ModelChoices> {
+  const defaults = localTurnModels()
+  return {
+    models: await pickableModels(userId),
+    defaults: {
+      flash: meterBudgetChars(defaults.flash.contextTokens),
+      chat: meterBudgetChars(defaults.chat.contextTokens),
+      thinking: meterBudgetChars(defaults.thinking.contextTokens),
+    },
+  }
+}

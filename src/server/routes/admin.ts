@@ -333,7 +333,7 @@ adminRouter.post('/llm-catalogue/test', zValidator('json', z.object({ modelId: z
   if (!target) return c.json({ ok: false, ms: 0, info: 'Not in the saved catalogue, or its API key env var is not set' } satisfies ProbeResult)
   console.log(`  [admin] testing cloud model ${modelId} (${target.model}) at ${target.baseURL}`)
   // Metered like any other call: the probe is paid for, and counts towards the provider's cap.
-  const metered = { ...target, onUsage: meteredUsage(c.get('userId') as string, target.entry) }
+  const metered = { ...target, onUsage: meteredUsage(c.get('userId') as string, target.entry, target.source) }
   return c.json(await probeChat(languageModel(metered), Math.min(target.entry.maxOutputTokens, CLOUD_PROBE_MAX_TOKENS)))
 })
 

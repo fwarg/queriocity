@@ -6,7 +6,7 @@ import { searchUploads } from './files/uploads-search.ts'
 import { saveMemories, saveUserMemory, searchSpaceHistory, MEMORY_MAX_SOURCES, type MemorySource } from './memory.ts'
 import { ragMinRelevance } from './rag-settings.ts'
 import { fetchUrl, processUrlsForContext, urlLabel, MIN_URL_CONTEXT_CHARS, type UrlOutcome } from './fetch-url.ts'
-import { trimMessages, compressMessages, contextCharBudget, CONTEXT_RESERVE_FRACTION } from './trim-messages.ts'
+import { trimMessages, compressMessages, contextCharBudget, meterBudgetChars, CONTEXT_RESERVE_FRACTION } from './trim-messages.ts'
 import type { ContextReport } from '../../shared/context.ts'
 import { loadHistorySummary, saveHistorySummary } from './history-summary.ts'
 import { queryTerms, querySimilarity, QUERY_DUPLICATE_THRESHOLD } from './query-terms.ts'
@@ -340,11 +340,11 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
     if (sessionId && stored && stored !== previous) await saveHistorySummary(sessionId, stored)
     augmentedMessages = compressedMessages
     if (summary) system += `\n\nSummary of earlier parts of this conversation (older messages were compacted to fit context):\n${summary}`
-    contextReport = { ...report, budgetChars: tokensToChars(totalInputTokens) }
+    contextReport = { ...report, budgetChars: meterBudgetChars(ctxLimit) }
   } else {
     const { messages: trimmed, report } = trimMessages(augmentedMessages, historyBudgetTokens, system, pinned)
     augmentedMessages = trimmed
-    contextReport = { ...report, budgetChars: tokensToChars(totalInputTokens) }
+    contextReport = { ...report, budgetChars: meterBudgetChars(ctxLimit) }
   }
   await onContext?.(contextReport)
 

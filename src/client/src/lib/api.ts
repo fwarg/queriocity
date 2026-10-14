@@ -2,7 +2,7 @@ import type { Lang } from '@shared/i18n/index.ts'
 import type { Theme } from '@shared/theme.ts'
 import type { ContextReport } from '@shared/context.ts'
 import type { ApiErrorBody, ErrorCode } from '@shared/error-codes.ts'
-import type { LlmCatalogue, LlmAccess, UsageRow, PickableModel, AnswerModel } from '@shared/llm-catalogue.ts'
+import type { LlmCatalogue, LlmAccess, UsageRow, AnswerModel, ModelChoices } from '@shared/llm-catalogue.ts'
 
 /** An API failure, carrying the server's stable code where the route sends one.
  *
@@ -205,10 +205,11 @@ export async function revokeInvite(token: string): Promise<void> {
   await fetch(`${BASE}/admin/invites/${token}`, { method: 'DELETE' })
 }
 
-/** Extra models the user may pick for one message; empty when picking is not enabled for them. */
-export async function fetchPickableModels(): Promise<PickableModel[]> {
+/** Extra models the user may pick for one message (none when picking is not enabled for them), and
+ *  every model's context size for the meter; null when the server could not say. */
+export async function fetchModelChoices(): Promise<ModelChoices | null> {
   const res = await fetch(`${BASE}/chat/models`)
-  return res.ok ? res.json() : []
+  return res.ok ? res.json() : null
 }
 
 export type ModelTestResult = { role: string; model: string; ok: boolean; ms: number; info: string }
@@ -671,7 +672,22 @@ export async function saveLlmCatalogue(catalogue: LlmCatalogue): Promise<void> {
   const body = await res.json().catch(() => null) as { error?: { message?: string } } | null
   let issue: { message: string; path?: unknown[] } | undefined
   try { issue = JSON.parse(body?.error?.message ?? '')[0] } catch { issue = undefined }
-  throw new Error(issue ? `Rejected: ${issue.path?.length ? `${issue.path.join('.')}: ` : ''}${issue.message}` : 'The catalogue was rejected — check the values')
+  throw new Error(issue ? `Rejected: ${catalogueFieldName(issue.path)}${issue.message}` : 'The catalogue was rejected — check the values')
+}
+
+const CATALOGUE_FIELD_LABELS: Record<string, string> = {
+  id: 'Id', label: 'Label', baseURL: 'Base URL', apiKeyEnv: 'API key env var', currency: 'Currency',
+  monthlyCap: 'Monthly cap', model: 'Model name at the provider', contextTokens: 'Context tokens',
+  maxOutputTokens: 'Max output tokens', priceIn: 'Price per M input', priceOut: 'Price per M output', extraBody: 'Extra request fields',
+}
+
+/** A zod path like ['models', 0, 'id'] as the form names it: "Model 1, Id: ". */
+export function catalogueFieldName(path?: unknown[]): string {
+  if (!path?.length) return ''
+  const [list, index, field] = path
+  const entry = list === 'models' ? 'Model' : list === 'providers' ? 'Provider' : String(list)
+  const place = typeof index === 'number' ? `${entry} ${index + 1}` : entry
+  return field === undefined ? `${place}: ` : `${place}, ${CATALOGUE_FIELD_LABELS[String(field)] ?? String(field)}: `
 }
 
 export async function testCloudModel(modelId: string): Promise<{ ok: boolean; ms: number; info: string }> {

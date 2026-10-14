@@ -9,6 +9,7 @@ import { indexContents } from './chat-indexer.ts'
 import { nullStream } from './researcher-stream.ts'
 import { EMPTY_ANSWER_MESSAGE } from './answer.ts'
 import { runTurn, createSink, type TurnContext } from './turn/index.ts'
+import { defaultAnswerModel } from './cloud-models.ts'
 
 /** Flash is not offered: it never searches, so a fixed prompt on a schedule would repeat itself. */
 export const MONITOR_MODES = ['balanced', 'thorough'] as const
@@ -74,6 +75,8 @@ export async function executeChatAndSave({
   await db.insert(messages).values({
     id: randomUUID(), sessionId, role: 'assistant', content: fullContent,
     sources: JSON.stringify(result.sources),
+    // Monitors always answer on the default chat model.
+    model: JSON.stringify(defaultAnswerModel(models.chat)),
     createdAt: savedAt,
   })
   await db.update(chatSessions).set({ updatedAt: savedAt }).where(eq(chatSessions.id, sessionId))

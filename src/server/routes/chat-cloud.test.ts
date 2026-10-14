@@ -10,7 +10,7 @@ import { Hono } from 'hono'
 import { startFakeOpenAI } from '../lib/test-support/fake-openai.ts'
 import { startFakeSearxng, type SseEvent } from '../lib/test-support/fake-searxng.ts'
 import { envOverride } from '../lib/test-support/env-override.ts'
-import type { LlmCatalogue, PickableModel } from '../../shared/llm-catalogue.ts'
+import type { LlmCatalogue, ModelChoices } from '../../shared/llm-catalogue.ts'
 
 const { db, users, spaces, messages, setAppSetting } = await import('../lib/db.ts')
 const { eq, and } = await import('drizzle-orm')
@@ -30,19 +30,28 @@ let cookie = ''
 let local: ReturnType<typeof startFakeOpenAI>
 let cloud: ReturnType<typeof startFakeOpenAI>
 let lan: ReturnType<typeof startFakeOpenAI>
+let routed: ReturnType<typeof startFakeOpenAI>
+let broken: ReturnType<typeof startFakeOpenAI>
 let searxng: ReturnType<typeof startFakeSearxng>
 let restoreEnv: () => void
 
 const catalogue = (): LlmCatalogue => ({
   providers: [
     { id: 'cl', label: 'Cloud', kind: 'cloud', baseURL: cloud.baseURL, apiKeyEnv: 'CLOUDTEST_API_KEY', currency: 'EUR', monthlyCap: 100, extraBody: { eu_native: true }, enabled: true },
+    // Like Cortecs: reports its own cost per response, in millionths, and which host served it.
+    { id: 'rt', label: 'Router', kind: 'cloud', baseURL: routed.baseURL, apiKeyEnv: 'CLOUDTEST_API_KEY', currency: 'EUR', monthlyCap: 0, reportedCostUnit: 0.000001, enabled: true },
+    { id: 'bad', label: 'Broken', kind: 'cloud', baseURL: broken.baseURL, apiKeyEnv: 'CLOUDTEST_API_KEY', currency: 'EUR', monthlyCap: 0, enabled: true },
     // A bigger model on this machine: no key, not metered.
     { id: 'lan', label: 'Big box', kind: 'local', baseURL: lan.baseURL, apiKeyEnv: '', currency: 'EUR', monthlyCap: 0, enabled: true },
   ],
   models: [
     { id: 'cl-both', providerId: 'cl', model: 'vendor/both', label: 'Both', role: 'both', contextTokens: 64000, maxOutputTokens: 3000, priceIn: 1, priceOut: 1, enabled: true },
     { id: 'cl-think', providerId: 'cl', model: 'vendor/think', label: 'Think', role: 'thinking', contextTokens: 64000, maxOutputTokens: 3000, priceIn: 1, priceOut: 1, enabled: true },
+    // Pinned to one hosting provider, overriding one of the provider's own extras.
+    { id: 'cl-pinned', providerId: 'cl', model: 'vendor/pinned', label: 'Pinned', role: 'chat', contextTokens: 64000, maxOutputTokens: 3000, priceIn: 1, priceOut: 1, extraBody: { allowed_providers: ['host-a'], provider_order: 'custom', eu_native: false }, enabled: true },
     { id: 'cl-off', providerId: 'cl', model: 'vendor/off', label: 'Off', role: 'chat', contextTokens: 64000, maxOutputTokens: 3000, priceIn: 1, priceOut: 1, enabled: false },
+    { id: 'rt-model', providerId: 'rt', model: 'routed', label: 'Routed', role: 'chat', contextTokens: 64000, maxOutputTokens: 3000, priceIn: 1, priceOut: 1, enabled: true },
+    { id: 'bad-model', providerId: 'bad', model: 'missing', label: 'Missing', role: 'chat', contextTokens: 64000, maxOutputTokens: 3000, priceIn: 1, priceOut: 1, enabled: true },
     { id: 'lan-big', providerId: 'lan', model: 'big-local', label: 'Big local', role: 'both', contextTokens: 32000, maxOutputTokens: 4000, priceIn: 0, priceOut: 0, enabled: true },
   ],
 })
@@ -55,6 +64,8 @@ beforeAll(async () => {
   await setAppSetting('query_reformulation', 'false')
   local = startFakeOpenAI([{ text: [LOCAL] }])
   cloud = startFakeOpenAI([{ text: [LONG], usage: { prompt_tokens: 1000, completion_tokens: 1000 } }])
+  routed = startFakeOpenAI([{ text: [LONG], usage: { prompt_tokens: 14, completion_tokens: 73, cost: 25 }, headers: { 'x-cortecs-provider': 'entrim' } }])
+  broken = startFakeOpenAI([{ error: { status: 404, message: 'Model missing does not exist' } }])
   lan = startFakeOpenAI([{ text: ['From the big local model.'], usage: { prompt_tokens: 1000, completion_tokens: 1000 } }])
   searxng = startFakeSearxng()
   restoreEnv = envOverride({
@@ -64,10 +75,10 @@ beforeAll(async () => {
   await saveCatalogue(catalogue())
 })
 
-beforeEach(() => setLlmAccess(USER, { cloudEnabled: true, budgets: { cl: 10, lan: 0 } }))
+beforeEach(() => setLlmAccess(USER, { cloudEnabled: true, budgets: { cl: 10, rt: 10, bad: 10, lan: 0 } }))
 
 afterAll(async () => {
-  local.stop(); cloud.stop(); lan.stop(); searxng.stop(); restoreEnv()
+  local.stop(); cloud.stop(); routed.stop(); broken.stop(); lan.stop(); searxng.stop(); restoreEnv()
   await setAppSetting(CATALOGUE_SETTING, '')
 })
 
@@ -97,6 +108,33 @@ describe('a cloud pick', () => {
     expect(userSpend(USER, 'cl') - before).toBeCloseTo(0.002)
   })
 
+  test('charges the provider\'s own cost and records the host it routed to', async () => {
+    const before = userSpend(USER, 'rt')
+    const events = await chat({ modelId: 'rt-model', ephemeral: false, sessionId: 'cloud-routed', messages: [{ role: 'user', content: 'Routed' }] })
+    // 25 millionths of a euro, not the catalogue estimate of (14 + 73) / 1e6.
+    expect(userSpend(USER, 'rt') - before).toBeCloseTo(0.000025, 9)
+    const answered = { id: 'rt-model', label: 'Routed', kind: 'cloud', provider: 'Router', via: 'entrim', cost: 0.000025, currency: 'EUR' }
+    const done = events.find(e => e.type === 'done')?.model as typeof answered
+    expect({ ...done, cost: undefined }).toEqual({ ...answered, cost: undefined })
+    expect(done.cost).toBeCloseTo(0.000025, 9)
+    const stored = await db.select({ model: messages.model }).from(messages)
+      .where(and(eq(messages.sessionId, 'cloud-routed'), eq(messages.role, 'assistant'))).get()
+    expect(JSON.parse(stored?.model ?? 'null')).toEqual(done)
+  })
+
+  test('says why when the cloud model fails, in the provider\'s words', async () => {
+    const events = await chat({ modelId: 'bad-model', messages: [{ role: 'user', content: 'Fails' }] })
+    const error = events.find(e => e.type === 'model_error')
+    expect(error).toMatchObject({ provider: 'Broken' })
+    expect(String(error?.message)).toContain('Model missing does not exist')
+    expect(events.map(e => e.type).indexOf('model_error')).toBeLessThan(events.map(e => e.type).indexOf('done'))
+  })
+
+  test('sends a model\'s own extras over its provider\'s', async () => {
+    await chat({ modelId: 'cl-pinned', messages: [{ role: 'user', content: 'Pinned' }] })
+    expect(cloud.requests.at(-1)).toMatchObject({ model: 'vendor/pinned', allowed_providers: ['host-a'], provider_order: 'custom', eu_native: false })
+  })
+
   test('is never served a cached local answer, nor the reverse', async () => {
     const ask = (n: number, modelId?: string) =>
       chat({ modelId, messages: [{ role: 'user', content: 'Same question' }], ephemeral: false, sessionId: `cloud-cache-${n}` })
@@ -109,11 +147,16 @@ describe('a cloud pick', () => {
     expect(answerOf(await ask(3))).toBe(LOCAL)
     expect(answerOf(await ask(4, 'cl-both'))).toBe(LONG)
     expect([local.callCount, cloud.callCount]).toEqual([localCalls, cloudCalls + 1])
-    // Each stored answer records where it came from, a cached cloud replay included.
-    const storedModel = async (n: number) => (await db.select({ model: messages.model }).from(messages)
-      .where(and(eq(messages.sessionId, `cloud-cache-${n}`), eq(messages.role, 'assistant'))).get())?.model
-    const cloudModel = JSON.stringify({ id: 'cl-both', label: 'Both', kind: 'cloud', provider: 'Cloud' })
-    expect([await storedModel(1), await storedModel(2), await storedModel(3), await storedModel(4)]).toEqual([null, cloudModel, null, cloudModel])
+    // Each stored answer records the model that wrote it, the default one included, and what the
+    // answer cost: the catalogue estimate here, (1000 + 1000) × 1 per million, and nothing for a
+    // cached replay, which made no calls.
+    const storedModel = async (n: number) => JSON.parse((await db.select({ model: messages.model }).from(messages)
+      .where(and(eq(messages.sessionId, `cloud-cache-${n}`), eq(messages.role, 'assistant'))).get())?.model ?? 'null')
+    const defaultModel = { id: 'local', label: 'local', kind: 'default' }
+    const cloudModel = { id: 'cl-both', label: 'Both', kind: 'cloud', provider: 'Cloud' }
+    expect([await storedModel(1), await storedModel(3), await storedModel(4)]).toEqual([defaultModel, defaultModel, cloudModel])
+    expect(await storedModel(2)).toMatchObject({ ...cloudModel, currency: 'EUR' })
+    expect((await storedModel(2)).cost).toBeCloseTo(0.002)
   })
 
   test('runs only thorough research on a thinking model; the local model writes the answer', async () => {
@@ -223,22 +266,35 @@ describe('GET /chat/models', () => {
   // The cap test above spent the provider's whole cap for this month; lift it for these.
   beforeAll(() => saveCatalogue({ ...catalogue(), providers: catalogue().providers.map(p => ({ ...p, monthlyCap: 0 })) }))
 
-  const list = async () => (await app.request('/chat/models', { headers: { Cookie: cookie } })).json() as Promise<PickableModel[]>
+  const choices = async () => (await app.request('/chat/models', { headers: { Cookie: cookie } })).json() as Promise<ModelChoices>
+  const list = async () => (await choices()).models
 
   test('lists the enabled, granted models with what is left of each cloud budget', async () => {
     setLlmAccess(USER, { cloudEnabled: true, budgets: { cl: userSpend(USER, 'cl') + 4, lan: 0 } })
     const models = await list()
-    expect(models.map(m => m.id)).toEqual(['cl-both', 'cl-think', 'lan-big'])
+    expect(models.map(m => m.id)).toEqual(['cl-both', 'cl-think', 'cl-pinned', 'lan-big'])
     expect(models[0]).toMatchObject({ kind: 'cloud', currency: 'EUR', allowedWhenLocked: false })
     expect(models[0].remaining).toBeCloseTo(4)
-    expect(models[2]).toMatchObject({ kind: 'local', allowedWhenLocked: true })
-    expect(models[2].remaining).toBeUndefined()
+    const lanModel = models.find(m => m.id === 'lan-big')
+    expect(lanModel).toMatchObject({ kind: 'local', allowedWhenLocked: true })
+    expect(lanModel?.remaining).toBeUndefined()
+  })
+
+  test('sizes the meter per model: a pick by its own window, the defaults by theirs', async () => {
+    const { models, defaults } = await choices()
+    // The input share (0.8) of the window, at 4 characters per token.
+    expect(models.find(m => m.id === 'cl-both')?.budgetChars).toBe(64000 * 0.8 * 4)
+    expect(models.find(m => m.id === 'lan-big')?.budgetChars).toBe(32000 * 0.8 * 4)
+    expect(defaults.chat).toBe(Math.floor(8192 * 0.8 * 4))
   })
 
   test('drops cloud models whose budget is spent, and lists nothing when picking is off', async () => {
     setLlmAccess(USER, { cloudEnabled: true, budgets: { cl: userSpend(USER, 'cl'), lan: 0 } })
     expect((await list()).map(m => m.id)).toEqual(['lan-big'])
     setLlmAccess(USER, { cloudEnabled: false, budgets: { cl: 10, lan: 0 } })
-    expect(await list()).toEqual([])
+    const off = await choices()
+    expect(off.models).toEqual([])
+    // The meter still needs the default models' sizes.
+    expect(off.defaults.chat).toBeGreaterThan(0)
   })
 })
