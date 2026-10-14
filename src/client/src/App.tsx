@@ -24,7 +24,7 @@ import { SpacesView } from './components/SpacesView.tsx'
 import { ResourcesView } from './components/ResourcesView.tsx'
 import {
   fetchHistory, fetchSession, deleteSession, updateSessionTitle,
-  fetchFiles, getMe, hasUsers, logout,
+  fetchFiles, getMe, hasUsers, logout, updateSettings,
   fetchSpaces, createSpace, promoteCollection, updateSpace, deleteSpace, assignChatToSpace, recreateChatMemories,
   fetchSpaceMemories, createSpaceMemory, updateSpaceMemory, deleteSpaceMemory, compactSpaceMemories, recreateAllSpaceMemories, clearSpaceMemories,
   fetchChatIndexStatus, rebuildChatIndex, searchHistory,
@@ -33,9 +33,11 @@ import {
 } from './lib/api.ts'
 import type { AuthUser, Message, Resource, Space, SpaceKind, SpaceMemory, SpaceFile } from './lib/api.ts'
 import { useChat } from './hooks/useChat.ts'
+import { useModelPicker } from './hooks/useModelPicker.ts'
 import { useLang, useT } from './lib/i18n.tsx'
 import { applyTheme } from './lib/theme.ts'
 import { DEFAULT_THEME } from '@shared/theme.ts'
+import type { ContextReport } from '@shared/context.ts'
 
 /** One per mode worth showing off: something current, something comparative, something explained. */
 const EXAMPLE_KEYS = ['guide.example1', 'guide.example2', 'guide.example3'] as const
@@ -198,9 +200,26 @@ export default function App() {
    *  refuses a collection either way; this keeps the UI from proposing what it will refuse. */
   const chatSpaces = spaces.filter(sp => sp.kind === 'space')
 
+  /** The id the server just gave a new chat, so receiving it is not taken for opening another chat. */
+  const createdSessionRef = useRef<string | undefined>(undefined)
+  const modelPicker = useModelPicker({
+    focusMode,
+    locked: activeSpaceLocked,
+    enabled: !!currentUser,
+    useThinking: currentUser?.settings?.useThinking === true,
+    cloudAcknowledged: currentUser?.settings?.cloudAcknowledged === true,
+    onAcknowledge: async () => {
+      if (!currentUser) return
+      const settings = { ...currentUser.settings, cloudAcknowledged: true }
+      await updateSettings(settings)
+      setCurrentUser({ ...currentUser, settings })
+    },
+  })
+
   const { messages, setMessages, context, setContext, togglePin, deleteTurn, streaming, streamingThinking, status, setStatus, answerTime, busy, submit, regenerate, cancel, reset, related, setRelated, steps, runStartedAt, approval, decideApproval } = useChat({
     sessionId,
     focusMode,
+    modelId: modelPicker.picked || undefined,
     searchCategories,
     notesFirst,
     includeFileIds: pinnedFileIds.length ? pinnedFileIds : undefined,
@@ -209,6 +228,7 @@ export default function App() {
     spaceId: activeSpaceId ?? undefined,
     followUpSuggestions: currentUser?.settings?.followUpSuggestions !== false,
     onSessionCreated: (id, title) => {
+      createdSessionRef.current = id
       setSessionId(id)
       setSessions(prev => prev.some(s => s.id === id) ? prev : [{ id, title, spaceId: activeSpaceId }, ...prev])
       if (activeSpaceId) {
@@ -220,6 +240,24 @@ export default function App() {
       }
     },
   })
+
+  /** While idle the meter is sized for the next message's model, which a pick or a mode switch
+   *  changes; during a run it shows the run's own report. */
+  const meterReport = (report: ContextReport): ContextReport =>
+    busy || modelPicker.meterBudget === undefined ? report : { ...report, budgetChars: modelPicker.meterBudget }
+
+  // A pick lasts for the chat it was made in: opening another chat, or starting a new one, goes back
+  // to the default. A new chat receiving its id after the first message is not a switch.
+  const { reset: resetModelPick } = modelPicker
+  useEffect(() => {
+    // Matched once only: reopening that chat later from the sidebar is a switch like any other.
+    if (sessionId && sessionId === createdSessionRef.current) { createdSessionRef.current = undefined; return }
+    resetModelPick()
+  }, [sessionId, resetModelPick])
+
+  // The pickable models carry what is left of each budget, which every answer spends.
+  const { refresh: refreshModels } = modelPicker
+  useEffect(() => { if (!busy) refreshModels() }, [busy, refreshModels])
 
   const bottomRef = useRef<HTMLDivElement>(null)
 
@@ -441,7 +479,12 @@ export default function App() {
     const header = `${EXPORT_FRONT_MATTER}# ${title}\n_Exported: ${date}_\n\n`
     const subset = scope === 'last' ? msgs.filter(m => m.role === 'assistant').slice(-1) : msgs
     const body = subset.map((m, msgIdx) => {
-      const label = m.role === 'user' ? '**User**' : '**Assistant**'
+      // Says which answers left the server, so a shared export does not pass a cloud answer off as local.
+      const model = m.model
+      const sentTo = model?.kind === 'cloud' ? `, cloud — sent to ${model.provider}${model.via ? ` via ${model.via}` : ''}` : ''
+      const name = model?.kind === 'default' ? `default (${model.label})` : model?.label
+      const via = model ? ` _(model: ${name}${sentTo})_` : ''
+      const label = m.role === 'user' ? '**User**' : `**Assistant**${via}`
       let content = m.role === 'assistant' ? splitGroupedCitations(m.content) : m.content
       if (m.role === 'assistant' && m.sources?.length) {
         content = content.replace(/\[(\d+)\]/g, (_, n) => `[\\[${n}\\]](#ref-${msgIdx}-${n})`)
@@ -1594,7 +1637,7 @@ export default function App() {
                     </div>
                   )}
                 </div>
-                {context && <div className="ml-auto"><ContextMeter report={context} /></div>}
+                {context && <div className="ml-auto"><ContextMeter report={meterReport(context)} model={busy ? undefined : modelPicker.meterModel} /></div>}
               </div>
             )}
             <div ref={bottomRef} />
@@ -1622,6 +1665,10 @@ export default function App() {
               onAddedToLibrary={reloadFiles}
               related={related}
               onRelatedSelect={q => { setRelated([]); submit(q) }}
+              models={modelPicker.available}
+              modelId={modelPicker.picked}
+              defaultModel={modelPicker.defaultModel}
+              onModelChange={modelPicker.choose}
             />
           </>
         )}

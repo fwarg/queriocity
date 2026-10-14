@@ -119,15 +119,20 @@ export function remoteModelEndpoints(): string[] {
     ['rerank', rerankURL],
   ]
   for (const [name, raw] of endpoints) {
-    if (!raw) continue
-    let host: string
-    try { host = new URL(raw).hostname.replace(/^\[|\]$/g, '').toLowerCase() } catch { continue }
-    if (host === 'localhost' || LOCAL_HOST_SUFFIXES.some(s => host.endsWith(s))) continue
-    // A bare hostname that is not obviously internal is treated as remote, which errs toward
-    // warning. Anything that parses as an IP is judged precisely.
-    if (isIP(host) ? !isBlockedAddress(host) : true) remote.push(`${name}=${host}`)
+    if (!raw || isLocalEndpoint(raw)) continue
+    try { remote.push(`${name}=${new URL(raw).hostname.replace(/^\[|\]$/g, '').toLowerCase()}`) } catch { /* unparseable: nothing to name */ }
   }
   return remote
+}
+
+/** True for a URL on this machine or LAN; false for anything else, unparseable included.
+ *  A bare hostname that is not obviously internal counts as remote, erring toward caution; an IP
+ *  is judged precisely. */
+export function isLocalEndpoint(raw: string): boolean {
+  let host: string
+  try { host = new URL(raw).hostname.replace(/^\[|\]$/g, '').toLowerCase() } catch { return false }
+  if (host === 'localhost' || LOCAL_HOST_SUFFIXES.some(s => host.endsWith(s))) return true
+  return isIP(host) ? isBlockedAddress(host) : false
 }
 
 const LOCAL_HOST_SUFFIXES = ['.localhost', '.internal', '.local', '.lan', 'host.docker.internal']

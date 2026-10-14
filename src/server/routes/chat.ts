@@ -11,7 +11,9 @@ import { eq, and, desc } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { hasTrustedSearch } from '../lib/search/index.ts'
-import { localTurnModels, getFlashModel } from '../lib/llm.ts'
+import { getFlashModel } from '../lib/llm.ts'
+import { resolveTurnModels, modelChoices, answerModelOf, attachAnswer, pickedModelOf, type ResolvedModels } from '../lib/cloud-models.ts'
+import type { AnswerModel } from '../../shared/llm-catalogue.ts'
 import { extractMemoriesPostHoc, toMemorySources } from '../lib/memory.ts'
 import { ownedCollectionIds } from '../lib/files/collections.ts'
 import { hasAttachment, type ContextReport } from '../../shared/context.ts'
@@ -51,6 +53,8 @@ const chatSchema = z.object({
   regenerate: z.boolean().optional(),
   /** "Notes first": answer from the user's own notes (and the notes they link with) before the web. */
   notesFirst: z.boolean().optional(),
+  /** A cloud catalogue model picked for this message only; refused picks fall back to local. */
+  modelId: z.string().max(80).optional(),
 })
 
 export const chatRouter = new Hono<AppEnv>()
@@ -161,6 +165,10 @@ chatRouter.get('/resume/:sessionId', async (c) => {
   })
 })
 
+/** The extra models this user may pick for a message now (none when picking is not enabled for
+ *  them), and every model's context size for the meter. */
+chatRouter.get('/models', async (c) => c.json(await modelChoices(c.get('userId') as string)))
+
 chatRouter.post('/:sessionId/stop', async (c) => {
   const stopped = stopRun(c.req.param('sessionId'), c.get('userId') as string)
   return c.json({ stopped })
@@ -181,7 +189,7 @@ chatRouter.post('/:sessionId/approve', zValidator('json', z.object({
 
 chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', chatSchema), async (c) => {
   const userId = c.get('userId') as string
-  const { sessionId, spaceId, messages: requestMsgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, collectionIds, ephemeral, regenerate, notesFirst } = c.req.valid('json')
+  const { sessionId, spaceId, messages: requestMsgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, collectionIds, ephemeral, regenerate, notesFirst, modelId } = c.req.valid('json')
   const sid = sessionId ?? randomUUID()
   const msgs = requestMsgs.map(({ role, content }) => ({ role, content }))
 
@@ -207,7 +215,10 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   // Settings are read once here rather than per branch: the cache key depends on the custom
   // prompt, so a personalised answer can never be served to a different user or context.
   const userRow = await db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get()
-  const settings = parseSettings(userRow?.settings ?? '{}')
+  const storedSettings = parseSettings(userRow?.settings ?? '{}')
+  // Resolved once so every phase of this turn runs on the same models.
+  const resolved = await resolveTurnModels({ userId, modelId, focusMode, locked, cloudAcknowledged: storedSettings.cloudAcknowledged === true })
+  const settings = resolved.forceThinking ? { ...storedSettings, useThinking: true } : storedSettings
   const customPrompt = settings.customPrompt as string | undefined
   // Everything that changes the answer for the same question belongs here. `searchCategories`
   // picks which corpus is searched and `locked` removes web search entirely, so leaving either
@@ -220,6 +231,8 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     customPrompt ?? '',
     [...(searchCategories ?? [])].sort().join(','),
     locked ? 'locked' : '',
+    // The model that actually answers, so a cloud answer is never replayed for a local request.
+    resolved.cloud?.id ?? '',
   ].join('|')
 
   // History is part of the key: without it, two unrelated conversations ending in the same
@@ -236,14 +249,14 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
 
   // A cache hit is a real turn, not a shortcut around one: it emits the same events and runs the
   // same tail as a generated answer, so the exchange is saved and its citations still resolve.
-  if (cached) return streamRun(c, run, out => replayCached(out, cached, tail))
+  // The cache key includes the model, so the cached text came from this same model too.
+  if (cached) return streamRun(c, run, out => replayCached(out, cached, { ...tail, model: answerModelOf(resolved, focusMode) }, resolved))
 
   const ctx: TurnContext = {
     userId, sid, msgs, focusMode, spaceId, locked, settings, customPrompt, collections,
     // Pins travel as indices, so the messages handed to the model carry nothing but role and content.
     pinned: new Set(requestMsgs.flatMap((m, i) => m.pinned ? [i] : [])),
-    // Resolved once so every phase of this turn runs on the same models.
-    models: localTurnModels(),
+    models: resolved.models,
     includeFileIds, includeMemoryIds, notesFirst, regenerate,
     searchCategory: toSearxngCategories(searchCategories),
     abortSignal: run.controller.signal,
@@ -251,15 +264,27 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   return streamRun(c, run, async (out) => {
     const sink = createSink(out, approvalRequester(run, out))
     await sink.emit({ type: 'session', sessionId: sid })
+    for (const event of modelEvents(resolved)) await sink.emit(event)
     const result = await runTurn(ctx, sink)
     const aborted = ctx.abortSignal.aborted
+    // Without this a failing cloud model reads as an empty answer; the provider's own words say why.
+    const error = resolved.observed?.error
+    if (error && !aborted) await sink.emit({ type: 'model_error', provider: resolved.provider?.label, message: error })
     if (result.cacheable && !aborted && result.content.length >= 50) {
       setCached(ck, { content: result.content, sources: result.sources, fileSources: result.fileSources })
     }
     // The latest report is also stored with the chat, so the meter reappears when it is reopened.
-    await finishTurn(out, { ...tail, fullContent: result.content, sources: result.sources, fileSources: result.fileSources, context: sink.lastContext, aborted })
+    // Read now, not before the turn: the hosting provider is known only once the calls report it.
+    await finishTurn(out, { ...tail, fullContent: result.content, sources: result.sources, fileSources: result.fileSources, context: sink.lastContext, aborted, model: answerModelOf(resolved, focusMode), onStored: id => attachAnswer(resolved, id) })
   })
 })
+
+/** Which model answers, or why the pick was refused; sent right after `session`. */
+function modelEvents(resolved: ResolvedModels): Array<{ type: string; [k: string]: unknown }> {
+  if (resolved.fallback) return [{ type: 'model_notice', ...resolved.fallback }]
+  const model = pickedModelOf(resolved)
+  return model ? [{ type: 'model', ...model }] : []
+}
 
 /** Read from the database, never from the request body — a lock the client could assert would be
  *  decorative. Resolved from the chat's own space when it has one, so an existing chat stays
@@ -273,8 +298,9 @@ async function isSessionLocked(sessionId: string | undefined, spaceId: string | 
 }
 
 /** Emits a cached answer with the same events and tail as a generated one. */
-async function replayCached(out: SSEStream, cached: CachedAnswer, tail: Omit<TurnTail, 'fullContent' | 'sources' | 'fileSources'>) {
+async function replayCached(out: SSEStream, cached: CachedAnswer, tail: Omit<TurnTail, 'fullContent' | 'sources' | 'fileSources'>, resolved: ResolvedModels) {
   await out.writeSSE({ data: JSON.stringify({ type: 'session', sessionId: tail.sid }) })
+  for (const event of modelEvents(resolved)) await out.writeSSE({ data: JSON.stringify(event) })
   await out.writeSSE({ data: JSON.stringify({ type: 'text', delta: cached.content }) })
   if (cached.sources.length) await out.writeSSE({ data: JSON.stringify({ type: 'sources', sources: cached.sources }) })
   if (cached.fileSources.length) await out.writeSSE({ data: JSON.stringify({ type: 'file_sources', sources: cached.fileSources }) })
@@ -324,23 +350,29 @@ interface TurnTail {
   /** Stopped by the user. With nothing produced, the client withdraws the question, so the
    *  server must not store it either — it would reappear as a phantom turn on reload. */
   aborted?: boolean
+  /** The model that answered. */
+  model?: AnswerModel
+  /** Called with the stored answer's id, e.g. so a late cost correction can reach it. */
+  onStored?: (assistantMessageId: string) => void
 }
 
 /** Common tail for every mode: persist the exchange, close the stream, and kick off the
  *  background memory/index work. Centralised because four branches ran their own copy and the
  *  cached-answer path quietly omitted all of it — losing the turn from the conversation. */
 async function finishTurn(out: SSEStream, {
-  sid, userId, msgs, fullContent, sources, fileSources, spaceId, regenerate, ephemeral, t0, context, aborted,
+  sid, userId, msgs, fullContent, sources, fileSources, spaceId, regenerate, ephemeral, t0, context, aborted, model, onStored,
 }: TurnTail): Promise<void> {
   const elapsedMs = Date.now() - t0
   if (ephemeral || (aborted && !fullContent.trim())) {
-    await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, elapsedMs }) })
+    await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, elapsedMs, ...(model && { model }) }) })
     return
   }
-  const { title, supersededAnswer, userMessageId, assistantMessageId } = await persistMessage(sid, userId, msgs, fullContent, sources, fileSources, spaceId, regenerate)
+  const { title, supersededAnswer, userMessageId, assistantMessageId } = await persistMessage(sid, userId, msgs, fullContent, sources, fileSources, spaceId, regenerate, model)
+  onStored?.(assistantMessageId)
   if (context) await db.update(chatSessions).set({ contextReport: JSON.stringify(context) }).where(eq(chatSessions.id, sid))
   // The stored ids let the client pin these messages without reloading the chat.
-  await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title, elapsedMs, userMessageId, assistantMessageId }) })
+  // The model again, now with the hosting provider the calls reported, for the live answer's badge.
+  await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title, elapsedMs, userMessageId, assistantMessageId, ...(model && { model }) }) })
   // Outside the spaceId block below: a regenerate strands its predecessor's image whether or not
   // the chat belongs to a space. Fire-and-forget, as the chat-delete path does — a failed unlink
   // costs a stray file the startup sweep will collect, and must not fail the turn.
@@ -423,6 +455,7 @@ async function persistMessage(
   fileSources: unknown[],
   spaceId?: string,
   regenerate = false,
+  model?: AnswerModel,
 ): Promise<{ title: string; supersededAnswer?: string; userMessageId?: string; assistantMessageId: string }> {
   const now = new Date()
   const assistantMessageId = randomUUID()
@@ -450,7 +483,7 @@ async function persistMessage(
       userMessageId = randomUUID()
       await tx.insert(messages).values({ id: userMessageId, sessionId, role: 'user', content: lastUser.content, pinned: hasAttachment(lastUser.content), createdAt: now })
     }
-    await tx.insert(messages).values({ id: assistantMessageId, sessionId, role: 'assistant', content: assistantContent, sources: JSON.stringify(sources), fileSources: JSON.stringify(fileSources), createdAt: now })
+    await tx.insert(messages).values({ id: assistantMessageId, sessionId, role: 'assistant', content: assistantContent, sources: JSON.stringify(sources), fileSources: JSON.stringify(fileSources), model: model ? JSON.stringify(model) : null, createdAt: now })
   })
 
   return { title, supersededAnswer, userMessageId, assistantMessageId }

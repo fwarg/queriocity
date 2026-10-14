@@ -39,6 +39,9 @@ const settingsSchema = z.object({
   /** UI language. Absent for everyone who signed up before the selector existed — the client
    *  falls back to the browser's language rather than assuming English. */
   language: z.enum(LANG_CODES).optional(),
+  /** The user has confirmed they understand a cloud model is sent everything in the prompt. Their
+   *  own consent, so it lives with their settings; cloud picks are refused until it is given. */
+  cloudAcknowledged: z.boolean().optional(),
 })
 
 usersRouter.post('/password', zValidator('json', z.object({

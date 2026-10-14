@@ -1,8 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import { useConfirm } from './confirm.tsx'
 import { listUsers, setUserRole, deleteUser, createInvite, listInvites, revokeInvite, resetUserPassword, testModels, fetchAdminSettings, updateAdminSettings, triggerDream, reindexChats, type ModelTestResult, type Invite } from '../lib/api.ts'
 import { Modal } from './Modal.tsx'
 import { AdminSearchPanel } from './AdminSearchPanel.tsx'
+import { AdminModelsPanel } from './AdminModelsPanel.tsx'
+import { UserCloudAccess, useCloudAccessData, pickingEnabled } from './AdminCloudAccess.tsx'
 import { AdminSimilarityPanel } from './AdminSimilarityPanel.tsx'
 
 interface Props {
@@ -12,7 +14,7 @@ interface Props {
 }
 
 type UserRow = { id: string; email: string; name: string | null; role: string; createdAt: number }
-type Tab = 'settings' | 'search' | 'similarity' | 'users'
+type Tab = 'settings' | 'search' | 'models' | 'similarity' | 'users'
 
 export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   const confirm = useConfirm()
@@ -56,6 +58,9 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
 
   // Users tab state
   const [userList, setUserList] = useState<UserRow[]>([])
+  /** The user whose model access is folded out, if any. */
+  const [modelsOpenFor, setModelsOpenFor] = useState<string | null>(null)
+  const cloud = useCloudAccessData(tab === 'users')
   const [inviteUrl, setInviteUrl] = useState('')
   const [inviteEmail, setInviteEmail] = useState('')
   const [invites, setInvites] = useState<Invite[]>([])
@@ -273,11 +278,13 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
         <div className="flex border-b border-gray-800 mb-5 -mt-2 overflow-x-auto">
           <button className={tabBtn('settings', 'System settings')} onClick={() => setTab('settings')}>System settings</button>
           <button className={tabBtn('search', 'Search')} onClick={() => setTab('search')}>Search</button>
+          <button className={tabBtn('models', 'Models')} onClick={() => setTab('models')}>Models</button>
           <button className={tabBtn('similarity', 'Similarity')} onClick={() => setTab('similarity')}>Similarity</button>
           <button className={tabBtn('users', 'Users')} onClick={() => setTab('users')}>Users</button>
         </div>
 
         {tab === 'search' && <AdminSearchPanel />}
+        {tab === 'models' && <AdminModelsPanel />}
         {tab === 'similarity' && <AdminSimilarityPanel />}
 
         {tab === 'settings' && (
@@ -569,7 +576,8 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
               </thead>
               <tbody>
                 {userList.map(u => (
-                  <tr key={u.id} className="border-b border-gray-800/50">
+                  <Fragment key={u.id}>
+                  <tr className={modelsOpenFor === u.id ? '' : 'border-b border-gray-800/50'}>
                     <td className="py-2 text-gray-200">{u.email}</td>
                     <td className="py-2 text-gray-400">{u.name ?? '—'}</td>
                     <td className="py-2">
@@ -585,6 +593,14 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                       )}
                     </td>
                     <td className="py-2 text-right whitespace-nowrap">
+                      <button
+                        onClick={() => setModelsOpenFor(id => id === u.id ? null : u.id)}
+                        aria-expanded={modelsOpenFor === u.id}
+                        className={`text-xs mr-3 ${pickingEnabled(cloud, u.id) ? 'text-amber-400 hover:text-amber-300' : 'text-gray-600 hover:text-gray-300'}`}
+                        title="Model picking, budgets and spend"
+                      >
+                        Models {modelsOpenFor === u.id ? '▴' : '▾'}
+                      </button>
                       <button
                         onClick={() => handleResetPassword(u.id)}
                         disabled={busy}
@@ -602,6 +618,14 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                       )}
                     </td>
                   </tr>
+                  {modelsOpenFor === u.id && (
+                    <tr className="border-b border-gray-800/50">
+                      <td colSpan={4} className="pl-3 border-l-2 border-gray-800">
+                        <UserCloudAccess userId={u.id} cloud={cloud} />
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>

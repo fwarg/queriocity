@@ -1,5 +1,5 @@
 import { streamText } from 'ai'
-import { languageModel, RESEARCH_MAX_TOKENS, type ModelTarget } from './llm.ts'
+import { languageModel, outputCap, RESEARCH_MAX_TOKENS, type ModelTarget } from './llm.ts'
 import type { SearchResult } from './search/index.ts'
 
 /** Pieces shared by every path that produces an answer — the interactive chat route and the
@@ -55,6 +55,6 @@ If they only partially cover the question, answer with whatever they do support 
 Search results are authoritative ground truth — if they describe a product or release you don't recognise, trust them; your training data has a cutoff.${resultsBlock}${memoryBlock ? '\n\n' + memoryBlock : ''}`,
     messages,
     abortSignal,
-    maxOutputTokens: RESEARCH_MAX_TOKENS,
+    maxOutputTokens: outputCap(model, RESEARCH_MAX_TOKENS),
   })
 }

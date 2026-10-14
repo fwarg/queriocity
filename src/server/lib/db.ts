@@ -27,6 +27,8 @@ export const users = sqliteTable('users', {
   role: text('role', { enum: ['user', 'admin'] }).notNull().default('user'),
   settings: text('settings').notNull().default('{}'),
   tokenVersion: integer('token_version').notNull().default(0),
+  /** Admin-granted, never part of `settings`, which the user can PATCH themselves. */
+  cloudEnabled: integer('cloud_enabled', { mode: 'boolean' }).notNull().default(false),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 })
@@ -133,6 +135,9 @@ export const messages = sqliteTable('messages', {
   fileSources: text('file_sources'),
   /** Kept in full when a long conversation is trimmed to fit the model's context. */
   pinned: integer('pinned', { mode: 'boolean' }).notNull().default(false),
+  /** JSON `AnswerModel` when a picked model answered; null for the default model. Records which
+   *  answers left the server for a cloud provider. */
+  model: text('model'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 
@@ -540,10 +545,31 @@ function initSchema() {
     count    INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (provider, month)
   )`)
+  // Cloud LLM providers a user may use, with a monthly budget in the provider's currency.
+  sqlite.run(`CREATE TABLE IF NOT EXISTS user_llm_access (
+    user_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider_id    TEXT NOT NULL,
+    monthly_budget REAL NOT NULL,
+    PRIMARY KEY (user_id, provider_id)
+  )`)
+  // Cloud LLM spend per user, provider and UTC month. No foreign key: a deleted user's spend
+  // still counts towards the provider's monthly cap.
+  sqlite.run(`CREATE TABLE IF NOT EXISTS llm_usage (
+    user_id       TEXT NOT NULL,
+    provider_id   TEXT NOT NULL,
+    month         TEXT NOT NULL,
+    cost          REAL NOT NULL DEFAULT 0,
+    input_tokens  INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    requests      INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, provider_id, month)
+  )`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_monitors_user_id ON monitors(user_id)`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_monitors_next_run ON monitors(next_run_at)`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_monitor_runs_monitor_user ON monitor_runs(monitor_id, user_id)`)
   try { sqlite.run('ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0') } catch {}
+  try { sqlite.run('ALTER TABLE users ADD COLUMN cloud_enabled INTEGER NOT NULL DEFAULT 0') } catch {}
+  try { sqlite.run('ALTER TABLE messages ADD COLUMN model TEXT') } catch {}
   try { sqlite.run('ALTER TABLE auth_credentials ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0') } catch {}
   try { sqlite.run('ALTER TABLE monitors ADD COLUMN preferred_hour INTEGER') } catch {}
   try { sqlite.run('ALTER TABLE monitors ADD COLUMN timezone TEXT') } catch {}

@@ -315,7 +315,15 @@ släppas fria.
 
 **En gräns värd att känna till.** Låsning tar bort modellens verktyg; den ändrar inte var modellen
 kör. Använder installationen en molnmodell i stället för en lokal skickas ditt dokument dit redan i
-första anropet, innan något verktyg hunnit finnas.`,
+första anropet, innan något verktyg hunnit finnas.
+
+**Molnmodeller är undantaget från allt detta.** Har en administratör gett dig tillgång kan
+modellmenyn bredvid forskningslägena skicka ett enskilt meddelande till en molnleverantör. Det
+meddelandet är inte privat: leverantören får din fråga, hela konversationen och eventuella utdrag ur
+minnen och dokument i prompten, och hanterar dem enligt sina egna villkor. Du bekräftar detta en
+gång före ditt första molnmeddelande, en varning står kvar under inmatningen medan en molnmodell är
+vald, och svaret anger vart det skickades. Ett val gäller chatten det gjordes i och återgår till
+standard när du öppnar en annan chatt, och ett låst utrymme erbjuder aldrig molnmodeller.`,
   },
 
   settings: {

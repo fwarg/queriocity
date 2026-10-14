@@ -2,6 +2,7 @@ import type { Lang } from '@shared/i18n/index.ts'
 import type { Theme } from '@shared/theme.ts'
 import type { ContextReport } from '@shared/context.ts'
 import type { ApiErrorBody, ErrorCode } from '@shared/error-codes.ts'
+import type { LlmCatalogue, LlmAccess, UsageRow, AnswerModel, ModelChoices } from '@shared/llm-catalogue.ts'
 
 /** An API failure, carrying the server's stable code where the route sends one.
  *
@@ -27,7 +28,7 @@ export interface AuthUser {
   email: string
   name: string | null
   role: 'user' | 'admin'
-  settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; useSpaceRag?: boolean; useChatRag?: boolean; querySuggestions?: boolean; followUpSuggestions?: boolean; userMemory?: boolean; imageWatermark?: boolean; fontSize?: number; theme?: Theme; timezone?: string; language?: Lang }
+  settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; useSpaceRag?: boolean; useChatRag?: boolean; querySuggestions?: boolean; followUpSuggestions?: boolean; userMemory?: boolean; imageWatermark?: boolean; cloudAcknowledged?: boolean; fontSize?: number; theme?: Theme; timezone?: string; language?: Lang }
   memoryTokenBudget: number
   /** True after an admin issued a temporary password — the user must set their own. */
   mustChangePassword?: boolean
@@ -82,6 +83,8 @@ export interface Message {
   pinned?: boolean
   /** Notes saved from this answer. */
   savedNotes?: Array<{ id: string; title: string }>
+  /** The picked model that wrote this answer; absent for the default model. */
+  model?: AnswerModel
 }
 
 // Auth — cookies are sent automatically by the browser
@@ -202,6 +205,13 @@ export async function revokeInvite(token: string): Promise<void> {
   await fetch(`${BASE}/admin/invites/${token}`, { method: 'DELETE' })
 }
 
+/** Extra models the user may pick for one message (none when picking is not enabled for them), and
+ *  every model's context size for the meter; null when the server could not say. */
+export async function fetchModelChoices(): Promise<ModelChoices | null> {
+  const res = await fetch(`${BASE}/chat/models`)
+  return res.ok ? res.json() : null
+}
+
 export type ModelTestResult = { role: string; model: string; ok: boolean; ms: number; info: string }
 
 export async function testModels(): Promise<ModelTestResult[]> {
@@ -223,6 +233,7 @@ export async function* streamChat(
   collectionIds?: string[],
   regenerate?: boolean,
   notesFirst?: boolean,
+  modelId?: string,
 ): AsyncGenerator<{ type: string; [k: string]: unknown }> {
   const res = await fetch(`${BASE}/chat`, {
     method: 'POST',
@@ -245,6 +256,7 @@ export async function* streamChat(
       ...(collectionIds?.length ? { collectionIds } : {}),
       ...(regenerate ? { regenerate: true } : {}),
       ...(notesFirst ? { notesFirst: true } : {}),
+      ...(modelId ? { modelId } : {}),
     }),
     signal,
   })
@@ -379,12 +391,12 @@ function parseContext(raw: string | null | undefined): ContextReport | null {
 
 function toMessages(messages: unknown): Message[] {
   const FIRST_PNG_RE = /!\[([^\]]*)\]\(([^)]+\.png)\)/
-  return (messages as Array<{ id: string; role: 'user' | 'assistant'; content: string; sources?: string; fileSources?: string; pinned?: boolean; savedNotes?: Array<{ id: string; title: string }> }>).map(m => {
+  return (messages as Array<{ id: string; role: 'user' | 'assistant'; content: string; sources?: string; fileSources?: string; pinned?: boolean; savedNotes?: Array<{ id: string; title: string }>; model?: string | null }>).map(m => {
     const sources = m.sources ? JSON.parse(m.sources) : undefined
     const fileSources = m.fileSources ? JSON.parse(m.fileSources) : undefined
     if (m.role === 'assistant') {
       const match = FIRST_PNG_RE.exec(m.content)
-      return { id: m.id, role: m.role, content: m.content, sources, fileSources, pinned: m.pinned, savedNotes: m.savedNotes?.length ? m.savedNotes : undefined, images: match ? [{ alt: match[1], url: match[2] }] : undefined }
+      return { id: m.id, role: m.role, content: m.content, sources, fileSources, pinned: m.pinned, savedNotes: m.savedNotes?.length ? m.savedNotes : undefined, images: match ? [{ alt: match[1], url: match[2] }] : undefined, model: m.model ? JSON.parse(m.model) as AnswerModel : undefined }
     }
     return { id: m.id, role: m.role, content: m.content, sources, fileSources, pinned: m.pinned }
   })
@@ -641,6 +653,65 @@ export async function saveSearchPolicy(policy: SearchPolicy): Promise<void> {
 
 export async function resetSearchPolicy(): Promise<void> {
   await fetch(`${BASE}/admin/search`, { method: 'DELETE' })
+}
+
+export async function fetchLlmCatalogue(): Promise<{ catalogue: LlmCatalogue; keys: Record<string, boolean> }> {
+  const res = await fetch(`${BASE}/admin/llm-catalogue`)
+  if (!res.ok) throw await apiError(res, 'Could not load the model catalogue')
+  return res.json()
+}
+
+export async function saveLlmCatalogue(catalogue: LlmCatalogue): Promise<void> {
+  const res = await fetch(`${BASE}/admin/llm-catalogue`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(catalogue),
+  })
+  if (res.ok) return
+  // zValidator answers with the ZodError, whose message is the issue list as JSON; surface the first.
+  const body = await res.json().catch(() => null) as { error?: { message?: string } } | null
+  let issue: { message: string; path?: unknown[] } | undefined
+  try { issue = JSON.parse(body?.error?.message ?? '')[0] } catch { issue = undefined }
+  throw new Error(issue ? `Rejected: ${catalogueFieldName(issue.path)}${issue.message}` : 'The catalogue was rejected — check the values')
+}
+
+const CATALOGUE_FIELD_LABELS: Record<string, string> = {
+  id: 'Id', label: 'Label', baseURL: 'Base URL', apiKeyEnv: 'API key env var', currency: 'Currency',
+  monthlyCap: 'Monthly cap', model: 'Model name at the provider', contextTokens: 'Context tokens',
+  maxOutputTokens: 'Max output tokens', priceIn: 'Price per M input', priceOut: 'Price per M output', extraBody: 'Extra request fields',
+}
+
+/** A zod path like ['models', 0, 'id'] as the form names it: "Model 1, Id: ". */
+export function catalogueFieldName(path?: unknown[]): string {
+  if (!path?.length) return ''
+  const [list, index, field] = path
+  const entry = list === 'models' ? 'Model' : list === 'providers' ? 'Provider' : String(list)
+  const place = typeof index === 'number' ? `${entry} ${index + 1}` : entry
+  return field === undefined ? `${place}: ` : `${place}, ${CATALOGUE_FIELD_LABELS[String(field)] ?? String(field)}: `
+}
+
+export async function testCloudModel(modelId: string): Promise<{ ok: boolean; ms: number; info: string }> {
+  const res = await fetch(`${BASE}/admin/llm-catalogue/test`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ modelId }),
+  })
+  return res.json()
+}
+
+export async function fetchLlmUsage(): Promise<{ month: string; access: Record<string, LlmAccess>; usage: UsageRow[] }> {
+  const res = await fetch(`${BASE}/admin/llm-usage`)
+  if (!res.ok) throw await apiError(res, 'Could not load cloud usage')
+  return res.json()
+}
+
+export async function saveLlmAccess(userId: string, access: LlmAccess): Promise<void> {
+  const res = await fetch(`${BASE}/admin/users/${userId}/llm-access`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(access),
+  })
+  if (!res.ok) throw await apiError(res, 'Cloud access was not saved')
 }
 
 export async function triggerDream(): Promise<void> {

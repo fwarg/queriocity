@@ -4,6 +4,8 @@ import { AI_SYSTEM_NOTICE_SHORT } from '../lib/ai-notice.ts'
 import { extractFileForContext, uploadFile, tagFileToSpace, fetchFiles, fetchNoteText, fetchSuggestions, type Resource } from '../lib/api.ts'
 import { Modal } from './Modal.tsx'
 import { TemplateSelector } from './TemplateSelector.tsx'
+import { ModelPicker } from './ModelPicker.tsx'
+import type { PickableModel } from '@shared/llm-catalogue.ts'
 import { useT } from '../lib/i18n.tsx'
 import type { TranslationKey } from '@shared/i18n/index.ts'
 
@@ -14,6 +16,12 @@ const SEARCH_CATEGORIES: SearchCategory[] = ['news', 'science', 'discussions', '
 
 interface Props {
   onSubmit: (text: string) => void
+  /** Extra models the user may pick for the next message, and the current pick ('' = default). */
+  models?: PickableModel[]
+  modelId?: string
+  /** The model the default stands for in the current mode. */
+  defaultModel?: string
+  onModelChange?: (id: string) => void
   onCancel?: () => void
   disabled?: boolean
   focusMode: FocusMode
@@ -74,7 +82,7 @@ const CATEGORY_LABEL_KEYS: Record<SearchCategory, TranslationKey> = {
   tech: 'category.tech',
 }
 
-export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, collections, selectedCollections, onCollectionsChange, notesAvailable = false, notesFirst = false, onNotesFirstChange, suggestionsEnabled, lockedSpace = false, related = [], onRelatedSelect, spaceId, onAddedToLibrary }: Props) {
+export function ChatInput({ models = [], modelId = '', defaultModel, onModelChange, onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, collections, selectedCollections, onCollectionsChange, notesAvailable = false, notesFirst = false, onNotesFirstChange, suggestionsEnabled, lockedSpace = false, related = [], onRelatedSelect, spaceId, onAddedToLibrary }: Props) {
   const t = useT()
   const [value, setValue] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
@@ -115,6 +123,7 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
     descTimerRef.current = setTimeout(() => setVisibleDesc(null), 2500)
   }
 
+  const pickedCloud = models.find(m => m.id === modelId && m.kind === 'cloud')
   const isFlash = focusMode === 'flash'
   const isOverLimit = isFlash && value.length > FLASH_MAX
 
@@ -287,6 +296,7 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
           )
         })}
         </div>
+        {onModelChange && <ModelPicker models={models} value={modelId} onChange={onModelChange} defaultModel={defaultModel} />}
         <span className="flex-1" />
         {isFlash && (
           <span className={isOverLimit ? 'text-red-400' : 'text-gray-500'}>
@@ -304,6 +314,8 @@ export function ChatInput({ onSubmit, onCancel, disabled, focusMode, onFocusMode
           </button>
         )}
       </div>
+      {/* Visible, not only a tooltip: a phone never shows a title, and this is what leaves the network. */}
+      {pickedCloud && <p className="text-xs text-amber-400">{t('model.cloudNote', { provider: pickedCloud.providerLabel })}</p>}
       {/* One expander, two groups: where the answer may look. Categories narrow the web search;
           collections add the user's own resources. Both are picked per request, not stored on the
           chat, so they belong beside the research mode rather than in the space. */}

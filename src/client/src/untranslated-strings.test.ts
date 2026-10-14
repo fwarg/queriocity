@@ -26,6 +26,8 @@ const SKIPPED_FILES = new Set([
   // Admin-only, left English by decision — see the Languages section in README.md.
   'AdminPanel.tsx',
   'AdminSearchPanel.tsx',
+  'AdminModelsPanel.tsx',
+  'AdminCloudAccess.tsx',
   'AdminSimilarityPanel.tsx',
 ])
 

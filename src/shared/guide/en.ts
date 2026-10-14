@@ -310,7 +310,15 @@ locked space deletes its chats rather than releasing them.
 
 **One limit worth knowing.** Locking removes the model's tools; it does not change where the model
 runs. If this installation uses a hosted model rather than a local one, your document is sent there
-before any tool could exist.`,
+before any tool could exist.
+
+**Cloud models are the exception to all of this.** If an admin has given you access, the model menu
+beside the research modes can send a single message to a cloud provider. That message is not
+private: the provider receives your question, the whole conversation, and any memory or document
+excerpts in the prompt, and handles them under its own terms. You confirm this once before your
+first cloud message, a warning stays under the input while a cloud model is picked, and the answer
+says where it was sent. A pick lasts for the chat it was made in and goes back to the default when
+you open another chat, and a locked space never offers cloud models.`,
   },
 
   settings: {

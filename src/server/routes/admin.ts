@@ -12,7 +12,10 @@ import { DEFAULT_MAX_URL_CONTEXT_CHARS, MIN_URL_CONTEXT_CHARS, SCRAPE_MAX_CHARS 
 import { randomUUID, randomInt } from 'crypto'
 import { hashPassword } from '../lib/auth.ts'
 import { authMiddleware, adminMiddleware, type AppEnv } from '../middleware/auth.ts'
-import { getChatModel, getSmallModel, getThinkingModel, getEmbeddingModel, modelTarget } from '../lib/llm.ts'
+import { getChatModel, getSmallModel, getThinkingModel, getEmbeddingModel, modelTarget, languageModel } from '../lib/llm.ts'
+import { loadCatalogue, saveCatalogue, keyStatus, cloudTarget, catalogueSchema } from '../lib/llm-catalogue.ts'
+import { allLlmAccess, setLlmAccess, monthlyLlmUsage, meteredUsage } from '../lib/llm-usage.ts'
+import { monthKey } from '../lib/search/usage.ts'
 import { rerank, rerankEnabled } from '../lib/reranker.ts'
 import { runDream, deleteMemoryEmbeddings } from '../lib/memory.ts'
 import { deleteFileChunks } from '../lib/vector-cleanup.ts'
@@ -21,6 +24,23 @@ import { describeProviders, PROVIDERS } from '../lib/search/index.ts'
 import { loadSearchPolicy, saveSearchPolicy, resetSearchPolicy, hasStoredSearchPolicy, searchPolicySchema } from '../lib/search/policy.ts'
 import { telemetrySnapshot } from '../lib/search/telemetry.ts'
 import { monthlyUsage } from '../lib/search/usage.ts'
+
+type ProbeResult = { ok: boolean; ms: number; info: string }
+
+/** One tiny generation against a model, timed; failures are reported, not thrown. */
+async function probeChat(model: ReturnType<typeof getChatModel>, maxOutputTokens: number): Promise<ProbeResult> {
+  const t = performance.now()
+  try {
+    const { text } = await generateText({
+      model,
+      messages: [{ role: 'user', content: 'Reply with one word: OK' }],
+      maxOutputTokens,
+    })
+    return { ok: true, ms: Math.round(performance.now() - t), info: text.trim().slice(0, 80) }
+  } catch (e: unknown) {
+    return { ok: false, ms: Math.round(performance.now() - t), info: String(e instanceof Error ? e.message : e).slice(0, 120) }
+  }
+}
 
 /** Random temporary password that satisfies validatePassword's complexity rules. */
 function generateTempPassword(): string {
@@ -247,17 +267,7 @@ adminRouter.get('/models-test', async (c) => {
   const results: Result[] = []
 
   async function testChat(role: string, modelName: string, getModel: () => ReturnType<typeof getChatModel>, maxTokens = 50) {
-    const t = performance.now()
-    try {
-      const { text } = await generateText({
-        model: getModel(),
-        messages: [{ role: 'user', content: 'Reply with one word: OK' }],
-        maxOutputTokens: maxTokens,
-      })
-      results.push({ role, model: modelName, ok: true, ms: Math.round(performance.now() - t), info: text.trim().slice(0, 80) })
-    } catch (e: unknown) {
-      results.push({ role, model: modelName, ok: false, ms: Math.round(performance.now() - t), info: String(e instanceof Error ? e.message : e).slice(0, 120) })
-    }
+    results.push({ role, model: modelName, ...await probeChat(getModel(), maxTokens) })
   }
 
   async function testEmbed(modelName: string) {
@@ -297,6 +307,54 @@ adminRouter.get('/models-test', async (c) => {
   }
 
   return c.json(results)
+})
+
+adminRouter.get('/llm-catalogue', async (c) => {
+  const catalogue = await loadCatalogue()
+  return c.json({ catalogue, keys: keyStatus(catalogue) })
+})
+
+adminRouter.put('/llm-catalogue', zValidator('json', catalogueSchema), async (c) => {
+  const catalogue = c.req.valid('json')
+  // Logged because the catalogue decides which outside services may receive users' prompts.
+  const enabled = catalogue.providers.filter(p => p.enabled).map(p => `${p.id} (${p.baseURL})`)
+  console.log(`  [admin] LLM catalogue saved by ${c.get('userId')} — ${catalogue.models.length} model(s), enabled providers: ${enabled.join(', ') || 'none'}`)
+  await saveCatalogue(catalogue)
+  return c.json({ ok: true })
+})
+
+// Reasoning models spend output tokens before answering, so the probe allows some room for that.
+const CLOUD_PROBE_MAX_TOKENS = 1000
+
+/** Tests one saved catalogue model with a tiny request; unsaved edits are not tested. */
+adminRouter.post('/llm-catalogue/test', zValidator('json', z.object({ modelId: z.string() })), async (c) => {
+  const { modelId } = c.req.valid('json')
+  const target = cloudTarget(await loadCatalogue(), modelId)
+  if (!target) return c.json({ ok: false, ms: 0, info: 'Not in the saved catalogue, or its API key env var is not set' } satisfies ProbeResult)
+  console.log(`  [admin] testing cloud model ${modelId} (${target.model}) at ${target.baseURL}`)
+  // Metered like any other call: the probe is paid for, and counts towards the provider's cap.
+  const metered = { ...target, onUsage: meteredUsage(c.get('userId') as string, target.entry, target.source, { endpoint: target }) }
+  return c.json(await probeChat(languageModel(metered), Math.min(target.entry.maxOutputTokens, CLOUD_PROBE_MAX_TOKENS)))
+})
+
+/** Cloud access of every user who has any, and this month's spend per user and provider. */
+adminRouter.get('/llm-usage', (c) =>
+  c.json({ month: monthKey(), access: allLlmAccess(), usage: monthlyLlmUsage() }))
+
+adminRouter.put('/users/:id/llm-access', zValidator('json', z.object({
+  cloudEnabled: z.boolean(),
+  budgets: z.record(z.string(), z.number().min(0).max(1_000_000)),
+})), async (c) => {
+  const { id } = c.req.param()
+  const access = c.req.valid('json')
+  if (!await db.select({ id: users.id }).from(users).where(eq(users.id, id)).get()) return c.json({ error: 'Not found' }, 404)
+  const known = new Set((await loadCatalogue()).providers.map(p => p.id))
+  const unknown = Object.keys(access.budgets).filter(p => !known.has(p))
+  if (unknown.length) return c.json({ error: `Unknown provider: ${unknown.join(', ')}` }, 400)
+  setLlmAccess(id, access)
+  const grants = Object.entries(access.budgets).map(([p, b]) => `${p}=${b}`).join(', ') || 'none'
+  console.log(`  [admin] cloud access for user ${id} set by ${c.get('userId')} — ${access.cloudEnabled ? 'enabled' : 'disabled'}, budgets: ${grants}`)
+  return c.json({ ok: true })
 })
 
 adminRouter.post('/reindex-chats', async (c) => {

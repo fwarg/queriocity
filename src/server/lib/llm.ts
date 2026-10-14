@@ -1,10 +1,15 @@
 import { createOpenAI } from '@ai-sdk/openai'
-import type { EmbeddingModel } from 'ai'
+import { wrapLanguageModel, type EmbeddingModel } from 'ai'
+import { observeResponse, modelMiddleware, type ResponseProbe, type TokenUsage } from './llm-metering.ts'
+
+export type { TokenUsage } from './llm-metering.ts'
 
 interface ProviderConfig {
   provider: string
   baseURL: string
   apiKey?: string
+  /** Fields merged into every request body; the request's own fields win. */
+  extraBody?: Record<string, unknown>
 }
 
 const warnedOllamaUrls = new Set<string>()
@@ -24,10 +29,30 @@ export function ollamaOpenAIBase(baseURL: string): string {
   return rewritten
 }
 
-function makeProvider({ provider, baseURL, apiKey }: ProviderConfig) {
+function makeProvider({ provider, baseURL, apiKey, extraBody }: ProviderConfig, probe?: ResponseProbe) {
   const url = provider === 'ollama' ? ollamaOpenAIBase(baseURL) : baseURL
   // Ollama ignores the key but the client requires one.
-  return createOpenAI({ baseURL: url, apiKey: apiKey ?? 'sk-placeholder' })
+  const needsFetch = extraBody || probe
+  return createOpenAI({ baseURL: url, apiKey: apiKey ?? 'sk-placeholder', ...(needsFetch && { fetch: providerFetch(extraBody, probe) }) })
+}
+
+/** A fetch that adds provider-specific fields to each request body (the SDK has no option for
+ *  them) and, when metering, notes what each response reports about cost and routing. */
+function providerFetch(extra: Record<string, unknown> | undefined, probe: ResponseProbe | undefined): typeof fetch {
+  const wrapped = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const res = await fetch(input, extra ? withExtraBody(init, extra) : init)
+    return probe ? observeResponse(res, probe) : res
+  }
+  return Object.assign(wrapped, { preconnect: fetch.preconnect })
+}
+
+function withExtraBody(init: RequestInit | undefined, extra: Record<string, unknown>): RequestInit | undefined {
+  if (typeof init?.body !== 'string') return init
+  try {
+    return { ...init, body: JSON.stringify({ ...extra, ...(JSON.parse(init.body) as object) }) }
+  } catch {
+    return init
+  }
 }
 
 // Output cap for the research/writer generations. Backstop against runaway
@@ -120,7 +145,20 @@ export interface ModelTarget extends ProviderConfig {
   contextTokens: number
   /** The role names its own model rather than borrowing the chat model (or the embed default). */
   configured: boolean
+  /** A display name for the model (`*_MODEL_LABEL`, or a catalogue entry's label); the model name when unset. */
+  label?: string
+  /** Called with each call's token usage; set for metered (cloud) targets only. */
+  onUsage?: (usage: TokenUsage) => void
+  /** Called with the provider's message when a metered call fails. */
+  onError?: (message: string) => void
+  /** Output cap from the catalogue; unset for env models, which use the caller's default. */
+  maxOutputTokens?: number
 }
+
+/** A call's output cap: the target's own when the catalogue sets one, else the caller's default.
+ *  Reasoning models spend output tokens before answering, so a cloud entry may need far more. */
+export const outputCap = (t: ModelTarget, fallback: number): number => t.maxOutputTokens ?? fallback
+
 
 const ROLE_ENV_PREFIX: Record<Exclude<ModelRole, 'chat'>, string> = { small: 'SMALL', thinking: 'THINKING', embed: 'EMBED' }
 
@@ -133,6 +171,7 @@ function chatTarget(): ModelTarget {
     model: process.env.CHAT_MODEL ?? DEFAULT_CHAT_MODEL,
     contextTokens: contextTokensFor('chat'),
     configured: true,
+    label: process.env.CHAT_MODEL_LABEL?.trim() || undefined,
   }
 }
 
@@ -150,12 +189,17 @@ export function modelTarget(role: ModelRole): ModelTarget {
     model: model ?? (role === 'embed' ? DEFAULT_EMBED_MODEL : chat.model),
     contextTokens: contextTokensFor(role),
     configured: model !== undefined,
+    // A role borrowing the chat model borrows its label too.
+    label: process.env[`${prefix}_MODEL_LABEL`]?.trim() || (model === undefined && role !== 'embed' ? chat.label : undefined),
   }
 }
 
 /** Every role's target, for startup logs, admin checks and the locked-space warning. */
 export const describeModels = (): ModelTarget[] =>
   (['chat', 'small', 'thinking', 'embed'] as const).map(role => modelTarget(role))
+
+/** What to call a model on screen: its label, else its name. */
+export const displayName = (t: ModelTarget): string => t.label ?? t.model
 
 /** Short `<url> model=<name>` label for log lines. */
 export const targetLabel = (t: ModelTarget): string => `${t.baseURL} model=${t.model}`
@@ -165,7 +209,7 @@ export const flashTarget = (): ModelTarget => modelTarget(process.env.FLASH_MODE
 
 const providers = new Map<string, ReturnType<typeof createOpenAI>>()
 function provider(config: ProviderConfig) {
-  const key = `${config.provider}|${config.baseURL}|${config.apiKey ?? ''}`
+  const key = `${config.provider}|${config.baseURL}|${config.apiKey ?? ''}|${JSON.stringify(config.extraBody ?? null)}`
   let p = providers.get(key)
   if (!p) {
     p = makeProvider(config)
@@ -177,7 +221,14 @@ function provider(config: ProviderConfig) {
 // `.chat(...)` rather than `provider(...)`: from @ai-sdk/openai v2 the bare call means the
 // OpenAI *Responses* API (/v1/responses), which self-hosted backends — LiteLLM, llama.cpp,
 // Ollama's /v1 — do not implement. They speak Chat Completions, so pin to it explicitly.
-export const languageModel = (t: ModelTarget) => provider(t).chat(t.model)
+export function languageModel(t: ModelTarget) {
+  // Unmetered models still get a provider's separate reasoning field turned into reasoning parts.
+  if (!t.onUsage) return wrapLanguageModel({ model: provider(t).chat(t.model), middleware: modelMiddleware({}, {}) })
+  // Metered: a provider of its own, so what a response reports belongs to this model instance's calls.
+  const probe: ResponseProbe = {}
+  return wrapLanguageModel({ model: makeProvider(t, probe).chat(t.model), middleware: modelMiddleware({ onUsage: t.onUsage, onError: t.onError }, probe) })
+}
+
 
 /** Background helpers (titles, reformulation, memory, summaries) use these and always run locally. */
 export const getChatModel = () => languageModel(modelTarget('chat'))

@@ -17,6 +17,8 @@ import { useT } from '../lib/i18n.tsx'
 import { NoteEditor } from './NoteEditor.tsx'
 import { answerAsNoteBody } from '../lib/note-from-answer.ts'
 import type { ContextReport } from '@shared/context.ts'
+import type { AnswerModel } from '@shared/llm-catalogue.ts'
+import { describeAnswerModel, answerModelBadge } from '../lib/answer-model.ts'
 import { ContextDivider, PinButton } from './ContextIndicators.tsx'
 
 export { ImageCaptionContext }
@@ -137,6 +139,19 @@ function makeMdComponents(highlighted: string | null, onCitationClick: (key: str
   },
   ...blockMdComponents,
 }}
+
+/** Marks an answer a picked model wrote; a cloud one names the provider it was sent to. */
+function ModelBadge({ model }: { model: AnswerModel }) {
+  const t = useT()
+  return (
+    <span
+      title={describeAnswerModel(model, t)}
+      className={`mr-auto truncate max-w-[14rem] rounded px-1.5 text-[11px] ${model.kind === 'cloud' ? 'bg-amber-900/40 text-amber-300' : 'text-gray-500'}`}
+    >
+      {answerModelBadge(model, t)}
+    </span>
+  )
+}
 
 interface SourceListProps {
   content: string
@@ -342,6 +357,7 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
             {msg.images?.map((img, i) => <ImageBlock key={i} url={img.url} alt={img.alt} />)}
             {msg.content && (
               <div className="flex justify-end items-center gap-2 mt-1">
+                {msg.model && <ModelBadge model={msg.model} />}
                 {savedNotes.length > 0 && onOpenResource && (
                   <span className="mr-auto flex flex-wrap items-center gap-x-2 min-w-0 text-[11px] text-gray-500">
                     {t('note.savedAs')}

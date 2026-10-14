@@ -21,6 +21,56 @@ export interface ScriptedStep {
   toolCall?: { id: string; name: string; args: unknown }
   /** Wait this long before answering, e.g. to stop a run while the model is still "thinking". */
   delayMs?: number
+  /** Token counts to report; streamed as a final usage chunk, as providers do. `cost` is the
+   *  provider's own figure, which Cortecs and OpenRouter add there. */
+  usage?: { prompt_tokens: number; completion_tokens: number; cost?: number }
+  /** Response headers, e.g. Cortecs' x-cortecs-provider. */
+  headers?: Record<string, string>
+  /** Fail the request with this HTTP status and message instead of answering. */
+  error?: { status: number; message: string }
+}
+
+const wireUsage = ({ usage }: ScriptedStep) => {
+  const { prompt_tokens = 0, completion_tokens = 0, cost } = usage ?? {}
+  return { prompt_tokens, completion_tokens, total_tokens: prompt_tokens + completion_tokens, ...(cost !== undefined && { cost }) }
+}
+
+/** The SSE chunks of one streamed step: text and reasoning deltas, a tool call, usage, then [DONE]. */
+function sseParts(step: ScriptedStep): string[] {
+  const chunk = (delta: unknown, finish: string | null = null) =>
+    `data: ${JSON.stringify({
+      id: 'chatcmpl-test',
+      object: 'chat.completion.chunk',
+      created: 0,
+      model: 'fake-model',
+      choices: [{ index: 0, delta, finish_reason: finish }],
+    })}\n\n`
+
+  const parts: string[] = [chunk({ role: 'assistant', content: '' })]
+  for (const r of step.reasoning ?? []) parts.push(chunk({ reasoning_content: r }))
+  for (const t of step.text ?? []) parts.push(chunk({ content: t }))
+
+  if (step.toolCall) {
+    parts.push(chunk({
+      tool_calls: [{
+        index: 0,
+        id: step.toolCall.id,
+        type: 'function',
+        function: { name: step.toolCall.name, arguments: '' },
+      }],
+    }))
+    parts.push(chunk({
+      tool_calls: [{ index: 0, function: { arguments: JSON.stringify(step.toolCall.args) } }],
+    }))
+    parts.push(chunk({}, 'tool_calls'))
+  } else {
+    parts.push(chunk({}, 'stop'))
+  }
+  if (step.usage) {
+    parts.push(`data: ${JSON.stringify({ id: 'chatcmpl-test', object: 'chat.completion.chunk', created: 0, model: 'fake-model', choices: [], usage: wireUsage(step) })}\n\n`)
+  }
+  parts.push('data: [DONE]\n\n')
+  return parts
 }
 
 /** Serves one scripted step per request, in order, so a multi-step tool loop can be driven. */
@@ -40,6 +90,7 @@ export function startFakeOpenAI(script: ScriptedStep[]) {
       const step = script[Math.min(call, script.length - 1)]
       call++
       if (step.delayMs) await Bun.sleep(step.delayMs)
+      if (step.error) return Response.json({ error: { message: step.error.message, type: 'test_error' } }, { status: step.error.status })
 
       // generateText omits `stream` (or sends false) and expects a single JSON body rather than
       // an SSE stream; only streamText sets it true.
@@ -66,43 +117,13 @@ export function startFakeOpenAI(script: ScriptedStep[]) {
             },
             finish_reason: step.toolCall ? 'tool_calls' : 'stop',
           }],
-          usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-        })
+          usage: wireUsage(step),
+        }, { headers: step.headers })
       }
 
-      const chunk = (delta: unknown, finish: string | null = null) =>
-        `data: ${JSON.stringify({
-          id: 'chatcmpl-test',
-          object: 'chat.completion.chunk',
-          created: 0,
-          model: 'fake-model',
-          choices: [{ index: 0, delta, finish_reason: finish }],
-        })}\n\n`
-
-      const parts: string[] = [chunk({ role: 'assistant', content: '' })]
-      for (const r of step.reasoning ?? []) parts.push(chunk({ reasoning_content: r }))
-      for (const t of step.text ?? []) parts.push(chunk({ content: t }))
-
-      if (step.toolCall) {
-        parts.push(chunk({
-          tool_calls: [{
-            index: 0,
-            id: step.toolCall.id,
-            type: 'function',
-            function: { name: step.toolCall.name, arguments: '' },
-          }],
-        }))
-        parts.push(chunk({
-          tool_calls: [{ index: 0, function: { arguments: JSON.stringify(step.toolCall.args) } }],
-        }))
-        parts.push(chunk({}, 'tool_calls'))
-      } else {
-        parts.push(chunk({}, 'stop'))
-      }
-      parts.push('data: [DONE]\n\n')
-
+      const parts = sseParts(step)
       return new Response(parts.join(''), {
-        headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' },
+        headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', ...step.headers },
       })
     },
   })
