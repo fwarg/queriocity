@@ -98,11 +98,11 @@ describe('ChatRun', () => {
     expect(seen.approval).toBeNull()
   })
 
-  test('keeps the default model on the answer without announcing it', () => {
+  test('names the default model too, marked as the default', () => {
     const { run, seen, feed } = harness()
-    feed({ type: 'text', delta: 'x' }, done({ model: { id: 'llama', label: 'llama', kind: 'default' } }))
-    expect(run.answer()?.model).toEqual({ id: 'llama', label: 'llama', kind: 'default' })
-    expect(seen.answerTime).not.toContain('llama')
+    feed({ type: 'text', delta: 'x' }, done({ model: { id: 'gemma4-26b', label: 'Gemma4-26B', kind: 'default' } }))
+    expect(run.answer()?.model).toEqual({ id: 'gemma4-26b', label: 'Gemma4-26B', kind: 'default' })
+    expect(seen.answerTime).toContain('Model: default (Gemma4-26B).')
   })
 
   test('takes the hosting provider and cost from the end of the run', () => {

@@ -1188,7 +1188,7 @@ existing installs pick up new columns when you restart.
 
 Admins can offer extra models that users pick from a menu next to the research modes; a pick lasts for the chat it was made in and goes back to the default when another chat is opened or a new one started. There are two kinds of provider, both managed under **Admin → Models**:
 
-- **Cloud** — OpenAI-compatible services (presets for OpenRouter and Cortecs), metered against budgets. A provider has a currency and an optional monthly cap; each model has prices per million tokens. Both presets report their own cost in each response (OpenRouter in credits = USD, Cortecs in millionths of a euro); with **Cost reported by the provider** set, that figure is what is charged to budgets, and the catalogue prices are only a fallback for calls that report none. A routing service's hosting provider (Cortecs' `x-cortecs-provider` header, OpenRouter's `provider` field) is stored with the answer and shown as "Cloud · Cortecs via entrim". Cortecs was seen ignoring `max_tokens` (a 5-token request returned 73), so set an output limit in its console as well; the catalogue's output cap may not bind there. HTTPS only (HTTP to `localhost` allowed). API keys stay in env: a provider names its key's env var, which must end in `_API_KEY` (e.g. `OPENROUTER_API_KEY=...`). A cloud model is sent the whole prompt, including memory and document excerpts, so a cloud message is not private: users confirm this once before their first cloud message (stored in their settings and enforced by the server), a warning stays under the input while a cloud model is picked, and the answer's footer names the provider it went to. Each answer from a picked model is stored with it: a reopened chat shows a badge ("Cloud · Provider" for a cloud model), and a Markdown export notes the model beside each such answer.
+- **Cloud** — OpenAI-compatible services (presets for OpenRouter and Cortecs), metered against budgets. A provider has a currency and an optional monthly cap; each model has prices per million tokens. Both presets report their own cost in each response (OpenRouter in credits = USD, Cortecs in millionths of a euro); with **Cost reported by the provider** set, that figure is what is charged to budgets, and the catalogue prices are only a fallback for calls that report none. A routing service's hosting provider (Cortecs' `x-cortecs-provider` header, OpenRouter's `provider` field) is stored with the answer and shown as "Cloud · Cortecs via entrim". Cortecs was seen ignoring `max_tokens` (a 5-token request returned 73), so set an output limit in its console as well; the catalogue's output cap may not bind there. HTTPS only (HTTP to `localhost` allowed). API keys stay in env: a provider names its key's env var, which must end in `_API_KEY` (e.g. `OPENROUTER_API_KEY=...`). A cloud model is sent the whole prompt, including memory and document excerpts, so a cloud message is not private: users confirm this once before their first cloud message (stored in their settings and enforced by the server), a warning stays under the input while a cloud model is picked, and the answer's footer names the provider it went to. Every answer is stored with the model that wrote it: a reopened chat shows a badge ("Default (Gemma4-26B)", a local model's name, or "Cloud · Provider" for a cloud model), and a Markdown export notes the model beside each answer.
 - **Local network** — a bigger model on your own hardware that you do not want as the default. Plain HTTP is fine and a key is optional; it is not metered and carries none of the cloud warnings, so its address must be on this machine or LAN (an IP address, or a `.lan`/`.local`/`.internal` name) or the catalogue is refused. It is the only kind a locked space may use, and only when its address is on this machine or LAN.
 
 Each model has a role — chat, thinking or both — a context size and an output cap. A chat model also answers flash; a thinking model is offered in thorough only, where it runs the research with thinking switched on and the default model writes the answer. **Test** sends one tiny request with the saved settings (metered, for a cloud model). A provider can carry extra request fields sent with every call, e.g. Cortecs `{"preference": "cost", "eu_native": true, "allow_zero_data_retention": true}`, and a model can add its own on top (the model's win), e.g. pinning Cortecs to one hosting provider with `{"allowed_providers": ["…"], "provider_order": "custom"}` so the price entered for that model matches what is billed. Values may be text, numbers, true/false or lists of text; fields that would change the model, messages, tools or output limits are refused.
@@ -1217,6 +1217,7 @@ BASE_PROVIDER=openai                             # "openai" or "ollama"; default
 # CHAT_BASE_URL=http://localhost:11434/v1     # falls back to BASE_URL (Ollama: use /v1, not /api)
 # CHAT_API_KEY=sk-placeholder
 CHAT_MODEL=qwen3.5-instruct                      # Model name/alias from your LLM endpoint
+# CHAT_MODEL_LABEL=Qwen 3.5                      # Optional display name in the model menu ("Default (Qwen 3.5)"); the model name if unset
 # FLASH_MODEL=small                              # Optional. Set to "small" to use SMALL_MODEL for flash mode instead of CHAT_MODEL
 
 # ── LLM: thinking/reasoning model (researcher phase) ─────────────────────────
@@ -1226,6 +1227,7 @@ CHAT_MODEL=qwen3.5-instruct                      # Model name/alias from your LL
 # THINKING_BASE_URL=
 # THINKING_API_KEY=
 THINKING_MODEL=qwen3.5-thinking
+# THINKING_MODEL_LABEL=Qwen 3.5 thinking        # falls back to the model name, or to CHAT_MODEL_LABEL when THINKING_MODEL is unset
 
 # ── LLM: small model (query reformulation) ───────────────────────────────────
 # Optional. Use a fast 1–3 B model for best latency. Falls back to CHAT_* if unset.
@@ -1233,6 +1235,7 @@ THINKING_MODEL=qwen3.5-thinking
 # SMALL_BASE_URL=http://localhost:11434/v1
 # SMALL_API_KEY=                            # falls back to CHAT_API_KEY
 SMALL_MODEL=qwen3.5-small
+# SMALL_MODEL_LABEL=Qwen 3.5 small              # shown when flash runs on it (FLASH_MODEL=small)
 
 # ── LLM: embedding model ─────────────────────────────────────────────────────
 # EMBED_PROVIDER=ollama

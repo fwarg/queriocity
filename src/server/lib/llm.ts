@@ -145,6 +145,8 @@ export interface ModelTarget extends ProviderConfig {
   contextTokens: number
   /** The role names its own model rather than borrowing the chat model (or the embed default). */
   configured: boolean
+  /** A display name for the model (`*_MODEL_LABEL`, or a catalogue entry's label); the model name when unset. */
+  label?: string
   /** Called with each call's token usage; set for metered (cloud) targets only. */
   onUsage?: (usage: TokenUsage) => void
   /** Called with the provider's message when a metered call fails. */
@@ -169,6 +171,7 @@ function chatTarget(): ModelTarget {
     model: process.env.CHAT_MODEL ?? DEFAULT_CHAT_MODEL,
     contextTokens: contextTokensFor('chat'),
     configured: true,
+    label: process.env.CHAT_MODEL_LABEL?.trim() || undefined,
   }
 }
 
@@ -186,12 +189,17 @@ export function modelTarget(role: ModelRole): ModelTarget {
     model: model ?? (role === 'embed' ? DEFAULT_EMBED_MODEL : chat.model),
     contextTokens: contextTokensFor(role),
     configured: model !== undefined,
+    // A role borrowing the chat model borrows its label too.
+    label: process.env[`${prefix}_MODEL_LABEL`]?.trim() || (model === undefined && role !== 'embed' ? chat.label : undefined),
   }
 }
 
 /** Every role's target, for startup logs, admin checks and the locked-space warning. */
 export const describeModels = (): ModelTarget[] =>
   (['chat', 'small', 'thinking', 'embed'] as const).map(role => modelTarget(role))
+
+/** What to call a model on screen: its label, else its name. */
+export const displayName = (t: ModelTarget): string => t.label ?? t.model
 
 /** Short `<url> model=<name>` label for log lines. */
 export const targetLabel = (t: ModelTarget): string => `${t.baseURL} model=${t.model}`

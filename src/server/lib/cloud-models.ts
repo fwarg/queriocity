@@ -2,7 +2,7 @@
  *  the models a turn runs on. Everything that could refuse the pick is checked here, so a refused
  *  pick falls back to the default models with a reason. */
 
-import { localTurnModels, type ModelTarget, type TokenUsage, type TurnModels } from './llm.ts'
+import { localTurnModels, displayName, type ModelTarget, type TokenUsage, type TurnModels } from './llm.ts'
 import { loadCatalogue, cloudTarget } from './llm-catalogue.ts'
 import { getLlmAccess, userSpend, providerSpend, meteredUsage, addAnswerCost } from './llm-usage.ts'
 import { isLocalEndpoint } from './space-lock.ts'
@@ -142,7 +142,7 @@ export const pickedModelOf = ({ cloud, provider, observed }: ResolvedModels): An
 export const answerModelOf = (resolved: ResolvedModels, focusMode: string): AnswerModel =>
   pickedModelOf(resolved) ?? defaultAnswerModel(focusMode === 'flash' ? resolved.models.flash : resolved.models.chat)
 
-export const defaultAnswerModel = (t: ModelTarget): AnswerModel => ({ id: t.model, label: t.model, kind: 'default' })
+export const defaultAnswerModel = (t: ModelTarget): AnswerModel => ({ id: t.model, label: displayName(t), kind: 'default' })
 
 /** A locked space keeps its documents on this network, so only a local provider that is on it qualifies. */
 const allowedWhenLocked = (p: CloudProvider) => p.kind === 'local' && isLocalEndpoint(p.baseURL)
@@ -181,6 +181,6 @@ const toPickable = (m: CloudModel, p: CloudProvider, remaining: number | undefin
 /** The models a user may pick, and the default models' meter budgets for when they pick none. */
 export async function modelChoices(userId: string): Promise<ModelChoices> {
   const { flash, chat, thinking } = localTurnModels()
-  const describe = (t: ModelTarget) => ({ model: t.model, budgetChars: meterBudgetChars(t.contextTokens) })
+  const describe = (t: ModelTarget) => ({ model: displayName(t), budgetChars: meterBudgetChars(t.contextTokens) })
   return { models: await pickableModels(userId), defaults: { flash: describe(flash), chat: describe(chat), thinking: describe(thinking) } }
 }

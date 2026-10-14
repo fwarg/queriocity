@@ -105,7 +105,7 @@ export interface ModelChoices {
 }
 
 export interface DefaultModel {
-  /** Its name, so the menu can say which model "default" is. */
+  /** Its display name (`*_MODEL_LABEL`, else the model name), so the menu can say which model "default" is. */
   model: string
   /** The context meter's whole for it, in characters. */
   budgetChars: number
@@ -126,8 +126,6 @@ export interface AnswerModel {
   currency?: string
 }
 
-/** A picked model, as opposed to the default one. */
-export const isPicked = (m: AnswerModel | undefined): m is AnswerModel & { provider: string } => !!m && m.kind !== 'default'
 
 /** Why a model pick was not honoured; the client words the notice from this. */
 export type ModelFallbackReason = 'locked' | 'mode' | 'unavailable' | 'not_allowed' | 'unacknowledged' | 'budget' | 'cap'

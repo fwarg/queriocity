@@ -38,7 +38,6 @@ import { useLang, useT } from './lib/i18n.tsx'
 import { applyTheme } from './lib/theme.ts'
 import { DEFAULT_THEME } from '@shared/theme.ts'
 import type { ContextReport } from '@shared/context.ts'
-import { isPicked } from '@shared/llm-catalogue.ts'
 
 /** One per mode worth showing off: something current, something comparative, something explained. */
 const EXAMPLE_KEYS = ['guide.example1', 'guide.example2', 'guide.example3'] as const
@@ -481,9 +480,10 @@ export default function App() {
     const subset = scope === 'last' ? msgs.filter(m => m.role === 'assistant').slice(-1) : msgs
     const body = subset.map((m, msgIdx) => {
       // Says which answers left the server, so a shared export does not pass a cloud answer off as local.
-      const picked = isPicked(m.model) ? m.model : undefined
-      const sentTo = picked?.kind === 'cloud' ? `, cloud — sent to ${picked.provider}${picked.via ? ` via ${picked.via}` : ''}` : ''
-      const via = picked ? ` _(model: ${picked.label}${sentTo})_` : ''
+      const model = m.model
+      const sentTo = model?.kind === 'cloud' ? `, cloud — sent to ${model.provider}${model.via ? ` via ${model.via}` : ''}` : ''
+      const name = model?.kind === 'default' ? `default (${model.label})` : model?.label
+      const via = model ? ` _(model: ${name}${sentTo})_` : ''
       const label = m.role === 'user' ? '**User**' : `**Assistant**${via}`
       let content = m.role === 'assistant' ? splitGroupedCitations(m.content) : m.content
       if (m.role === 'assistant' && m.sources?.length) {

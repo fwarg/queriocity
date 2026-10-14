@@ -3,8 +3,8 @@ import type { Message, Source, FileSource } from '../lib/api.ts'
 import type { LogStep } from '../components/ProgressLog.tsx'
 import type { TFunction } from '../lib/i18n.tsx'
 import type { ContextReport } from '@shared/context.ts'
-import { isPicked, type AnswerModel, type ModelFallbackReason } from '@shared/llm-catalogue.ts'
-import { formatCost } from '../lib/money.ts'
+import type { AnswerModel, ModelFallbackReason } from '@shared/llm-catalogue.ts'
+import { describeAnswerModel } from '../lib/answer-model.ts'
 
 export type FocusMode = 'flash' | 'balanced' | 'thorough' | 'image'
 export type ChatChunk = { type: string; [k: string]: unknown }
@@ -166,16 +166,11 @@ export class ChatRun {
     this.view.setSteps([...this.log])
   }
 
+  /** Called at the start for a pick, and again at the end with what only the end knows: the
+   *  hosting provider and the cost, or which default model answered. */
   private setModel(model: AnswerModel) {
-    const { t } = this.view
     this.model = model
-    // The default model is recorded but not announced: the footer names only a pick.
-    if (!isPicked(model)) return
-    if (model.kind !== 'cloud') this.modelNote = t('answer.byModel', { label: model.label })
-    else if (model.via) this.modelNote = t('answer.byCloudModelVia', { label: model.label, provider: model.provider, via: model.via })
-    else this.modelNote = t('answer.byCloudModel', { label: model.label, provider: model.provider })
-    // Known only at the end, when the turn's calls have been counted.
-    if (model.cost !== undefined) this.modelNote += ` ${t('answer.cost', { amount: formatCost(model.cost), currency: model.currency ?? '' })}`
+    this.modelNote = describeAnswerModel(model, this.view.t)
   }
 
   private finish(chunk: ChatChunk) {

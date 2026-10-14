@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test'
-import { ollamaOpenAIBase, modelTarget, flashTarget, DEFAULT_BASE_URL, DEFAULT_CHAT_MODEL, DEFAULT_EMBED_MODEL } from './llm.ts'
+import { ollamaOpenAIBase, modelTarget, flashTarget, displayName, DEFAULT_BASE_URL, DEFAULT_CHAT_MODEL, DEFAULT_EMBED_MODEL } from './llm.ts'
 
 describe('ollamaOpenAIBase', () => {
   test('rewrites the native /api path to the OpenAI-compatible /v1', () => {
@@ -30,7 +30,7 @@ describe('ollamaOpenAIBase', () => {
 
 const MODEL_ENV = [
   'BASE_URL', 'BASE_PROVIDER', 'CONTEXT_TOKEN_LIMIT', 'SMALL_MODEL_CONTEXT_TOKENS', 'EMBED_CONTEXT_TOKENS', 'FLASH_MODEL',
-  ...['CHAT', 'SMALL', 'THINKING', 'EMBED'].flatMap(p => [`${p}_MODEL`, `${p}_BASE_URL`, `${p}_PROVIDER`, `${p}_API_KEY`]),
+  ...['CHAT', 'SMALL', 'THINKING', 'EMBED'].flatMap(p => [`${p}_MODEL`, `${p}_MODEL_LABEL`, `${p}_BASE_URL`, `${p}_PROVIDER`, `${p}_API_KEY`]),
 ]
 
 /** Runs `fn` with only `vars` set among the model env vars, restoring the previous env after. */
@@ -81,6 +81,18 @@ describe('modelTarget', () => {
     })
     withEnv({ CONTEXT_TOKEN_LIMIT: '32768', SMALL_MODEL_CONTEXT_TOKENS: '2048', FLASH_MODEL: 'small' }, () => {
       expect(flashTarget()).toMatchObject({ role: 'small', contextTokens: 2048 })
+    })
+  })
+})
+
+describe('model labels', () => {
+  test('use *_MODEL_LABEL, fall back to the model name, and follow the chat model when borrowed', () => {
+    withEnv({ CHAT_MODEL: 'gemma4-large', CHAT_MODEL_LABEL: 'Gemma 4', THINKING_MODEL: 'gemma4-think' }, () => {
+      expect(displayName(modelTarget('chat'))).toBe('Gemma 4')
+      // Its own model and no label of its own: the model name, not the chat model's label.
+      expect(displayName(modelTarget('thinking'))).toBe('gemma4-think')
+      // Borrowing the chat model: the chat model's label too.
+      expect(displayName(modelTarget('small'))).toBe('Gemma 4')
     })
   })
 })

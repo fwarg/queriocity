@@ -122,6 +122,7 @@ export function cloudTarget(catalogue: LlmCatalogue, modelId: string): (ModelTar
     extraBody: mergeExtras(provider.extraBody, entry.extraBody),
     maxOutputTokens: entry.maxOutputTokens,
     model: entry.model,
+    label: entry.label,
     contextTokens: entry.contextTokens,
     configured: true,
     entry,
