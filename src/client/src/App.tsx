@@ -245,6 +245,10 @@ export default function App() {
   const meterReport = (report: ContextReport): ContextReport =>
     busy || modelPicker.meterBudget === undefined ? report : { ...report, budgetChars: modelPicker.meterBudget }
 
+  // A pick is for one message in one chat: opening another chat must not carry it along.
+  const { reset: resetModelPick } = modelPicker
+  useEffect(() => { resetModelPick() }, [sessionId, resetModelPick])
+
   // The pickable models carry what is left of each budget, which every answer spends.
   const { refresh: refreshModels } = modelPicker
   useEffect(() => { if (!busy) refreshModels() }, [busy, refreshModels])

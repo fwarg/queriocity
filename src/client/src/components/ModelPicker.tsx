@@ -18,7 +18,10 @@ export function ModelPicker({ models, value, onChange }: { models: PickableModel
   // A cloud model is sent the prompt with everything in it, so the tooltip says so.
   const title = chosen?.kind === 'cloud' ? t('model.cloudNote', { provider: chosen.providerLabel }) : t('model.pickTitle')
   return (
+    // autoComplete off: a browser restoring the last selection on reload (Firefox does) would show
+    // one model while the app's state holds another.
     <select
+      autoComplete="off"
       value={value}
       onChange={e => onChange(e.target.value)}
       title={title}
