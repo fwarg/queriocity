@@ -104,6 +104,12 @@ describe('a collection holds no chats', () => {
     const res = await send(`/spaces/${collection.id}/memories`, 'POST', { content: 'A fact' })
     expect(res.status).toBe(400)
   })
+
+  test('a resource summary, which is saved as memory, cannot be made in one', async () => {
+    const collection = await create('Papers', 'collection')
+    const res = await send(`/spaces/${collection.id}/transform`, 'POST', { operation: 'summarize' })
+    expect(res.status).toBe(400)
+  })
 })
 
 describe('a collection cannot be locked', () => {

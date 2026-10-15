@@ -5,7 +5,7 @@ import { coverCollection } from '../files/collection-coverage.ts'
 import { trimMessages, meterBudgetChars, CONTEXT_RESERVE_FRACTION } from '../trim-messages.ts'
 import { thinkingFor } from './prepare.ts'
 import { AnswerStream } from './stream-answer.ts'
-import { userQueryOf, type TurnContext, type TurnResult, type TurnSink } from './context.ts'
+import { userQueryOf, withKeepalive, type TurnContext, type TurnResult, type TurnSink } from './context.ts'
 
 const COLLECTION_SYSTEM = `You work on a collection of documents the user selected, all of which are given below, together with anything the user attaches to their message (for instance a draft of their own).
 Do the task the user asks for, grounded in these documents. Do not invent what they do not say; say so when they do not cover something.
@@ -18,8 +18,14 @@ const HISTORY_RESERVE_CHARS = 4000
 /** Whole-collection mode: one answer call over every document in the picked collections.
  *
  *  No web search and no research loop: a tool loop resends the system prompt at every step, and
- *  here that prompt holds the collection, so each step would pay for every document again. */
-export async function runCollectionTurn(ctx: TurnContext, sink: TurnSink): Promise<TurnResult> {
+ *  here that prompt holds the collection, so each step would pay for every document again.
+ *  Kept alive throughout: a local model can read for minutes before its first word, and a silent
+ *  stream is dropped, after which the run is abandoned. */
+export function runCollectionTurn(ctx: TurnContext, sink: TurnSink): Promise<TurnResult> {
+  return withKeepalive(sink, () => answerFromCollection(ctx, sink))
+}
+
+async function answerFromCollection(ctx: TurnContext, sink: TurnSink): Promise<TurnResult> {
   const t0 = Date.now()
   const model = answerModel(ctx)
   const query = userQueryOf(ctx.msgs)

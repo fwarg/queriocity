@@ -16,6 +16,7 @@ import { exportVault } from '../lib/files/obsidian-export.ts'
 import { acceptLink, dismissLink, suggestLinks } from '../lib/files/link-suggest.ts'
 import { proposeSplit } from '../lib/files/note-split.ts'
 import { collectResourceText } from '../lib/files/resource-context.ts'
+import { storedDigests } from '../lib/files/collection-coverage.ts'
 import { operationPrompt, transformPrompt, TRANSFORM_MAX_CHARS, TRANSFORM_OPERATIONS } from '../lib/files/transforms.ts'
 import { getChatModel } from '../lib/llm.ts'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
@@ -461,6 +462,7 @@ filesRouter.get('/:id', async (c) => {
     updatedAt: epochSeconds(resource.updatedAt),
     spaces: taggedSpaces,
     chunks: chunks.map(ch => ch.content),
+    digests: await storedDigests(resource.id),
   })
 })
 

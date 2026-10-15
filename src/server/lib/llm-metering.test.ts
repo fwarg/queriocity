@@ -81,6 +81,29 @@ describe('what the SDK alone would lose', () => {
     // Refused outright, so not billed and not recorded.
     expect(calls).toEqual([])
   })
+
+  test('passes on a default (unmetered) model\'s error too, such as a local server losing its GPU', async () => {
+    fake = startFakeOpenAI([{ error: { status: 400, message: 'decode() failed: ErrorDeviceLost' } }])
+    const errors: string[] = []
+    const model = languageModel({ ...fakeTarget(fake.baseURL), onError: m => { errors.push(m) } })
+    await streamText({ model, prompt: 'Hi', maxRetries: 0 }).consumeStream({ onError: () => {} })
+    expect(errors[0]).toContain('ErrorDeviceLost')
+  })
+})
+
+describe('long silent calls', () => {
+  test('turn off Bun\'s response timeout, which a local model reading a long prompt outlasts', async () => {
+    fake = startFakeOpenAI([{ text: ['OK'] }])
+    const inits: Array<RequestInit & { timeout?: unknown }> = []
+    const realFetch = globalThis.fetch
+    globalThis.fetch = Object.assign((input: RequestInfo | URL, init?: RequestInit) => { inits.push(init ?? {}); return realFetch(input, init) }, { preconnect: realFetch.preconnect })
+    try {
+      await streamText({ model: languageModel(fakeTarget(fake.baseURL)), prompt: 'Hi' }).consumeStream()
+    } finally {
+      globalThis.fetch = realFetch
+    }
+    expect(inits[0]?.timeout).toBe(false)
+  })
 })
 
 describe('an OpenRouter stream, as recorded', () => {

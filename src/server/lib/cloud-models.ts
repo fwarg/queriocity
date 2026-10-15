@@ -25,8 +25,9 @@ export interface ResolvedModels {
   /** The catalogue entry the turn runs on, and its provider, when the pick was honoured. */
   cloud?: CloudModel
   provider?: CloudProvider
-  /** Filled in as the turn's calls report it: the hosting provider, and the cost so far. */
-  observed?: TurnObserved
+  /** Filled in as the turn's calls report it: the first error (any model), and for a cloud pick the
+   *  hosting provider and the cost so far. */
+  observed: TurnObserved
   /** Set when a pick was refused. */
   fallback?: { reason: ModelFallbackReason; message: string }
   /** A thinking-only pick switches thinking on for this turn, whatever the user's setting. */
@@ -44,11 +45,15 @@ interface PickRequest {
 
 /** The turn's models: the defaults, or the picked model in the slots its role allows. */
 export async function resolveTurnModels({ userId, modelId, focusMode, locked, cloudAcknowledged }: PickRequest): Promise<ResolvedModels> {
-  const models = localTurnModels()
-  if (!modelId) return { models, forceThinking: false }
+  const observed: TurnObserved = {}
+  const onError = (message: string) => { observed.error ??= message }
+  // The default models report their errors too: a local server failing is otherwise only in the server log.
+  const local = localTurnModels()
+  const models: TurnModels = { chat: { ...local.chat, onError }, thinking: { ...local.thinking, onError }, flash: { ...local.flash, onError } }
+  if (!modelId) return { models, observed, forceThinking: false }
   const refuse = (reason: ModelFallbackReason): ResolvedModels => {
     console.log(`  [cloud] pick "${modelId}" refused for user ${userId}: ${reason}`)
-    return { models, forceThinking: false, fallback: { reason, message: FALLBACK_MESSAGES[reason] } }
+    return { models, observed, forceThinking: false, fallback: { reason, message: FALLBACK_MESSAGES[reason] } }
   }
   if (focusMode === 'image') return refuse('mode')
 
@@ -68,8 +73,7 @@ export async function resolveTurnModels({ userId, modelId, focusMode, locked, cl
   const spendRefusal = provider.kind === 'cloud' && overSpend(userId, provider, budget)
   if (spendRefusal) return refuse(spendRefusal)
 
-  // Local providers run on your own hardware: nothing to meter.
-  const observed: TurnObserved = {}
+  // Local providers run on your own hardware: nothing to meter, but their errors are reported.
   const cloud = provider.kind === 'cloud'
     ? {
         ...target,
@@ -78,9 +82,9 @@ export async function resolveTurnModels({ userId, modelId, focusMode, locked, cl
           endpoint: target,
           onCorrection: delta => correctAnswer(observed, delta),
         }),
-        onError: (message: string) => { observed.error ??= message },
+        onError,
       }
-    : target
+    : { ...target, onError }
   const usesChat = entry.role !== 'thinking'
   const usesThinking = entry.role !== 'chat'
   console.log(`  [cloud] turn on ${provider.id}/${entry.model} for user ${userId} (${provider.kind}, ${entry.role})`)

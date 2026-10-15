@@ -400,6 +400,8 @@ export const en = {
   'resource.taggedToNone': 'Not in any space or collection.',
   'resource.chunks': { one: '{count} indexed excerpt', other: '{count} indexed excerpts' },
   'resource.chunksIntro': 'What retrieval actually sees. Excerpts overlap, so text repeats where they meet.',
+  'resource.digests': { one: '{count} digest', other: '{count} digests' },
+  'resource.digestsIntro': 'What a whole-collection answer read instead of the full text when the collection did not fit the model. One per model, made the first time it was needed, and remade if the text changes.',
   'resource.noChunks': 'This resource has no indexed content.',
   'resource.loadFailed': 'Could not load this resource',
   'resource.transform': 'Transform',

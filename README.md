@@ -1037,7 +1037,8 @@ nearest the question:
 - The documents go into the prompt **in full** when they fit the answering model's context.
 - Otherwise each document is first reduced to a **digest** (claims, method, results, verdict,
   strengths, weaknesses) by the same model. Digests are made one at a time on a local model and three at
-  a time on a cloud model, and are kept per document and model, so a follow-up question reuses them. If
+  a time on a cloud model, and are kept per document and model, so a follow-up question reuses them. A
+  resource's page lists its digests under *Digests*, with the model that made each. If
   even the digests do not fit, each is shortened equally, and the footer says so.
 - Each document is cited as `[C1]`, `[C2]`, one label per document.
 - The turn makes no web search, and its answer is not cached, because the collection can change.
@@ -1046,6 +1047,9 @@ nearest the question:
 The built-in **Collection report** template asks for a summary of each work, how they relate, where they
 agree and disagree, the pros and cons of each, and a comparison table. Choosing it turns *Whole
 collection* on. Save a good answer as a note with the answer's note action.
+
+*Summarize resources* is offered in spaces only: it saves a memory, which only a space's chats read.
+In a collection, use *Analyze in chat*, whose per-document digests are cached and reused.
 
 **Promotion.** A collection can be turned into a space from its detail view, keeping every tagged
 resource — nothing moves, because both kinds tag the same way. This is one-way: a space that already

@@ -189,6 +189,8 @@ export function ResourceDetail({ id, onBack, onChanged, onOpen, onOpenChat, onTa
 
       <IndexedExcerpts chunks={detail.chunks} />
 
+      {detail.digests.length > 0 && <Digests digests={detail.digests} />}
+
       {editing && (
         <NoteEditor
           id={detail.id}
@@ -443,6 +445,30 @@ function IndexedExcerpts({ chunks }: { chunks: string[] }) {
             </div>
           </>
         )}
+    </details>
+  )
+}
+
+/** The digests whole-collection answers read in place of this resource when the collection was too
+ *  large to send in full; folded away like the excerpts, and shown only once one exists. */
+function Digests({ digests }: { digests: Detail['digests'] }) {
+  const t = useT()
+  const { lang } = useLang()
+  return (
+    <details className="group">
+      <summary className="cursor-pointer list-none text-xs font-medium uppercase tracking-wide text-gray-500 hover:text-gray-300 flex items-center gap-1">
+        <ChevronRight size={12} className="transition-transform group-open:rotate-90" />
+        {t('resource.digests', { count: digests.length })}
+      </summary>
+      <p className="text-xs text-gray-500 mt-1.5">{t('resource.digestsIntro')}</p>
+      <div className="flex flex-col gap-2 mt-1">
+        {digests.map(d => (
+          <div key={d.model} className="bg-gray-800 rounded p-3">
+            <p className="text-xs text-gray-500 mb-1">{d.model} · {new Date(d.createdAt * 1000).toLocaleDateString(lang)}</p>
+            <pre className="text-xs text-gray-400 whitespace-pre-wrap break-words">{d.digest}</pre>
+          </div>
+        ))}
+      </div>
     </details>
   )
 }

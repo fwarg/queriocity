@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
 import { generateText } from 'ai'
 import { sqlite } from '../db.ts'
-import { languageModel, outputCap, type ModelTarget } from '../llm.ts'
+import { languageModel, outputCap, localTurnModels, displayName, type ModelTarget } from '../llm.ts'
+import { loadCatalogue } from '../llm-catalogue.ts'
 import { meterBudgetChars } from '../trim-messages.ts'
 import { ThinkExtractor } from '../think-extractor.ts'
 import { collectResourceText } from './resource-context.ts'
@@ -168,6 +169,39 @@ async function digestOf(doc: CollectionDoc, { model, abortSignal }: CoverOptions
 
 /** Digests are per model: the same text digested by another model is another digest. */
 const digestKey = (t: ModelTarget) => `${t.baseURL} ${t.model}`
+
+export interface StoredDigest {
+  /** The model's display name where it is still configured, else its model name. */
+  model: string
+  digest: string
+  /** Epoch seconds. */
+  createdAt: number
+}
+
+/** A resource's stored digests, newest first, for showing in its detail view. */
+export async function storedDigests(fileId: string): Promise<StoredDigest[]> {
+  const rows = sqlite.prepare('SELECT model, digest, created_at FROM resource_digests WHERE file_id = ? ORDER BY created_at DESC')
+    .all(fileId) as Array<{ model: string; digest: string; created_at: number }>
+  if (!rows.length) return []
+  const labels = await digestModelLabels()
+  return rows.map(r => ({
+    model: labels.get(r.model) ?? r.model.slice(r.model.indexOf(' ') + 1),
+    digest: r.digest,
+    createdAt: Math.floor(r.created_at / 1000),
+  }))
+}
+
+/** Display names by digest key, for the env models and every catalogue model. */
+async function digestModelLabels(): Promise<Map<string, string>> {
+  const { chat, thinking, flash } = localTurnModels()
+  const labels = new Map([chat, thinking, flash].map(t => [digestKey(t), displayName(t)]))
+  const catalogue = await loadCatalogue()
+  for (const m of catalogue.models) {
+    const provider = catalogue.providers.find(p => p.id === m.providerId)
+    if (provider) labels.set(`${provider.baseURL} ${m.model}`, m.label)
+  }
+  return labels
+}
 
 /** The answer text of a model that writes its reasoning inline in `<think>` tags. */
 function withoutThinking(text: string): string {

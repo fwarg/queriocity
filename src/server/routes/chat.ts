@@ -272,14 +272,16 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     const result = await runTurn(ctx, sink)
     const aborted = ctx.abortSignal.aborted
     // Without this a failing cloud model reads as an empty answer; the provider's own words say why.
-    const error = resolved.observed?.error
-    if (error && !aborted) await sink.emit({ type: 'model_error', provider: resolved.provider?.label, message: error })
+    const error = resolved.observed.error
+    const model = answerModelOf(resolved, focusMode, result.answeredBy)
+    // Named by its provider for a pick, by the model itself for a default (local) one.
+    if (error && !aborted) await sink.emit({ type: 'model_error', provider: resolved.provider?.label ?? model.label, message: error })
     if (result.cacheable && !aborted && result.content.length >= 50) {
       setCached(ck, { content: result.content, sources: result.sources, fileSources: result.fileSources })
     }
     // The latest report is also stored with the chat, so the meter reappears when it is reopened.
     // Read now, not before the turn: the hosting provider is known only once the calls report it.
-    await finishTurn(out, { ...tail, fullContent: result.content, sources: result.sources, fileSources: result.fileSources, context: sink.lastContext, aborted, model: answerModelOf(resolved, focusMode, result.answeredBy), onStored: id => attachAnswer(resolved, id) })
+    await finishTurn(out, { ...tail, fullContent: result.content, sources: result.sources, fileSources: result.fileSources, context: sink.lastContext, aborted, model, onStored: id => attachAnswer(resolved, id) })
   })
 })
 

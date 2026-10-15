@@ -396,6 +396,8 @@ export const sv: Catalog = {
   'resource.taggedToNone': 'Inte med i något utrymme eller någon samling.',
   'resource.chunks': { one: '{count} indexerat utdrag', other: '{count} indexerade utdrag' },
   'resource.chunksIntro': 'Det här är vad sökningen faktiskt ser. Utdragen överlappar, så text upprepas där de möts.',
+  'resource.digests': { one: '{count} sammandrag', other: '{count} sammandrag' },
+  'resource.digestsIntro': 'Det som ett svar över hela samlingen läste i stället för hela texten när samlingen inte fick plats i modellen. Ett per modell, gjort första gången det behövdes och gjort om när texten ändras.',
   'resource.noChunks': 'Den här resursen har inget indexerat innehåll.',
   'resource.loadFailed': 'Kunde inte läsa in resursen',
   'resource.transform': 'Bearbeta',

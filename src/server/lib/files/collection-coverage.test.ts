@@ -10,7 +10,7 @@ import { fakeTarget, startFakeOpenAI } from '../test-support/fake-openai.ts'
 import type { ModelTarget } from '../llm.ts'
 
 const { sqlite } = await import('../db.ts')
-const { coverCollection, fitTexts } = await import('./collection-coverage.ts')
+const { coverCollection, fitTexts, storedDigests } = await import('./collection-coverage.ts')
 
 const USER = 'coverage-user'
 const COLL = 'coverage-coll'
@@ -65,6 +65,12 @@ describe('coverCollection', () => {
     expect(progress).toEqual([0, 1, 2])
     await coverCollection([COLL], opts)
     expect(fake.callCount).toBe(calls + 2)
+  })
+
+  test('lists a resource\'s stored digests with the model that made them', async () => {
+    const id = seedDoc('a.txt', 'x'.repeat(3000))
+    await coverCollection([COLL], { model: fakeTarget(fake.baseURL), budgetChars: 500 })
+    expect(await storedDigests(id)).toEqual([{ model: 'm', digest: '- Claims: bees dance.', createdAt: expect.any(Number) }])
   })
 
   test('falls back to the opening of a document whose digest fails, and does not cache it', async () => {

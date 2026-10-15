@@ -938,6 +938,8 @@ export interface ResourceRef { id: string; filename: string; kind: 'file' | 'not
 export interface ResourceDetail extends Resource {
   body: string | null
   chunks: string[]
+  /** Digests whole-collection answers made of this resource, one per model; createdAt in epoch seconds. */
+  digests: Array<{ model: string; digest: string; createdAt: number }>
   /** The resource a transform produced this note from, if any, and the notes produced from it. */
   derivedFrom: ResourceRef | null
   derived: ResourceRef[]

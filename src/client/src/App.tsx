@@ -1307,7 +1307,8 @@ export default function App() {
                     />
                   </div>
                 ))}
-                {filesSectionOpen && taggedFiles.length > 0 && (
+                {/* The summary is saved as space memory, which only a space's chats read. */}
+                {filesSectionOpen && taggedFiles.length > 0 && !activeSpaceIsCollection && (
                   <div className="mt-2 flex items-center gap-2">
                     <button
                       onClick={handleTransform}
