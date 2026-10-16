@@ -67,6 +67,9 @@ describe('what the SDK alone would lose', () => {
     const sent = setInterval(() => { if (server.callCount) { clearInterval(sent); stop.abort() } }, 5)
     await streamText({ model, prompt: 'A question long enough to count', abortSignal: stop.signal }).consumeStream({ onError: () => {} })
     clearInterval(sent)
+    // Since ai 7.0.137 the stream ends on the stop before the stopped call's error reaches the
+    // middleware, so the estimate arrives just after — still recorded, as metering is per call.
+    for (let waited = 0; !calls.length && waited < 1000; waited += 10) await Bun.sleep(10)
     expect(calls).toHaveLength(1)
     expect(calls[0].estimated).toBe(true)
     expect(calls[0].inputTokens).toBeGreaterThan(0)
