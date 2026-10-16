@@ -493,6 +493,12 @@ export default function App() {
     setCollectionMode('whole')
   }
 
+  /** A new chat in the space that reads every resource tagged to it; the space's lock covers it. */
+  function analyzeSpace(spaceId: string) {
+    newChat(spaceId)
+    setCollectionMode('whole')
+  }
+
   /** Provenance front-matter for exported chats — EU AI Act Art 50(2).
    *
    *  Front-matter rather than an embedded watermark: no interoperable machine-readable marking
@@ -1067,12 +1073,23 @@ export default function App() {
                     </button>
                   </div>
                 ) : (
-                  <button
-                    onClick={() => newChat(currentSpaceId!)}
-                    className={`ml-auto ${PRIMARY_BTN}`}
-                  >
-                    + {t('chat.new')}
-                  </button>
+                  <div className="ml-auto flex flex-wrap gap-2">
+                    {(spaces.find(s => s.id === currentSpaceId)?.resourceCount ?? 0) > 0 && (
+                      <button
+                        onClick={() => analyzeSpace(currentSpaceId!)}
+                        title={t('space.analyzeTitle')}
+                        className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-sm font-medium whitespace-nowrap"
+                      >
+                        {t('collection.analyze')}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => newChat(currentSpaceId!)}
+                      className={PRIMARY_BTN}
+                    >
+                      + {t('chat.new')}
+                    </button>
+                  </div>
                 )}
               </div>
               {/* Memory describes conversations, which a collection has none of — as do the chat
@@ -1715,6 +1732,7 @@ export default function App() {
               onCollectionsChange={setSelectedCollections}
               collectionMode={collectionMode}
               onCollectionModeChange={setCollectionMode}
+              spaceResources={spaces.find(sp => sp.id === activeSpaceId && sp.kind === 'space')?.resourceCount ?? 0}
               notesAvailable={files.some(f => f.kind === 'note')}
               notesFirst={notesFirst}
               onNotesFirstChange={setNotesFirst}

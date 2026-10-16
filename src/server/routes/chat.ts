@@ -237,7 +237,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     [...(includeMemoryIds ?? [])].sort().join(','),
     collections.join(','),
     // Whole-collection and explored answers are never stored, but must not be served an excerpt answer either.
-    collections.length ? collectionMode : '',
+    collections.length || (spaceId && (collectionMode === 'whole' || collectionMode === 'explore')) ? collectionMode : '',
     customPrompt ?? '',
     [...(searchCategories ?? [])].sort().join(','),
     locked ? 'locked' : '',
@@ -278,7 +278,9 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     for (const event of modelEvents(resolved)) await sink.emit(event)
     // An unlocked turn leaves confidential resources out — of the picked collections, and of every
     // search it runs; the footer says how many.
-    const leftOut = new Set<string>(locked ? [] : confidentialInCollections(collections))
+    // Whole and Explore asked for in a space read the space's resources too (turn/context.ts documentSet).
+    const readsSpace = !!spaceId && (collectionMode === 'whole' || collectionMode === 'explore')
+    const leftOut = new Set<string>(locked ? [] : confidentialInCollections(readsSpace ? [spaceId, ...collections] : collections))
     const result = await trackLeftOut(leftOut, () => runTurn(ctx, sink))
     if (leftOut.size) await sink.emit({ type: 'confidential_excluded', count: leftOut.size })
     const aborted = ctx.abortSignal.aborted

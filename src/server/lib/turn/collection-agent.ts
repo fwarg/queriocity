@@ -12,9 +12,9 @@ import {
   type Doc, type Note, type Gathered,
 } from './collection-evidence.ts'
 import { trimMessages, meterBudgetChars, CONTEXT_RESERVE_FRACTION } from '../trim-messages.ts'
-import { thinkingFor } from './prepare.ts'
+import { thinkingFor, spaceMemoryOnly } from './prepare.ts'
 import { AnswerStream } from './stream-answer.ts'
-import { userQueryOf, withKeepalive, type TurnContext, type TurnResult, type TurnSink } from './context.ts'
+import { userQueryOf, withKeepalive, documentSet, type TurnContext, type TurnResult, type TurnSink } from './context.ts'
 
 /** Explore mode: an agent reads the picked collections for a targeted question — lists the
  *  documents, searches them, reads the parts that matter, and notes what it finds — then the answer
@@ -47,7 +47,7 @@ export function runCollectionAgent(ctx: TurnContext, sink: TurnSink): Promise<Tu
 async function exploreAndAnswer(ctx: TurnContext, sink: TurnSink): Promise<TurnResult> {
   const t0 = Date.now()
   const model = thinkingFor(ctx).researchModel
-  const docs = collectionIndex(ctx.collections, ctx.locked)
+  const docs = collectionIndex(documentSet(ctx), ctx.locked)
   const fileSources = docs.map(d => ({ title: `[${d.label}] ${d.filename}`, url: `file:${d.fileId}`, label: d.label }))
   if (fileSources.length) await sink.emit({ type: 'file_sources', sources: fileSources })
   const gathered: Gathered = { notes: [], seen: new Map(), reads: new Map(), queries: [], locked: ctx.locked }
@@ -214,6 +214,7 @@ async function answerFromNotes(ctx: TurnContext, sink: TurnSink, model: ModelTar
   const system = joinMemoryBlocks(
     ANSWER_SYSTEM + (ctx.customPrompt ? `\n\nAdditional instructions:\n${ctx.customPrompt}` : ''),
     await userMemoryBlockIfEnabled(ctx.userId, ctx.settings, query),
+    await spaceMemoryOnly(ctx, query),
     documents,
     noted,
     seenBlock(gathered.seen),

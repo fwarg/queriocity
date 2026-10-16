@@ -51,6 +51,14 @@ export async function prepareResearch(ctx: TurnContext) {
 
 /** Whether the mode shows its thinking, and the model that researches: the thinking model in
  *  thorough mode when the user has it on, else the chat model. */
+/** The space's memory without its resource excerpts, for turns that read the resources another way
+ *  (Whole collection, Explore); empty outside a space. */
+export async function spaceMemoryOnly(ctx: TurnContext, query: string): Promise<string> {
+  if (!ctx.spaceId) return ''
+  const budget = Number(await getAppSetting('memory_token_budget', DEFAULT_MEMORY_TOKEN_BUDGET))
+  return (await buildMemoryBlock(ctx.spaceId, budget, 0, query, undefined, ctx.includeMemoryIds, ctx.locked)).block
+}
+
 export function thinkingFor(ctx: TurnContext) {
   const showThinkingSettings = (ctx.settings.showThinking ?? { balanced: false, thorough: false }) as { balanced: boolean; thorough: boolean }
   const showThinking = ctx.focusMode === 'balanced' ? showThinkingSettings.balanced

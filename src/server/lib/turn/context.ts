@@ -97,3 +97,8 @@ export async function withKeepalive<T>(sink: TurnSink, fn: () => Promise<T>): Pr
 /** Latest user message, the query every relevance decision is made against. */
 export const userQueryOf = (msgs: Array<{ role: string; content: string }>) =>
   [...msgs].reverse().find(m => m.role === 'user')?.content ?? ''
+
+/** What Whole collection and Explore read: the picked collections and, in a space chat, the space's
+ *  own resources — spaces and collections tag resources alike, so one id list covers both. */
+export const documentSet = (ctx: Pick<TurnContext, 'spaceId' | 'collections'>): string[] =>
+  ctx.spaceId ? [...new Set([ctx.spaceId, ...ctx.collections])] : ctx.collections

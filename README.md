@@ -1208,6 +1208,18 @@ handles many tool calls reliably works best; on a small local model, prefer *Who
 *Summarize resources* is offered in spaces only: it saves a memory, which only a space's chats read.
 In a collection, use *Analyze in chat*, whose per-document reading is cached and reused.
 
+**In a space.** A space's tagged resources are read the same ways, so promoting a collection to a
+space loses nothing. In a space chat the selector, labelled *Read this space's resources*, appears
+with nothing picked. *Excerpts* is the default there and is the space's usual per-turn search;
+*Auto* is offered only once a collection is picked, since choosing per message would cost a
+small-model call on every message in the space. *Whole collection* and *Explore* read the space's
+resources and any picked collections as one set, labelled `[C1]`… throughout, in place of the
+space's search for that turn — the same passages are not given twice under `[F]` and `[C]` labels.
+Both still get the space's memory (without its resource excerpts), and a space chat follows the
+space's lock as always. With nothing to read (a space with no resources), they fall back to
+excerpts. The space's page offers *Analyze in chat* too: a new chat in the space set to *Whole
+collection*.
+
 **Promotion.** A collection can be turned into a space from its detail view, keeping every tagged
 resource — nothing moves, because both kinds tag the same way. This is one-way: a space that already
 holds chats, memories and possibly a lock has no sensible reading as a collection, so the reverse is

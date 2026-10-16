@@ -40,6 +40,9 @@ interface Props {
   /** Read every document in the picked collections rather than the excerpts nearest the question. */
   collectionMode?: CollectionMode
   onCollectionModeChange?: (mode: CollectionMode) => void
+  /** Resources tagged to the chat's space: a space chat can read them like a collection, with
+   *  nothing picked. */
+  spaceResources?: number
   /** "Notes first": answer from the user's own notes before the web. Offered once they have notes. */
   notesAvailable?: boolean
   notesFirst?: boolean
@@ -98,7 +101,7 @@ const CATEGORY_LABEL_KEYS: Record<SearchCategory, TranslationKey> = {
   tech: 'category.tech',
 }
 
-export function ChatInput({ models = [], modelId = '', defaultModel, onModelChange, onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, collections, selectedCollections, onCollectionsChange, collectionMode = 'auto', onCollectionModeChange, notesAvailable = false, notesFirst = false, onNotesFirstChange, suggestionsEnabled, lockedSpace = false, chatLocked = false, hasHistory = false, related = [], onRelatedSelect, spaceId, onAddedToLibrary }: Props) {
+export function ChatInput({ models = [], modelId = '', defaultModel, onModelChange, onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, collections, selectedCollections, onCollectionsChange, collectionMode = 'auto', onCollectionModeChange, spaceResources = 0, notesAvailable = false, notesFirst = false, onNotesFirstChange, suggestionsEnabled, lockedSpace = false, chatLocked = false, hasHistory = false, related = [], onRelatedSelect, spaceId, onAddedToLibrary }: Props) {
   const t = useT()
   const confirm = useConfirm()
   const [value, setValue] = useState('')
@@ -149,13 +152,15 @@ export function ChatInput({ models = [], modelId = '', defaultModel, onModelChan
   // whichever groups apply — the trigger names what is currently in force.
   const categoriesAvailable = !lockedSpace && (focusMode === 'balanced' || focusMode === 'thorough')
   const notesOffered = notesAvailable && focusMode !== 'image' && !!onNotesFirstChange
-  const sourcesPicker = categoriesAvailable || collections.length > 0 || notesOffered
+  const spaceReadable = spaceResources > 0 && focusMode !== 'image'
+  const readMode = shownReadMode(collectionMode, selectedCollections.length > 0)
+  const sourcesPicker = categoriesAvailable || collections.length > 0 || notesOffered || spaceReadable
   const sourcesActive = searchCategories.length > 0 || selectedCollections.length > 0 || (notesOffered && notesFirst)
   const pickedNames = [
     ...(notesOffered && notesFirst ? [t('notesFirst.label')] : []),
     ...(categoriesAvailable && searchCategories.length > 0 ? [searchCategories.map(c => t(CATEGORY_LABEL_KEYS[c])).join('+')] : []),
     ...collections.filter(c => selectedCollections.includes(c.id)).map(c => c.name),
-    ...(collectionMode !== 'auto' && selectedCollections.length > 0 && focusMode !== 'image' ? [t(COLLECTION_MODE_LABEL_KEYS[collectionMode])] : []),
+    ...(focusMode !== 'image' && (selectedCollections.length > 0 ? readMode !== 'auto' : spaceReadable && readMode !== 'excerpts') ? [t(COLLECTION_MODE_LABEL_KEYS[readMode])] : []),
   ]
   // "All" is a statement about categories only, and unqualified it reads as "everything" once
   // collections share the button — no collection is picked by default.
@@ -398,12 +403,13 @@ export function ChatInput({ models = [], modelId = '', defaultModel, onModelChan
               </button>
             </div>
           )}
-          {collections.length > 0 && (
+          {(collections.length > 0 || spaceReadable) && (
             <CollectionsGroup
               collections={collections}
               selected={selectedCollections}
               onChange={pickCollections}
-              mode={focusMode !== 'image' ? collectionMode : undefined}
+              spaceReadable={spaceReadable}
+              mode={focusMode !== 'image' ? readMode : undefined}
               onModeChange={onCollectionModeChange}
             />
           )}
@@ -596,20 +602,28 @@ const COLLECTION_MODE_DESC_KEYS: Record<CollectionMode, TranslationKey> = {
   auto: 'collection.modeDesc.auto', excerpts: 'collection.modeDesc.excerpts', whole: 'collection.modeDesc.whole', explore: 'collection.modeDesc.explore',
 }
 
-/** The collection chips, and once one is picked, how to read them. `mode` is undefined where the
- *  choice does not apply (image mode). The chosen mode's description is shown, not only in a tooltip:
- *  a phone never shows a title. */
-function CollectionsGroup({ collections, selected, onChange, mode, onModeChange }: {
+/** The mode as shown: with nothing picked only a space's resources are read, and there Auto is
+ *  excerpts — choosing per message would cost a call on every one (the server does the same). */
+function shownReadMode(mode: CollectionMode, picked: boolean): CollectionMode {
+  return !picked && mode === 'auto' ? 'excerpts' : mode
+}
+
+/** The collection chips, and once one is picked — or in a space chat, always — how to read them.
+ *  `mode` is undefined where the choice does not apply (image mode). The chosen mode's description is
+ *  shown, not only in a tooltip: a phone never shows a title. */
+function CollectionsGroup({ collections, selected, onChange, spaceReadable, mode, onModeChange }: {
   collections: Array<{ id: string; name: string; offline?: boolean }>
   selected: string[]
   onChange: (ids: string[]) => void
+  spaceReadable: boolean
   mode?: CollectionMode
   onModeChange?: (mode: CollectionMode) => void
 }) {
   const t = useT()
+  const picked = selected.length > 0
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="flex items-center gap-1.5 flex-wrap">
+      {collections.length > 0 && <div className="flex items-center gap-1.5 flex-wrap">
         <span className="text-xs text-gray-500 mr-0.5">{t('collection.plural')}</span>
         {collections.map(collection => {
           const on = selected.includes(collection.id)
@@ -627,12 +641,12 @@ function CollectionsGroup({ collections, selected, onChange, mode, onModeChange 
             </button>
           )
         })}
-      </div>
-      {selected.length > 0 && mode !== undefined && onModeChange && (
+      </div>}
+      {(picked || spaceReadable) && mode !== undefined && onModeChange && (
         <div className="flex flex-col gap-1">
-          <div className="flex items-center gap-1 flex-wrap" role="radiogroup" aria-label={t('collection.modeGroup')}>
-            <span className="text-xs text-gray-500 mr-0.5">{t('collection.modeGroup')}</span>
-            {COLLECTION_MODES.map(m => (
+          <div className="flex items-center gap-1 flex-wrap" role="radiogroup" aria-label={t(picked ? 'collection.modeGroup' : 'collection.modeGroupSpace')}>
+            <span className="text-xs text-gray-500 mr-0.5">{t(picked ? 'collection.modeGroup' : 'collection.modeGroupSpace')}</span>
+            {COLLECTION_MODES.filter(m => picked || m !== 'auto').map(m => (
               <button
                 key={m}
                 type="button"

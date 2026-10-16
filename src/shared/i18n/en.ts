@@ -324,6 +324,7 @@ export const en = {
   // --- Collections ---
   'collection.plural': 'Collections',
   'collection.modeGroup': 'Read',
+  'collection.modeGroupSpace': 'Read this space\'s resources',
   'collection.mode.auto': 'Auto',
   'collection.mode.excerpts': 'Excerpts',
   'collection.mode.whole': 'Whole collection',
@@ -346,6 +347,7 @@ export const en = {
   'collection.confidentialConfirm': 'Mark "{name}" confidential?\n\nIts documents are then read only by locked chats. A chat that picks it is locked for good (no web search, URL fetching, image generation or cloud models), and other chats leave these documents out. You can remove the mark at any time; chats already locked stay locked.',
   'collection.confidentialChipTitle': 'Confidential: picking it locks this chat (no web, local models only)',
   'collection.analyze': 'Analyze in chat',
+  'space.analyzeTitle': 'Open a new chat in this space that reads every resource tagged to it: compare them, summarise them, or review a draft you attach against them. The space\'s memory is used too.',
   'collection.analyzeTitle': 'Open a new chat that reads every document in this collection: compare them, summarise them, or review a draft you attach against them. Save the answer as a note from the chat.',
   'collection.promoteTitle': 'Turn this collection into a space, keeping its resources. This cannot be undone.',
   'collection.promoteFailed': 'Could not turn this collection into a space',

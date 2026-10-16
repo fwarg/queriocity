@@ -95,11 +95,11 @@ function documentText(fileId: string, filename: string): string {
 function renderCoverage(docs: CollectionDoc[], texts: string[], mode: Coverage['mode']) {
   const n = docs.length
   const heading = mode === 'full'
-    ? `## All ${n} documents in the selected collections, in full`
-    : `## What each of the ${n} documents in the selected collections says about the task`
+    ? `## All ${n} documents being read, in full`
+    : `## What each of the ${n} documents being read says about the task`
   const sections = docs.map((d, i) => `### [C${i + 1}] ${d.filename}\n${texts[i]}`)
   const read = mode === 'full' ? '' : ' Each section was extracted from its document for this task; one saying it has nothing on the task means the document was read and found to have nothing on it. A claim about all or several documents (who wrote them, what they share) must hold in each one\'s section: check before generalising.'
-  const instruction = `These are every document in the collections the user selected, not search results: when the task concerns the collection, take all ${n} into account.${read} Cite a document inline by its label (e.g. [C1]); do not invent any other citation format.`
+  const instruction = `These are every document the user chose to read (the picked collections, and in a space its own resources), not search results: when the task concerns them, take all ${n} into account.${read} Cite a document inline by its label (e.g. [C1]); do not invent any other citation format.`
   return {
     block: [heading, ...sections, instruction].join('\n\n'),
     fileSources: docs.map((d, i) => ({ title: `[C${i + 1}] ${d.filename}`, url: `file:${d.fileId}`, label: `C${i + 1}` })),

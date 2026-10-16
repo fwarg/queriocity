@@ -260,7 +260,8 @@ export async function* streamChat(
       ...(regenerate ? { regenerate: true } : {}),
       ...(notesFirst ? { notesFirst: true } : {}),
       ...(modelId ? { modelId } : {}),
-      ...(collectionMode && collectionIds?.length ? { collectionMode } : {}),
+      // A space chat reads its own resources in the chosen mode too, with no collection picked.
+      ...(collectionMode && (collectionIds?.length || spaceId) ? { collectionMode } : {}),
       ...(attachedFileIds?.length ? { attachedFileIds } : {}),
     }),
     signal,

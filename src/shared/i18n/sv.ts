@@ -320,6 +320,7 @@ export const sv: Catalog = {
   // --- Samlingar ---
   'collection.plural': 'Samlingar',
   'collection.modeGroup': 'Läs',
+  'collection.modeGroupSpace': 'Läs utrymmets resurser',
   'collection.mode.auto': 'Auto',
   'collection.mode.excerpts': 'Utdrag',
   'collection.mode.whole': 'Hela samlingen',
@@ -342,6 +343,7 @@ export const sv: Catalog = {
   'collection.confidentialConfirm': 'Markera "{name}" som konfidentiell?\n\nDess dokument läses då bara av låsta chattar. En chatt som väljer den låses för gott (ingen webbsökning, URL-hämtning, bildgenerering eller molnmodeller), och andra chattar utesluter dokumenten. Du kan ta bort markeringen när som helst; chattar som redan låsts förblir låsta.',
   'collection.confidentialChipTitle': 'Konfidentiell: att välja den låser chatten (ingen webb, bara lokala modeller)',
   'collection.analyze': 'Analysera i chatt',
+  'space.analyzeTitle': 'Öppna en ny chatt i utrymmet som läser alla resurser som taggats till det: jämför dem, sammanfatta dem eller granska ett utkast du bifogar mot dem. Utrymmets minne används också.',
   'collection.analyzeTitle': 'Öppna en ny chatt som läser alla dokument i samlingen: jämför dem, sammanfatta dem eller granska ett utkast du bifogar mot dem. Spara svaret som anteckning från chatten.',
   'collection.promoteTitle': 'Gör om samlingen till ett utrymme och behåll resurserna. Detta går inte att ångra.',
   'collection.promoteFailed': 'Kunde inte göra om samlingen till ett utrymme',

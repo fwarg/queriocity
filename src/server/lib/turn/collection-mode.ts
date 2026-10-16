@@ -2,7 +2,8 @@ import { generateText } from 'ai'
 import { languageModel, modelTarget } from '../llm.ts'
 import { withoutThinking } from '../files/collection-digests.ts'
 import { splitAttachments, type CollectionMode } from '../../../shared/context.ts'
-import { userQueryOf, type TurnContext, type TurnSink } from './context.ts'
+import { userQueryOf, documentSet, type TurnContext, type TurnSink } from './context.ts'
+import { collectionIndex } from './collection-agent.ts'
 
 /** Auto: the small model picks how a message reads the picked collections — one short call, before
  *  anything else is read. Said in the footer, so the user learns how it decides and can override. */
@@ -26,6 +27,11 @@ export interface ModeChoice {
 /** The mode a turn reads its collections in: as asked, or chosen when the turn asked for auto. */
 export async function collectionModeFor(ctx: TurnContext, sink: TurnSink): Promise<ChosenMode> {
   const asked = ctx.collectionMode ?? 'excerpts'
+  // Read as excerpts (the space's usual search) when there is nothing else to read: Whole and Explore
+  // with no documents have nothing to do, and Auto in a space with nothing picked would cost a call
+  // on every message.
+  if (asked === 'auto' && !ctx.collections.length) return 'excerpts'
+  if (asked !== 'excerpts' && !collectionIndex(documentSet(ctx), ctx.locked).length) return 'excerpts'
   if (asked !== 'auto') return asked
   await sink.emit({ type: 'status', text: 'Choosing how to read the collection…' })
   const choice = await chooseMode(userQueryOf(ctx.msgs), ctx.collections.length, ctx.abortSignal)
