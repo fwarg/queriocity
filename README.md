@@ -1172,11 +1172,14 @@ the small model and cached until the document is re-indexed.
 
 Before the agent's first step, the server itself shows it each document's passages nearest the
 question (a *first look*), so every document is considered whatever the model then decides. With a
-reranker configured, passages are held to a relevance floor of 0.05, or the retrieval floor
-*rag_min_relevance* if set higher. That is low on purpose: question-to-passage scores run far lower
-than document-to-document ones, so relevant passages often score 0.15–0.4. A document with nothing
-above it is shown as having *nothing close*,
-and the agent is told it can rule it out without searching it. The agent's own searches show it every
+reranker configured, passages are held to a relevance floor of its own (Admin → Settings, *Explore:
+minimum relevance*, default 0.05), separate from the retrieval floor *rag_min_relevance*. It is low on
+purpose: question-to-passage scores run far lower than the scores retrieval floors are tuned on, and
+the bare word "contract" scored 0.05–0.28 on the passages that discuss contracts. A document with
+nothing above it is shown as having *nothing close*, and the agent is told it can rule it out without
+searching it. If no document clears the floor, the first look says the message matched nothing as
+worded and rules nothing out: a conversational message ("can you check again?") scores near zero
+against everything. The agent's own searches show it every
 hit it asked for, and it judges them itself; only hits above the floor are passed to the answer
 unasked, while anything the agent finds relevant it notes. Without a reranker there is no floor, as
 elsewhere in the app.
@@ -1187,7 +1190,9 @@ forced: a model that answers instead just ends the exploration), and to summaris
 to read the two or three parts that match most, not just one. The answer is written in a separate call
 from the notes, the passages searches showed (up to about 15,000 characters), and **every part read**,
 in full, most relevant first and above the floor (up to about 20,000 characters, or a quarter of the
-model's room) — notes included or not, since a model's note may be a sentence where the part holds a
+model's room). A part is scored by its best stretch against the message *and* the agent's latest
+searches, so a follow-up such as "check again" still ranks the parts read for "contract"; if no part
+clears the floor, all are passed on, ranked — notes included or not, since a model's note may be a sentence where the part holds a
 page. It also gets a list of where relevant material was found (which documents and parts) and must
 account for each document on it, so it cannot call a document silent whose passages it was given. It is
 asked to use everything relevant and be thorough; it cites `[C1]`. Reading the same part twice is

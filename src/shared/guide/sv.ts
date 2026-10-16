@@ -257,6 +257,8 @@ läses ett dokument i taget för din fråga, och svaret skrivs utifrån vad vart
 hittar; svaret skrivs utifrån anteckningarna och de stycken den såg.
 - *Bra för* riktade frågor: vilka artiklar gör X, säger något emot mitt avsnitt 3.
 - *Kan missa* det den bedömer som oviktigt; sidfoten visar hur många anrop och anteckningar den använde.
+  Avsnitt som bedöms sakna samband med din fråga och agentens sökningar lämnas utanför svaret; en
+  administratör ställer in hur strängt det är.
 - *Kostnad:* 5–20 korta modellanrop. Fungerar bäst på en modell som är bra på verktyg.
 
 **Auto**, förvalet, frågar en liten lokal modell vilket av de tre som passar varje meddelande — ett

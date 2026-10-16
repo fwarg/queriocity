@@ -252,7 +252,9 @@ is read one document at a time for your question, then answered from what each s
 **Explore** — an agent searches the documents, reads the parts that matter and notes what it finds;
 the answer is written from its notes and the passages it saw.
 - *Good for* targeted questions: which papers do X, does anything contradict my section 3.
-- *Can miss* what it judges irrelevant; the footer shows how many calls and notes it used.
+- *Can miss* what it judges irrelevant; the footer shows how many calls and notes it used. Passages
+  that score as unrelated to your question and the agent's searches are left out of the answer; an
+  administrator sets how strict that is.
 - *Cost:* 5–20 short model calls. Works best on a model that is good with tools.
 
 **Auto**, the default, asks a small local model which of the three fits each message — one quick

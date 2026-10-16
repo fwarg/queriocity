@@ -58,12 +58,15 @@ describe('what the SDK alone would lose', () => {
 
   test('still reports a call that is stopped before the provider reports usage, as an estimate', async () => {
     const errors: string[] = []
-    fake = startFakeOpenAI([{ text: ['late'], delayMs: 300 }])
+    const server = fake = startFakeOpenAI([{ text: ['late'], delayMs: 300 }])
     const calls: TokenUsage[] = []
     const model = languageModel({ ...fakeTarget(fake.baseURL), onUsage: u => { calls.push(u) }, onError: m => { errors.push(m) } })
     const stop = new AbortController()
-    setTimeout(() => stop.abort(), 50)
+    // Stopped once the provider has the request — a fixed delay can fire before it is sent on a slow
+    // CI runner, and a call never made has nothing to report.
+    const sent = setInterval(() => { if (server.callCount) { clearInterval(sent); stop.abort() } }, 5)
     await streamText({ model, prompt: 'A question long enough to count', abortSignal: stop.signal }).consumeStream({ onError: () => {} })
+    clearInterval(sent)
     expect(calls).toHaveLength(1)
     expect(calls[0].estimated).toBe(true)
     expect(calls[0].inputTokens).toBeGreaterThan(0)
