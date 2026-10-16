@@ -35,6 +35,7 @@ async function answerFromCollection(ctx: TurnContext, sink: TurnSink): Promise<T
   )
   const coverage = await coverCollection(ctx.collections, {
     model,
+    includeConfidential: ctx.locked,
     budgetChars: meterBudgetChars(model.contextTokens) - head.length - query.length - HISTORY_RESERVE_CHARS,
     abortSignal: ctx.abortSignal,
     // Digest progress rewrites one log row; nothing to wait for, so it is not awaited.

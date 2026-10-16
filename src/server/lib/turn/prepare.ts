@@ -77,7 +77,7 @@ function urlBudgetChars(ctx: TurnContext, contextTokens: number, memoryBlock: st
 async function gatherContext(ctx: TurnContext, searchBudget: SearchBudget, fetchMaxPages: number) {
   const userQuery = userQueryOf(ctx.msgs)
   const lastHasAttachment = hasAttachment(userQuery)
-  const notesBlock = ctx.notesFirst ? await buildNotesBlock(ctx.userId, userQuery, await notesRagBudget()) : { block: '', fileSources: [] }
+  const notesBlock = ctx.notesFirst ? await buildNotesBlock(ctx.userId, userQuery, await notesRagBudget(), ctx.locked) : { block: '', fileSources: [] }
   const [fileCountRow, { initialQueries, initialResults, engineErrors }, memoryBudget, ragBudget, prefetchedUrls] = await Promise.all([
     ctx.monitor ? Promise.resolve({ count: 0 }) : db.select({ count: sql<number>`count(*)` }).from(uploadedFiles).where(eq(uploadedFiles.userId, ctx.userId)).get(),
     preSearch(ctx, notesBlock.block, lastHasAttachment, searchBudget),
@@ -88,11 +88,11 @@ async function gatherContext(ctx: TurnContext, searchBudget: SearchBudget, fetch
   const hasFiles = (fileCountRow?.count ?? 0) > 0
   const effectiveRag = (ctx.settings.useSpaceRag !== false) ? ragBudget : 0
   const { block: scopedBlock, fileSources } = ctx.spaceId
-    ? await buildMemoryBlock(ctx.spaceId, memoryBudget, effectiveRag, userQuery, ctx.includeFileIds, ctx.includeMemoryIds)
+    ? await buildMemoryBlock(ctx.spaceId, memoryBudget, effectiveRag, userQuery, ctx.includeFileIds, ctx.includeMemoryIds, ctx.locked)
     : (hasFiles && ctx.settings.useChatRag !== false)
-      ? await buildChatFileBlock(ctx.userId, userQuery, ragBudget, !!notesBlock.block)
+      ? await buildChatFileBlock(ctx.userId, userQuery, ragBudget, !!notesBlock.block, ctx.locked)
       : { block: '', fileSources: [] }
-  const collectionBlock = await buildCollectionBlock(ctx.collections, userQuery, await collectionRagBudget(ctx.collections))
+  const collectionBlock = await buildCollectionBlock(ctx.collections, userQuery, await collectionRagBudget(ctx.collections), ctx.locked)
   // User memory applies to every chat, including those with no space at all.
   const memoryBlock = joinMemoryBlocks(
     await userMemoryBlockIfEnabled(ctx.userId, ctx.settings, userQuery),

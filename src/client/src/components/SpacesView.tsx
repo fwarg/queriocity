@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Lock, Unlock, MessagesSquare, Library, Trash2 } from 'lucide-react'
+import { Eye, EyeOff, Lock, Unlock, MessagesSquare, Library, Trash2 } from 'lucide-react'
 import { SectionHeader } from './SectionHeader.tsx'
 import type { TopicId } from '@shared/guide/index.ts'
 import { EmptyState, ListRow, RowAction } from './ui.tsx'
@@ -89,17 +89,20 @@ export function SpacesView({ spaces, onOpen, onCreate, onToggleLock, onDelete }:
                     ? t('collection.holdsResources', { count: sp.resourceCount })
                     : `${t('space.holdsChats', { count: sp.chatCount })}${sp.memoryCount > 0 ? ` · ${t('space.holdsMemories', { count: sp.memoryCount })}` : ''}`}
                 </span>
-                {/* Locking denies a chat web access, so it is offered only where there are chats.
-                    Persistent once on: a lock is state the row should state at rest, not on hover. */}
-                {sp.kind === 'space' && (
-                  <RowAction
-                    icon={sp.offline ? <Lock size={14} /> : <Unlock size={14} />}
-                    tone={sp.offline ? 'active' : 'default'}
-                    persistent={sp.offline}
-                    label={sp.offline ? t('space.unlockNamed', { name: sp.name }) : t('space.lockNamed', { name: sp.name })}
-                    onClick={() => onToggleLock(sp.id)}
-                  />
-                )}
+                {/* A space is locked (a container: its chats get no web); a collection is confidential
+                    (content: only locked chats read it). Persistent once on: state the row should show at
+                    rest, not on hover. */}
+                <RowAction
+                  icon={sp.kind === 'collection'
+                    ? (sp.offline ? <EyeOff size={14} /> : <Eye size={14} />)
+                    : (sp.offline ? <Lock size={14} /> : <Unlock size={14} />)}
+                  tone={sp.offline ? 'active' : 'default'}
+                  persistent={sp.offline}
+                  label={sp.kind === 'collection'
+                    ? t(sp.offline ? 'collection.unmarkConfidentialNamed' : 'collection.markConfidentialNamed', { name: sp.name })
+                    : t(sp.offline ? 'space.unlockNamed' : 'space.lockNamed', { name: sp.name })}
+                  onClick={() => onToggleLock(sp.id)}
+                />
                 <RowAction
                   icon={<Trash2 size={14} />}
                   tone="danger"

@@ -66,9 +66,10 @@ describe('creating', () => {
     expect({ kind: row.kind, resources: row.resourceCount }).toEqual({ kind: 'collection', resources: 0 })
   })
 
-  test('refuses to create a locked collection', async () => {
+  test('can create a confidential collection', async () => {
     const res = await send('/spaces', 'POST', { name: 'Secret', kind: 'collection', offline: true })
-    expect(res.status).toBe(400)
+    expect(res.status).toBe(201)
+    expect((await res.json()).offline).toBe(true)
   })
 })
 
@@ -112,13 +113,18 @@ describe('a collection holds no chats', () => {
   })
 })
 
-describe('a collection cannot be locked', () => {
-  test('locking is refused, and the row is unchanged', async () => {
+describe('locking a collection', () => {
+  // Unlike a space, nothing is gathered under a collection's lock: the chats that read it are
+  // locked themselves and stay so. So it unlocks freely, even while it holds resources.
+  test('locks, and unlocks freely while it holds resources', async () => {
     const collection = await create('Papers', 'collection')
-    expect((await send(`/spaces/${collection.id}`, 'PATCH', { offline: true })).status).toBe(400)
+    await db.insert(uploadedFiles).values({ id: 'lockfile', userId: 'colu', filename: 'a.txt', mimeType: 'text/plain', size: 1, createdAt: new Date() }).onConflictDoNothing()
+    sqlite.run('INSERT OR IGNORE INTO space_files(space_id, file_id) VALUES (?, ?)', [collection.id, 'lockfile'])
 
-    const row = await db.select().from(spaces).where(eq(spaces.id, collection.id)).get()
-    expect(row?.offline).toBe(false)
+    expect((await send(`/spaces/${collection.id}`, 'PATCH', { offline: true })).status).toBe(200)
+    expect((await db.select().from(spaces).where(eq(spaces.id, collection.id)).get())?.offline).toBe(true)
+    expect((await send(`/spaces/${collection.id}`, 'PATCH', { offline: false })).status).toBe(200)
+    expect((await db.select().from(spaces).where(eq(spaces.id, collection.id)).get())?.offline).toBe(false)
   })
 
   test('an ordinary space can still be locked', async () => {

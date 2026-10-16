@@ -11,7 +11,7 @@ import type { AnswerModel, CloudModel, CloudProvider, ModelChoices, ModelFallbac
 
 
 const FALLBACK_MESSAGES: Record<ModelFallbackReason, string> = {
-  locked: 'This space is locked, so the answer stays on the default local model.',
+  locked: 'This chat is locked (a locked space, collection or resource), so the answer stays on the default local model.',
   mode: 'The chosen model does not apply to this mode; answered with the default model.',
   unavailable: 'The chosen model is not available; answered with the default model.',
   not_allowed: 'Choosing models is not enabled for your account; answered with the default model.',

@@ -733,7 +733,8 @@ Step 3 matters as much as the others. A file added to your **library** is search
 chat you own — including online ones in other spaces, and any chat where you tick a
 [collection](#collections) that holds it, which need not be in a space at all. Locking a space
 afterwards does not retract it. A chat attachment is ephemeral and never enters the library, so it
-exists only in the locked conversation.
+exists only in the locked conversation. To keep a document in the library, mark it or its collection
+confidential instead — see below.
 
 **Locking is close to one-way, by design.** While a space is empty you can unlock it freely. Once it
 holds a chat or a memory you cannot, because unlocking would hand web access to everything gathered
@@ -745,6 +746,28 @@ are enforced on the server, not just hidden in the interface:
 - Deleting a locked space **deletes its chats**, rather than releasing them as ordinary unlocked
   chats. You are warned before this happens.
 - Monitors cannot be attached to a locked space, since a monitor is a scheduled web search.
+
+### Confidential collections and resources
+
+Two words for two things. **Locked** is about *where* content may be read: a locked space or chat has
+no web search, URL fetching or image generation, and uses local models only. **Confidential** is about
+*content*: a confidential document may only be read in a locked chat.
+
+Mark a collection confidential with the eye icon on its row, or a single resource with **Confidential**
+on its page. A resource in a confidential collection is confidential too. Confidential resources show an
+eye-off icon in the list, whichever way they got it.
+
+- **Using a confidential collection or note locks the chat, after asking.** Picking a confidential
+  collection, attaching a confidential note or opening one with *Analyze in chat* asks first, because
+  the chat then stays locked for good: its history holds what it read. A cloud model pick falls back to
+  the default local model. The chat's banner names what locked it. A locked chat in an unlocked space
+  does not write to that space's memory or history index, which the space's other chats read.
+- **Unlocked chats leave confidential documents out**: library search, notes-first, the space's own
+  documents and picked collections alike. The footer says how many were left out, so a missing document
+  has an explanation.
+- **One rule per word.** Locked spaces and chats stay locked; whether something is confidential can
+  be changed at any time. Removing the mark releases nothing already read: the chats that read it stay
+  locked.
 
 **The limit worth knowing.** A locked space removes the model's tools; it does not change where the
 model runs. If `CHAT_BASE_URL` (or `EMBED_BASE_URL` / `RERANK_BASE_URL`) points at a hosted API, your
@@ -1056,8 +1079,8 @@ resource — nothing moves, because both kinds tag the same way. This is one-way
 holds chats, memories and possibly a lock has no sensible reading as a collection, so the reverse is
 refused.
 
-**Collections cannot be locked.** Locking denies a chat web access, and a collection has no chats.
-Confidential material belongs in a [locked space](#locked-spaces).
+**A confidential collection** (eye icon on its row) keeps its documents to locked chats; see
+[Confidential collections and resources](#confidential-collections-and-resources).
 
 ### Assigning chats to spaces
 

@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, type FormEvent, type KeyboardEvent } from 'react'
-import { Send, Paperclip, X, Square, LayoutGrid, ChevronDown, ChevronUp, NotebookPen, Library } from 'lucide-react'
+import { Send, Paperclip, X, Square, LayoutGrid, ChevronDown, ChevronUp, NotebookPen, Library, EyeOff } from 'lucide-react'
 import { AI_SYSTEM_NOTICE_SHORT } from '../lib/ai-notice.ts'
 import { extractFileForContext, uploadFile, tagFileToSpace, fetchFiles, fetchNoteText, fetchSuggestions, type Resource } from '../lib/api.ts'
 import { Modal } from './Modal.tsx'
@@ -8,6 +8,7 @@ import { ModelPicker } from './ModelPicker.tsx'
 import type { PickableModel } from '@shared/llm-catalogue.ts'
 import { useT } from '../lib/i18n.tsx'
 import type { TranslationKey } from '@shared/i18n/index.ts'
+import { useConfirm } from './confirm.tsx'
 
 type FocusMode = 'flash' | 'balanced' | 'thorough' | 'image'
 type SearchCategory = 'news' | 'science' | 'discussions' | 'tech'
@@ -15,7 +16,8 @@ type SearchCategory = 'news' | 'science' | 'discussions' | 'tech'
 const SEARCH_CATEGORIES: SearchCategory[] = ['news', 'science', 'discussions', 'tech']
 
 interface Props {
-  onSubmit: (text: string) => void
+  /** `attachedFileIds`: library resources attached as text, so the server can lock the turn for a confidential one. */
+  onSubmit: (text: string, attachedFileIds?: string[]) => void
   /** Extra models the user may pick for the next message, and the current pick ('' = default). */
   models?: PickableModel[]
   modelId?: string
@@ -30,7 +32,7 @@ interface Props {
   onSearchCategoriesChange: (cats: SearchCategory[]) => void
   suggestionsEnabled?: boolean
   /** The user's collections, and which are picked for the next message. */
-  collections: Array<{ id: string; name: string }>
+  collections: Array<{ id: string; name: string; offline?: boolean }>
   selectedCollections: string[]
   onCollectionsChange: (ids: string[]) => void
   /** Read every document in the picked collections rather than the excerpts nearest the question. */
@@ -45,9 +47,14 @@ interface Props {
   spaceId?: string
   /** A document was added to the library from here; the parent reloads the list. */
   onAddedToLibrary?: () => void
-  /** The chat's space is locked: no web search, URL fetching or image generation. Advisory only —
-   *  the server enforces it — but the controls should not offer what will be refused. */
+  /** The turn will be locked (its space or chat is, or a confidential collection is picked): no web search,
+   *  URL fetching or image generation. Advisory only — the server enforces it — but the controls
+   *  should not offer what will be refused. */
   lockedSpace?: boolean
+  /** The chat is locked already (its space or itself), so nothing confidential needs asking about. */
+  chatLocked?: boolean
+  /** The chat has messages, which picking something confidential would put under the lock too. */
+  hasHistory?: boolean
   /** Follow-up questions for the last answer. Rendered here rather than above the input so they
    *  collapse with it — on a phone they otherwise eat the message list. */
   related?: string[]
@@ -57,6 +64,10 @@ interface Props {
 interface Attachment {
   filename: string
   content: string
+  /** Set for a library resource (an attached note), whose confidentiality the server must know about. */
+  resourceId?: string
+  /** A confidential note: sending it locks the chat. */
+  confidential?: boolean
   /** Cut to the attachment limit; `file` is kept so it can go to the library instead. */
   truncated?: boolean
   totalChars?: number
@@ -85,8 +96,9 @@ const CATEGORY_LABEL_KEYS: Record<SearchCategory, TranslationKey> = {
   tech: 'category.tech',
 }
 
-export function ChatInput({ models = [], modelId = '', defaultModel, onModelChange, onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, collections, selectedCollections, onCollectionsChange, wholeCollection = false, onWholeCollectionChange, notesAvailable = false, notesFirst = false, onNotesFirstChange, suggestionsEnabled, lockedSpace = false, related = [], onRelatedSelect, spaceId, onAddedToLibrary }: Props) {
+export function ChatInput({ models = [], modelId = '', defaultModel, onModelChange, onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, collections, selectedCollections, onCollectionsChange, wholeCollection = false, onWholeCollectionChange, notesAvailable = false, notesFirst = false, onNotesFirstChange, suggestionsEnabled, lockedSpace = false, chatLocked = false, hasHistory = false, related = [], onRelatedSelect, spaceId, onAddedToLibrary }: Props) {
   const t = useT()
+  const confirm = useConfirm()
   const [value, setValue] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [extractStatus, setExtractStatus] = useState<'idle' | 'loading' | 'error'>('idle')
@@ -168,6 +180,26 @@ export function ChatInput({ models = [], modelId = '', defaultModel, onModelChan
     }, 500)
   }
 
+  /** Asks before something confidential locks the chat for good; true when the chat is or will be
+   *  locked anyway, or the user agrees. */
+  async function confirmLock(name: string): Promise<boolean> {
+    const willLock = chatLocked
+      || collections.some(c => c.offline && selectedCollections.includes(c.id))
+      || attachments.some(a => a.confidential)
+    if (willLock) return true
+    const agreed = await confirm({
+      message: t(hasHistory ? 'chat.lockConfirmExisting' : 'chat.lockConfirmNew', { name }),
+      confirmLabel: t('chat.lockConfirmAction'),
+    })
+    return agreed
+  }
+
+  async function pickCollections(ids: string[]) {
+    const added = collections.find(c => c.offline && ids.includes(c.id) && !selectedCollections.includes(c.id))
+    if (added && !await confirmLock(added.name)) return
+    onCollectionsChange(ids)
+  }
+
   function handleSubmit(e: FormEvent) {
     e.preventDefault()
     const text = value.trim()
@@ -178,7 +210,8 @@ export function ChatInput({ models = [], modelId = '', defaultModel, onModelChan
       fullText += `\n\n---\n[${att.filename}]\n${att.content}`
     }
 
-    onSubmit(fullText)
+    const resourceIds = attachments.flatMap(att => att.resourceId ? [att.resourceId] : [])
+    onSubmit(fullText, resourceIds.length ? resourceIds : undefined)
     setValue('')
     setAttachments([])
     // The query is sent: any suggestion for how to phrase it is now obsolete. Cancel a pending
@@ -200,7 +233,8 @@ export function ChatInput({ models = [], modelId = '', defaultModel, onModelChan
     setExtractError('')
     try {
       const note = await fetchNoteText(id)
-      setAttachments(prev => [...prev, note])
+      if (note.confidential && !await confirmLock(note.filename)) { setExtractStatus('idle'); return }
+      setAttachments(prev => [...prev, { ...note, resourceId: id }])
       setExtractStatus('idle')
     } catch (err: unknown) {
       setExtractStatus('error')
@@ -366,7 +400,7 @@ export function ChatInput({ models = [], modelId = '', defaultModel, onModelChan
             <CollectionsGroup
               collections={collections}
               selected={selectedCollections}
-              onChange={onCollectionsChange}
+              onChange={pickCollections}
               whole={focusMode !== 'image' ? wholeCollection : undefined}
               onWholeChange={onWholeCollectionChange}
             />
@@ -555,7 +589,7 @@ function NotePicker({ onPick, onClose }: { onPick: (id: string) => void; onClose
 /** The collection chips, and once one is picked, whether to read the whole of them: every
  *  document rather than the excerpts nearest the question. `whole` is undefined where it does not apply. */
 function CollectionsGroup({ collections, selected, onChange, whole, onWholeChange }: {
-  collections: Array<{ id: string; name: string }>
+  collections: Array<{ id: string; name: string; offline?: boolean }>
   selected: string[]
   onChange: (ids: string[]) => void
   whole?: boolean
@@ -573,8 +607,10 @@ function CollectionsGroup({ collections, selected, onChange, whole, onWholeChang
             type="button"
             aria-pressed={on}
             onClick={() => onChange(on ? selected.filter(id => id !== collection.id) : [...selected, collection.id])}
-            className={`px-2 py-0.5 rounded text-xs ${on ? 'bg-amber-700 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'}`}
+            title={collection.offline ? t('collection.confidentialChipTitle') : undefined}
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${on ? 'bg-amber-700 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'}`}
           >
+            {collection.offline && <EyeOff size={10} aria-label={t('resource.confidential')} />}
             {collection.name}
           </button>
         )

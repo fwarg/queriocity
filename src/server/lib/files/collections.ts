@@ -38,12 +38,13 @@ export async function searchCollections(
   query: string,
   embedding: number[],
   limit?: number,
+  includeConfidential = false,
 ): Promise<ChunkResult[]> {
   if (!collectionIds.length) return []
   const topK = limit ?? await ragTopK()
 
   const perCollection = await Promise.all(
-    collectionIds.map(id => searchSpaceFiles(id, query, embedding, topK, true)),
+    collectionIds.map(id => searchSpaceFiles(id, query, embedding, topK, true, undefined, undefined, includeConfidential)),
   )
 
   // A resource tagged to two selected collections comes back from both, and injecting the same

@@ -189,6 +189,8 @@ export interface ResearchOptions {
   /** The chat's space is locked: no fetch_url, and no web_search unless a provider trusted for locked spaces backs it. Resolved from the database by the
    *  caller, never from the client. */
   locked?: boolean
+  /** False for a locked turn in an unlocked space: save_to_memory is not offered. */
+  spaceWrites?: boolean
   /** Indices into `messages` the user pinned: kept in full however long the conversation gets. */
   pinned?: ReadonlySet<number>
   /** Called once history has been fitted to the context, with what the model will see of it. */
@@ -201,7 +203,7 @@ export interface EgressApprovalRequest {
   reasons: string[]
 }
 
-export async function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, userMemoryEnabled = false, fetchSummarize = false, urlContextChars, compressHistory = false, searchCategory, maxStepsOverride, onEngineErrors, onUrlRead, onSource, searchBudget, requestApproval, locked = false, pinned, onContext }: ResearchOptions) {
+export async function runResearcher({ messages, focusMode, userId, model, abortSignal, initialQueries, initialResults, prefetchedUrls, customPrompt, hasFiles, spaceId, sessionId, memoryBlock, userMemoryEnabled = false, fetchSummarize = false, urlContextChars, compressHistory = false, searchCategory, maxStepsOverride, onEngineErrors, onUrlRead, onSource, searchBudget, requestApproval, locked = false, spaceWrites = true, pinned, onContext }: ResearchOptions) {
   const { maxSteps: defaultMaxSteps, count } = MODE_CONFIG[focusMode]
   // Read once per run, so the tools, the tool description and the system prompt agree.
   const trustedSearch = locked && await hasTrustedSearch()
@@ -264,7 +266,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
   system += '\n\n' + SYSTEM_PROMPTS[focusMode]
   if (customPrompt?.trim()) system += `\n\nAdditional instructions from the user:\n${customPrompt.trim()}`
   if (hasFiles) system += `\n\nYou have an uploads_search tool to search the user's uploaded documents. When the query might be answered by personal, domain-specific, or proprietary documents, call uploads_search before or alongside web_search.`
-  if (spaceId) system += `\n\nYou have a save_to_memory tool. Use it when the user expresses a preference, makes a decision, or shares context that would be useful in future conversations. Do not save trivial or ephemeral details.`
+  if (spaceId && spaceWrites) system += `\n\nYou have a save_to_memory tool. Use it when the user expresses a preference, makes a decision, or shares context that would be useful in future conversations. Do not save trivial or ephemeral details.`
   if (userMemoryEnabled) system += `\n\nYou have a save_user_fact tool for facts about the user that hold in *every* conversation — how they want answers written, languages they work in, durable constraints. Use it rarely: anything topic-specific belongs in save_to_memory instead.`
   if (spaceId) system += `\n\nYou also have a search_space_history tool for looking up earlier conversations in this space. Relevant excerpts are already provided above when they exist, so call it only when the user refers to something earlier that is not covered there.`
   // The mode prompts above instruct the model to search; without contradicting them explicitly it
@@ -459,7 +461,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
       // The primary thing worth protecting: everything returned here is local document content,
       // so it is recorded as taint before it can reach a search query or a URL.
       execute: async ({ query }) => {
-        const rows = await searchUploads(query, userId, undefined, await ragMinRelevance())
+        const rows = await searchUploads(query, userId, undefined, await ragMinRelevance(), undefined, locked)
         for (const r of rows) noteTaint(egress, r.content)
         return rows
       },
@@ -474,7 +476,8 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
     })
   }
 
-  if (spaceId) {
+  // Not in a locked turn of an unlocked space: the space's other, unlocked chats read its memory.
+  if (spaceId && spaceWrites) {
     tools.save_to_memory = tool({
       description: 'Save a noteworthy fact, preference, decision, or research finding to the space memory for future conversations. A few sentences with enough context to stand on its own.',
       inputSchema: z.object({ fact: z.string().describe('The fact to remember') }),
@@ -488,7 +491,9 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
         return 'Saved.'
       },
     })
+  }
 
+  if (spaceId) {
     tools.search_space_history = tool({
       description: 'Search past conversations in this space for relevant context (e.g. what was decided or discussed earlier). Relevant excerpts are already injected automatically — only call this when you need something they do not cover.',
       inputSchema: z.object({

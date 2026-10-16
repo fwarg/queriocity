@@ -116,7 +116,7 @@ function researcherOptions(ctx: TurnContext, sink: TurnSink, inputs: ResearchInp
     memoryBlock: inputs.memoryBlock, userMemoryEnabled: ctx.settings.userMemory === true,
     fetchSummarize: inputs.fetchSummarize, urlContextChars: inputs.urlContextChars, compressHistory: inputs.compressHistory,
     searchCategory: ctx.searchCategory, onEngineErrors: progress.warnEngineErrors, onUrlRead: progress.urlOutcome,
-    searchBudget: inputs.searchBudget, requestApproval: sink.requestApproval, locked: ctx.locked, pinned: ctx.pinned,
+    searchBudget: inputs.searchBudget, requestApproval: sink.requestApproval, locked: ctx.locked, spaceWrites: ctx.spaceWrites, pinned: ctx.pinned,
     onContext: sink.context, maxStepsOverride: ctx.monitor?.maxStepsOverride,
   }
 }

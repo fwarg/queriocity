@@ -67,6 +67,15 @@ describe('coverCollection', () => {
     expect(fake.callCount).toBe(calls + 2)
   })
 
+  test('leaves a confidential document out of an unlocked turn, and reads it in a locked one', async () => {
+    seedDoc('a.txt', 'Open paper.')
+    const secret = seedDoc('b.txt', 'Secret paper.')
+    sqlite.run('UPDATE uploaded_files SET confidential = 1 WHERE id = ?', [secret])
+    const model = fakeTarget(fake.baseURL)
+    expect((await coverCollection([COLL], { model, budgetChars: 10_000 })).block).not.toContain('Secret paper.')
+    expect((await coverCollection([COLL], { model, budgetChars: 10_000, includeConfidential: true })).block).toContain('Secret paper.')
+  })
+
   test('lists a resource\'s stored digests with the model that made them', async () => {
     const id = seedDoc('a.txt', 'x'.repeat(3000))
     await coverCollection([COLL], { model: fakeTarget(fake.baseURL), budgetChars: 500 })

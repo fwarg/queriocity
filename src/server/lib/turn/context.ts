@@ -22,7 +22,11 @@ export interface TurnContext {
   models: TurnModels
   focusMode: FocusMode
   spaceId?: string
+  /** No web, no image generation, local models only: the space or chat is locked, or the turn reads
+   *  a confidential collection or resource (lib/files/confidential.ts), which only a locked turn reads. */
   locked: boolean
+  /** May write to the space's memory: false for a locked turn in an unlocked space. Defaults to true. */
+  spaceWrites?: boolean
   settings: Record<string, unknown>
   customPrompt?: string
   /** Owned collection ids, sorted. */

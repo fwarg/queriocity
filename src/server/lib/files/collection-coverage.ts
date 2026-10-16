@@ -7,6 +7,7 @@ import { meterBudgetChars } from '../trim-messages.ts'
 import { ThinkExtractor } from '../think-extractor.ts'
 import { collectResourceText } from './resource-context.ts'
 import { LANGUAGE_RULE } from './transforms.ts'
+import { withoutConfidential } from './confidential.ts'
 
 /** Whole-collection context: every document in the picked collections rather than the excerpts
  *  nearest the question, for tasks about the collection as a whole (compare these papers, review a
@@ -51,6 +52,8 @@ export interface CoverOptions {
   /** Characters the block may take. */
   budgetChars: number
   abortSignal?: AbortSignal
+  /** Confidential resources are read only by a locked turn. */
+  includeConfidential?: boolean
   /** Called once before the first digest and after each; not at all when the documents go in full. */
   onProgress?: (done: number, total: number) => void
 }
@@ -59,7 +62,7 @@ const EMPTY: Coverage = { block: '', fileSources: [], mode: 'full', trimmed: fal
 
 /** Every document in the collections, in full or as digests, sized to `budgetChars`. */
 export async function coverCollection(collectionIds: string[], opts: CoverOptions): Promise<Coverage> {
-  const docs = collectionDocs(collectionIds)
+  const docs = collectionDocs(collectionIds, opts.includeConfidential)
   if (!docs.length) return EMPTY
   const full = renderCoverage(docs, docs.map(d => d.text), 'full')
   if (full.block.length <= opts.budgetChars) return { ...full, mode: 'full', trimmed: false }
@@ -72,12 +75,12 @@ export async function coverCollection(collectionIds: string[], opts: CoverOption
 }
 
 /** The documents in these collections that have text, each once, by filename. */
-export function collectionDocs(collectionIds: string[]): CollectionDoc[] {
+export function collectionDocs(collectionIds: string[], includeConfidential = false): CollectionDoc[] {
   if (!collectionIds.length) return []
   const rows = sqlite.prepare(`
     SELECT DISTINCT f.id, f.filename FROM space_files sf
     JOIN uploaded_files f ON f.id = sf.file_id
-    WHERE sf.space_id IN (${collectionIds.map(() => '?').join(',')})
+    WHERE sf.space_id IN (${collectionIds.map(() => '?').join(',')}) ${withoutConfidential('f.id', includeConfidential)}
     ORDER BY f.filename, f.id
   `).all(...collectionIds) as Array<{ id: string; filename: string }>
   return rows

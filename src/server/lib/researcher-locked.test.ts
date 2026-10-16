@@ -27,7 +27,7 @@ function startFakeSearxng() {
 
 afterEach(() => { fake?.stop(); fake = null; searxng?.stop(); searxng = null })
 
-async function toolNamesOffered(locked: boolean): Promise<string[][]> {
+async function toolNamesOffered(locked: boolean, spaceWrites = true): Promise<string[][]> {
   searxng = startFakeSearxng()
   process.env.SEARXNG_URL = searxng.url
   fake = startFakeOpenAI([{ text: ['An answer from the document.'] }])
@@ -37,7 +37,7 @@ async function toolNamesOffered(locked: boolean): Promise<string[][]> {
 
   const res = await runResearcher({
     messages: [{ role: 'user', content: 'what does the attached contract say about termination?' }],
-    focusMode: 'balanced', userId: 'u1', model, spaceId: 'space-1', hasFiles: true, locked,
+    focusMode: 'balanced', userId: 'u1', model, spaceId: 'space-1', hasFiles: true, locked, spaceWrites,
   })
   for await (const part of res.stream) void part
 
@@ -141,5 +141,14 @@ describe('locked space with SPEJAREN_TRUSTED', () => {
     const { tools, system } = await runLocked('yes', [{ text: ['An answer.'] }])
     expect(tools).not.toContain('web_search')
     expect(system).toContain('there is no web search')
+  })
+})
+
+describe('locked chat in an unlocked space', () => {
+  // The space's other, unlocked chats read its memory, so a chat locked by what it read must not write there.
+  test('is not offered save_to_memory, but can still read the space\'s history', async () => {
+    const names = (await toolNamesOffered(true, false)).flat()
+    expect(names).not.toContain('save_to_memory')
+    expect(names).toContain('search_space_history')
   })
 })

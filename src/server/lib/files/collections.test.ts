@@ -13,6 +13,8 @@ import { envOverride } from '../test-support/env-override.ts'
 const { db, sqlite, users, spaces, EMBED_DIMS } = await import('../db.ts')
 const { embedText } = await import('../embeddings.ts')
 const { ownedCollectionIds, searchCollections } = await import('./collections.ts')
+const { readsConfidential, confidentialInCollections, trackLeftOut } = await import('./confidential.ts')
+const { searchUploads } = await import('./uploads-search.ts')
 
 const OWNER = 'coll-owner'
 const STRANGER = 'coll-stranger'
@@ -143,5 +145,49 @@ describe('searchCollections', () => {
       await seedResource(`f${i}`, `doc${i}.pdf`, `Document number ${i} about retrieval and ranking.`, ['c1'])
     }
     expect(await searchCollections(['c1'], 'retrieval', await embedText('retrieval'), 2)).toHaveLength(2)
+  })
+})
+
+describe('confidential resources', () => {
+  // A resource is confidential by its own flag or by a confidential collection holding it. Retrieval
+  // in an unlocked turn leaves both kinds out; a locked turn reads them.
+  async function seedLibrary() {
+    await seedGroup('c1', 'Papers', 'collection')
+    await seedGroup('c2', 'Secret', 'collection')
+    await seedResource('open', 'open.pdf', 'Retrieval and ranking, an open paper.', ['c1'])
+    await seedResource('own', 'own.pdf', 'Retrieval and ranking, locked on its own.', ['c1'])
+    await seedResource('viacoll', 'viacoll.pdf', 'Retrieval and ranking, locked by its collection.', ['c1', 'c2'])
+    sqlite.run('UPDATE uploaded_files SET confidential = 1 WHERE id = ?', ['own'])
+    sqlite.run('UPDATE spaces SET offline = 1 WHERE id = ?', ['c2'])
+  }
+  const ids = (rows: Array<{ fileId: string }>) => rows.map(r => r.fileId).sort()
+
+  test('an unlocked turn leaves them out of collection and library search', async () => {
+    await seedLibrary()
+    const embedding = await embedText('retrieval')
+    expect(ids(await searchCollections(['c1'], 'retrieval', embedding))).toEqual(['open'])
+    expect(ids(await searchUploads('retrieval', OWNER))).toEqual(['open'])
+  })
+
+  test('a locked turn reads them', async () => {
+    await seedLibrary()
+    const embedding = await embedText('retrieval')
+    expect(ids(await searchCollections(['c1'], 'retrieval', embedding, undefined, true))).toEqual(['open', 'own', 'viacoll'])
+    expect(ids(await searchUploads('retrieval', OWNER, undefined, undefined, undefined, true))).toEqual(['open', 'own', 'viacoll'])
+  })
+
+  test('names what a turn reads that is confidential, and what an unlocked one leaves out', async () => {
+    await seedLibrary()
+    expect(readsConfidential({ collectionIds: ['c1'] })).toEqual([])
+    expect(readsConfidential({ collectionIds: ['c2'] })).toEqual(['Secret'])
+    expect(readsConfidential({ fileIds: ['open', 'own', 'viacoll'] }).sort()).toEqual(['own.pdf', 'viacoll.pdf'])
+    expect(confidentialInCollections(['c1']).sort()).toEqual(['own', 'viacoll'])
+  })
+
+  test('records what an unlocked search left out, when a turn is tracking', async () => {
+    await seedLibrary()
+    const leftOut = new Set<string>()
+    await trackLeftOut(leftOut, () => searchUploads('retrieval', OWNER))
+    expect([...leftOut].sort()).toEqual(['own', 'viacoll'])
   })
 })

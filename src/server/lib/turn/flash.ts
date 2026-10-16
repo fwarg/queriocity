@@ -46,12 +46,12 @@ async function flashBlocks(ctx: TurnContext) {
   ])
   const effectiveRag = (ctx.settings.useSpaceRag !== false) ? ragBudget : 0
   const scoped = ctx.spaceId
-    ? await buildMemoryBlock(ctx.spaceId, memoryBudget, effectiveRag, query, ctx.includeFileIds, ctx.includeMemoryIds)
+    ? await buildMemoryBlock(ctx.spaceId, memoryBudget, effectiveRag, query, ctx.includeFileIds, ctx.includeMemoryIds, ctx.locked)
     : { block: '', fileSources: [] }
   // Collections are picked per request and apply with or without a space, so they get their own
   // budget rather than the space one — which is deliberately 0 for a chat that has no space.
-  const collections = await buildCollectionBlock(ctx.collections, query, await collectionRagBudget(ctx.collections))
-  const notes = ctx.notesFirst ? await buildNotesBlock(ctx.userId, query, await notesRagBudget()) : { block: '', fileSources: [] }
+  const collections = await buildCollectionBlock(ctx.collections, query, await collectionRagBudget(ctx.collections), ctx.locked)
+  const notes = ctx.notesFirst ? await buildNotesBlock(ctx.userId, query, await notesRagBudget(), ctx.locked) : { block: '', fileSources: [] }
   return {
     block: joinMemoryBlocks(await userMemoryBlockIfEnabled(ctx.userId, ctx.settings, query), scoped.block, collections.block, notes.block),
     fileSources: [...scoped.fileSources, ...collections.fileSources, ...notes.fileSources],

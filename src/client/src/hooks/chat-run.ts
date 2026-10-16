@@ -31,7 +31,9 @@ export interface RunView {
   setContext: (report: ContextReport) => void
   rafRef: MutableRefObject<number>
   liveSessionRef: MutableRefObject<string | undefined>
-  onSessionCreated: (id: string, title: string) => void
+  /** `lockedBy`: set when the turn locked the chat for good, naming the confidential collections and
+   *  resources that did it. */
+  onSessionCreated: (id: string, title: string, lockedBy?: string[]) => void
 }
 
 /** One answer being streamed: folds the server's events into the answer and the progress shown. */
@@ -47,6 +49,7 @@ export class ChatRun {
   // Which picked model answered, or why the pick was refused, for the answer's footer.
   private modelNote = ''
   private errorNote = ''
+  private lockNote = ''
   private model: AnswerModel | undefined
   private coverage: Coverage | undefined
   // Built here rather than in the component so a step's end time is the moment the next one
@@ -118,6 +121,7 @@ export class ChatRun {
         return true
       case 'model_notice': this.modelNote = t(`modelNotice.${chunk.reason as ModelFallbackReason}`); return true
       case 'coverage': this.coverage = { documents: chunk.documents as number, mode: chunk.mode as Coverage['mode'], trimmed: !!chunk.trimmed }; return true
+      case 'confidential_excluded': this.lockNote = t('answer.confidentialExcluded', { count: chunk.count as number }); return true
       case 'model_error': this.errorNote = t('answer.modelError', { provider: chunk.provider as string, message: chunk.message as string }); return true
       default: return false
     }
@@ -187,12 +191,12 @@ export class ChatRun {
     if (chunk.elapsedMs) {
       view.setAnswerTime(answerFooter(view.t, {
         elapsedMs: chunk.elapsedMs as number, focusMode: this.focusMode, images: this.images.length,
-        sources: this.sources.length, blockedEngines: this.blockedEngines.map(e => e.engine), coverage: this.coverage, modelNote: [this.modelNote, this.errorNote].filter(Boolean).join(' '),
+        sources: this.sources.length, blockedEngines: this.blockedEngines.map(e => e.engine), coverage: this.coverage, modelNote: [this.modelNote, this.errorNote, this.lockNote].filter(Boolean).join(' '),
       }))
     }
     view.liveSessionRef.current = chunk.sessionId as string
     this.storedIds = { user: chunk.userMessageId as string | undefined, assistant: chunk.assistantMessageId as string | undefined }
-    view.onSessionCreated(chunk.sessionId as string, (chunk.title as string | undefined) ?? this.question.slice(0, 60))
+    view.onSessionCreated(chunk.sessionId as string, (chunk.title as string | undefined) ?? this.question.slice(0, 60), chunk.chatLocked === true ? (chunk.lockedBy as string[] ?? []) : undefined)
   }
 }
 

@@ -5,7 +5,7 @@ import { generateText } from 'ai'
 import { db, sqlite, uploadedFiles, spaceFiles, spaces, customTemplates, chatSessions, getAppSetting } from '../lib/db.ts'
 import { relatedMinSimilarity, relatedMinRelevance, topicMinSimilarity } from '../lib/rag-settings.ts'
 import { MAX_TOPIC_RESOURCES, nameTopic, noteMap, topicMap } from '../lib/files/topics.ts'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { ingestFile, extractFileText, isUsableText, ACCEPTED_MIME_TYPES } from '../lib/files/ingest.ts'
 import { saveNote, renameResource, addSeeAlso } from '../lib/files/notes.ts'
 import { relatedResources } from '../lib/files/related.ts'
@@ -17,6 +17,7 @@ import { acceptLink, dismissLink, suggestLinks } from '../lib/files/link-suggest
 import { proposeSplit } from '../lib/files/note-split.ts'
 import { collectResourceText } from '../lib/files/resource-context.ts'
 import { storedDigests } from '../lib/files/collection-coverage.ts'
+import { confidentialSql, readsConfidential } from '../lib/files/confidential.ts'
 import { operationPrompt, transformPrompt, TRANSFORM_MAX_CHARS, TRANSFORM_OPERATIONS } from '../lib/files/transforms.ts'
 import { getChatModel } from '../lib/llm.ts'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
@@ -111,6 +112,8 @@ filesRouter.get('/', async (c) => {
     summary: uploadedFiles.summary,
     topics: uploadedFiles.topics,
     origin: uploadedFiles.origin,
+    // Confidential by its own flag or a confidential collection's: what the list marks.
+    confidential: sql<number>`CASE WHEN ${sql.raw(confidentialSql('uploaded_files.id'))} THEN 1 ELSE 0 END`,
     createdAt: uploadedFiles.createdAt,
     updatedAt: uploadedFiles.updatedAt,
   }).from(uploadedFiles).where(eq(uploadedFiles.userId, userId))
@@ -407,15 +410,34 @@ filesRouter.patch('/:id', zValidator('json', z.object({
   return c.json({ ok: true })
 })
 
+/** Whether a resource is confidential (as the list reports it), its own flag, and the confidential
+ *  collections that make it so whatever that flag says (lib/files/confidential.ts). */
+function confidentiality(own: boolean, tagged: Array<{ name: string; kind: string; offline: boolean }>) {
+  const confidentialVia = tagged.filter(s => s.kind === 'collection' && s.offline).map(s => s.name)
+  return { confidential: own || confidentialVia.length > 0, confidentialOwn: own, confidentialVia }
+}
+
+/** Marks a resource confidential or not. Removable at any time: chats that read it are locked and stay so. */
+filesRouter.patch('/:id/confidential', zValidator('json', z.object({ confidential: z.boolean() })), async (c) => {
+  const userId = c.get('userId') as string
+  const resource = await ownedResource(c.req.param('id'), userId)
+  if (!resource) return c.json({ error: 'Not found' }, 404)
+  const { confidential } = c.req.valid('json')
+  await db.update(uploadedFiles).set({ confidential }).where(eq(uploadedFiles.id, resource.id))
+  console.log(`  [confidential] resource ${resource.id} ${confidential ? 'marked' : 'unmarked'}`)
+  return c.json({ ok: true })
+})
+
 filesRouter.get('/:id', async (c) => {
   const userId = c.get('userId') as string
   const resource = await ownedResource(c.req.param('id'), userId)
   if (!resource) return c.json({ error: 'Not found' }, 404)
 
-  const taggedSpaces = await db.select({ id: spaces.id, name: spaces.name })
+  const tagged = await db.select({ id: spaces.id, name: spaces.name, kind: spaces.kind, offline: spaces.offline })
     .from(spaceFiles)
     .innerJoin(spaces, eq(spaces.id, spaceFiles.spaceId))
     .where(eq(spaceFiles.fileId, resource.id))
+  const taggedSpaces = tagged.map(({ id, name }) => ({ id, name }))
 
   // The chunks rather than a reassembled document: they overlap, so joining them repeats a sentence
   // at every seam, and they are what retrieval actually returns — which is the thing worth seeing
@@ -461,6 +483,7 @@ filesRouter.get('/:id', async (c) => {
     createdAt: epochSeconds(resource.createdAt),
     updatedAt: epochSeconds(resource.updatedAt),
     spaces: taggedSpaces,
+    ...confidentiality(resource.confidential, tagged),
     chunks: chunks.map(ch => ch.content),
     digests: await storedDigests(resource.id),
   })
@@ -476,7 +499,9 @@ filesRouter.get('/:id/text', async (c) => {
   if (resource.kind !== 'note') return c.json({ error: 'Only notes can be attached from the library' }, 400)
 
   const maxChars = parseInt(await getAppSetting('attachment_chars', '20000'))
-  return c.json({ filename: resource.filename, content: (resource.body ?? '').slice(0, maxChars) })
+  // `confidential` lets the client ask before attaching it locks the chat; the server locks the turn
+  // either way, from the attached id.
+  return c.json({ filename: resource.filename, content: (resource.body ?? '').slice(0, maxChars), confidential: readsConfidential({ fileIds: [resource.id] }).length > 0 })
 })
 
 filesRouter.post('/:id/transform', zValidator('json', z.object({

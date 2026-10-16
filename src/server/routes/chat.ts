@@ -16,6 +16,7 @@ import { resolveTurnModels, modelChoices, answerModelOf, attachAnswer, pickedMod
 import type { AnswerModel } from '../../shared/llm-catalogue.ts'
 import { extractMemoriesPostHoc, toMemorySources } from '../lib/memory.ts'
 import { ownedCollectionIds } from '../lib/files/collections.ts'
+import { readsConfidential, confidentialInCollections, trackLeftOut, parseLockedBy } from '../lib/files/confidential.ts'
 import { hasAttachment, type ContextReport } from '../../shared/context.ts'
 import { indexContents, deindexContent } from '../lib/chat-indexer.ts'
 import { ownsSpace, sessionOwnership } from '../lib/ownership.ts'
@@ -57,6 +58,8 @@ const chatSchema = z.object({
   modelId: z.string().max(80).optional(),
   /** Read every document in the picked collections, not the excerpts nearest the question. */
   wholeCollection: z.boolean().optional(),
+  /** Library resources whose text the client attached to the message, so a confidential one locks the turn. */
+  attachedFileIds: z.array(z.string()).max(20).optional(),
 })
 
 export const chatRouter = new Hono<AppEnv>()
@@ -191,7 +194,7 @@ chatRouter.post('/:sessionId/approve', zValidator('json', z.object({
 
 chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', chatSchema), async (c) => {
   const userId = c.get('userId') as string
-  const { sessionId, spaceId, messages: requestMsgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, collectionIds, ephemeral, regenerate, notesFirst, modelId, wholeCollection } = c.req.valid('json')
+  const { sessionId, spaceId, messages: requestMsgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, collectionIds, ephemeral, regenerate, notesFirst, modelId, wholeCollection, attachedFileIds } = c.req.valid('json')
   const sid = sessionId ?? randomUUID()
   const msgs = requestMsgs.map(({ role, content }) => ({ role, content }))
 
@@ -205,11 +208,14 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   // Sorted so the cache key does not depend on the order the client happened to send.
   const collections = (await ownedCollectionIds(collectionIds ?? [], userId)).sort()
 
-  const locked = await isSessionLocked(sessionId, spaceId)
+  const { locked, spaceLocked, lockedBy } = await turnLock(sessionId, spaceId, { collectionIds: collections, fileIds: [...includeFileIds ?? [], ...attachedFileIds ?? []] })
   if (locked && focusMode === 'image') {
-    return c.json({ error: 'Image generation is unavailable in a locked space — it would send the prompt to the diffusion server.' }, 409)
+    return c.json({ error: 'Image generation is unavailable in a locked chat — it would send the prompt to the diffusion server.' }, 409)
   }
-  if (locked) console.log(`  [space] locked — no ${await hasTrustedSearch() ? 'web search beyond trusted providers' : 'web search'}, URL fetching or image generation`)
+  if (locked) console.log(`  [lock] locked turn — no ${await hasTrustedSearch() ? 'web search beyond trusted providers' : 'web search'}, URL fetching, image generation or cloud models`)
+  // A locked turn in an unlocked space must not leave what it read in that space's memory or
+  // history index, which the space's other, unlocked chats read.
+  const spaceWrites = !locked || spaceLocked
 
   const lastUserContent = userQueryOf(msgs)
   console.log(`\n━━━ [${focusMode}] ${lastUserContent.slice(0, 100).replace(/\n/g, ' ')}`)
@@ -249,7 +255,8 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   // resumed instead of losing a half-finished answer. See lib/stream-buffer.ts.
   const run = startRun(sid, userId)
   c.req.raw.signal.addEventListener('abort', () => scheduleAbandon(run))
-  const tail = { sid, userId, msgs, spaceId, regenerate, ephemeral, t0: Date.now() }
+  // A turn locked by what it read, outside a locked space, locks its chat for good, naming why.
+  const tail = { sid, userId, msgs, spaceId, regenerate, ephemeral, t0: Date.now(), lockedBy: locked && !spaceLocked ? lockedBy : undefined, spaceWrites }
 
   // A cache hit is a real turn, not a shortcut around one: it emits the same events and runs the
   // same tail as a generated answer, so the exchange is saved and its citations still resolve.
@@ -257,7 +264,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   if (cached) return streamRun(c, run, out => replayCached(out, cached, { ...tail, model: answerModelOf(resolved, focusMode) }, resolved))
 
   const ctx: TurnContext = {
-    userId, sid, msgs, focusMode, spaceId, locked, settings, customPrompt, collections, wholeCollection,
+    userId, sid, msgs, focusMode, spaceId, locked, spaceWrites, settings, customPrompt, collections, wholeCollection,
     // Pins travel as indices, so the messages handed to the model carry nothing but role and content.
     pinned: new Set(requestMsgs.flatMap((m, i) => m.pinned ? [i] : [])),
     models: resolved.models,
@@ -269,7 +276,11 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     const sink = createSink(out, approvalRequester(run, out))
     await sink.emit({ type: 'session', sessionId: sid })
     for (const event of modelEvents(resolved)) await sink.emit(event)
-    const result = await runTurn(ctx, sink)
+    // An unlocked turn leaves confidential resources out — of the picked collections, and of every
+    // search it runs; the footer says how many.
+    const leftOut = new Set<string>(locked ? [] : confidentialInCollections(collections))
+    const result = await trackLeftOut(leftOut, () => runTurn(ctx, sink))
+    if (leftOut.size) await sink.emit({ type: 'confidential_excluded', count: leftOut.size })
     const aborted = ctx.abortSignal.aborted
     // Without this a failing cloud model reads as an empty answer; the provider's own words say why.
     const error = resolved.observed.error
@@ -292,15 +303,24 @@ function modelEvents(resolved: ResolvedModels): Array<{ type: string; [k: string
   return model ? [{ type: 'model', ...model }] : []
 }
 
-/** Read from the database, never from the request body — a lock the client could assert would be
- *  decorative. Resolved from the chat's own space when it has one, so an existing chat stays
- *  locked even if the client forgets to send spaceId. */
-async function isSessionLocked(sessionId: string | undefined, spaceId: string | undefined): Promise<boolean> {
-  const existingSpaceId = sessionId
-    ? (await db.select({ spaceId: chatSessions.spaceId }).from(chatSessions)
-        .where(eq(chatSessions.id, sessionId)).get())?.spaceId ?? null
-    : null
-  return isSpaceLocked(existingSpaceId ?? spaceId)
+/** Whether this turn is locked: its space or chat is, or it reads a confidential collection or resource
+ *  by name (lib/files/confidential.ts). Read from the database, never from a client-asserted flag — a lock
+ *  the client could assert would be decorative. Resolved from the chat's own space when it has one,
+ *  so an existing chat stays locked even if the client forgets to send spaceId. */
+async function turnLock(
+  sessionId: string | undefined,
+  spaceId: string | undefined,
+  reads: { collectionIds: string[]; fileIds: string[] },
+): Promise<{ locked: boolean; spaceLocked: boolean; lockedBy: string[] }> {
+  const session = sessionId
+    ? await db.select({ spaceId: chatSessions.spaceId, locked: chatSessions.locked, lockedBy: chatSessions.lockedBy }).from(chatSessions)
+        .where(eq(chatSessions.id, sessionId)).get()
+    : undefined
+  const spaceLocked = await isSpaceLocked(session?.spaceId ?? spaceId)
+  const read = readsConfidential(reads)
+  // What locked the chat before, and what this turn adds.
+  const lockedBy = [...new Set([...parseLockedBy(session?.lockedBy), ...read])]
+  return { locked: spaceLocked || !!session?.locked || read.length > 0, spaceLocked, lockedBy }
 }
 
 /** Emits a cached answer with the same events and tail as a generated one. */
@@ -360,13 +380,18 @@ interface TurnTail {
   model?: AnswerModel
   /** Called with the stored answer's id, e.g. so a late cost correction can reach it. */
   onStored?: (assistantMessageId: string) => void
+  /** Set when the turn is locked outside a locked space: the chat is locked from now on, by these
+   *  confidential collections and resources (empty when it was locked already). */
+  lockedBy?: string[]
+  /** False when the space's memory and history index must not take this turn (see `spaceWrites`). */
+  spaceWrites?: boolean
 }
 
 /** Common tail for every mode: persist the exchange, close the stream, and kick off the
  *  background memory/index work. Centralised because four branches ran their own copy and the
  *  cached-answer path quietly omitted all of it — losing the turn from the conversation. */
 async function finishTurn(out: SSEStream, {
-  sid, userId, msgs, fullContent, sources, fileSources, spaceId, regenerate, ephemeral, t0, context, aborted, model, onStored,
+  sid, userId, msgs, fullContent, sources, fileSources, spaceId, regenerate, ephemeral, t0, context, aborted, model, onStored, lockedBy, spaceWrites = true,
 }: TurnTail): Promise<void> {
   const elapsedMs = Date.now() - t0
   if (ephemeral || (aborted && !fullContent.trim())) {
@@ -375,17 +400,18 @@ async function finishTurn(out: SSEStream, {
   }
   const { title, supersededAnswer, userMessageId, assistantMessageId } = await persistMessage(sid, userId, msgs, fullContent, sources, fileSources, spaceId, regenerate, model)
   onStored?.(assistantMessageId)
+  if (lockedBy) await db.update(chatSessions).set({ locked: true, lockedBy: JSON.stringify(lockedBy) }).where(eq(chatSessions.id, sid))
   if (context) await db.update(chatSessions).set({ contextReport: JSON.stringify(context) }).where(eq(chatSessions.id, sid))
   // The stored ids let the client pin these messages without reloading the chat.
   // The model again, now with the hosting provider the calls reported, for the live answer's badge.
-  await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title, elapsedMs, userMessageId, assistantMessageId, ...(model && { model }) }) })
+  await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title, elapsedMs, userMessageId, assistantMessageId, ...(model && { model }), ...(lockedBy && { chatLocked: true, lockedBy }) }) })
   // Outside the spaceId block below: a regenerate strands its predecessor's image whether or not
   // the chat belongs to a space. Fire-and-forget, as the chat-delete path does — a failed unlink
   // costs a stray file the startup sweep will collect, and must not fail the turn.
   if (supersededAnswer) {
     deleteSupersededImages(supersededAnswer, fullContent).catch(e => console.error('[image] superseded cleanup failed:', e))
   }
-  if (spaceId) {
+  if (spaceId && spaceWrites) {
     // Indexing is content-addressed and idempotent, so re-running it for the same question costs
     // nothing — but the answer that was just thrown away has to be removed explicitly.
     if (supersededAnswer) deindexContent(sid, supersededAnswer)

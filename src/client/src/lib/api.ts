@@ -235,6 +235,7 @@ export async function* streamChat(
   notesFirst?: boolean,
   modelId?: string,
   wholeCollection?: boolean,
+  attachedFileIds?: string[],
 ): AsyncGenerator<{ type: string; [k: string]: unknown }> {
   const res = await fetch(`${BASE}/chat`, {
     method: 'POST',
@@ -259,6 +260,7 @@ export async function* streamChat(
       ...(notesFirst ? { notesFirst: true } : {}),
       ...(modelId ? { modelId } : {}),
       ...(wholeCollection && collectionIds?.length ? { wholeCollection: true } : {}),
+      ...(attachedFileIds?.length ? { attachedFileIds } : {}),
     }),
     signal,
   })
@@ -913,6 +915,8 @@ export async function uploadFile(file: File): Promise<{ fileId: string; filename
 export interface Resource {
   id: string
   filename: string
+  /** Confidential by its own flag or a confidential collection's: read only by locked chats. */
+  confidential?: boolean | number
   mimeType: string
   size: number
   kind: 'file' | 'note'
@@ -938,6 +942,9 @@ export interface ResourceRef { id: string; filename: string; kind: 'file' | 'not
 export interface ResourceDetail extends Resource {
   body: string | null
   chunks: string[]
+  /** Its own flag; `confidentialVia` names the confidential collections that make it confidential regardless. */
+  confidentialOwn: boolean
+  confidentialVia: string[]
   /** Digests whole-collection answers made of this resource, one per model; createdAt in epoch seconds. */
   digests: Array<{ model: string; digest: string; createdAt: number }>
   /** The resource a transform produced this note from, if any, and the notes produced from it. */
@@ -977,13 +984,20 @@ export async function fetchFiles(): Promise<Resource[]> {
   return res.json()
 }
 
+/** Marks a resource confidential or not: a confidential one is read only by locked chats. */
+export async function setResourceConfidential(id: string, confidential: boolean): Promise<void> {
+  const res = await fetch(`${BASE}/files/${id}/confidential`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confidential }) })
+  if (!res.ok) throw await apiError(res, 'Could not change confidentiality')
+}
+
 export async function fetchResource(id: string): Promise<ResourceDetail> {
   const res = await fetch(`${BASE}/files/${id}`)
   if (!res.ok) throw await apiError(res, 'Could not load resource')
   return res.json()
 }
 
-export async function fetchNoteText(id: string): Promise<{ filename: string; content: string }> {
+/** `confidential`: attaching it locks the chat. */
+export async function fetchNoteText(id: string): Promise<{ filename: string; content: string; confidential?: boolean }> {
   const res = await fetch(`${BASE}/files/${id}/text`)
   if (!res.ok) throw await apiError(res, 'Could not load note')
   return res.json()

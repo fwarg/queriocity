@@ -25,7 +25,7 @@ interface UseChatOptions {
   followUpSuggestions?: boolean
   /** An extra model picked for this chat's messages. */
   modelId?: string
-  onSessionCreated: (id: string, title: string) => void
+  onSessionCreated: (id: string, title: string, lockedBy?: string[]) => void
 }
 
 /** Gives the just-sent question its stored id, so it can be pinned without reloading the chat. */
@@ -69,10 +69,10 @@ export function useChat(options: UseChatOptions) {
     setApproval(null)
   }
 
-  async function submit(text: string) {
+  async function submit(text: string, attachedFileIds?: string[]) {
     const next: Message[] = [...messages, { role: 'user', content: text, ...(hasAttachment(text) ? { pinned: true } : {}) }]
     setMessages(next)
-    await run(next, text, false)
+    await run(next, text, false, attachedFileIds)
   }
 
   /** Re-answers the last question, replacing the previous answer. Uses whichever focus mode
@@ -84,7 +84,7 @@ export function useChat(options: UseChatOptions) {
     await run(retry.history, retry.question, true)
   }
 
-  async function run(next: Message[], text: string, regenerating: boolean) {
+  async function run(next: Message[], text: string, regenerating: boolean, attachedFileIds?: string[]) {
     const ctrl = new AbortController()
     abortRef.current = ctrl
     clearLive()
@@ -94,7 +94,7 @@ export function useChat(options: UseChatOptions) {
     const chatRun = new ChatRun({ t, setStreaming, setStreamingThinking, setStatus, setSteps, setAnswerTime, setApproval, setContext, rafRef, liveSessionRef, onSessionCreated }, text, focusMode)
     const { searchCategories, includeFileIds, includeMemoryIds, collectionIds, spaceId, notesFirst, wholeCollection } = options
     try {
-      for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId, undefined, searchCategories, includeFileIds, includeMemoryIds, collectionIds, regenerating, notesFirst, modelId, wholeCollection)) {
+      for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId, undefined, searchCategories, includeFileIds, includeMemoryIds, collectionIds, regenerating, notesFirst, modelId, wholeCollection, attachedFileIds)) {
         chatRun.handle(chunk)
       }
     } catch (err: unknown) {
