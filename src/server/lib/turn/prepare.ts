@@ -87,9 +87,11 @@ async function gatherContext(ctx: TurnContext, searchBudget: SearchBudget, fetch
   ])
   const hasFiles = (fileCountRow?.count ?? 0) > 0
   const effectiveRag = (ctx.settings.useSpaceRag !== false) ? ragBudget : 0
+  // Picked collections are the documents asked about: excerpts from all the user's files would repeat
+  // theirs under a second label ([F1] and [C1] for one passage).
   const { block: scopedBlock, fileSources } = ctx.spaceId
     ? await buildMemoryBlock(ctx.spaceId, memoryBudget, effectiveRag, userQuery, ctx.includeFileIds, ctx.includeMemoryIds, ctx.locked)
-    : (hasFiles && ctx.settings.useChatRag !== false)
+    : (hasFiles && ctx.settings.useChatRag !== false && !ctx.collections.length)
       ? await buildChatFileBlock(ctx.userId, userQuery, ragBudget, !!notesBlock.block, ctx.locked)
       : { block: '', fileSources: [] }
   const collectionBlock = await buildCollectionBlock(ctx.collections, userQuery, await collectionRagBudget(ctx.collections), ctx.locked)

@@ -185,7 +185,7 @@ function renderFileBlock(
     .map(([fileId, { filename, label }]) => ({ title: `[${label}] ${filename}`, url: `file:${fileId}`, label }))
 
   let block = `## ${heading}\n` + fileLines.map(l => `> ${l}`).join('\n\n')
-  block += `\n\nWhen your answer draws on the excerpts above, cite them inline using their label (e.g. [${labelPrefix}1]). This is separate from any [N] web-source citations you are also instructed to use elsewhere — use both where appropriate, and do not invent any other citation format.`
+  block += `\n\nWhen your answer draws on the excerpts above, cite them inline using their label (e.g. [${labelPrefix}1]). This is separate from any [N] web-source citations you are also instructed to use elsewhere — use both where appropriate, and do not invent any other citation format. Bracketed numbers inside the excerpts, such as [7], are the documents' own references, not sources: never cite them as [7].`
 
   console.log(`  [memory] ${logTag}: ${fileLines.length} chunks, ${fileSources.length} files (~${estimateTokens(block)} tokens)`)
   return { block, fileSources }

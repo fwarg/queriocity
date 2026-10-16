@@ -13,7 +13,8 @@ const CHOOSE_TIMEOUT_MS = 20_000
 const CHOOSE_SYSTEM = `You decide how to answer a message about a collection of documents. Reply with one word — excerpts, whole or explore — then " - " and a reason of at most 12 words.
 excerpts: the answer is a fact or passage found in one or a few places in the documents.
 whole: the message is about the collection as a whole — summarise, compare, report on, or review something against all of it.
-explore: a targeted question across the documents — which of them do or say something, where something is discussed, or checking specific claims (for instance of an attached draft) against them.`
+explore: a targeted question across the documents — which of them do or say something, where something is discussed, or checking specific claims (for instance of an attached draft) against them.
+A message asking which documents or papers discuss something is explore, also when it asks to summarise what they say.`
 
 export type ChosenMode = Exclude<CollectionMode, 'auto'>
 
