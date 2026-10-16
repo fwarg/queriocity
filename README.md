@@ -1068,7 +1068,7 @@ Set `IMAGE_BASE_URL` in your environment to enable the feature (see [Environment
 ### Collections
 
 A **collection** is the other kind of grouping: it holds resources and nothing else — no chats, no
-memory, no monitors, no lock. It exists for reference material that belongs to no conversation, where
+memory, no monitors. It can be marked [confidential](#confidential-collections-and-resources). It exists for reference material that belongs to no conversation, where
 filing it into a space would mean inventing a project that does not exist.
 
 Both kinds live under **Workspaces** in the sidebar, in two labelled sections — the entry is named for
@@ -1077,15 +1077,16 @@ chats. A resource is tagged to a collection exactly as it is tagged to a space, 
 collections appear alongside spaces as [filter chips](#finding-things-in-a-large-library) in the
 Resources list.
 
-**Using a collection in a chat.** Tick one or more below the message box and that turn also retrieves
-from their resources, whether or not the chat is in a space. The selection is per request, not stored
-on the chat: it is as cheap to change as the research mode beside it, and stays lit until you untick
-it or leave the chat — starting a new chat or opening another one clears it, along with *Whole
-collection*, as it does a model pick. (Carried over, a confidential collection would lock the next
-chat without asking.) Excerpts arrive as their own block, cited `[C1]`, `[C2]` — distinct from the `[F1]` labels a
-space's own tagged resources carry, so a citation is never ambiguous about which shelf it came from.
+**Using a collection in a chat.** Pick one or more below the message box and that turn also reads
+from their resources, whether or not the chat is in a space, in the way chosen under **Read** (below).
+The selection is not stored on the chat: it is as cheap to change as the research mode beside it, and
+stays until you unpick it or leave the chat — starting a new chat or opening another one clears it,
+along with the Read choice, as it does a model pick. (Carried over, a confidential collection would
+lock the next chat without asking.) Collection sources are cited `[C1]`, `[C2]` — distinct from the
+`[F1]` labels a space's own tagged resources carry, so a citation is never ambiguous about which shelf
+it came from.
 
-Because these excerpts are asked for explicitly, they are not made to compete with whatever the space
+In *Excerpts* mode, because these excerpts are asked for explicitly, they are not made to compete with whatever the space
 itself holds: they carry their own retrieval budget rather than being ranked against it. A request
 with collections selected therefore builds a somewhat larger prompt.
 
@@ -1106,6 +1107,16 @@ description is shown under it.
 The pick, like the collections, lasts for the chat. *Analyze in chat* on a collection's page and the
 **Collection report** template set Whole collection.
 
+**Accuracy, speed and AI usage** (timings from a local 26B model on an integrated GPU, and a fast cloud model):
+
+| Mode | Reads | Good at | Can miss | Time and AI usage |
+|---|---|---|---|---|
+| **Excerpts** | the ~15 passages nearest the question | a fact or passage found in a few places | anything not near the question's wording; cannot cover a whole collection | fastest: one search, one normal answer |
+| **Whole collection, in full** (small collections) | every document, side by side | links between documents, comparisons, style | detail in the middle of a very long prompt | one long call; on a local GPU about 5–6 min for 4 papers (~40k tokens) before the first word; on a cloud model the whole collection is paid for on every message |
+| **Whole collection, per document** (larger ones) | every document, each read for the task | covering every document; nothing crowded out | cross-document detail the task did not ask for | one short call per document plus the answer; much faster than a long prompt on a local GPU; slightly more tokens than in full; cached per task |
+| **Explore** | what the agent searches for and reads | targeted questions: which documents do X, checking specific claims | what the agent judges irrelevant | 5–20 short model calls; small prompts; quality depends on the model's tool use |
+| **Auto** | — | — | a misjudged choice (it says which it made) | adds one quick small-model call |
+
 **Working on the whole collection.** That turn reads every document, not the passages nearest the
 question:
 
@@ -1118,7 +1129,7 @@ question:
   venue, year and funding; which of the other documents it cites or builds on; and the points in it
   that bear on the task (with short quotes) — or that it has nothing on it. The answer is then written from what every document
   said, so none is skipped and none is crowded out. Many short calls are also much faster than one long
-  prompt on a local GPU; see the timings in `perftest.md` if you have run it.
+  prompt on a local GPU, where reading slows sharply as a prompt grows.
 - **An attached draft** (review it against the collection) is first summarised into a short card,
   which goes into every document's call so each is read with your draft in mind. The answer still gets
   the draft in full.

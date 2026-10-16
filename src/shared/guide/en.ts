@@ -65,17 +65,18 @@ and **tech**. Pick one or several to restrict the web search to that kind of sit
 searches both. Useful when a general search keeps returning the wrong sort of page — product
 listings when you wanted research, say.
 
-**Collections** are listed under the same button. Ticking one makes that turn also read from the
-resources in it, whichever chat you are in. Excerpts from a collection are cited \`[C1]\`, \`[C2]\`
-so you can always see which shelf an answer came off.
+**Collections** are listed under the same button. Picking one makes that turn also read from the
+resources in it, whichever chat you are in, in the way chosen under **Read** — see *Reading a
+collection*. Sources from a collection are cited \`[C1]\`, \`[C2]\` so you can always see which shelf
+an answer came off.
 
 **Notes first**, under *Your notes* once you have some, answers from your own notes — and the notes
 they link with — before searching the web. They are cited \`[N1]\`, \`[N2]\`; the web is searched
 only for what they do not cover. Unlike the other choices it is remembered until you turn it off.
 
-Categories and collections apply to the **next message only** and stay lit until you unpick them —
-they are not saved on the chat. Nothing is picked by default, so the button reading *All categories* means all
-*categories*, not all collections.`,
+Categories apply to the **next message only** and stay lit until you unpick them. Collections, and
+how they are read, last for the chat: starting or opening another chat clears them. Nothing is picked
+by default, so the button reading *All categories* means all *categories*, not all collections.`,
   },
 
   resources: {
@@ -203,20 +204,61 @@ A space can also be **locked**, which cuts it off from the web entirely — see 
   collections: {
     title: 'Collections',
     summary: 'A shelf of resources, with no chats and no memory.',
-    body: `A **collection** holds resources and nothing else. No chats, no memory, no lock. It is
-for reference material that belongs to no particular project — where filing it into a space would
-mean inventing a project that does not exist.
+    body: `A **collection** holds resources and nothing else — no chats, no memory. It is for reference
+material that belongs to no particular project, where filing it into a space would mean inventing a
+project that does not exist.
 
 Collections and spaces both live under **Workspaces**, in two labelled sections. A resource is
 tagged to a collection exactly as it is tagged to a space.
 
-**Using one.** Tick it below the message box and that question also reads from its resources —
-whether or not the chat is in a space. The tick lasts until you remove it and is not saved on the
-chat, so it costs no more to change than the research mode beside it.
+**Using one.** Pick it below the message box and that question reads from its resources — whether
+or not the chat is in a space. Choose how under **Read**: Auto, Excerpts, Whole collection or Explore
+(see *Reading a collection*). The pick lasts for the chat and is cleared when you start or open
+another one.
+
+**Analyze in chat**, on a collection's page, opens a new chat that reads the whole collection — for a
+report, or for reviewing a draft you attach against it. The built-in **Collection report** template
+does the same from any chat. Save a good answer as a note with the answer's note button.
+
+**Confidential.** The eye icon on a collection's row marks it confidential: its documents are then
+read only by locked chats, and picking it locks the chat for good, after asking. See *Keeping things
+private*.
 
 **Turning one into a space.** If a collection turns out to be a project after all, promote it from
-its own panel and it keeps every resource. This only goes one way: a space that already holds
-chats and memories has no sensible reading as a collection.`,
+its own panel and it keeps every resource. This only goes one way: a space that already holds chats
+and memories has no sensible reading as a collection.`,
+  },
+
+  collectionModes: {
+    title: 'Reading a collection',
+    summary: 'Auto, excerpts, whole collection or explore — and what each costs in accuracy and time.',
+    body: `Once a collection is picked, **Read** decides how it is used. Each way trades accuracy
+against time and AI usage.
+
+**Excerpts** — the passages nearest your question, as in any chat.
+- *Good for* a fact or passage found in a few places.
+- *Can miss* anything not close to your wording; it never covers the whole collection.
+- *Cost:* the least — one search and a normal answer.
+
+**Whole collection** — every document. A small collection goes to the model in full; a larger one
+is read one document at a time for your question, then answered from what each said.
+- *Good for* reports, comparisons, and reviewing a draft against the collection. Nothing is skipped.
+- *Can miss* links between documents your question did not ask about (read one at a time), or
+  detail buried in a very long prompt (in full).
+- *Cost:* the most. On a local model a long prompt takes minutes before the first word; one document
+  at a time is much faster there. On a cloud model the collection is paid for on every message. Each
+  message reads again, so for a quick follow-up switch to Excerpts.
+
+**Explore** — an agent searches the documents, reads the parts that matter and notes what it finds;
+the answer is written from its notes.
+- *Good for* targeted questions: which papers do X, does anything contradict my section 3.
+- *Can miss* what it judges irrelevant; the footer shows how many calls and notes it used.
+- *Cost:* 5–20 short model calls. Works best on a model that is good with tools.
+
+**Auto**, the default, asks a small local model which of the three fits each message — one quick
+extra call — and the footer says what it chose and why, so you can pick yourself next time.
+
+The progress log shows each stage as it runs, and the footer how the collection was read.`,
   },
 
   monitors: {
@@ -283,42 +325,35 @@ marker is also drawn onto the downloaded file is your choice, under Settings.`,
 
   privacy: {
     title: 'Keeping things private',
-    summary: 'Locked spaces, and how to analyse a document that must not leave.',
-    body: `Everything you write, upload and receive is stored on this machine. But once the
-assistant has read a document, anything it can send outwards is a way for that document to leave —
-and a document can *contain instructions* the model will follow. Queriocity assumes what it reads
-may be hostile.
+    summary: 'Three levels of protection: cloud, local, locked — and confidential content.',
+    body: `Everything you write, upload and receive is stored on this machine. But once the assistant has
+read a document, anything it can send outwards is a way for that document to leave — and a document
+can *contain instructions* the model will follow.
 
-A **locked space** answers this by removing the ability rather than policing it. Chats in a locked
-space get no web search, no page fetching and no image generation. There is nothing to judge, so
-there is nothing to get wrong.
+There are three levels of protection:
 
-**To analyse a sensitive document:**
+- **A cloud model** — only if an admin has given you access and you pick one. The provider receives
+  the whole prompt: your question, the conversation and any document excerpts. You confirm this
+  once, and the answer says where it was sent.
+- **Local models (the default)** — nothing goes to a model provider, but web searches and fetched pages
+  can carry words from your documents. Requests that look like they do are held for your approval.
+  That is detection, and it can be fooled.
+- **Locked** — no web search, page fetching, image generation or cloud models at all. The routes out
+  do not exist, so nothing has to be judged.
 
-1. **Create a space and lock it first**, before anything is in it.
-2. **Start a new chat inside that space.**
-3. **Attach the document with the paperclip** — not to your library.
+**Two ways to lock.**
+- A **locked space** (padlock): every chat in it is locked. Lock it before anything is in it; once it
+  holds a chat or a memory it cannot be unlocked, and its chats can only move to another locked space.
+- **Confidential content** (eye icon on a collection, or on a resource's page): only locked chats may
+  read it. Picking a confidential collection or attaching a confidential note locks that chat for
+  good, after asking; the chat's banner says what locked it. Unlocked chats leave confidential
+  documents out, and the footer says so. The mark can be removed any time; locked chats stay locked.
 
-Step 3 matters as much as the others. A file in your **library** can be found from *every* chat you
-own, including ones with web access. A chat attachment never enters the library, so it exists only
-in that locked conversation.
+**A document for one chat only:** attach it with the paperclip in a locked chat instead of adding
+it to your library.
 
-**Locking is close to one-way.** An empty space can be unlocked freely; one that holds a chat or a
-memory cannot, because unlocking would hand web access to everything gathered on the promise that
-there was none. Chats in a locked space can only move to another locked space, and deleting a
-locked space deletes its chats rather than releasing them.
-
-**One limit worth knowing.** Locking removes the model's tools; it does not change where the model
-runs. If this installation uses a hosted model rather than a local one, your document is sent there
-before any tool could exist.
-
-**Cloud models are the exception to all of this.** If an admin has given you access, the model menu
-beside the research modes can send a single message to a cloud provider. That message is not
-private: the provider receives your question, the whole conversation, and any memory or document
-excerpts in the prompt, and handles them under its own terms. You confirm this once before your
-first cloud message, a warning stays under the input while a cloud model is picked, and the answer
-says where it was sent. A pick lasts for the chat it was made in and goes back to the default when
-you open another chat, and a locked space never offers cloud models.`,
+**One limit worth knowing.** A lock removes the model's tools; it does not change where the model
+runs. If this installation's own models are hosted elsewhere, documents reach them anyway.`,
   },
 
   settings: {

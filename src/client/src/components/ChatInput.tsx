@@ -10,6 +10,7 @@ import { useT } from '../lib/i18n.tsx'
 import type { TranslationKey } from '@shared/i18n/index.ts'
 import { useConfirm } from './confirm.tsx'
 import { COLLECTION_MODES, type CollectionMode } from '@shared/context.ts'
+import { GuideLink } from './GuideView.tsx'
 
 type FocusMode = 'flash' | 'balanced' | 'thorough' | 'image'
 type SearchCategory = 'news' | 'science' | 'discussions' | 'tech'
@@ -644,7 +645,7 @@ function CollectionsGroup({ collections, selected, onChange, mode, onModeChange 
               </button>
             ))}
           </div>
-          <p className="text-xs text-gray-500">{t(COLLECTION_MODE_DESC_KEYS[mode])}</p>
+          <p className="text-xs text-gray-500">{t(COLLECTION_MODE_DESC_KEYS[mode])} <GuideLink topic="collectionModes" /></p>
         </div>
       )}
     </div>
