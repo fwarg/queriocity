@@ -30,7 +30,8 @@ const MODE_LABEL_KEYS: Record<FocusMode, TranslationKey> = {
 }
 
 interface Props {
-  onSelect: (text: string, mode: FocusMode) => void
+  /** `wholeCollection`: the template is meant for the whole of the picked collections. */
+  onSelect: (text: string, mode: FocusMode, wholeCollection?: boolean) => void
   onClose: () => void
 }
 
@@ -97,7 +98,7 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
 
   function handleUse() {
     if (!active) return
-    onSelect(active.assemble(values), active.suggestedMode)
+    onSelect(active.assemble(values), active.suggestedMode, active.wholeCollection)
   }
 
   async function handleDeleteCustom(e: React.MouseEvent, id: string) {

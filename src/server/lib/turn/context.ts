@@ -2,9 +2,9 @@
 
 import type { EgressApprovalRequest } from '../researcher.ts'
 import type { SSEStream } from '../researcher-stream.ts'
-import type { TurnModels } from '../llm.ts'
+import type { ModelTarget, TurnModels } from '../llm.ts'
 import type { SearchResult } from '../search/index.ts'
-import type { ContextReport } from '../../../shared/context.ts'
+import type { ContextReport, CollectionMode } from '../../../shared/context.ts'
 import { stepEvent, type ProgressStep } from '../progress.ts'
 
 export const KEEPALIVE_INTERVAL_MS = 15000
@@ -22,11 +22,17 @@ export interface TurnContext {
   models: TurnModels
   focusMode: FocusMode
   spaceId?: string
+  /** No web, no image generation, local models only: the space or chat is locked, or the turn reads
+   *  a confidential collection or resource (lib/files/confidential.ts), which only a locked turn reads. */
   locked: boolean
+  /** May write to the space's memory: false for a locked turn in an unlocked space. Defaults to true. */
+  spaceWrites?: boolean
   settings: Record<string, unknown>
   customPrompt?: string
   /** Owned collection ids, sorted. */
   collections: string[]
+  /** How the collections are read; `auto` lets the small model choose (collection-mode.ts). Absent: excerpts. */
+  collectionMode?: CollectionMode
   includeFileIds?: string[]
   includeMemoryIds?: string[]
   notesFirst?: boolean
@@ -49,6 +55,8 @@ export interface TurnResult {
   fileSources: unknown[]
   /** False for answers that must not be replayed from the cache (failures, images). */
   cacheable: boolean
+  /** The model that wrote the answer, when the mode alone does not say (see answerModelOf). */
+  answeredBy?: ModelTarget
 }
 
 /** Typed writes onto the turn's event stream. */

@@ -9,6 +9,8 @@ export interface TokenUsage {
   inputTokens: number
   /** Includes reasoning tokens, which providers bill as output. */
   outputTokens: number
+  /** The part of `outputTokens` spent reasoning, where the provider reports it. */
+  reasoningTokens?: number
   /** Cost as the provider reported it, in the provider's own unit; absent when it reports none. */
   reportedCost?: number
   /** The hosting provider a routing service sent the call to, when it says. */
@@ -68,9 +70,11 @@ function readReport(json: unknown, probe: ResponseProbe) {
   if (typeof body?.provider === 'string' && body.provider) probe.via = body.provider
 }
 
-/** Hooks for a model's calls; none for an unmetered model, which only gets its reasoning converted. */
+/** Hooks for a model's calls. `onUsage` meters a cloud model; `onTokens` counts any model's tokens
+ *  for the answer they went into. With neither, a model only gets its reasoning converted. */
 export interface MeterHooks {
   onUsage?: (u: TokenUsage) => void
+  onTokens?: (u: TokenUsage) => void
   /** A call failed; the message is the provider's, for the user to see. */
   onError?: (message: string) => void
 }
@@ -84,11 +88,13 @@ const REASONING_ID = 'provider-reasoning'
  *  At the model layer rather than per call site, so every step of a tool loop is counted. A
  *  stream cut off before its finish part (stopped, timed out, failed) is still billed by the
  *  provider, so it is reported with an estimate from the prompt and the text received. */
-export function modelMiddleware({ onUsage, onError }: MeterHooks, probe: ResponseProbe): LanguageModelMiddleware {
-  const report = (inputTokens: number, outputTokens: number, estimated = false) => {
-    if (!onUsage) return
+export function modelMiddleware({ onUsage, onTokens, onError }: MeterHooks, probe: ResponseProbe): LanguageModelMiddleware {
+  const report = (inputTokens: number, outputTokens: number, estimated = false, reasoningTokens?: number) => {
+    if (!onUsage && !onTokens) return
     try {
-      onUsage({ inputTokens, outputTokens, reportedCost: probe.cost, routedVia: probe.via, ...(estimated && { estimated, generationId: probe.generationId }) })
+      const usage: TokenUsage = { inputTokens, outputTokens, ...(reasoningTokens ? { reasoningTokens } : {}), reportedCost: probe.cost, routedVia: probe.via, ...(estimated && { estimated, generationId: probe.generationId }) }
+      onUsage?.(usage)
+      onTokens?.(usage)
     } catch (e) {
       console.error('  [llm] usage recording failed:', e)
     }
@@ -104,7 +110,7 @@ export function modelMiddleware({ onUsage, onError }: MeterHooks, probe: Respons
     wrapGenerate: async ({ doGenerate, params }) => {
       try {
         const result = await doGenerate()
-        report(result.usage.inputTokens.total ?? 0, result.usage.outputTokens.total ?? 0)
+        report(result.usage.inputTokens.total ?? 0, result.usage.outputTokens.total ?? 0, false, result.usage.outputTokens.reasoning)
         return result
       } catch (e) {
         failed(e)
@@ -132,7 +138,7 @@ export function modelMiddleware({ onUsage, onError }: MeterHooks, probe: Respons
 function meteredStream(
   source: ReadableStream<StreamPart>,
   promptTokens: number,
-  report: (input: number, output: number, estimated?: boolean) => void,
+  report: (input: number, output: number, estimated?: boolean, reasoning?: number) => void,
   failed: (e: unknown) => void,
 ): ReadableStream<StreamPart> {
   const reader = source.getReader()
@@ -168,7 +174,7 @@ function meteredStream(
     else if (endsReasoning(part)) closeReasoning(controller)
     if (part.type === 'text-delta') outputChars += part.delta.length
     if (part.type === 'error') failed(part.error)
-    if (part.type === 'finish') { finished = true; report(part.usage.inputTokens.total ?? 0, part.usage.outputTokens.total ?? 0) }
+    if (part.type === 'finish') { finished = true; report(part.usage.inputTokens.total ?? 0, part.usage.outputTokens.total ?? 0, false, part.usage.outputTokens.reasoning) }
     controller.enqueue(part)
     return true
   }

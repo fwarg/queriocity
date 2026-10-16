@@ -9,6 +9,7 @@ import { extractMemoriesPostHoc, retroExtractionInputs } from '../lib/memory.ts'
 import { deleteSessionImages } from '../lib/image-store.ts'
 import { canMoveChat } from '../lib/space-lock.ts'
 import { deindexContent, deindexSession, indexSession } from '../lib/chat-indexer.ts'
+import { parseLockedBy } from '../lib/files/confidential.ts'
 
 export const historyRouter = new Hono<AppEnv>()
 
@@ -29,6 +30,9 @@ historyRouter.get('/', async (c) => {
   const baseQuery = db.select({
     id: chatSessions.id, title: chatSessions.title, spaceId: chatSessions.spaceId,
     locked: sql<number>`coalesce(${spaces.offline}, 0)`,
+    // The chat's own lock (it read a confidential collection or resource), separate from its space's.
+    chatLocked: chatSessions.locked,
+    lockedBy: chatSessions.lockedBy,
     createdAt: chatSessions.createdAt, updatedAt: chatSessions.updatedAt,
   })
     .from(chatSessions)
@@ -43,7 +47,7 @@ historyRouter.get('/', async (c) => {
     baseQuery.where(where).orderBy(desc(orderCol)).limit(limit).offset(offset),
     db.select({ total: count() }).from(chatSessions).leftJoin(monitorRuns, eq(chatSessions.id, monitorRuns.sessionId)).where(where).get(),
   ])
-  return c.json({ items, total: totalRow?.total ?? 0 })
+  return c.json({ items: items.map(withLockReasons), total: totalRow?.total ?? 0 })
 })
 
 historyRouter.get('/search', async (c) => {
@@ -56,13 +60,13 @@ historyRouter.get('/search', async (c) => {
   // no padlock, unlocked spaces offered as move targets for a locked chat, and the next message
   // posted without a space at all.
   const results = sqlite.prepare(`
-    SELECT DISTINCT cs.id, cs.title, cs.user_id AS userId, cs.space_id AS spaceId,
+    SELECT DISTINCT cs.id, cs.title, cs.user_id AS userId, cs.space_id AS spaceId, cs.locked AS chatLocked, cs.locked_by AS lockedBy,
            cs.created_at AS createdAt, cs.updated_at AS updatedAt
     FROM chat_sessions cs
     LEFT JOIN monitor_runs mr ON mr.session_id = cs.id
     WHERE cs.user_id = ? AND (mr.id IS NULL OR cs.graduated = 1) AND cs.title LIKE ? COLLATE NOCASE
     UNION
-    SELECT DISTINCT cs.id, cs.title, cs.user_id AS userId, cs.space_id AS spaceId,
+    SELECT DISTINCT cs.id, cs.title, cs.user_id AS userId, cs.space_id AS spaceId, cs.locked AS chatLocked, cs.locked_by AS lockedBy,
            cs.created_at AS createdAt, cs.updated_at AS updatedAt
     FROM chat_sessions cs
     JOIN messages m ON m.session_id = cs.id
@@ -70,7 +74,7 @@ historyRouter.get('/search', async (c) => {
     WHERE cs.user_id = ? AND (mr.id IS NULL OR cs.graduated = 1) AND m.content LIKE ? COLLATE NOCASE
     ORDER BY updatedAt DESC LIMIT 100
   `).all(userId, like, userId, like)
-  return c.json(results)
+  return c.json((results as Array<{ lockedBy: string | null }>).map(withLockReasons))
 })
 
 historyRouter.get('/:id', async (c) => {
@@ -229,3 +233,6 @@ historyRouter.delete('/:id', async (c) => {
 
   return c.json({ ok: true })
 })
+
+/** The chat's `locked_by` names as an array, for the banner that says why it is locked. */
+const withLockReasons = <T extends { lockedBy: string | null }>(row: T) => ({ ...row, lockedBy: parseLockedBy(row.lockedBy) })

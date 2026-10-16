@@ -3,7 +3,7 @@
 import { describe, test, expect } from 'bun:test'
 import { translate } from '@shared/i18n/index.ts'
 import type { TFunction } from './i18n.tsx'
-import { describeAnswerModel, answerModelBadge } from './answer-model.ts'
+import { describeAnswerModel, answerModelBadge, answerFooterNote } from './answer-model.ts'
 
 const t: TFunction = (key, vars) => translate('en', key, vars)
 
@@ -19,5 +19,14 @@ describe('answer model labels', () => {
     const cloud = { id: 'g', label: 'GLM', kind: 'cloud' as const, provider: 'Cortecs', via: 'entrim', cost: 0.000025, currency: 'EUR' }
     expect(answerModelBadge(cloud, t)).toBe('Cloud · Cortecs via entrim')
     expect(describeAnswerModel(cloud, t)).toBe('Model: GLM (cloud — this message was sent to Cortecs, which passed it to entrim). Cost: 0.000025 EUR.')
+    // The footer keeps just the model; the rest is on the badge and in its tooltip.
+    expect(answerFooterNote(cloud, t)).toBe('Model: GLM.')
+  })
+
+  test('put the tokens in the tooltip, with reasoning and estimates when there are any', () => {
+    const local = { id: 'g', label: 'Gemma', kind: 'default' as const, tokens: { input: 48213, output: 9120, reasoning: 2300, calls: 6 } }
+    expect(describeAnswerModel(local, t)).toBe('Model: default (Gemma). Tokens: 48.2k in, 9.1k out (2.3k reasoning) · 6 calls.')
+    const cut = { ...local, tokens: { input: 900, output: 40, calls: 1, estimated: true } }
+    expect(describeAnswerModel(cut, t)).toBe('Model: default (Gemma). Tokens: 900 in, 40 out · 1 call. Partly estimated: a call was cut off.')
   })
 })

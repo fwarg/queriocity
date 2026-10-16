@@ -38,6 +38,7 @@ import { useLang, useT } from './lib/i18n.tsx'
 import { applyTheme } from './lib/theme.ts'
 import { DEFAULT_THEME } from '@shared/theme.ts'
 import type { ContextReport } from '@shared/context.ts'
+import type { CollectionMode } from '@shared/context.ts'
 
 /** One per mode worth showing off: something current, something comparative, something explained. */
 const EXAMPLE_KEYS = ['guide.example1', 'guide.example2', 'guide.example3'] as const
@@ -47,7 +48,9 @@ type MainView = 'chat' | 'chats' | 'files' | 'spaces' | 'explore'
 type ChatsTab = 'chats' | 'monitors'
 const CHATS_TAB_KEY = 'queriocity.chatsTab'
 const NOTES_FIRST_KEY = 'queriocity.notesFirst'
-type Session = { id: string; title: string; spaceId: string | null; locked?: boolean }
+/** `locked`: its space is locked; `chatLocked`: the chat itself is, having read the confidential
+ *  collections and resources named in `lockedBy`. */
+type Session = { id: string; title: string; spaceId: string | null; locked?: boolean; chatLocked?: boolean | number; lockedBy?: string[] }
 
 const MEMORY_HEADER_TOKENS = 30
 
@@ -97,6 +100,7 @@ export default function App() {
    *  are visibly lit, so an unwanted one is obvious and one click away, whereas silently clearing a
    *  shelf the user had set up would be the more surprising of the two. */
   const [selectedCollections, setSelectedCollections] = useState<string[]>([])
+  const [collectionMode, setCollectionMode] = useState<CollectionMode>('auto')
 
   const [sessionId, setSessionId] = useState<string | undefined>()
   const [sessions, setSessions] = useState<Session[]>([])
@@ -196,6 +200,12 @@ export default function App() {
   const activeSpaceLocked = !!activeSpaceId && spaces.some(s => s.id === activeSpaceId && s.offline)
   const spaceIsLocked = (id: string | null | undefined) => !!id && spaces.some(sp => sp.id === id && sp.offline)
   const activeSpaceIsCollection = spaces.some(sp => sp.id === currentSpaceId && sp.kind === 'collection')
+  // The chat's own lock, from having read a confidential collection or resource; and whether the next
+  // message would lock it by picking a confidential collection. Advisory, as above.
+  const activeSession = sessionId ? [...sessions, ...(spaceChats ?? [])].find(s => s.id === sessionId) : undefined
+  const activeChatLocked = !!activeSession?.chatLocked
+  const pickedLockedCollection = spaces.some(sp => sp.kind === 'collection' && sp.offline && selectedCollections.includes(sp.id))
+  const turnLocked = activeSpaceLocked || activeChatLocked || pickedLockedCollection
   /** Only spaces can hold a chat, so only spaces are offered as a destination for one. The server
    *  refuses a collection either way; this keeps the UI from proposing what it will refuse. */
   const chatSpaces = spaces.filter(sp => sp.kind === 'space')
@@ -204,7 +214,7 @@ export default function App() {
   const createdSessionRef = useRef<string | undefined>(undefined)
   const modelPicker = useModelPicker({
     focusMode,
-    locked: activeSpaceLocked,
+    locked: turnLocked,
     enabled: !!currentUser,
     useThinking: currentUser?.settings?.useThinking === true,
     cloudAcknowledged: currentUser?.settings?.cloudAcknowledged === true,
@@ -224,13 +234,18 @@ export default function App() {
     notesFirst,
     includeFileIds: pinnedFileIds.length ? pinnedFileIds : undefined,
     collectionIds: selectedCollections.length ? selectedCollections : undefined,
+    collectionMode,
     includeMemoryIds: pinnedMemoryIds.length ? pinnedMemoryIds : undefined,
     spaceId: activeSpaceId ?? undefined,
     followUpSuggestions: currentUser?.settings?.followUpSuggestions !== false,
-    onSessionCreated: (id, title) => {
+    onSessionCreated: (id, title, lockedBy) => {
       createdSessionRef.current = id
       setSessionId(id)
-      setSessions(prev => prev.some(s => s.id === id) ? prev : [{ id, title, spaceId: activeSpaceId }, ...prev])
+      const lock = lockedBy ? { chatLocked: true, lockedBy } : {}
+      setSessions(prev => prev.some(s => s.id === id)
+        ? (lockedBy ? prev.map(s => s.id === id ? { ...s, ...lock } : s) : prev)
+        : [{ id, title, spaceId: activeSpaceId, ...lock }, ...prev])
+      if (lockedBy) setSpaceChats(prev => prev && prev.map(s => s.id === id ? { ...s, ...lock } : s))
       if (activeSpaceId) {
         setSpaces(sps => sps.map(sp => sp.id === activeSpaceId ? { ...sp, chatCount: sp.chatCount + 1 } : sp))
         fetchSpaceMemories(activeSpaceId).then(({ memories }) => setSpaceMemories(memories)).catch(() => {})
@@ -428,8 +443,16 @@ export default function App() {
   }
 
 
+  /** Picked collections and how they are read belong to the chat they were picked in, like the model
+   *  pick: carried into another chat, a confidential one would lock it without asking. */
+  function clearCollectionPicks() {
+    setSelectedCollections([])
+    setCollectionMode('auto')
+  }
+
   function loadSession(id: string, title: string, addToHistory = true, fromMonitor = false) {
     setFocusMessageId(null)
+    clearCollectionPicks()
     setSessionId(id)
     setEditingTitle(false)
     setIsMonitorSession(fromMonitor)
@@ -451,12 +474,23 @@ export default function App() {
   }
 
   function newChat(inSpaceId?: string) {
+    clearCollectionPicks()
     setSessionId(undefined)
     setEditingTitle(false)
     setIsMonitorSession(false)
     reset()
     setCurrentSpaceId(inSpaceId ?? null)
     setView('chat')
+  }
+
+  /** A new chat that reads every document in the collection; its answer can be saved as a note there.
+   *  A confidential collection locks that chat, so it is asked first. */
+  async function analyzeCollection(collectionId: string) {
+    const collection = spaces.find(sp => sp.id === collectionId)
+    if (collection?.offline && !await confirm({ message: t('chat.lockConfirmNew', { name: collection.name }), confirmLabel: t('chat.lockConfirmAction') })) return
+    newChat()
+    setSelectedCollections([collectionId])
+    setCollectionMode('whole')
   }
 
   /** Provenance front-matter for exported chats — EU AI Act Art 50(2).
@@ -613,7 +647,9 @@ export default function App() {
     const sp = spaces.find(s => s.id === id)
     if (!sp) return
     const next = !sp.offline
-    if (next) {
+    if (next && sp.kind === 'collection') {
+      if (!await confirm({ message: t('collection.confidentialConfirm', { name: sp.name }), confirmLabel: t('collection.markConfidential') })) return
+    } else if (next) {
       const holds = [
         sp.chatCount ? t('space.holdsChats', { count: sp.chatCount }) : '',
         sp.memoryCount ? t('space.holdsMemories', { count: sp.memoryCount }) : '',
@@ -984,7 +1020,7 @@ export default function App() {
         ) : view === 'spaces' ? (
           currentSpaceId ? (
             <div className="flex flex-col flex-1 overflow-y-auto p-6 gap-3">
-              <div className="flex items-center gap-3 mb-2">
+              <div className="flex items-center flex-wrap gap-3 mb-2">
                 <button
                   onClick={() => setCurrentSpaceId(null)}
                   className="text-gray-500 hover:text-gray-300 text-sm"
@@ -1014,13 +1050,22 @@ export default function App() {
                   </h2>
                 )}
                 {activeSpaceIsCollection ? (
-                  <button
-                    onClick={handlePromoteCollection}
-                    title={t('collection.promoteTitle')}
-                    className="ml-auto px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-sm font-medium whitespace-nowrap"
-                  >
-                    {t('collection.promote')}
-                  </button>
+                  <div className="ml-auto flex flex-wrap gap-2">
+                    <button
+                      onClick={() => analyzeCollection(currentSpaceId!)}
+                      title={t('collection.analyzeTitle')}
+                      className={PRIMARY_BTN}
+                    >
+                      {t('collection.analyze')}
+                    </button>
+                    <button
+                      onClick={handlePromoteCollection}
+                      title={t('collection.promoteTitle')}
+                      className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-sm font-medium whitespace-nowrap"
+                    >
+                      {t('collection.promote')}
+                    </button>
+                  </div>
                 ) : (
                   <button
                     onClick={() => newChat(currentSpaceId!)}
@@ -1289,7 +1334,8 @@ export default function App() {
                     />
                   </div>
                 ))}
-                {filesSectionOpen && taggedFiles.length > 0 && (
+                {/* The summary is saved as space memory, which only a space's chats read. */}
+                {filesSectionOpen && taggedFiles.length > 0 && !activeSpaceIsCollection && (
                   <div className="mt-2 flex items-center gap-2">
                     <button
                       onClick={handleTransform}
@@ -1532,6 +1578,17 @@ export default function App() {
                 </span>
               </div>
             )}
+            {activeChatLocked && !activeSpaceLocked && (
+              <div className="mx-4 mt-3 flex items-start gap-2 rounded border border-amber-700/50 bg-amber-950/20 px-3 py-2 text-xs text-amber-200">
+                <ShieldCheck size={14} className="mt-0.5 shrink-0" aria-hidden />
+                <span>
+                  <strong>{t('chat.lockedBannerTitle')}</strong>{' '}
+                  {activeSession?.lockedBy?.length
+                    ? t('chat.lockedBannerBodyNamed', { names: activeSession.lockedBy.join(', ') })
+                    : t('chat.lockedBannerBody')}
+                </span>
+              </div>
+            )}
             {spaceError && (
               <div className="mx-4 mt-3 flex items-start gap-2 rounded border border-red-700/50 bg-red-950/20 px-3 py-2 text-xs text-red-200">
                 <span className="flex-1">{spaceError}</span>
@@ -1656,11 +1713,15 @@ export default function App() {
               collections={spaces.filter(sp => sp.kind === 'collection')}
               selectedCollections={selectedCollections}
               onCollectionsChange={setSelectedCollections}
+              collectionMode={collectionMode}
+              onCollectionModeChange={setCollectionMode}
               notesAvailable={files.some(f => f.kind === 'note')}
               notesFirst={notesFirst}
               onNotesFirstChange={setNotesFirst}
               suggestionsEnabled={currentUser?.settings?.querySuggestions !== false}
-              lockedSpace={activeSpaceLocked}
+              lockedSpace={turnLocked}
+              chatLocked={activeSpaceLocked || activeChatLocked}
+              hasHistory={messages.length > 0}
               spaceId={activeSpaceId ?? undefined}
               onAddedToLibrary={reloadFiles}
               related={related}

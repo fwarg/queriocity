@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { ArrowLeft, ChevronRight, ExternalLink, FileText, MessageSquare, NotebookPen, Plus, Scissors, X } from 'lucide-react'
+import { ArrowLeft, ChevronRight, ExternalLink, Eye, EyeOff, FileText, MessageSquare, NotebookPen, Plus, Scissors, X } from 'lucide-react'
 import { NoteEditor } from './NoteEditor.tsx'
 import { NoteMarkdown } from './NoteMarkdown.tsx'
 import { TagEditor } from './TagEditor.tsx'
@@ -8,7 +8,7 @@ import { RelatedResources } from './RelatedResources.tsx'
 import { LinkSuggestions } from './LinkSuggestions.tsx'
 import { SplitNotesDialog } from './SplitNotesDialog.tsx'
 import {
-  fetchResource, fetchCustomTemplates, fetchSpaces, renameResource, setResourceTags, tagFileToSpace, transformResource, untagFileFromSpace,
+  fetchResource, fetchCustomTemplates, fetchSpaces, renameResource, setResourceConfidential, setResourceTags, tagFileToSpace, transformResource, untagFileFromSpace,
   type CustomTemplate, type ResourceDetail as Detail, type ResourceRef, type Space, type TransformOperation,
 } from '../lib/api.ts'
 import { useLang, useT } from '../lib/i18n.tsx'
@@ -88,16 +88,22 @@ export function ResourceDetail({ id, onBack, onChanged, onOpen, onOpenChat, onTa
             <p className="text-xs text-gray-500">
               {isNote ? t('note.kind') : detail.mimeType} · {stamp} · {t('resource.chunks', { count: detail.chunks.length })}
             </p>
+            {detail.confidentialVia.length > 0 && (
+              <p className="text-xs text-amber-400">{t('resource.confidentialVia', { names: detail.confidentialVia.join(', ') })}</p>
+            )}
           </div>
         </div>
-        {isNote && (
-          <button
-            onClick={() => setEditing(true)}
-            className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-sm shrink-0"
-          >
-            {t('common.edit')}
-          </button>
-        )}
+        <div className="flex gap-2 shrink-0">
+          <ConfidentialToggle detail={detail} onChanged={changed} />
+          {isNote && (
+            <button
+              onClick={() => setEditing(true)}
+              className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-sm"
+            >
+              {t('common.edit')}
+            </button>
+          )}
+        </div>
       </div>
 
       {detail.origin && detail.origin !== detail.filename && (
@@ -188,6 +194,8 @@ export function ResourceDetail({ id, onBack, onChanged, onOpen, onOpenChat, onTa
       <TransformPanel id={id} sourceTitle={detail.filename} onSaved={onChanged} />
 
       <IndexedExcerpts chunks={detail.chunks} />
+
+      {detail.digests.length > 0 && <Digests digests={detail.digests} />}
 
       {editing && (
         <NoteEditor
@@ -443,6 +451,61 @@ function IndexedExcerpts({ chunks }: { chunks: string[] }) {
             </div>
           </>
         )}
+    </details>
+  )
+}
+
+/** Marks the resource confidential, so only locked chats read it, or unmarks it at any time. */
+function ConfidentialToggle({ detail, onChanged }: { detail: Detail; onChanged: () => void }) {
+  const t = useT()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  async function toggle() {
+    setBusy(true)
+    setError('')
+    try {
+      await setResourceConfidential(detail.id, !detail.confidentialOwn)
+      onChanged()
+    } catch (e) {
+      setError(errorMessage(t, e, t('resource.confidentialFailed')))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <button
+      onClick={toggle}
+      disabled={busy}
+      title={error || t(detail.confidentialOwn ? 'resource.unmarkConfidentialTitle' : 'resource.markConfidentialTitle')}
+      aria-pressed={detail.confidentialOwn}
+      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-sm disabled:opacity-50 ${detail.confidentialOwn ? 'bg-amber-700 hover:bg-amber-600 text-white' : 'bg-gray-700 hover:bg-gray-600'}`}
+    >
+      {detail.confidentialOwn ? <EyeOff size={14} /> : <Eye size={14} />}
+      {t('resource.confidential')}
+    </button>
+  )
+}
+
+/** The digests whole-collection answers read in place of this resource when the collection was too
+ *  large to send in full; folded away like the excerpts, and shown only once one exists. */
+function Digests({ digests }: { digests: Detail['digests'] }) {
+  const t = useT()
+  const { lang } = useLang()
+  return (
+    <details className="group">
+      <summary className="cursor-pointer list-none text-xs font-medium uppercase tracking-wide text-gray-500 hover:text-gray-300 flex items-center gap-1">
+        <ChevronRight size={12} className="transition-transform group-open:rotate-90" />
+        {t('resource.digests', { count: digests.length })}
+      </summary>
+      <p className="text-xs text-gray-500 mt-1.5">{t('resource.digestsIntro')}</p>
+      <div className="flex flex-col gap-2 mt-1">
+        {digests.map(d => (
+          <div key={d.model} className="bg-gray-800 rounded p-3">
+            <p className="text-xs text-gray-500 mb-1">{d.model} · {new Date(d.createdAt * 1000).toLocaleDateString(lang)}</p>
+            <pre className="text-xs text-gray-400 whitespace-pre-wrap break-words">{d.digest}</pre>
+          </div>
+        ))}
+      </div>
     </details>
   )
 }

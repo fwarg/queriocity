@@ -25,7 +25,7 @@ export type Guide = { [K in TopicId]: Topic }
  *  things you reach for later. Object key order would work until someone sorted the file. */
 export const TOPIC_ORDER: readonly TopicId[] = [
   'gettingStarted', 'modes', 'sources', 'resources', 'notes', 'explore', 'spaces',
-  'collections', 'monitors', 'templates', 'images', 'privacy', 'settings',
+  'collections', 'collectionModes', 'monitors', 'templates', 'images', 'privacy', 'settings',
 ]
 
 /** Where a topic's "Open …" button can send you — the sidebar views, plus the settings modal.

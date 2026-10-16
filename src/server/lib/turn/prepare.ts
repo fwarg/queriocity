@@ -41,17 +41,23 @@ export async function prepareResearch(ctx: TurnContext) {
   const searchBudget = await newSearchBudget(ctx.monitor ? 'monitor' : ctx.focusMode === 'thorough' ? 'thorough' : 'balanced')
   const gathered = await gatherContext(ctx, searchBudget, fetchMaxPages)
 
+  const { showThinking, researchModel } = thinkingFor(ctx)
+  // URL text goes into the researcher's context, so it is budgeted against the model that runs it.
+  const processedUrls = gathered.prefetchedUrls.length > 0
+    ? await processUrlsForContext(gathered.prefetchedUrls, urlBudgetChars(ctx, researchModel.contextTokens, gathered.memoryBlock), fetchSummarize, urlContextChars)
+    : gathered.prefetchedUrls
+  return { ...gathered, processedUrls, showThinking, researchModel, searchBudget, urlContextChars, fetchSummarize, compressHistory }
+}
+
+/** Whether the mode shows its thinking, and the model that researches: the thinking model in
+ *  thorough mode when the user has it on, else the chat model. */
+export function thinkingFor(ctx: TurnContext) {
   const showThinkingSettings = (ctx.settings.showThinking ?? { balanced: false, thorough: false }) as { balanced: boolean; thorough: boolean }
   const showThinking = ctx.focusMode === 'balanced' ? showThinkingSettings.balanced
                      : ctx.focusMode === 'thorough'  ? showThinkingSettings.thorough
                      : false
   const useThinking: boolean = !!(ctx.settings.useThinking) && ctx.focusMode === 'thorough'
-  // URL text goes into the researcher's context, so it is budgeted against the model that runs it.
-  const researchModel = useThinking ? ctx.models.thinking : ctx.models.chat
-  const processedUrls = gathered.prefetchedUrls.length > 0
-    ? await processUrlsForContext(gathered.prefetchedUrls, urlBudgetChars(ctx, researchModel.contextTokens, gathered.memoryBlock), fetchSummarize, urlContextChars)
-    : gathered.prefetchedUrls
-  return { ...gathered, processedUrls, showThinking, researchModel, searchBudget, urlContextChars, fetchSummarize, compressHistory }
+  return { showThinking, researchModel: useThinking ? ctx.models.thinking : ctx.models.chat }
 }
 
 /** Context left for prefetched page text once the system prompt and history are counted. */
@@ -71,7 +77,7 @@ function urlBudgetChars(ctx: TurnContext, contextTokens: number, memoryBlock: st
 async function gatherContext(ctx: TurnContext, searchBudget: SearchBudget, fetchMaxPages: number) {
   const userQuery = userQueryOf(ctx.msgs)
   const lastHasAttachment = hasAttachment(userQuery)
-  const notesBlock = ctx.notesFirst ? await buildNotesBlock(ctx.userId, userQuery, await notesRagBudget()) : { block: '', fileSources: [] }
+  const notesBlock = ctx.notesFirst ? await buildNotesBlock(ctx.userId, userQuery, await notesRagBudget(), ctx.locked) : { block: '', fileSources: [] }
   const [fileCountRow, { initialQueries, initialResults, engineErrors }, memoryBudget, ragBudget, prefetchedUrls] = await Promise.all([
     ctx.monitor ? Promise.resolve({ count: 0 }) : db.select({ count: sql<number>`count(*)` }).from(uploadedFiles).where(eq(uploadedFiles.userId, ctx.userId)).get(),
     preSearch(ctx, notesBlock.block, lastHasAttachment, searchBudget),
@@ -81,12 +87,14 @@ async function gatherContext(ctx: TurnContext, searchBudget: SearchBudget, fetch
   ])
   const hasFiles = (fileCountRow?.count ?? 0) > 0
   const effectiveRag = (ctx.settings.useSpaceRag !== false) ? ragBudget : 0
+  // Picked collections are the documents asked about: excerpts from all the user's files would repeat
+  // theirs under a second label ([F1] and [C1] for one passage).
   const { block: scopedBlock, fileSources } = ctx.spaceId
-    ? await buildMemoryBlock(ctx.spaceId, memoryBudget, effectiveRag, userQuery, ctx.includeFileIds, ctx.includeMemoryIds)
-    : (hasFiles && ctx.settings.useChatRag !== false)
-      ? await buildChatFileBlock(ctx.userId, userQuery, ragBudget, !!notesBlock.block)
+    ? await buildMemoryBlock(ctx.spaceId, memoryBudget, effectiveRag, userQuery, ctx.includeFileIds, ctx.includeMemoryIds, ctx.locked)
+    : (hasFiles && ctx.settings.useChatRag !== false && !ctx.collections.length)
+      ? await buildChatFileBlock(ctx.userId, userQuery, ragBudget, !!notesBlock.block, ctx.locked)
       : { block: '', fileSources: [] }
-  const collectionBlock = await buildCollectionBlock(ctx.collections, userQuery, await collectionRagBudget(ctx.collections))
+  const collectionBlock = await buildCollectionBlock(ctx.collections, userQuery, await collectionRagBudget(ctx.collections), ctx.locked)
   // User memory applies to every chat, including those with no space at all.
   const memoryBlock = joinMemoryBlocks(
     await userMemoryBlockIfEnabled(ctx.userId, ctx.settings, userQuery),

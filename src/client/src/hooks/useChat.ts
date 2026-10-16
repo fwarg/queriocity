@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 import { streamChat, stopChat, fetchRelatedQuestions } from '../lib/api.ts'
-import { hasAttachment, type ContextReport } from '@shared/context.ts'
+import { hasAttachment, type ContextReport, type CollectionMode } from '@shared/context.ts'
 import type { Message } from '../lib/api.ts'
 import { useT } from '../lib/i18n.tsx'
 import { ChatRun, type FocusMode } from './chat-run.ts'
@@ -17,13 +17,15 @@ interface UseChatOptions {
   notesFirst?: boolean
   includeFileIds?: string[]
   collectionIds?: string[]
+  /** How the picked collections are read; auto lets the server choose per message. */
+  collectionMode?: CollectionMode
   includeMemoryIds?: string[]
   spaceId?: string
   /** User setting; when false no related-questions call is made at all. */
   followUpSuggestions?: boolean
   /** An extra model picked for this chat's messages. */
   modelId?: string
-  onSessionCreated: (id: string, title: string) => void
+  onSessionCreated: (id: string, title: string, lockedBy?: string[]) => void
 }
 
 /** Gives the just-sent question its stored id, so it can be pinned without reloading the chat. */
@@ -67,10 +69,10 @@ export function useChat(options: UseChatOptions) {
     setApproval(null)
   }
 
-  async function submit(text: string) {
+  async function submit(text: string, attachedFileIds?: string[]) {
     const next: Message[] = [...messages, { role: 'user', content: text, ...(hasAttachment(text) ? { pinned: true } : {}) }]
     setMessages(next)
-    await run(next, text, false)
+    await run(next, text, false, attachedFileIds)
   }
 
   /** Re-answers the last question, replacing the previous answer. Uses whichever focus mode
@@ -82,7 +84,7 @@ export function useChat(options: UseChatOptions) {
     await run(retry.history, retry.question, true)
   }
 
-  async function run(next: Message[], text: string, regenerating: boolean) {
+  async function run(next: Message[], text: string, regenerating: boolean, attachedFileIds?: string[]) {
     const ctrl = new AbortController()
     abortRef.current = ctrl
     clearLive()
@@ -90,9 +92,9 @@ export function useChat(options: UseChatOptions) {
     setBusy(true)
     setAnswerTime('')
     const chatRun = new ChatRun({ t, setStreaming, setStreamingThinking, setStatus, setSteps, setAnswerTime, setApproval, setContext, rafRef, liveSessionRef, onSessionCreated }, text, focusMode)
-    const { searchCategories, includeFileIds, includeMemoryIds, collectionIds, spaceId, notesFirst } = options
+    const { searchCategories, includeFileIds, includeMemoryIds, collectionIds, spaceId, notesFirst, collectionMode } = options
     try {
-      for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId, undefined, searchCategories, includeFileIds, includeMemoryIds, collectionIds, regenerating, notesFirst, modelId)) {
+      for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId, undefined, searchCategories, includeFileIds, includeMemoryIds, collectionIds, regenerating, notesFirst, modelId, collectionMode, attachedFileIds)) {
         chatRun.handle(chunk)
       }
     } catch (err: unknown) {

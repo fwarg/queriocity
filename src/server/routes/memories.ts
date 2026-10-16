@@ -234,7 +234,10 @@ memoriesRouter.post('/:spaceId/transform', zValidator('json', z.object({
   const userId = c.get('userId') as string
   const spaceId = c.req.param('spaceId')
   const { operation, fileIds } = c.req.valid('json')
-  if (!await verifySpaceOwner(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
+  const space = await verifySpaceOwner(spaceId, userId)
+  if (!space) return c.json({ error: 'Not found' }, 404)
+  // The summary is saved as memory, which a collection never reads (see the POST above).
+  if (space.kind === 'collection') return c.json({ error: COLLECTION_HOLDS_NO_CHATS }, 400)
 
   // The space's tagged files, narrowed to the selection when the panel has checkboxes ticked.
   const tagged = await db.select({ fileId: spaceFiles.fileId }).from(spaceFiles)

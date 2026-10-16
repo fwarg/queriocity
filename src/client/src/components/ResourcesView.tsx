@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { FileText, NotebookPen, Trash2, X } from 'lucide-react'
+import { EyeOff, FileText, NotebookPen, Trash2, X } from 'lucide-react'
 import { NoteEditor } from './NoteEditor.tsx'
 import { SectionHeader } from './SectionHeader.tsx'
 import { useConfirm } from './confirm.tsx'
@@ -214,7 +214,10 @@ export function ResourcesView({ resources, onChanged, openId, onOpenIdChange, on
                     ? <NotebookPen size={16} className="text-amber-400 shrink-0 mt-0.5" />
                     : <FileText size={16} className="text-gray-500 shrink-0 mt-0.5" />}
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm text-gray-100 truncate">{r.filename}</div>
+                    <div className="text-sm text-gray-100 truncate flex items-center gap-1.5">
+                      {!!r.confidential && <EyeOff size={12} className="shrink-0 text-amber-400" aria-label={t('resource.confidential')} />}
+                      <span className="truncate">{r.filename}</span>
+                    </div>
                     {r.summary && <div className="text-xs text-gray-400 mt-0.5 line-clamp-2">{r.summary}</div>}
                     <div className="text-xs text-gray-500 mt-0.5">
                       {r.kind === 'note' ? t('note.kind') : r.mimeType} · {formatSize(r.size)} · {new Date((r.updatedAt ?? r.createdAt) * 1000).toLocaleDateString(lang)}

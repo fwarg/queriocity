@@ -4,7 +4,7 @@ import type { LogStep } from '../components/ProgressLog.tsx'
 import type { TFunction } from '../lib/i18n.tsx'
 import type { ContextReport } from '@shared/context.ts'
 import type { AnswerModel, ModelFallbackReason } from '@shared/llm-catalogue.ts'
-import { describeAnswerModel } from '../lib/answer-model.ts'
+import { answerFooterNote } from '../lib/answer-model.ts'
 
 export type FocusMode = 'flash' | 'balanced' | 'thorough' | 'image'
 export type ChatChunk = { type: string; [k: string]: unknown }
@@ -31,7 +31,9 @@ export interface RunView {
   setContext: (report: ContextReport) => void
   rafRef: MutableRefObject<number>
   liveSessionRef: MutableRefObject<string | undefined>
-  onSessionCreated: (id: string, title: string) => void
+  /** `lockedBy`: set when the turn locked the chat for good, naming the confidential collections and
+   *  resources that did it. */
+  onSessionCreated: (id: string, title: string, lockedBy?: string[]) => void
 }
 
 /** One answer being streamed: folds the server's events into the answer and the progress shown. */
@@ -47,7 +49,12 @@ export class ChatRun {
   // Which picked model answered, or why the pick was refused, for the answer's footer.
   private modelNote = ''
   private errorNote = ''
+  private lockNote = ''
+  // Which way Auto read the collections, and how an exploration went, for the footer.
+  private collectionNote = ''
   private model: AnswerModel | undefined
+  private coverage: Coverage | undefined
+  private exploration: Exploration | undefined
   // Built here rather than in the component so a step's end time is the moment the next one
   // arrives, not the moment React happened to re-render.
   private readonly log: LogStep[] = []
@@ -116,6 +123,12 @@ export class ChatRun {
         this.setModel({ id: chunk.id as string, label: chunk.label as string, kind: chunk.kind as AnswerModel['kind'], provider: chunk.provider as string })
         return true
       case 'model_notice': this.modelNote = t(`modelNotice.${chunk.reason as ModelFallbackReason}`); return true
+      case 'coverage': this.coverage = { documents: chunk.documents as number, mode: chunk.mode as Coverage['mode'], trimmed: !!chunk.trimmed, irrelevant: (chunk.irrelevant as number | undefined) ?? 0 }; return true
+      case 'collection_mode':
+        this.collectionNote = t('answer.autoChose', { mode: t(`collection.mode.${chunk.mode as 'excerpts' | 'whole' | 'explore'}`), reason: chunk.reason as string })
+        return true
+      case 'exploration': this.exploration = { steps: chunk.steps as number, notes: chunk.notes as number, endedEarly: !!chunk.endedEarly }; return true
+      case 'confidential_excluded': this.lockNote = t('answer.confidentialExcluded', { count: chunk.count as number }); return true
       case 'model_error': this.errorNote = t('answer.modelError', { provider: chunk.provider as string, message: chunk.message as string }); return true
       default: return false
     }
@@ -161,8 +174,13 @@ export class ChatRun {
   }
 
   private pushStep(step: Omit<LogStep, 'startedAt'>) {
-    this.endLastStep()
-    this.log.push({ ...step, startedAt: Date.now() })
+    const last = this.log[this.log.length - 1]
+    // Progress of the running step rewrites its row, keeping its start time.
+    if (step.update && last?.kind === step.kind && last.endedAt === undefined) this.log[this.log.length - 1] = { ...last, ...step }
+    else {
+      this.endLastStep()
+      this.log.push({ ...step, startedAt: Date.now() })
+    }
     this.view.setSteps([...this.log])
   }
 
@@ -170,7 +188,7 @@ export class ChatRun {
    *  hosting provider and the cost, or which default model answered. */
   private setModel(model: AnswerModel) {
     this.model = model
-    this.modelNote = describeAnswerModel(model, this.view.t)
+    this.modelNote = answerFooterNote(model, this.view.t)
   }
 
   private finish(chunk: ChatChunk) {
@@ -180,32 +198,71 @@ export class ChatRun {
     if (chunk.elapsedMs) {
       view.setAnswerTime(answerFooter(view.t, {
         elapsedMs: chunk.elapsedMs as number, focusMode: this.focusMode, images: this.images.length,
-        sources: this.sources.length, blockedEngines: this.blockedEngines.map(e => e.engine), modelNote: [this.modelNote, this.errorNote].filter(Boolean).join(' '),
+        sources: this.sources.length, blockedEngines: this.blockedEngines.map(e => e.engine), coverage: this.coverage, exploration: this.exploration,
+        modelNote: [this.collectionNote, this.modelNote, this.errorNote, this.lockNote].filter(Boolean).join(' '),
       }))
     }
     view.liveSessionRef.current = chunk.sessionId as string
     this.storedIds = { user: chunk.userMessageId as string | undefined, assistant: chunk.assistantMessageId as string | undefined }
-    view.onSessionCreated(chunk.sessionId as string, (chunk.title as string | undefined) ?? this.question.slice(0, 60))
+    view.onSessionCreated(chunk.sessionId as string, (chunk.title as string | undefined) ?? this.question.slice(0, 60), chunk.chatLocked === true ? (chunk.lockedBy as string[] ?? []) : undefined)
   }
 }
 
-/** The line under a finished answer: time taken, what the search found, and which model answered. */
-export function answerFooter(t: TFunction, { elapsedMs, focusMode, images, sources, blockedEngines, modelNote }: {
+/** How a whole-collection answer read the collection: its documents in full, or each read for the task. */
+export interface Coverage {
+  documents: number
+  mode: 'full' | 'extract'
+  /** What the documents said was shortened to fit the model. */
+  trimmed: boolean
+  /** Documents read for the task that had nothing on it. */
+  irrelevant: number
+}
+
+/** The line under a finished answer: time taken, what the search found (or which documents were
+ *  read, for a whole-collection answer, which does not search), and which model answered. */
+export function answerFooter(t: TFunction, { elapsedMs, focusMode, images, sources, blockedEngines, coverage, exploration, modelNote }: {
   elapsedMs: number
   focusMode: FocusMode
   images: number
   sources: number
   blockedEngines: string[]
+  coverage?: Coverage
+  exploration?: Exploration
   modelNote: string
 }): string {
   const label = t(images > 0 ? 'answer.generatedIn' : 'answer.answeredIn')
+  const detail = exploration ? ` · ${explorationText(t, exploration)}`
+    : coverage ? ` · ${coverageText(t, coverage)}`
+      : searchText(t, focusMode, sources, blockedEngines)
+  return t('answer.time', { label, seconds: (elapsedMs / 1000).toFixed(1) }) + detail + '.' + (modelNote ? ` ${modelNote}` : '')
+}
+
+function searchText(t: TFunction, focusMode: FocusMode, sources: number, blockedEngines: string[]): string {
   // Zero sources only means "the search came up empty" in the modes that always search. Flash
   // never searches, and image searches at its own discretion without reporting sources, so for
   // those a count of zero says nothing and is left out.
   const alwaysSearches = focusMode === 'balanced' || focusMode === 'thorough'
-  let srcLabel: string
-  if (sources > 0) srcLabel = ` · ${t('answer.searchResults', { count: sources })}`
-  else if (blockedEngines.length) srcLabel = ` · ${t('answer.enginesUnavailable', { engines: blockedEngines.join(', ') })}`
-  else srcLabel = alwaysSearches ? ` · ${t('answer.noSearchResults')}` : ''
-  return t('answer.time', { label, seconds: (elapsedMs / 1000).toFixed(1) }) + srcLabel + '.' + (modelNote ? ` ${modelNote}` : '')
+  if (sources > 0) return ` · ${t('answer.searchResults', { count: sources })}`
+  if (blockedEngines.length) return ` · ${t('answer.enginesUnavailable', { engines: blockedEngines.join(', ') })}`
+  return alwaysSearches ? ` · ${t('answer.noSearchResults')}` : ''
+}
+
+/** How an Explore answer went: its steps and notes, and whether it ended before the model was done. */
+export interface Exploration {
+  steps: number
+  notes: number
+  endedEarly: boolean
+}
+
+function explorationText(t: TFunction, { steps, notes, endedEarly }: Exploration): string {
+  return t('answer.explored', { steps, notes }) + (endedEarly ? `, ${t('answer.exploredEarly')}` : '')
+}
+
+function coverageText(t: TFunction, { documents, mode, trimmed, irrelevant }: Coverage): string {
+  if (mode === 'full') return t('answer.documentsInFull', { count: documents })
+  return [
+    t('answer.documentsForTask', { count: documents }),
+    ...(irrelevant ? [t('answer.documentsNothingRelevant', { count: irrelevant })] : []),
+    ...(trimmed ? [t('answer.documentsShortened')] : []),
+  ].join(', ')
 }

@@ -71,7 +71,9 @@ describe('ChatRun', () => {
     expect(run.storedIds).toEqual({ user: 'u1', assistant: 'a1' })
     expect(liveSessionRef.current).toBe('s1')
     expect(seen.sessions).toEqual([['s1', 'Bees']])
-    expect(seen.answerTime).toContain('this message was sent to Cloudy')
+    // Just the model in the footer; where it went is on the badge, the rest in its tooltip.
+    expect(seen.answerTime).toContain('Model: Big.')
+    expect(seen.answerTime).not.toContain('Cloudy')
   })
 
   test('names the session after the question when the server sends no title', () => {
@@ -113,8 +115,8 @@ describe('ChatRun', () => {
       done({ model: { id: 'm', label: 'Big', kind: 'cloud', provider: 'Cortecs', via: 'entrim', cost: 0.00002, currency: 'EUR' } }),
     )
     expect(run.answer()?.model).toMatchObject({ via: 'entrim', cost: 0.00002 })
-    expect(seen.answerTime).toContain('passed it to entrim')
-    expect(seen.answerTime).toContain('Cost: 0.000020 EUR.')
+    expect(seen.answerTime).toContain('Model: Big.')
+    expect(seen.answerTime).not.toContain('Cost')
   })
 
   test('puts a cloud model\'s error in the footer, after the model note', () => {
@@ -126,6 +128,27 @@ describe('ChatRun', () => {
     )
     expect(seen.answerTime).toContain('Cortecs returned an error: Model missing does not exist')
     expect(seen.answerTime.indexOf('sent to Cortecs')).toBeLessThan(seen.answerTime.indexOf('returned an error'))
+  })
+
+  test('updates a document-reading step in place, and names the documents read in the footer', () => {
+    const { seen, feed } = harness()
+    const docs = (index: number) => ({ type: 'status', text: '', step: { kind: 'documents', index, total: 3, update: index > 0 } })
+    feed(docs(0), docs(1), docs(2), { type: 'coverage', documents: 3, mode: 'extract', trimmed: true, irrelevant: 1 }, { type: 'text', delta: 'x' }, done())
+    expect(seen.steps).toHaveLength(1)
+    expect(seen.steps[0]).toMatchObject({ kind: 'documents', index: 2 })
+    expect(seen.answerTime).toContain('3 documents read for this question, 1 with nothing on it, shortened to fit the model')
+    expect(seen.answerTime).not.toContain(translate('en', 'answer.noSearchResults'))
+  })
+
+  test('says how Auto read the collection, and how an exploration went', () => {
+    const { seen, feed } = harness()
+    feed(
+      { type: 'collection_mode', mode: 'explore', reason: 'a targeted question' },
+      { type: 'exploration', steps: 12, notes: 5, endedEarly: true },
+      { type: 'text', delta: 'x' }, done(),
+    )
+    expect(seen.answerTime).toContain('12 model calls exploring the collection, 5 notes, ended before the model was done')
+    expect(seen.answerTime).toContain('Auto read the collection as Explore: a targeted question.')
   })
 
   test('puts a refused model pick in the footer', () => {

@@ -12,7 +12,7 @@ export const TRANSFORM_MAX_CHARS = 24000
 
 /** Answers follow the document rather than the UI, matching how the research prompts treat the
  *  user's own language — a summary of a Swedish report is of no use in English. */
-const LANGUAGE_RULE = 'Write in the same language as the source material.'
+export const LANGUAGE_RULE = 'Write in the same language as the source material.'
 
 /** The output is saved as a note and read on its own, often as a retrieved excerpt with nothing
  *  around it. Without this, `questions` in particular produced a bare list — the questions were

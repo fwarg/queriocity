@@ -7,11 +7,11 @@ import { loadCatalogue, cloudTarget } from './llm-catalogue.ts'
 import { getLlmAccess, userSpend, providerSpend, meteredUsage, addAnswerCost } from './llm-usage.ts'
 import { isLocalEndpoint } from './space-lock.ts'
 import { meterBudgetChars } from './trim-messages.ts'
-import type { AnswerModel, CloudModel, CloudProvider, ModelChoices, ModelFallbackReason, PickableModel } from '../../shared/llm-catalogue.ts'
+import type { AnswerModel, AnswerTokens, CloudModel, CloudProvider, ModelChoices, ModelFallbackReason, PickableModel } from '../../shared/llm-catalogue.ts'
 
 
 const FALLBACK_MESSAGES: Record<ModelFallbackReason, string> = {
-  locked: 'This space is locked, so the answer stays on the default local model.',
+  locked: 'This chat is locked (a locked space, collection or resource), so the answer stays on the default local model.',
   mode: 'The chosen model does not apply to this mode; answered with the default model.',
   unavailable: 'The chosen model is not available; answered with the default model.',
   not_allowed: 'Choosing models is not enabled for your account; answered with the default model.',
@@ -25,8 +25,9 @@ export interface ResolvedModels {
   /** The catalogue entry the turn runs on, and its provider, when the pick was honoured. */
   cloud?: CloudModel
   provider?: CloudProvider
-  /** Filled in as the turn's calls report it: the hosting provider, and the cost so far. */
-  observed?: TurnObserved
+  /** Filled in as the turn's calls report it: the first error (any model), and for a cloud pick the
+   *  hosting provider and the cost so far. */
+  observed: TurnObserved
   /** Set when a pick was refused. */
   fallback?: { reason: ModelFallbackReason; message: string }
   /** A thinking-only pick switches thinking on for this turn, whatever the user's setting. */
@@ -44,11 +45,17 @@ interface PickRequest {
 
 /** The turn's models: the defaults, or the picked model in the slots its role allows. */
 export async function resolveTurnModels({ userId, modelId, focusMode, locked, cloudAcknowledged }: PickRequest): Promise<ResolvedModels> {
-  const models = localTurnModels()
-  if (!modelId) return { models, forceThinking: false }
+  const observed: TurnObserved = {}
+  const onError = (message: string) => { observed.error ??= message }
+  const onTokens = (u: TokenUsage) => addTokens(observed, u)
+  // The default models report their errors too: a local server failing is otherwise only in the server
+  // log. And their tokens, which the answer's badge shows like a cloud answer's.
+  const local = localTurnModels()
+  const models: TurnModels = { chat: { ...local.chat, onError, onTokens }, thinking: { ...local.thinking, onError, onTokens }, flash: { ...local.flash, onError, onTokens } }
+  if (!modelId) return { models, observed, forceThinking: false }
   const refuse = (reason: ModelFallbackReason): ResolvedModels => {
     console.log(`  [cloud] pick "${modelId}" refused for user ${userId}: ${reason}`)
-    return { models, forceThinking: false, fallback: { reason, message: FALLBACK_MESSAGES[reason] } }
+    return { models, observed, forceThinking: false, fallback: { reason, message: FALLBACK_MESSAGES[reason] } }
   }
   if (focusMode === 'image') return refuse('mode')
 
@@ -68,8 +75,7 @@ export async function resolveTurnModels({ userId, modelId, focusMode, locked, cl
   const spendRefusal = provider.kind === 'cloud' && overSpend(userId, provider, budget)
   if (spendRefusal) return refuse(spendRefusal)
 
-  // Local providers run on your own hardware: nothing to meter.
-  const observed: TurnObserved = {}
+  // Local providers run on your own hardware: nothing to meter, but their errors are reported.
   const cloud = provider.kind === 'cloud'
     ? {
         ...target,
@@ -78,9 +84,10 @@ export async function resolveTurnModels({ userId, modelId, focusMode, locked, cl
           endpoint: target,
           onCorrection: delta => correctAnswer(observed, delta),
         }),
-        onError: (message: string) => { observed.error ??= message },
+        onError,
+        onTokens,
       }
-    : target
+    : { ...target, onError, onTokens }
   const usesChat = entry.role !== 'thinking'
   const usesThinking = entry.role !== 'chat'
   console.log(`  [cloud] turn on ${provider.id}/${entry.model} for user ${userId} (${provider.kind}, ${entry.role})`)
@@ -107,6 +114,17 @@ interface TurnObserved {
   messageId?: string
   /** Corrections that arrived before the answer was saved. */
   pendingCorrection?: number
+  /** Every call's tokens, summed. */
+  tokens?: AnswerTokens
+}
+
+function addTokens(observed: TurnObserved, u: TokenUsage) {
+  const t = observed.tokens ??= { input: 0, output: 0, calls: 0 }
+  t.input += u.inputTokens
+  t.output += u.outputTokens
+  t.calls++
+  if (u.reasoningTokens) t.reasoning = (t.reasoning ?? 0) + u.reasoningTokens
+  if (u.estimated) t.estimated = true
 }
 
 /** A stopped call's real cost arrived: correct the stored answer, or hold it until it is stored. */
@@ -138,9 +156,12 @@ export const pickedModelOf = ({ cloud, provider, observed }: ResolvedModels): An
   } : undefined
 
 /** The model stored with the answer: the pick, or the default model that wrote it. Flash answers
- *  on the flash model; every other mode's answer is written by the chat model. */
-export const answerModelOf = (resolved: ResolvedModels, focusMode: string): AnswerModel =>
-  pickedModelOf(resolved) ?? defaultAnswerModel(focusMode === 'flash' ? resolved.models.flash : resolved.models.chat)
+ *  on the flash model; every other mode's answer is written by the chat model, unless the turn
+ *  says otherwise (`answeredBy`). */
+export const answerModelOf = (resolved: ResolvedModels, focusMode: string, answeredBy?: ModelTarget): AnswerModel => ({
+  ...(pickedModelOf(resolved) ?? defaultAnswerModel(answeredBy ?? (focusMode === 'flash' ? resolved.models.flash : resolved.models.chat))),
+  ...(resolved.observed.tokens && { tokens: { ...resolved.observed.tokens } }),
+})
 
 export const defaultAnswerModel = (t: ModelTarget): AnswerModel => ({ id: t.model, label: displayName(t), kind: 'default' })
 

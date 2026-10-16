@@ -8,6 +8,7 @@ import { searchSpaceFiles, searchUploads, spaceHasTaggedFiles, type ChunkResult 
 import { rerank, rerankEnabled } from './reranker.ts'
 import { ragTopK, ragMinRelevance } from './rag-settings.ts'
 import { searchCollections } from './files/collections.ts'
+import { withoutConfidential } from './files/confidential.ts'
 import { splitGroupedCitations } from '../../shared/citations.ts'
 
 export interface MemorySource { url: string; title: string }
@@ -184,7 +185,7 @@ function renderFileBlock(
     .map(([fileId, { filename, label }]) => ({ title: `[${label}] ${filename}`, url: `file:${fileId}`, label }))
 
   let block = `## ${heading}\n` + fileLines.map(l => `> ${l}`).join('\n\n')
-  block += `\n\nWhen your answer draws on the excerpts above, cite them inline using their label (e.g. [${labelPrefix}1]). This is separate from any [N] web-source citations you are also instructed to use elsewhere — use both where appropriate, and do not invent any other citation format.`
+  block += `\n\nWhen your answer draws on the excerpts above, cite them inline using their label (e.g. [${labelPrefix}1]). This is separate from any [N] web-source citations you are also instructed to use elsewhere — use both where appropriate, and do not invent any other citation format. Bracketed numbers inside the excerpts, such as [7], are the documents' own references, not sources: never cite them as [7].`
 
   console.log(`  [memory] ${logTag}: ${fileLines.length} chunks, ${fileSources.length} files (~${estimateTokens(block)} tokens)`)
   return { block, fileSources }
@@ -197,12 +198,13 @@ export async function buildChatFileBlock(
   query: string,
   ragBudget = 500,
   withoutNotes = false,
+  includeConfidential = false,
 ): Promise<MemoryBlock> {
   if (!query.trim() || ragBudget <= 0) return { block: '', fileSources: [] }
 
   let fileRows: ChunkResult[] = []
   try {
-    fileRows = await searchUploads(query, userId, await ragTopK(), await ragMinRelevance(), withoutNotes ? 'file' : undefined)
+    fileRows = await searchUploads(query, userId, await ragTopK(), await ragMinRelevance(), withoutNotes ? 'file' : undefined, includeConfidential)
   } catch (e) {
     console.error('  [memory] chat file RAG failed:', e)
     return { block: '', fileSources: [] }
@@ -213,16 +215,16 @@ export async function buildChatFileBlock(
 
 /** "Notes first": the user's notes most relevant to the query, then the opening of each note they
  *  link to or are linked from — one hop, so a note brings its context along. Labelled [N1]… */
-export async function buildNotesBlock(userId: string, query: string, ragBudget: number): Promise<MemoryBlock> {
+export async function buildNotesBlock(userId: string, query: string, ragBudget: number, includeConfidential = false): Promise<MemoryBlock> {
   if (!query.trim() || ragBudget <= 0) return { block: '', fileSources: [] }
   let hits: ChunkResult[] = []
   try {
-    hits = await searchUploads(query, userId, await ragTopK(), await ragMinRelevance(), 'note')
+    hits = await searchUploads(query, userId, await ragTopK(), await ragMinRelevance(), 'note', includeConfidential)
   } catch (e) {
     console.error('  [memory] notes RAG failed:', e)
     return { block: '', fileSources: [] }
   }
-  const rows = [...hits, ...linkedNoteOpenings(userId, [...new Set(hits.map(h => h.fileId))])]
+  const rows = [...hits, ...linkedNoteOpenings(userId, [...new Set(hits.map(h => h.fileId))], includeConfidential)]
   const rendered = renderFileBlock(rows, ragBudget, 'Your own notes (most relevant first, then notes they link with)', 'N', 'notes')
   if (!rendered.block) return rendered
   return { ...rendered, block: `${rendered.block}
@@ -231,7 +233,7 @@ The user asked for an answer from their own notes first. Base the answer on the 
 }
 
 /** The first chunk of each note linked with any of `noteIds`, either direction, not already among them. */
-function linkedNoteOpenings(userId: string, noteIds: string[]): ChunkResult[] {
+function linkedNoteOpenings(userId: string, noteIds: string[], includeConfidential: boolean): ChunkResult[] {
   if (!noteIds.length) return []
   const marks = noteIds.map(() => '?').join(',')
   return sqlite.query(`
@@ -240,7 +242,7 @@ function linkedNoteOpenings(userId: string, noteIds: string[]): ChunkResult[] {
     WHERE f.user_id = ? AND f.kind = 'note' AND f.id NOT IN (${marks}) AND f.id IN (
       SELECT dst_id FROM resource_links WHERE src_id IN (${marks})
       UNION SELECT src_id FROM resource_links WHERE dst_id IN (${marks})
-    )
+    ) ${withoutConfidential('f.id', includeConfidential)}
   `).all(userId, ...noteIds, ...noteIds, ...noteIds) as ChunkResult[]
 }
 
@@ -254,13 +256,14 @@ export async function buildCollectionBlock(
   collectionIds: string[],
   query: string,
   ragBudget = 500,
+  includeConfidential = false,
 ): Promise<MemoryBlock> {
   if (!collectionIds.length || !query.trim() || ragBudget <= 0) return { block: '', fileSources: [] }
 
   let rows: ChunkResult[] = []
   try {
     const embedding = await embedText(query)
-    rows = await searchCollections(collectionIds, query, embedding)
+    rows = await searchCollections(collectionIds, query, embedding, undefined, includeConfidential)
     if (rerankEnabled() && rows.length) {
       const order = await rerank(query, rows.map(r => r.content), rows.length, await ragMinRelevance())
       rows = order.map(i => rows[i])
@@ -472,6 +475,7 @@ export async function buildMemoryBlock(
   query?: string,
   includeFileIds?: string[],
   includeMemoryIds?: string[],
+  includeConfidential = false,
 ): Promise<MemoryBlock> {
   const allMemories = await getSpaceMemories(spaceId)
   if (!allMemories.length) return { block: '', fileSources: [] }
@@ -545,7 +549,7 @@ export async function buildMemoryBlock(
       let fileRows: ChunkResult[] = []
       if (hasTaggedFiles) {
         try {
-          fileRows = await searchSpaceFiles(spaceId, query, embedding, topK, true, includeFileIds)
+          fileRows = await searchSpaceFiles(spaceId, query, embedding, topK, true, includeFileIds, undefined, includeConfidential)
         } catch (e) {
           console.error('  [memory] space file RAG failed:', e)
         }
@@ -801,12 +805,17 @@ export async function suggestUserMemories(
   // queries, not conversations the user had, and their recurring prompt is instruction-shaped
   // ("report on X, be concise, cite sources") — read as a profile it yields the assistant's
   // standing orders rather than anything about the person.
+  // Locked chats are excluded too, by their own lock or their space's: user memory is read by every
+  // chat, so a fact drawn from one would carry what it read out of the lock.
   const sessions = await db.select({ id: chatSessions.id })
     .from(chatSessions)
     .leftJoin(monitorRuns, eq(chatSessions.id, monitorRuns.sessionId))
+    .leftJoin(spaces, eq(chatSessions.spaceId, spaces.id))
     .where(and(
       eq(chatSessions.userId, userId),
       or(isNull(monitorRuns.id), eq(chatSessions.graduated, 1)),
+      eq(chatSessions.locked, false),
+      or(isNull(spaces.id), eq(spaces.offline, false)),
     ))
     .orderBy(desc(chatSessions.updatedAt))
     .limit(limit)

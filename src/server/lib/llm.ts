@@ -32,15 +32,18 @@ export function ollamaOpenAIBase(baseURL: string): string {
 function makeProvider({ provider, baseURL, apiKey, extraBody }: ProviderConfig, probe?: ResponseProbe) {
   const url = provider === 'ollama' ? ollamaOpenAIBase(baseURL) : baseURL
   // Ollama ignores the key but the client requires one.
-  const needsFetch = extraBody || probe
-  return createOpenAI({ baseURL: url, apiKey: apiKey ?? 'sk-placeholder', ...(needsFetch && { fetch: providerFetch(extraBody, probe) }) })
+  return createOpenAI({ baseURL: url, apiKey: apiKey ?? 'sk-placeholder', fetch: providerFetch(extraBody, probe) })
 }
 
 /** A fetch that adds provider-specific fields to each request body (the SDK has no option for
- *  them) and, when metering, notes what each response reports about cost and routing. */
+ *  them) and, when metering, notes what each response reports about cost and routing.
+ *
+ *  Bun's own response timeout is turned off (`timeout: false`, Bun-only): it gives up after about
+ *  360 s without a response, and a local model reading a long prompt sends nothing — not even
+ *  headers, through LiteLLM — until its first token. Calls still end on the run's abort signal. */
 function providerFetch(extra: Record<string, unknown> | undefined, probe: ResponseProbe | undefined): typeof fetch {
   const wrapped = async (input: RequestInfo | URL, init?: RequestInit) => {
-    const res = await fetch(input, extra ? withExtraBody(init, extra) : init)
+    const res = await fetch(input, { ...(extra ? withExtraBody(init, extra) : init), timeout: false } as RequestInit)
     return probe ? observeResponse(res, probe) : res
   }
   return Object.assign(wrapped, { preconnect: fetch.preconnect })
@@ -149,7 +152,9 @@ export interface ModelTarget extends ProviderConfig {
   label?: string
   /** Called with each call's token usage; set for metered (cloud) targets only. */
   onUsage?: (usage: TokenUsage) => void
-  /** Called with the provider's message when a metered call fails. */
+  /** Called with each call's token counts, metered or not, so the answer can say what it used. */
+  onTokens?: (usage: TokenUsage) => void
+  /** Called with the provider's message when a call fails. */
   onError?: (message: string) => void
   /** Output cap from the catalogue; unset for env models, which use the caller's default. */
   maxOutputTokens?: number
@@ -222,11 +227,11 @@ function provider(config: ProviderConfig) {
 // OpenAI *Responses* API (/v1/responses), which self-hosted backends — LiteLLM, llama.cpp,
 // Ollama's /v1 — do not implement. They speak Chat Completions, so pin to it explicitly.
 export function languageModel(t: ModelTarget) {
-  // Unmetered models still get a provider's separate reasoning field turned into reasoning parts.
-  if (!t.onUsage) return wrapLanguageModel({ model: provider(t).chat(t.model), middleware: modelMiddleware({}, {}) })
+  // Unmetered models still get a provider's separate reasoning field turned into reasoning parts, and report errors.
+  if (!t.onUsage) return wrapLanguageModel({ model: provider(t).chat(t.model), middleware: modelMiddleware({ onError: t.onError, onTokens: t.onTokens }, {}) })
   // Metered: a provider of its own, so what a response reports belongs to this model instance's calls.
   const probe: ResponseProbe = {}
-  return wrapLanguageModel({ model: makeProvider(t, probe).chat(t.model), middleware: modelMiddleware({ onUsage: t.onUsage, onError: t.onError }, probe) })
+  return wrapLanguageModel({ model: makeProvider(t, probe).chat(t.model), middleware: modelMiddleware({ onUsage: t.onUsage, onTokens: t.onTokens, onError: t.onError }, probe) })
 }
 
 

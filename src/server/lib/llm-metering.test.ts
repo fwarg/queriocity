@@ -58,12 +58,18 @@ describe('what the SDK alone would lose', () => {
 
   test('still reports a call that is stopped before the provider reports usage, as an estimate', async () => {
     const errors: string[] = []
-    fake = startFakeOpenAI([{ text: ['late'], delayMs: 300 }])
+    const server = fake = startFakeOpenAI([{ text: ['late'], delayMs: 300 }])
     const calls: TokenUsage[] = []
     const model = languageModel({ ...fakeTarget(fake.baseURL), onUsage: u => { calls.push(u) }, onError: m => { errors.push(m) } })
     const stop = new AbortController()
-    setTimeout(() => stop.abort(), 50)
+    // Stopped once the provider has the request — a fixed delay can fire before it is sent on a slow
+    // CI runner, and a call never made has nothing to report.
+    const sent = setInterval(() => { if (server.callCount) { clearInterval(sent); stop.abort() } }, 5)
     await streamText({ model, prompt: 'A question long enough to count', abortSignal: stop.signal }).consumeStream({ onError: () => {} })
+    clearInterval(sent)
+    // Since ai 7.0.137 the stream ends on the stop before the stopped call's error reaches the
+    // middleware, so the estimate arrives just after — still recorded, as metering is per call.
+    for (let waited = 0; !calls.length && waited < 1000; waited += 10) await Bun.sleep(10)
     expect(calls).toHaveLength(1)
     expect(calls[0].estimated).toBe(true)
     expect(calls[0].inputTokens).toBeGreaterThan(0)
@@ -80,6 +86,37 @@ describe('what the SDK alone would lose', () => {
     expect(errors[0]).toContain('Model glm-x does not exist')
     // Refused outright, so not billed and not recorded.
     expect(calls).toEqual([])
+  })
+
+  test('counts a default (unmetered) model\'s tokens too, for the answer\'s badge', async () => {
+    fake = startFakeOpenAI([{ text: ['OK'], usage: { prompt_tokens: 120, completion_tokens: 30 } }])
+    const counted: TokenUsage[] = []
+    const model = languageModel({ ...fakeTarget(fake.baseURL), onTokens: u => { counted.push(u) } })
+    await streamText({ model, prompt: 'Hi' }).consumeStream()
+    expect(counted).toMatchObject([{ inputTokens: 120, outputTokens: 30 }])
+  })
+
+  test('passes on a default (unmetered) model\'s error too, such as a local server losing its GPU', async () => {
+    fake = startFakeOpenAI([{ error: { status: 400, message: 'decode() failed: ErrorDeviceLost' } }])
+    const errors: string[] = []
+    const model = languageModel({ ...fakeTarget(fake.baseURL), onError: m => { errors.push(m) } })
+    await streamText({ model, prompt: 'Hi', maxRetries: 0 }).consumeStream({ onError: () => {} })
+    expect(errors[0]).toContain('ErrorDeviceLost')
+  })
+})
+
+describe('long silent calls', () => {
+  test('turn off Bun\'s response timeout, which a local model reading a long prompt outlasts', async () => {
+    fake = startFakeOpenAI([{ text: ['OK'] }])
+    const inits: Array<RequestInit & { timeout?: unknown }> = []
+    const realFetch = globalThis.fetch
+    globalThis.fetch = Object.assign((input: RequestInfo | URL, init?: RequestInit) => { inits.push(init ?? {}); return realFetch(input, init) }, { preconnect: realFetch.preconnect })
+    try {
+      await streamText({ model: languageModel(fakeTarget(fake.baseURL)), prompt: 'Hi' }).consumeStream()
+    } finally {
+      globalThis.fetch = realFetch
+    }
+    expect(inits[0]?.timeout).toBe(false)
   })
 })
 

@@ -3,6 +3,7 @@ import type { Theme } from '@shared/theme.ts'
 import type { ContextReport } from '@shared/context.ts'
 import type { ApiErrorBody, ErrorCode } from '@shared/error-codes.ts'
 import type { LlmCatalogue, LlmAccess, UsageRow, AnswerModel, ModelChoices } from '@shared/llm-catalogue.ts'
+import type { CollectionMode } from '@shared/context.ts'
 
 /** An API failure, carrying the server's stable code where the route sends one.
  *
@@ -234,6 +235,8 @@ export async function* streamChat(
   regenerate?: boolean,
   notesFirst?: boolean,
   modelId?: string,
+  collectionMode?: CollectionMode,
+  attachedFileIds?: string[],
 ): AsyncGenerator<{ type: string; [k: string]: unknown }> {
   const res = await fetch(`${BASE}/chat`, {
     method: 'POST',
@@ -257,6 +260,8 @@ export async function* streamChat(
       ...(regenerate ? { regenerate: true } : {}),
       ...(notesFirst ? { notesFirst: true } : {}),
       ...(modelId ? { modelId } : {}),
+      ...(collectionMode && collectionIds?.length ? { collectionMode } : {}),
+      ...(attachedFileIds?.length ? { attachedFileIds } : {}),
     }),
     signal,
   })
@@ -561,11 +566,11 @@ export async function ingestUrl(url: string): Promise<{ fileId: string; filename
   return res.json()
 }
 
-export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; userMemoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; ragTopK: number; ragMinRelevance: number; relatedMinSimilarity: number; relatedMinRelevance: number; rerankEnabled: boolean; attachmentChars: number; spaceRagBudget: number; notesRagBudget: number; topicMinSimilarity: number; queryReformulation: boolean; rssFeedCharsBudget: number; fetchMaxPages: number; fetchMaxUrlContextChars: number; fetchSummarizeOverflow: boolean; compressHistoryOverflow: boolean; resourceSummary: boolean; limits: { smallModelInputChars: number; embedInputChars: number; scrapeMaxChars: number; minUrlContextChars: number } }> {
+export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; userMemoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; ragTopK: number; ragMinRelevance: number; relatedMinSimilarity: number; relatedMinRelevance: number; rerankEnabled: boolean; attachmentChars: number; spaceRagBudget: number; notesRagBudget: number; topicMinSimilarity: number; collectionFullTextTokens: number; collectionFullTextTokensCloud: number; collectionExploreMaxSteps: number; collectionExploreMinRelevance: number; queryReformulation: boolean; rssFeedCharsBudget: number; fetchMaxPages: number; fetchMaxUrlContextChars: number; fetchSummarizeOverflow: boolean; compressHistoryOverflow: boolean; resourceSummary: boolean; limits: { smallModelInputChars: number; embedInputChars: number; scrapeMaxChars: number; minUrlContextChars: number } }> {
   return fetch(`${BASE}/admin/settings`).then(r => r.json())
 }
 
-export async function updateAdminSettings(s: { memoryTokenBudget?: number; userMemoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; dreamDeep?: boolean; memoryExtractChars?: number; rerankTopN?: number; ragTopK?: number; ragMinRelevance?: number; relatedMinSimilarity?: number; relatedMinRelevance?: number; attachmentChars?: number; spaceRagBudget?: number; notesRagBudget?: number; topicMinSimilarity?: number; queryReformulation?: boolean; rssFeedCharsBudget?: number; fetchMaxPages?: number; fetchMaxUrlContextChars?: number; fetchSummarizeOverflow?: boolean; compressHistoryOverflow?: boolean; resourceSummary?: boolean }): Promise<void> {
+export async function updateAdminSettings(s: { memoryTokenBudget?: number; userMemoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; dreamDeep?: boolean; memoryExtractChars?: number; rerankTopN?: number; ragTopK?: number; ragMinRelevance?: number; relatedMinSimilarity?: number; relatedMinRelevance?: number; attachmentChars?: number; spaceRagBudget?: number; notesRagBudget?: number; topicMinSimilarity?: number; collectionFullTextTokens?: number; collectionFullTextTokensCloud?: number; collectionExploreMaxSteps?: number; collectionExploreMinRelevance?: number; queryReformulation?: boolean; rssFeedCharsBudget?: number; fetchMaxPages?: number; fetchMaxUrlContextChars?: number; fetchSummarizeOverflow?: boolean; compressHistoryOverflow?: boolean; resourceSummary?: boolean }): Promise<void> {
   await fetch(`${BASE}/admin/settings`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -911,6 +916,8 @@ export async function uploadFile(file: File): Promise<{ fileId: string; filename
 export interface Resource {
   id: string
   filename: string
+  /** Confidential by its own flag or a confidential collection's: read only by locked chats. */
+  confidential?: boolean | number
   mimeType: string
   size: number
   kind: 'file' | 'note'
@@ -936,6 +943,11 @@ export interface ResourceRef { id: string; filename: string; kind: 'file' | 'not
 export interface ResourceDetail extends Resource {
   body: string | null
   chunks: string[]
+  /** Its own flag; `confidentialVia` names the confidential collections that make it confidential regardless. */
+  confidentialOwn: boolean
+  confidentialVia: string[]
+  /** Digests whole-collection answers made of this resource, one per model; createdAt in epoch seconds. */
+  digests: Array<{ model: string; digest: string; createdAt: number }>
   /** The resource a transform produced this note from, if any, and the notes produced from it. */
   derivedFrom: ResourceRef | null
   derived: ResourceRef[]
@@ -973,13 +985,20 @@ export async function fetchFiles(): Promise<Resource[]> {
   return res.json()
 }
 
+/** Marks a resource confidential or not: a confidential one is read only by locked chats. */
+export async function setResourceConfidential(id: string, confidential: boolean): Promise<void> {
+  const res = await fetch(`${BASE}/files/${id}/confidential`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confidential }) })
+  if (!res.ok) throw await apiError(res, 'Could not change confidentiality')
+}
+
 export async function fetchResource(id: string): Promise<ResourceDetail> {
   const res = await fetch(`${BASE}/files/${id}`)
   if (!res.ok) throw await apiError(res, 'Could not load resource')
   return res.json()
 }
 
-export async function fetchNoteText(id: string): Promise<{ filename: string; content: string }> {
+/** `confidential`: attaching it locks the chat. */
+export async function fetchNoteText(id: string): Promise<{ filename: string; content: string; confidential?: boolean }> {
   const res = await fetch(`${BASE}/files/${id}/text`)
   if (!res.ok) throw await apiError(res, 'Could not load note')
   return res.json()

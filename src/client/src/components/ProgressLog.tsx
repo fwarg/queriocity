@@ -17,6 +17,8 @@ export interface LogStep {
   /** A key for one of the closed set of sub-states the server names, translated on arrival.
    *  `detail` stays for the free-form text alongside it. */
   detailKey?: TranslationKey
+  /** Progress of the running step (k of N) rather than a new one. */
+  update?: boolean
   startedAt: number
   endedAt?: number
 }
@@ -62,6 +64,13 @@ function label(step: LogStep, t: TFunction): string {
     case 'write':      return detail ?? t('log.write')
     case 'memory':     return t('log.memory')
     case 'image':      return detail ?? t('log.image')
+    case 'documents':  return t('log.documents', { index: step.index ?? 0, total: step.total ?? 0 })
+    case 'readFull':   return t('log.readFull', { count: step.count ?? 0, tokens: step.total ?? 0 })
+    case 'combine':    return t('log.combine', { count: step.count ?? 0 })
+    case 'outline':    return t('log.outline', { doc: step.detail ?? '' })
+    case 'readPart':   return t('log.readPart', { part: step.detail ?? '' })
+    case 'note':       return t('log.note', { count: step.count ?? 0 })
+    case 'readNotes':  return t('log.readNotes', { count: step.count ?? 0 })
     default:           return step.text
   }
 }

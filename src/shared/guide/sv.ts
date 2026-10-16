@@ -63,18 +63,18 @@ den inte används allt.
 sidor. *nyheter+vetenskap* söker i båda. Användbart när en vanlig sökning envisas med fel sorts
 träffar — produktsidor när du ville ha forskning, till exempel.
 
-**Samlingar** ligger under samma knapp. Kryssar du i en läser den omgången också ur resurserna i
-den, oavsett vilken chatt du är i. Utdrag ur en samling får hänvisningarna \`[C1]\`, \`[C2]\` så att
-du alltid ser vilken hylla svaret kommer från.
+**Samlingar** ligger under samma knapp. Väljer du en läser den omgången också ur resurserna i den,
+oavsett vilken chatt du är i, på det sätt som är valt under **Läs** — se *Läsa en samling*. Källor ur
+en samling får hänvisningarna \`[C1]\`, \`[C2]\` så att du alltid ser vilken hylla svaret kommer från.
 
 **Anteckningar först**, under *Dina anteckningar* när du har några, svarar utifrån dina egna
 anteckningar — och anteckningarna de länkar ihop med — innan webben söks. De hänvisas som \`[N1]\`,
 \`[N2]\`; webben söks bara för det de inte täcker. Till skillnad från de andra valen kommer det ihåg
 tills du stänger av det.
 
-Kategorier och samlingar gäller **bara nästa meddelande** och lyser tills du tar bort dem — de
-sparas inte på chatten. Ingenting är valt från början, så när knappen säger *Alla kategorier* betyder det alla
-*kategorier*, inte alla samlingar.`,
+Kategorier gäller **bara nästa meddelande** och lyser tills du tar bort dem. Samlingar, och hur de
+läses, gäller för chatten: att starta eller öppna en annan chatt nollställer dem. Ingenting är valt
+från början, så när knappen säger *Alla kategorier* betyder det alla *kategorier*, inte alla samlingar.`,
   },
 
   resources: {
@@ -208,20 +208,63 @@ privata*.`,
   collections: {
     title: 'Samlingar',
     summary: 'En hylla med resurser, utan chattar och utan minne.',
-    body: `En **samling** innehåller resurser och ingenting annat. Inga chattar, inget minne, inget
-lås. Den finns för referensmaterial som inte hör till något särskilt projekt — där det vore att
-hitta på ett projekt som inte finns bara för att kunna lägga undan materialet.
+    body: `En **samling** innehåller resurser och ingenting annat — inga chattar, inget minne. Den är till för
+referensmaterial som inte hör till något särskilt projekt, där det skulle betyda att hitta på ett
+projekt som inte finns om du lade det i ett utrymme.
 
 Samlingar och utrymmen ligger båda under **Arbetsytor**, i två märkta avdelningar. En resurs taggas
 till en samling precis som till ett utrymme.
 
-**Använda en.** Kryssa i den under meddelanderutan så läser den frågan också ur dess resurser —
-oavsett om chatten ligger i ett utrymme eller inte. Krysset sitter kvar tills du tar bort det och
-sparas inte på chatten, så det kostar inte mer att ändra än researchläget bredvid.
+**Använda en.** Välj den under meddelanderutan så läser frågan ur dess resurser — oavsett om chatten
+ligger i ett utrymme. Välj hur under **Läs**: Auto, Utdrag, Hela samlingen eller Utforska (se *Läsa en
+samling*). Valet gäller för chatten och nollställs när du startar eller öppnar en annan.
 
-**Göra om den till ett utrymme.** Visar sig samlingen vara ett projekt ändå kan du befordra den
-från dess egen panel, och den behåller alla resurser. Det går bara åt ett håll: ett utrymme som
-redan har chattar och minnen går inte att läsa som en samling.`,
+**Analysera i chatt**, på samlingens sida, öppnar en ny chatt som läser hela samlingen — för en
+rapport, eller för att granska ett utkast du bifogar mot den. Den inbyggda mallen **Samlingsrapport**
+gör samma sak från vilken chatt som helst. Spara ett bra svar som anteckning med svarets
+anteckningsknapp.
+
+**Konfidentiell.** Ögonikonen på samlingens rad markerar den som konfidentiell: dess dokument läses då
+bara av låsta chattar, och att välja den låser chatten för gott, efter en fråga. Se *Hålla saker
+privata*.
+
+**Göra om den till ett utrymme.** Visar sig en samling vara ett projekt ändå, gör om den från dess egen
+panel så behåller den alla resurser. Det går bara åt ett håll: ett utrymme som redan har chattar och
+minnen går inte att läsa som en samling.`,
+  },
+
+  collectionModes: {
+    title: 'Läsa en samling',
+    summary: 'Auto, utdrag, hela samlingen eller utforska — och vad var och en kostar i träffsäkerhet och tid.',
+    body: `När en samling är vald avgör **Läs** hur den används. Varje sätt väger träffsäkerhet mot
+tid och AI-användning.
+
+**Utdrag** — de stycken som ligger närmast din fråga, som i vilken chatt som helst.
+- *Bra för* ett faktum eller ett stycke som finns på några få ställen.
+- *Kan missa* det som inte ligger nära dina ord; det täcker aldrig hela samlingen.
+- *Kostnad:* minst — en sökning och ett vanligt svar.
+
+**Hela samlingen** — alla dokument. En liten samling skickas till modellen i sin helhet; en större
+läses ett dokument i taget för din fråga, och svaret skrivs utifrån vad vart och ett sade.
+- *Bra för* rapporter, jämförelser och att granska ett utkast mot samlingen. Inget hoppas över.
+- *Kan missa* kopplingar mellan dokument som frågan inte bad om (ett i taget), eller detaljer som
+  drunknar i en mycket lång prompt (i sin helhet).
+- *Kostnad:* störst. På en lokal modell tar en lång prompt minuter före första ordet; ett dokument i
+  taget går mycket fortare där. På en molnmodell betalas samlingen vid varje meddelande. Varje
+  meddelande läser om, så byt till Utdrag för en snabb följdfråga.
+
+**Utforska** — en agent söker i dokumenten, läser de delar som spelar roll och antecknar vad den
+hittar; svaret skrivs utifrån anteckningarna och de stycken den såg.
+- *Bra för* riktade frågor: vilka artiklar gör X, säger något emot mitt avsnitt 3.
+- *Kan missa* det den bedömer som oviktigt; sidfoten visar hur många anrop och anteckningar den använde.
+  Avsnitt som bedöms sakna samband med din fråga och agentens sökningar lämnas utanför svaret; en
+  administratör ställer in hur strängt det är.
+- *Kostnad:* 5–20 korta modellanrop. Fungerar bäst på en modell som är bra på verktyg.
+
+**Auto**, förvalet, frågar en liten lokal modell vilket av de tre som passar varje meddelande — ett
+snabbt extra anrop — och sidfoten säger vad den valde och varför, så att du kan välja själv nästa gång.
+
+Förloppsloggen visar varje steg medan det pågår, och sidfoten hur samlingen lästes.`,
   },
 
   monitors: {
@@ -287,43 +330,37 @@ ritas in i den nedladdade filen bestämmer du under Inställningar.`,
 
   privacy: {
     title: 'Hålla saker privata',
-    summary: 'Låsta utrymmen, och hur du analyserar ett dokument som inte får lämna maskinen.',
-    body: `Allt du skriver, laddar upp och får tillbaka lagras på den här maskinen. Men när
-assistenten väl har läst ett dokument är allt den kan skicka utåt en väg för dokumentet att läcka —
-och ett dokument kan *innehålla instruktioner* som modellen följer. Queriocity utgår från att det
-den läser kan vara fientligt.
+    summary: 'Tre skyddsnivåer: moln, lokalt, låst — och konfidentiellt innehåll.',
+    body: `Allt du skriver, laddar upp och får tillbaka lagras på den här maskinen. Men när assistenten har läst
+ett dokument är allt den kan skicka utåt en väg för dokumentet att läcka — och ett dokument kan
+*innehålla instruktioner* som modellen följer.
 
-Ett **låst utrymme** löser det genom att ta bort förmågan i stället för att övervaka den. Chattar i
-ett låst utrymme får ingen webbsökning, ingen sidhämtning och ingen bildgenerering. Det finns inget
-att bedöma, alltså inget att göra fel.
+Det finns tre skyddsnivåer:
 
-**Så analyserar du ett känsligt dokument:**
+- **En molnmodell** — bara om en administratör har gett dig tillgång och du väljer en. Leverantören
+  får hela prompten: din fråga, samtalet och eventuella utdrag ur dokument. Du bekräftar det en gång,
+  och svaret säger vart det skickades.
+- **Lokala modeller (förval)** — inget går till en modelleverantör, men webbsökningar och hämtade
+  sidor kan bära ord ur dina dokument. Förfrågningar som ser ut att göra det hålls kvar tills du
+  godkänner dem. Det är upptäckt, och den kan luras.
+- **Låst** — ingen webbsökning, sidhämtning, bildgenerering eller molnmodell alls. Vägarna ut finns
+  inte, så ingenting behöver bedömas.
 
-1. **Skapa ett utrymme och lås det först**, innan något ligger i det.
-2. **Starta en ny chatt inne i utrymmet.**
-3. **Bifoga dokumentet med gemet** — inte till biblioteket.
+**Två sätt att låsa.**
+- Ett **låst utrymme** (hänglås): alla chattar i det är låsta. Lås det innan något finns i det; när
+  det har en chatt eller ett minne går det inte att låsa upp, och dess chattar kan bara flyttas till
+  ett annat låst utrymme.
+- **Konfidentiellt innehåll** (ögonikonen på en samling, eller på en resurs sida): bara låsta chattar
+  får läsa det. Att välja en konfidentiell samling eller bifoga en konfidentiell anteckning låser
+  chatten för gott, efter en fråga; chattens banner säger vad som låste den. Olåsta chattar utesluter
+  konfidentiella dokument, och sidfoten säger det. Markeringen kan tas bort när som helst; låsta
+  chattar förblir låsta.
 
-Steg 3 är lika viktigt som de andra. En fil i **biblioteket** kan hittas från *varenda* chatt du
-äger, även sådana med nätåtkomst. En bilaga hamnar aldrig i biblioteket och finns därför bara i det
-låsta samtalet.
+**Ett dokument för bara en chatt:** bifoga det med gemet i en låst chatt i stället för att lägga det i
+ditt bibliotek.
 
-**Låsning går nästan bara åt ett håll.** Ett tomt utrymme kan låsas upp fritt; ett som innehåller
-en chatt eller ett minne kan det inte, eftersom upplåsningen skulle ge nätåtkomst åt allt som
-samlats in under löftet att det inte fanns någon. Chattar i ett låst utrymme kan bara flyttas till
-ett annat låst utrymme, och raderar du ett låst utrymme raderas dess chattar i stället för att
-släppas fria.
-
-**En gräns värd att känna till.** Låsning tar bort modellens verktyg; den ändrar inte var modellen
-kör. Använder installationen en molnmodell i stället för en lokal skickas ditt dokument dit redan i
-första anropet, innan något verktyg hunnit finnas.
-
-**Molnmodeller är undantaget från allt detta.** Har en administratör gett dig tillgång kan
-modellmenyn bredvid forskningslägena skicka ett enskilt meddelande till en molnleverantör. Det
-meddelandet är inte privat: leverantören får din fråga, hela konversationen och eventuella utdrag ur
-minnen och dokument i prompten, och hanterar dem enligt sina egna villkor. Du bekräftar detta en
-gång före ditt första molnmeddelande, en varning står kvar under inmatningen medan en molnmodell är
-vald, och svaret anger vart det skickades. Ett val gäller chatten det gjordes i och återgår till
-standard när du öppnar en annan chatt, och ett låst utrymme erbjuder aldrig molnmodeller.`,
+**En gräns värd att känna till.** Ett lås tar bort modellens verktyg; det ändrar inte var modellen
+körs. Om installationens egna modeller ligger någon annanstans når dokumenten dem ändå.`,
   },
 
   settings: {

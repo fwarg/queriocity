@@ -15,7 +15,6 @@ export const spacesRouter = new Hono<AppEnv>()
 spacesRouter.use('*', authMiddleware)
 
 /** Named once: four routes refuse the same thing, and they should say so identically. */
-const NOT_LOCKABLE = 'A collection cannot be locked. Locking denies a chat web access, and a collection holds no chats — put confidential material in a locked space instead.'
 
 spacesRouter.get('/', async (c) => {
   const userId = c.get('userId') as string
@@ -66,7 +65,6 @@ spacesRouter.post('/', zValidator('json', z.object({
 })), async (c) => {
   const userId = c.get('userId') as string
   const { name, kind, offline } = c.req.valid('json')
-  if (kind === 'collection' && offline) return c.json({ error: NOT_LOCKABLE }, 400)
   const now = new Date()
   const id = randomUUID()
   await db.insert(spaces).values({ id, name, userId, kind, offline, createdAt: now, updatedAt: now })
@@ -93,10 +91,6 @@ spacesRouter.patch('/:id', zValidator('json', z.object({
   const space = await db.select().from(spaces).where(and(eq(spaces.id, id), eq(spaces.userId, userId))).get()
   if (!space) return c.json({ error: 'Not found' }, 404)
 
-  // Locking denies a chat web search, URL fetching and image generation. A collection has no chats,
-  // so there is nothing to deny and the flag would only be a claim the app does not keep.
-  if (offline === true && space.kind === 'collection') return c.json({ error: NOT_LOCKABLE }, 400)
-
   // One-way: promoting only adds capabilities to a grouping that has none, and its tagged resources
   // are already in `space_files`, so nothing moves. Demoting would have to answer what happens to
   // the chats, memories and lock a space may hold — a question worth not having.
@@ -106,7 +100,9 @@ spacesRouter.patch('/:id', zValidator('json', z.object({
 
   // Unlocking a space that still holds anything would hand web access back to chats and memories
   // built up while it was sealed. Refused with the contents named, so the UI can say what to clear.
-  if (offline === false && space.offline) {
+  // A collection unlocks freely: nothing is gathered under its lock — the chats that read it are
+  // locked themselves (chat_sessions.locked) and stay so.
+  if (offline === false && space.offline && space.kind === 'space') {
     const { ok, contents } = await canUnlock(id)
     if (!ok) {
       return c.json({

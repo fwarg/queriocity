@@ -39,6 +39,10 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   const [attachmentCharsDraft, setAttachmentCharsDraft] = useState('20000')
   const [spaceRagBudgetDraft, setSpaceRagBudgetDraft] = useState('500')
   const [notesRagBudgetDraft, setNotesRagBudgetDraft] = useState('1500')
+  const [collectionFullTextDraft, setCollectionFullTextDraft] = useState('30000')
+  const [collectionFullTextCloudDraft, setCollectionFullTextCloudDraft] = useState('1000000')
+  const [exploreMaxStepsDraft, setExploreMaxStepsDraft] = useState('20')
+  const [exploreMinRelevanceDraft, setExploreMinRelevanceDraft] = useState('0.05')
   const [userMemoryBudgetDraft, setUserMemoryBudgetDraft] = useState('300')
   const [queryReformulationDraft, setQueryReformulationDraft] = useState(true)
   const [rssFeedCharsBudgetDraft, setRssFeedCharsBudgetDraft] = useState('50000')
@@ -88,6 +92,10 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
       setAttachmentCharsDraft(String(s.attachmentChars))
       setSpaceRagBudgetDraft(String(s.spaceRagBudget))
       setNotesRagBudgetDraft(String(s.notesRagBudget))
+      setCollectionFullTextDraft(String(s.collectionFullTextTokens))
+      setCollectionFullTextCloudDraft(String(s.collectionFullTextTokensCloud))
+      setExploreMaxStepsDraft(String(s.collectionExploreMaxSteps))
+      setExploreMinRelevanceDraft(String(s.collectionExploreMinRelevance))
       setUserMemoryBudgetDraft(String(s.userMemoryTokenBudget))
       setQueryReformulationDraft(s.queryReformulation)
       setRssFeedCharsBudgetDraft(String(s.rssFeedCharsBudget))
@@ -121,6 +129,10 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     const attachmentChars = parseInt(attachmentCharsDraft)
     const spaceRagBudget = parseInt(spaceRagBudgetDraft)
     const notesRagBudget = parseInt(notesRagBudgetDraft)
+    const collectionFullTextTokens = parseInt(collectionFullTextDraft)
+    const collectionFullTextTokensCloud = parseInt(collectionFullTextCloudDraft)
+    const collectionExploreMaxSteps = parseInt(exploreMaxStepsDraft)
+    const collectionExploreMinRelevance = parseFloat(exploreMinRelevanceDraft)
     const userMemoryTokenBudget = parseInt(userMemoryBudgetDraft)
     const rssFeedCharsBudget = parseInt(rssFeedCharsBudgetDraft)
     const fetchMaxPages = parseInt(fetchMaxPagesDraft)
@@ -140,6 +152,10 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     if (isNaN(attachmentChars) || attachmentChars < 1000) return
     if (isNaN(spaceRagBudget) || spaceRagBudget < 0) return
     if (isNaN(notesRagBudget) || notesRagBudget < 0) return
+    if (isNaN(collectionFullTextTokens) || collectionFullTextTokens < 0) return
+    if (isNaN(collectionFullTextTokensCloud) || collectionFullTextTokensCloud < 0) return
+    if (isNaN(collectionExploreMaxSteps) || collectionExploreMaxSteps < 3) return
+    if (isNaN(collectionExploreMinRelevance) || collectionExploreMinRelevance < 0 || collectionExploreMinRelevance > 1) return
     if (isNaN(userMemoryTokenBudget) || userMemoryTokenBudget < 0) return
     if (isNaN(rssFeedCharsBudget) || rssFeedCharsBudget < 5000) return
     if (isNaN(fetchMaxPages) || fetchMaxPages < 0) return
@@ -150,7 +166,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     setError('')
     setSavingBudget(true)
     try {
-      await updateAdminSettings({ memoryTokenBudget: budget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, ragTopK, ragMinRelevance, relatedMinSimilarity, relatedMinRelevance, topicMinSimilarity, attachmentChars, spaceRagBudget, notesRagBudget, queryReformulation: queryReformulationDraft, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow: fetchSummarizeOverflowDraft, compressHistoryOverflow: compressHistoryOverflowDraft, resourceSummary: resourceSummaryDraft })
+      await updateAdminSettings({ memoryTokenBudget: budget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, ragTopK, ragMinRelevance, relatedMinSimilarity, relatedMinRelevance, topicMinSimilarity, attachmentChars, spaceRagBudget, notesRagBudget, collectionFullTextTokens, collectionFullTextTokensCloud, collectionExploreMaxSteps, collectionExploreMinRelevance, queryReformulation: queryReformulationDraft, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow: fetchSummarizeOverflowDraft, compressHistoryOverflow: compressHistoryOverflowDraft, resourceSummary: resourceSummaryDraft })
 
       onBudgetChange?.(budget)
       setBudgetSaved(true)
@@ -368,6 +384,26 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                 <p className="text-xs text-gray-500">Tokens of the user&apos;s own notes (and the notes they link with) injected when a question is sent with <em>Notes first</em>. Larger than the RAG budget: there the notes are what the answer rests on.</p>
                 <input type="number" min={0} max={10000} step={100} value={notesRagBudgetDraft}
                   onChange={e => setNotesRagBudgetDraft(e.target.value)}
+                  className="w-32 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
+                <p className="text-xs text-gray-400 font-medium mt-2">Whole collection: full text up to (tokens) — local / cloud models</p>
+                <p className="text-xs text-gray-500">A <em>Whole collection</em> answer sends a collection this small in full. A larger one is read document by document for the question asked, then answered from what each says: many short calls, which a local GPU reads far faster than one long prompt. Seeing every document side by side finds more links between them, so cloud models, which read long prompts quickly, default to whatever fits their context. The model&apos;s own context always caps both. 0 always reads document by document.</p>
+                <div className="flex gap-2">
+                  <input type="number" min={0} max={1000000} step={5000} value={collectionFullTextDraft} aria-label="Local models"
+                    onChange={e => setCollectionFullTextDraft(e.target.value)}
+                    className="w-32 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
+                  <input type="number" min={0} max={1000000} step={5000} value={collectionFullTextCloudDraft} aria-label="Cloud models"
+                    onChange={e => setCollectionFullTextCloudDraft(e.target.value)}
+                    className="w-32 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
+                </div>
+                <p className="text-xs text-gray-400 font-medium mt-2">Explore: step limit</p>
+                <p className="text-xs text-gray-500">Most tool steps an <em>Explore</em> answer may take (list, outline, search, read, note) before it answers from what it noted. Each step is a model call over a small prompt.</p>
+                <input type="number" min={3} max={100} step={1} value={exploreMaxStepsDraft}
+                  onChange={e => setExploreMaxStepsDraft(e.target.value)}
+                  className="w-32 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
+                <p className="text-xs text-gray-400 font-medium mt-2">Explore: minimum relevance</p>
+                <p className="text-xs text-gray-500">Reranker score (0–1) below which an <em>Explore</em> answer takes a passage or a part it read as unrelated: such a document is reported as having nothing close, and such a part is left out of the answer. Passages are scored against the question and the model&apos;s own searches, and these scores run far lower than for retrieval, so keep it well below the resource floor. 0 disables it. Only applies when a reranker model is configured.</p>
+                <input type="number" min={0} max={1} step={0.01} value={exploreMinRelevanceDraft}
+                  onChange={e => setExploreMinRelevanceDraft(e.target.value)}
                   className="w-32 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
                 <p className="text-xs text-gray-500 mt-1">Re-index all chat sessions across all users. Run this after changing embedding models or dimensions.</p>
                 <button onClick={handleReindexChats} disabled={reindexing}

@@ -44,7 +44,10 @@ through a single Bun process.
     - [Changing the embedding model](#changing-the-embedding-model)
   - [URL fetching](#url-fetching)
   - [Preventing data exfiltration](#preventing-data-exfiltration)
+    - [Three levels of protection](#three-levels-of-protection)
+    - [Outbound channels](#outbound-channels)
     - [Locked spaces](#locked-spaces)
+    - [Confidential collections and resources](#confidential-collections-and-resources)
   - [Prompt templates](#prompt-templates)
     - [Prompt Studio](#prompt-studio)
   - [Settings](#settings)
@@ -662,6 +665,39 @@ document to leave. This is not only a question of trusting the model: a document
 model reads is hostile — a poisoned PDF is far likelier than a maliciously trained model, and both
 produce the same behaviour.
 
+### Three levels of protection
+
+| Level | What can leave your network | What protects it |
+|---|---|---|
+| **0 — a cloud model picked** | The whole prompt, documents included, goes to the provider | Your choice: the cloud warning, its one-time confirmation, and budgets |
+| **1 — local models (the default)** | Search queries and fetched URLs, which may carry words from your documents | The egress guard below: *detection*, which asks before a suspicious request — and can be fooled |
+| **2 — locked** (padlock on a space or chat, eye on confidential content) | Nothing from the chat | *Capability removal*: no web search, URL fetching, image generation, cloud models or writes to shared memory — the routes out do not exist, so nothing has to be judged |
+
+Level 0 trusts the provider, level 1 trusts detection, level 2 trusts nothing to judge. Level 2 covers
+both a careless search query and a model deliberately trying to smuggle data out (a poisoned
+document's instructions, say), because the model has nothing to send it with.
+
+Level 1 is a habit rather than a label: a document stays on local models only as long as no one picks a
+cloud model for that chat. For anything that must not leave, use level 2:
+[locked spaces](#locked-spaces) and [confidential collections and resources](#confidential-collections-and-resources).
+
+**Level 2's edges, so its promise is not overstated:**
+
+- **A link you click.** Images cannot leak (channel 1 below), but a link in an answer could carry data
+  in its address if you open it.
+- **Trusted search.** With `SPEJAREN_TRUSTED=true`, locked chats may still search your own spejaren
+  index. The queries reach only that server.
+- **The model, embedding and reranker servers** see every document, from upload onwards, before any lock
+  applies. That is the point of running them locally; startup warns when one is not.
+- **Confidential is a read rule, not encryption.** The text on disk and in backups is like any other.
+
+What a locked chat does not do: it is offered no `save_to_memory` outside a locked space, and no
+`save_user_fact`; its turns are not indexed into an unlocked space's history; and *Suggest from chats*
+(user memory) skips locked chats. Every chat reads user memory and a space's memory, so a fact written
+there would carry what the chat read out of the lock.
+
+### Outbound channels
+
 There are three outbound channels, and they are not equally dangerous.
 
 **1. Images in the answer — closed.** An answer containing `![](https://somewhere/x?d=…)` is
@@ -733,7 +769,8 @@ Step 3 matters as much as the others. A file added to your **library** is search
 chat you own — including online ones in other spaces, and any chat where you tick a
 [collection](#collections) that holds it, which need not be in a space at all. Locking a space
 afterwards does not retract it. A chat attachment is ephemeral and never enters the library, so it
-exists only in the locked conversation.
+exists only in the locked conversation. To keep a document in the library, mark it or its collection
+confidential instead — see below.
 
 **Locking is close to one-way, by design.** While a space is empty you can unlock it freely. Once it
 holds a chat or a memory you cannot, because unlocking would hand web access to everything gathered
@@ -745,6 +782,28 @@ are enforced on the server, not just hidden in the interface:
 - Deleting a locked space **deletes its chats**, rather than releasing them as ordinary unlocked
   chats. You are warned before this happens.
 - Monitors cannot be attached to a locked space, since a monitor is a scheduled web search.
+
+### Confidential collections and resources
+
+Two words for two things. **Locked** is about *where* content may be read: a locked space or chat has
+no web search, URL fetching or image generation, and uses local models only. **Confidential** is about
+*content*: a confidential document may only be read in a locked chat.
+
+Mark a collection confidential with the eye icon on its row, or a single resource with **Confidential**
+on its page. A resource in a confidential collection is confidential too. Confidential resources show an
+eye-off icon in the list, whichever way they got it.
+
+- **Using a confidential collection or note locks the chat, after asking.** Picking a confidential
+  collection, attaching a confidential note or opening one with *Analyze in chat* asks first, because
+  the chat then stays locked for good: its history holds what it read. A cloud model pick falls back to
+  the default local model. The chat's banner names what locked it. A locked chat in an unlocked space
+  does not write to that space's memory or history index, which the space's other chats read.
+- **Unlocked chats leave confidential documents out**: library search, notes-first, the space's own
+  documents and picked collections alike. The footer says how many were left out, so a missing document
+  has an explanation.
+- **One rule per word.** Locked spaces and chats stay locked; whether something is confidential can
+  be changed at any time. Removing the mark releases nothing already read: the chats that read it stay
+  locked.
 
 **The limit worth knowing.** A locked space removes the model's tools; it does not change where the
 model runs. If `CHAT_BASE_URL` (or `EMBED_BASE_URL` / `RERANK_BASE_URL`) points at a hosted API, your
@@ -1009,7 +1068,7 @@ Set `IMAGE_BASE_URL` in your environment to enable the feature (see [Environment
 ### Collections
 
 A **collection** is the other kind of grouping: it holds resources and nothing else — no chats, no
-memory, no monitors, no lock. It exists for reference material that belongs to no conversation, where
+memory, no monitors. It can be marked [confidential](#confidential-collections-and-resources). It exists for reference material that belongs to no conversation, where
 filing it into a space would mean inventing a project that does not exist.
 
 Both kinds live under **Workspaces** in the sidebar, in two labelled sections — the entry is named for
@@ -1018,23 +1077,144 @@ chats. A resource is tagged to a collection exactly as it is tagged to a space, 
 collections appear alongside spaces as [filter chips](#finding-things-in-a-large-library) in the
 Resources list.
 
-**Using a collection in a chat.** Tick one or more below the message box and that turn also retrieves
-from their resources, whether or not the chat is in a space. The selection is per request, not stored
-on the chat: it is as cheap to change as the research mode beside it, and stays lit until you untick
-it. Excerpts arrive as their own block, cited `[C1]`, `[C2]` — distinct from the `[F1]` labels a
-space's own tagged resources carry, so a citation is never ambiguous about which shelf it came from.
+**Using a collection in a chat.** Pick one or more below the message box and that turn also reads
+from their resources, whether or not the chat is in a space, in the way chosen under **Read** (below).
+The selection is not stored on the chat: it is as cheap to change as the research mode beside it, and
+stays until you unpick it or leave the chat — starting a new chat or opening another one clears it,
+along with the Read choice, as it does a model pick. (Carried over, a confidential collection would
+lock the next chat without asking.) Collection sources are cited `[C1]`, `[C2]` — distinct from the
+`[F1]` labels a space's own tagged resources carry, so a citation is never ambiguous about which shelf
+it came from.
 
-Because these excerpts are asked for explicitly, they are not made to compete with whatever the space
+In *Excerpts* mode, because these excerpts are asked for explicitly, they are not made to compete with whatever the space
 itself holds: they carry their own retrieval budget rather than being ranked against it. A request
 with collections selected therefore builds a somewhat larger prompt.
+
+**How the collections are read.** Once a collection is picked, a **Read** choice appears below the
+chips: **Auto** (the default), **Excerpts**, **Whole collection** or **Explore**. The chosen one's
+description is shown under it.
+
+- **Excerpts**: the passages nearest the question, as described above. Quick; suits a question
+  *answered somewhere* in the collection.
+- **Whole collection**: every document, for tasks *about* the collection: compare these papers, place
+  my work among them, review my attached draft against these reviewed papers. See below.
+- **Explore**: an agent for targeted questions across the documents ("which of these use GSN?",
+  "does anything here contradict my section 3?"). See [Exploring a collection](#exploring-a-collection).
+- **Auto** asks the small model, in one short call, which of the three fits the message, and falls
+  back to Excerpts if it cannot say. The footer says what it chose and why ("Auto read the collection
+  as Explore: a targeted question"), so you can override it next time.
+
+The pick, like the collections, lasts for the chat. *Analyze in chat* on a collection's page and the
+**Collection report** template set Whole collection.
+
+**Accuracy, speed and AI usage** (timings from a local 26B model on an integrated GPU, and a fast cloud model):
+
+| Mode | Reads | Good at | Can miss | Time and AI usage |
+|---|---|---|---|---|
+| **Excerpts** | the ~15 passages nearest the question | a fact or passage found in a few places | anything not near the question's wording; cannot cover a whole collection | fastest: one search, one normal answer |
+| **Whole collection, in full** (small collections) | every document, side by side | links between documents, comparisons, style | detail in the middle of a very long prompt | one long call; on a local GPU about 5–6 min for 4 papers (~40k tokens) before the first word; on a cloud model the whole collection is paid for on every message |
+| **Whole collection, per document** (larger ones) | every document, each read for the task | covering every document; nothing crowded out | cross-document detail the task did not ask for | one short call per document plus the answer; much faster than a long prompt on a local GPU; slightly more tokens than in full; cached per task |
+| **Explore** | what the agent searches for and reads | targeted questions: which documents do X, checking specific claims | what the agent judges irrelevant | 5–20 short model calls; small prompts; quality depends on the model's tool use |
+| **Auto** | — | — | a misjudged choice (it says which it made) | adds one quick small-model call |
+
+**Working on the whole collection.** That turn reads every document, not the passages nearest the
+question:
+
+- **A small collection goes in full**: up to *Whole collection: full text up to* in Admin → Settings,
+  set separately for local models (default 30,000 tokens) and cloud models (default: whatever fits the
+  model's context). Seeing every document side by side finds the links between them best; a cloud model
+  reads a long prompt quickly, while a local GPU slows sharply with prompt length.
+- **A larger one is read document by document for your message.** Each document gets its own call,
+  with your message as the task and the other documents' titles, and returns what it is; its authors,
+  venue, year and funding; which of the other documents it cites or builds on; and the points in it
+  that bear on the task (with short quotes) — or that it has nothing on it. The answer is then written from what every document
+  said, so none is skipped and none is crowded out. Many short calls are also much faster than one long
+  prompt on a local GPU, where reading slows sharply as a prompt grows.
+- **An attached draft** (review it against the collection) is first summarised into a short card,
+  which goes into every document's call so each is read with your draft in mind. The answer still gets
+  the draft in full.
+- **Each message is its own task.** Extracts are cached per document, model and task, so retrying
+  is free, but a new question reads the documents again. For a quick follow-up on the answer, switch
+  to *Excerpts* and chat normally.
+- A document too long for one call is read in consecutive parts. If a call fails, the document's
+  generic **digest** stands in. Digests are listed on the resource's page under *Digests*.
+- Calls run one at a time on a local model and three at a time on a cloud model, where they count
+  toward its cost and budget like any other call.
+- The progress log shows each stage: *Reading documents (k of N)* for the per-document pass, then
+  *Reading N documents in full (~T tokens)* or *Reading what the N documents said* while the model takes
+  in its prompt before the first word, then *Writing answer*.
+- The footer says how the collection was read: "12 documents read for this question, 3 with nothing on
+  it", and whether what they said had to be shortened to fit.
+- Each document is cited as `[C1]`, `[C2]`, one label per document.
+- The turn makes no web search, and its answer is not cached, because the collection can change.
+
+The built-in **Collection report** template asks for a summary of each work, how they relate, where they
+agree and disagree, the pros and cons of each, and a comparison table. Choosing it sets *Whole
+collection*. Save a good answer as a note with the answer's note action.
+
+#### Exploring a collection
+
+**Explore** answers a targeted question by working through the documents the way a person would,
+rather than reading all of them. An agent (the answering model) has four tools:
+
+- **list the documents**: label, title, one-line summary, and how many parts each has;
+- **outline** a document: one line per part, saying what it covers and its headings;
+- **search** the documents, or one of them: which document and part a passage is in, with an
+  excerpt. Across all documents it returns each document's best matches first (up to 2 each, 8–30
+  in all as the collection grows), so a paper full of matches cannot hide one with a few. A document
+  whose best matches are clearly unrelated can be ruled out from that; one that did not appear, or
+  whose matches are ambiguous, the agent searches or outlines on its own;
+- **read** a part in full, and **note** a finding with where it is and a short quote.
+
+A *part* is three consecutive indexed excerpts (about 5,000 characters), the same excerpts search
+uses, so nothing is stored twice and a search hit names its part exactly. Outlines are written once by
+the small model and cached until the document is re-indexed.
+
+Before the agent's first step, the server itself shows it each document's passages nearest the
+question (a *first look*), so every document is considered whatever the model then decides. With a
+reranker configured, passages are held to a relevance floor of its own (Admin → Settings, *Explore:
+minimum relevance*, default 0.05), separate from the retrieval floor *rag_min_relevance*. It is low on
+purpose: question-to-passage scores run far lower than the scores retrieval floors are tuned on, and
+the bare word "contract" scored 0.05–0.28 on the passages that discuss contracts. A document with
+nothing above it is shown as having *nothing close*, and the agent is told it can rule it out without
+searching it. If no document clears the floor, the first look says the message matched nothing as
+worded and rules nothing out: a conversational message ("can you check again?") scores near zero
+against everything. The agent's own searches show it every
+hit it asked for, and it judges them itself; only hits above the floor are passed to the answer
+unasked, while anything the agent finds relevant it notes. Without a reranker there is no floor, as
+elsewhere in the app.
+
+The agent keeps its prompt small, however long it explores: parts read earlier are dropped once read,
+and its notes are restated at every step. After each part it reads it is asked for a note (offered, not
+forced: a model that answers instead just ends the exploration), and to summarise a document it is told
+to read the two or three parts that match most, not just one. The answer is written in a separate call
+from the notes, the passages searches showed (up to about 15,000 characters), and **every part read**,
+in full, most relevant first and above the floor (up to about 20,000 characters, or a quarter of the
+model's room). A part is scored by its best stretch against the message *and* the agent's latest
+searches, so a follow-up such as "check again" still ranks the parts read for "contract"; if no part
+clears the floor, all are passed on, ranked — notes included or not, since a model's note may be a sentence where the part holds a
+page. It also gets a list of where relevant material was found (which documents and parts) and must
+account for each document on it, so it cannot call a document silent whose passages it was given. It is
+asked to use everything relevant and be thorough; it cites `[C1]`. Reading the same part twice is
+turned away. The progress log shows each search, read and note; the server log shows each step's tool
+calls and the first look's score per document.
+
+It stops when it judges its notes enough, or at a step limit (Admin → Settings, *Explore: step limit*,
+default 20). If it hits the limit or its tool calls fail, it answers from what it noted so far, and the
+footer says so. Like whole-collection mode, it makes no web search, its answers are not cached, it
+follows the chat's model pick, and confidential documents are read only in locked chats. A model that
+handles many tool calls reliably works best; on a small local model, prefer *Whole collection*.
+
+*Summarize resources* is offered in spaces only: it saves a memory, which only a space's chats read.
+In a collection, use *Analyze in chat*, whose per-document reading is cached and reused.
 
 **Promotion.** A collection can be turned into a space from its detail view, keeping every tagged
 resource — nothing moves, because both kinds tag the same way. This is one-way: a space that already
 holds chats, memories and possibly a lock has no sensible reading as a collection, so the reverse is
 refused.
 
-**Collections cannot be locked.** Locking denies a chat web access, and a collection has no chats.
-Confidential material belongs in a [locked space](#locked-spaces).
+**A confidential collection** (eye icon on its row) keeps its documents to locked chats; see
+[Confidential collections and resources](#confidential-collections-and-resources).
 
 ### Assigning chats to spaces
 
@@ -1193,7 +1373,7 @@ Admins can offer extra models that users pick from a menu next to the research m
 
 Each model has a role — chat, thinking or both — a context size and an output cap. A chat model also answers flash; a thinking model is offered in thorough only, where it runs the research with thinking switched on and the default model writes the answer. **Test** sends one tiny request with the saved settings (metered, for a cloud model). A provider can carry extra request fields sent with every call, e.g. Cortecs `{"preference": "cost", "eu_native": true, "allow_zero_data_retention": true}`, and a model can add its own on top (the model's win), e.g. pinning Cortecs to one hosting provider with `{"allowed_providers": ["…"], "provider_order": "custom"}` so the price entered for that model matches what is billed. Values may be text, numbers, true/false or lists of text; fields that would change the model, messages, tools or output limits are refused.
 
-In **Admin → Users**, each user's **Models ▾** fold-out switches model picking on for them, with access per provider: a monthly budget for a cloud provider (blank = no access), a tick for a local one, and their spend this month. **Admin → Models** shows each cloud provider's spend against its cap; months are UTC. A cloud model's reasoning, which providers send in a separate field, is shown under *show thinking* like a local model's. If a cloud model fails, the note under the answer gives the provider's error message. The note also gives a cloud answer's cost, and the context meter is sized for whichever model the next message will use: each catalogue model has its own **Context tokens**, the default models theirs from `CONTEXT_TOKEN_LIMIT`. A call stopped before the provider reports its usage is still charged, as an estimate from the prompt and the text received. A pick falls back to the default model, with a note under the answer, when it does not apply (image mode, a locked space, a thinking model outside thorough), when the model or provider is disabled or its key unset, when the user has no access, or when a budget or cap is spent. The note under an answer also names the model that answered. Image mode, monitors and background helpers (titles, query rewriting, memory) always use the default models.
+In **Admin → Users**, each user's **Models ▾** fold-out switches model picking on for them, with access per provider: a monthly budget for a cloud provider (blank = no access), a tick for a local one, and their spend this month. **Admin → Models** shows each cloud provider's spend against its cap; months are UTC. A cloud model's reasoning, which providers send in a separate field, is shown under *show thinking* like a local model's. If a cloud model fails, the note under the answer gives the provider's error message. The note under an answer names just the model; the badge on the answer says where a cloud answer went (amber, e.g. *Cloud · Cortecs via entrim*), and its tooltip adds the cost and the tokens the answer used — input, output (with reasoning, where the provider reports it) and the number of model calls, counted for local models too. Helper calls on the small model (titles, Auto's choice, outlines) are not included; a cached answer made no calls and shows none. The context meter is sized for whichever model the next message will use: each catalogue model has its own **Context tokens**, the default models theirs from `CONTEXT_TOKEN_LIMIT`. A call stopped before the provider reports its usage is still charged, as an estimate from the prompt and the text received. A pick falls back to the default model, with a note under the answer, when it does not apply (image mode, a locked space, a thinking model outside thorough), when the model or provider is disabled or its key unset, when the user has no access, or when a budget or cap is spent. Image mode, monitors and background helpers (titles, query rewriting, memory) always use the default models.
 
 ## Environment variables
 

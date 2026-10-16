@@ -124,6 +124,20 @@ export interface AnswerModel {
   /** What the answer's calls cost, in `currency`; absent when nothing was metered (local models, a cached answer). */
   cost?: number
   currency?: string
+  /** What the answer's calls used, local models included; absent for a cached answer. */
+  tokens?: AnswerTokens
+}
+
+/** Token counts summed over an answer's calls of the answering model (helpers on the small model,
+ *  such as the title or Auto's choice, are not counted). */
+export interface AnswerTokens {
+  input: number
+  /** Includes `reasoning`. */
+  output: number
+  reasoning?: number
+  calls: number
+  /** A call was cut off before reporting, so its counts are an estimate. */
+  estimated?: boolean
 }
 
 
