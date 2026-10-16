@@ -442,8 +442,16 @@ export default function App() {
   }
 
 
+  /** Picked collections and Whole collection belong to the chat they were picked in, like the model
+   *  pick: carried into another chat, a confidential one would lock it without asking. */
+  function clearCollectionPicks() {
+    setSelectedCollections([])
+    setWholeCollection(false)
+  }
+
   function loadSession(id: string, title: string, addToHistory = true, fromMonitor = false) {
     setFocusMessageId(null)
+    clearCollectionPicks()
     setSessionId(id)
     setEditingTitle(false)
     setIsMonitorSession(fromMonitor)
@@ -465,6 +473,7 @@ export default function App() {
   }
 
   function newChat(inSpaceId?: string) {
+    clearCollectionPicks()
     setSessionId(undefined)
     setEditingTitle(false)
     setIsMonitorSession(false)

@@ -44,7 +44,10 @@ through a single Bun process.
     - [Changing the embedding model](#changing-the-embedding-model)
   - [URL fetching](#url-fetching)
   - [Preventing data exfiltration](#preventing-data-exfiltration)
+    - [Three levels of protection](#three-levels-of-protection)
+    - [Outbound channels](#outbound-channels)
     - [Locked spaces](#locked-spaces)
+    - [Confidential collections and resources](#confidential-collections-and-resources)
   - [Prompt templates](#prompt-templates)
     - [Prompt Studio](#prompt-studio)
   - [Settings](#settings)
@@ -662,6 +665,39 @@ document to leave. This is not only a question of trusting the model: a document
 model reads is hostile — a poisoned PDF is far likelier than a maliciously trained model, and both
 produce the same behaviour.
 
+### Three levels of protection
+
+| Level | What can leave your network | What protects it |
+|---|---|---|
+| **0 — a cloud model picked** | The whole prompt, documents included, goes to the provider | Your choice: the cloud warning, its one-time confirmation, and budgets |
+| **1 — local models (the default)** | Search queries and fetched URLs, which may carry words from your documents | The egress guard below: *detection*, which asks before a suspicious request — and can be fooled |
+| **2 — locked** (padlock on a space or chat, eye on confidential content) | Nothing from the chat | *Capability removal*: no web search, URL fetching, image generation, cloud models or writes to shared memory — the routes out do not exist, so nothing has to be judged |
+
+Level 0 trusts the provider, level 1 trusts detection, level 2 trusts nothing to judge. Level 2 covers
+both a careless search query and a model deliberately trying to smuggle data out (a poisoned
+document's instructions, say), because the model has nothing to send it with.
+
+Level 1 is a habit rather than a label: a document stays on local models only as long as no one picks a
+cloud model for that chat. For anything that must not leave, use level 2:
+[locked spaces](#locked-spaces) and [confidential collections and resources](#confidential-collections-and-resources).
+
+**Level 2's edges, so its promise is not overstated:**
+
+- **A link you click.** Images cannot leak (channel 1 below), but a link in an answer could carry data
+  in its address if you open it.
+- **Trusted search.** With `SPEJAREN_TRUSTED=true`, locked chats may still search your own spejaren
+  index. The queries reach only that server.
+- **The model, embedding and reranker servers** see every document, from upload onwards, before any lock
+  applies. That is the point of running them locally; startup warns when one is not.
+- **Confidential is a read rule, not encryption.** The text on disk and in backups is like any other.
+
+What a locked chat does not do: it is offered no `save_to_memory` outside a locked space, and no
+`save_user_fact`; its turns are not indexed into an unlocked space's history; and *Suggest from chats*
+(user memory) skips locked chats. Every chat reads user memory and a space's memory, so a fact written
+there would carry what the chat read out of the lock.
+
+### Outbound channels
+
 There are three outbound channels, and they are not equally dangerous.
 
 **1. Images in the answer — closed.** An answer containing `![](https://somewhere/x?d=…)` is
@@ -1044,7 +1080,9 @@ Resources list.
 **Using a collection in a chat.** Tick one or more below the message box and that turn also retrieves
 from their resources, whether or not the chat is in a space. The selection is per request, not stored
 on the chat: it is as cheap to change as the research mode beside it, and stays lit until you untick
-it. Excerpts arrive as their own block, cited `[C1]`, `[C2]` — distinct from the `[F1]` labels a
+it or leave the chat — starting a new chat or opening another one clears it, along with *Whole
+collection*, as it does a model pick. (Carried over, a confidential collection would lock the next
+chat without asking.) Excerpts arrive as their own block, cited `[C1]`, `[C2]` — distinct from the `[F1]` labels a
 space's own tagged resources carry, so a citation is never ambiguous about which shelf it came from.
 
 Because these excerpts are asked for explicitly, they are not made to compete with whatever the space
@@ -1057,22 +1095,34 @@ draft against these reviewed papers), tick **Whole collection** next to the pick
 **Analyze in chat** on the collection's page. That turn then reads every document, not the passages
 nearest the question:
 
-- The documents go into the prompt **in full** when they fit the answering model's context.
-- Otherwise each document is first reduced to a **digest** (claims, method, results, verdict,
-  strengths, weaknesses) by the same model. Digests are made one at a time on a local model and three at
-  a time on a cloud model, and are kept per document and model, so a follow-up question reuses them. A
-  resource's page lists its digests under *Digests*, with the model that made each. If
-  even the digests do not fit, each is shortened equally, and the footer says so.
+- **A small collection goes in full**: up to *Whole collection: full text up to* in Admin → Settings
+  (default 30,000 tokens, never above the model's context).
+- **A larger one is read document by document for your message.** Each document gets its own call,
+  with your message as the task, and returns what it is, the points in it that bear on the task (with
+  short quotes), or that it has nothing on it. The answer is then written from what every document
+  said, so none is skipped and none is crowded out. Many short calls are also much faster than one long
+  prompt on a local GPU; see the timings in `perftest.md` if you have run it.
+- **An attached draft** (review it against the collection) is first summarised into a short card,
+  which goes into every document's call so each is read with your draft in mind. The answer still gets
+  the draft in full.
+- **Each message is its own task.** Extracts are cached per document, model and task, so retrying
+  is free, but a new question reads the documents again. For a quick follow-up on the answer, turn
+  *Whole collection* off and chat normally.
+- A document too long for one call is read in consecutive parts. If a call fails, the document's
+  generic **digest** stands in. Digests are listed on the resource's page under *Digests*.
+- Calls run one at a time on a local model and three at a time on a cloud model, where they count
+  toward its cost and budget like any other call.
+- The footer says how the collection was read: "12 documents read for this question, 3 with nothing on
+  it", and whether what they said had to be shortened to fit.
 - Each document is cited as `[C1]`, `[C2]`, one label per document.
 - The turn makes no web search, and its answer is not cached, because the collection can change.
-- Digest calls on a cloud model count toward its cost and budget like any other call.
 
 The built-in **Collection report** template asks for a summary of each work, how they relate, where they
 agree and disagree, the pros and cons of each, and a comparison table. Choosing it turns *Whole
 collection* on. Save a good answer as a note with the answer's note action.
 
 *Summarize resources* is offered in spaces only: it saves a memory, which only a space's chats read.
-In a collection, use *Analyze in chat*, whose per-document digests are cached and reused.
+In a collection, use *Analyze in chat*, whose per-document reading is cached and reused.
 
 **Promotion.** A collection can be turned into a space from its detail view, keeping every tagged
 resource — nothing moves, because both kinds tag the same way. This is one-way: a space that already

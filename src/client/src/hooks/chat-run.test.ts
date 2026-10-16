@@ -131,10 +131,10 @@ describe('ChatRun', () => {
   test('updates a document-reading step in place, and names the documents read in the footer', () => {
     const { seen, feed } = harness()
     const docs = (index: number) => ({ type: 'status', text: '', step: { kind: 'documents', index, total: 3, update: index > 0 } })
-    feed(docs(0), docs(1), docs(2), { type: 'coverage', documents: 3, mode: 'digest', trimmed: true }, { type: 'text', delta: 'x' }, done())
+    feed(docs(0), docs(1), docs(2), { type: 'coverage', documents: 3, mode: 'extract', trimmed: true, irrelevant: 1 }, { type: 'text', delta: 'x' }, done())
     expect(seen.steps).toHaveLength(1)
     expect(seen.steps[0]).toMatchObject({ kind: 'documents', index: 2 })
-    expect(seen.answerTime).toContain('3 documents read as digests, shortened to fit the model')
+    expect(seen.answerTime).toContain('3 documents read for this question, 1 with nothing on it, shortened to fit the model')
     expect(seen.answerTime).not.toContain(translate('en', 'answer.noSearchResults'))
   })
 

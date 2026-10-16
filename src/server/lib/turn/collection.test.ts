@@ -47,9 +47,27 @@ describe('whole-collection turn', () => {
     const system = JSON.stringify(fake.requests.at(-1))
     expect(system).toContain('Paper A on bees.')
     expect(system).toContain('Paper B on bees.')
-    expect(cap.ofType('coverage')).toEqual([{ type: 'coverage', documents: 2, mode: 'full', trimmed: false }])
+    expect(cap.ofType('coverage')).toEqual([{ type: 'coverage', documents: 2, mode: 'full', trimmed: false, irrelevant: 0 }])
     expect(cap.ofType('file_sources')[0].sources).toHaveLength(2)
     expect(cap.events.some(e => (e.step as { kind?: string } | undefined)?.kind === 'search')).toBe(false)
     expect(result).toMatchObject({ content: 'Both papers study bees [C1][C2].', cacheable: false })
+  })
+
+  test('above the threshold, reads each document for the message, with the attached draft as a card', async () => {
+    sqlite.run("INSERT OR REPLACE INTO app_settings(key, value) VALUES ('collection_full_text_tokens', '0')")
+    try {
+      const from = fake.requests.length
+      const ctx = { ...ctxFor(), msgs: [{ role: 'user' as const, content: 'Review my draft.\n\n---\n[draft.md]\nMY DRAFT TEXT' }] }
+      await runTurn(ctx, createSink(captureSSE().stream as never))
+      const asked = fake.requests.slice(from).map(r => JSON.stringify(r))
+      // The draft card first, then one call per document, then the answer.
+      expect(asked).toHaveLength(4)
+      expect(asked[0]).toContain('MY DRAFT TEXT')
+      expect(asked[1]).toContain('The task: Review my draft.')
+      expect(asked[1]).not.toContain('MY DRAFT TEXT')
+      expect(asked[3]).toContain('MY DRAFT TEXT')
+    } finally {
+      sqlite.run("DELETE FROM app_settings WHERE key = 'collection_full_text_tokens'")
+    }
   })
 })

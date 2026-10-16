@@ -1,16 +1,19 @@
-/** Whole-collection coverage: the documents go in full when they fit, else as one digest each, made
- *  by the answer model, cached, and one at a time on a local model. */
+/** Whole-collection coverage: a small collection goes in full; a larger one is read document by
+ *  document for the task (and an attached draft's card), by the answer model, cached per task, one at
+ *  a time on a local model; the digest stands in when an extract fails. */
 
 // Must precede every other import: sets DB_PATH before lib/db.ts opens it.
 import '../test-support/test-env.ts'
 
 import { describe, test, expect, beforeAll, beforeEach, afterAll } from 'bun:test'
 import { randomUUID } from 'node:crypto'
-import { fakeTarget, startFakeOpenAI } from '../test-support/fake-openai.ts'
+import { fakeTarget, startFakeOpenAI, type ScriptedStep } from '../test-support/fake-openai.ts'
 import type { ModelTarget } from '../llm.ts'
 
 const { sqlite } = await import('../db.ts')
-const { coverCollection, fitTexts, storedDigests } = await import('./collection-coverage.ts')
+const { coverCollection, fitTexts } = await import('./collection-coverage.ts')
+const { storedDigests } = await import('./collection-digests.ts')
+const { joinParts } = await import('./collection-extracts.ts')
 
 const USER = 'coverage-user'
 const COLL = 'coverage-coll'
@@ -23,6 +26,7 @@ beforeAll(() => {
 beforeEach(() => {
   sqlite.run('DELETE FROM space_files WHERE space_id = ?', [COLL])
   sqlite.run('DELETE FROM resource_digests')
+  sqlite.run('DELETE FROM resource_extracts')
 })
 
 /** A resource of one chunk, filed in the test collection. */
@@ -35,63 +39,107 @@ function seedDoc(filename: string, content: string): string {
   return id
 }
 
-describe('coverCollection', () => {
-  let fake: ReturnType<typeof startFakeOpenAI>
-  beforeAll(() => { fake = startFakeOpenAI([{ text: ['- Claims: bees dance.'] }]) })
-  afterAll(() => fake.stop())
+/** Options that send a collection in full when it fits `budgetChars`, or read it for `task` (fullTextMaxChars 0). */
+const opts = (model: ModelTarget, extra: Partial<Parameters<typeof coverCollection>[1]> = {}) =>
+  ({ model, budgetChars: 10_000, fullTextMaxChars: 0, task: 'What do they say about bees?', ...extra })
 
-  test('sends every document in full when they fit, labelled by filename order, without calling the model', async () => {
+/** What the fake model was asked, as text. */
+const asked = (fake: ReturnType<typeof startFakeOpenAI>, from: number) => JSON.stringify(fake.requests.slice(from))
+
+let fake: ReturnType<typeof startFakeOpenAI> | null = null
+afterAll(() => fake?.stop())
+function serve(script: ScriptedStep[]) {
+  fake?.stop()
+  fake = startFakeOpenAI(script)
+  return fake
+}
+
+describe('coverCollection', () => {
+  test('sends a collection under the threshold in full, labelled by filename order, without calling the model', async () => {
+    const f = serve([{ text: ['x'] }])
     seedDoc('b.txt', 'Second paper.')
     const first = seedDoc('a.txt', 'First paper.')
-    const calls = fake.callCount
-    const c = await coverCollection([COLL], { model: fakeTarget(fake.baseURL), budgetChars: 10_000 })
+    const c = await coverCollection([COLL], opts(fakeTarget(f.baseURL), { fullTextMaxChars: 10_000 }))
     expect(c.mode).toBe('full')
     expect(c.block).toContain('### [C1] a.txt\nFirst paper.')
     expect(c.block).toContain('### [C2] b.txt\nSecond paper.')
     expect(c.fileSources[0]).toEqual({ title: '[C1] a.txt', url: `file:${first}`, label: 'C1' })
-    expect(fake.callCount).toBe(calls)
+    expect(f.callCount).toBe(0)
   })
 
-  test('digests documents that do not fit, and reuses the digests on the next turn', async () => {
-    seedDoc('a.txt', 'x'.repeat(3000))
-    seedDoc('b.txt', 'y'.repeat(3000))
-    const calls = fake.callCount
+  test('reads each document for the task, and reuses the extracts for the same task only', async () => {
+    const f = serve([{ text: ['A paper on bees.\n- "Bees dance" (section 2)'] }])
+    seedDoc('a.txt', 'Bees dance.')
+    seedDoc('b.txt', 'Bees hum.')
     const progress: number[] = []
-    const opts = { model: fakeTarget(fake.baseURL), budgetChars: 2000, onProgress: (done: number) => { progress.push(done) } }
-    const c = await coverCollection([COLL], opts)
-    expect(c.mode).toBe('digest')
-    expect(c.block).toContain('### [C2] b.txt\n- Claims: bees dance.')
-    expect(fake.callCount).toBe(calls + 2)
+    const c = await coverCollection([COLL], opts(fakeTarget(f.baseURL), { onProgress: (done: number) => { progress.push(done) } }))
+    expect(c.mode).toBe('extract')
+    expect(c.block).toContain('### [C2] b.txt\nA paper on bees.')
+    expect(asked(f, 0)).toContain('What do they say about bees?')
+    expect(f.callCount).toBe(2)
     expect(progress).toEqual([0, 1, 2])
-    await coverCollection([COLL], opts)
-    expect(fake.callCount).toBe(calls + 2)
+    await coverCollection([COLL], opts(fakeTarget(f.baseURL)))
+    expect(f.callCount).toBe(2)
+    await coverCollection([COLL], opts(fakeTarget(f.baseURL), { task: 'And about wasps?' }))
+    expect(f.callCount).toBe(4)
   })
 
-  test('leaves a confidential document out of an unlocked turn, and reads it in a locked one', async () => {
-    seedDoc('a.txt', 'Open paper.')
-    const secret = seedDoc('b.txt', 'Secret paper.')
-    sqlite.run('UPDATE uploaded_files SET confidential = 1 WHERE id = ?', [secret])
-    const model = fakeTarget(fake.baseURL)
-    expect((await coverCollection([COLL], { model, budgetChars: 10_000 })).block).not.toContain('Secret paper.')
-    expect((await coverCollection([COLL], { model, budgetChars: 10_000, includeConfidential: true })).block).toContain('Secret paper.')
+  test('reads each document with the attached draft\'s card in mind', async () => {
+    const f = serve([{ text: ['DRAFT CARD: claims bees count'] }, { text: ['A paper.\n- relevant'] }])
+    seedDoc('a.txt', 'Bees dance.')
+    await coverCollection([COLL], opts(fakeTarget(f.baseURL), { draft: '[draft.md]\nMy draft about bees.' }))
+    expect(JSON.stringify(f.requests[0])).toContain('My draft about bees.')
+    expect(JSON.stringify(f.requests[1])).toContain('DRAFT CARD: claims bees count')
   })
 
-  test('lists a resource\'s stored digests with the model that made them', async () => {
-    const id = seedDoc('a.txt', 'x'.repeat(3000))
-    await coverCollection([COLL], { model: fakeTarget(fake.baseURL), budgetChars: 500 })
+  test('lists a document with nothing on the task, and counts it', async () => {
+    const f = serve([{ text: ['A paper on wasps.\nNOTHING RELEVANT'] }])
+    seedDoc('a.txt', 'Wasps sting.')
+    const c = await coverCollection([COLL], opts(fakeTarget(f.baseURL)))
+    expect(c.irrelevant).toBe(1)
+    expect(c.block).toContain('A paper on wasps.\nNothing on this task.')
+  })
+
+  test('reads a document too long for one call in parts', async () => {
+    const f = serve([{ text: ['A part.\n- point'] }])
+    seedDoc('a.txt', 'w'.repeat(5000))
+    // 1000 context tokens leaves the minimum of 2000 characters per call.
+    await coverCollection([COLL], opts(fakeTarget(f.baseURL, 1000)))
+    expect(f.callCount).toBe(3)
+    expect(asked(f, 0)).toContain('part 3 of 3')
+  })
+
+  test('uses the digest when an extract fails, and lists it on the resource', async () => {
+    const f = serve([{ error: { status: 400, message: 'refused' } }, { text: ['- Claims: bees dance.'] }])
+    const id = seedDoc('a.txt', 'Bees dance.')
+    const c = await coverCollection([COLL], opts(fakeTarget(f.baseURL)))
+    expect(c.block).toContain('### [C1] a.txt\n- Claims: bees dance.')
     expect(await storedDigests(id)).toEqual([{ model: 'm', digest: '- Claims: bees dance.', createdAt: expect.any(Number) }])
   })
 
-  test('falls back to the opening of a document whose digest fails, and does not cache it', async () => {
-    const failing = startFakeOpenAI([{ error: { status: 400, message: 'refused' } }])
-    try {
-      seedDoc('a.txt', 'Opening words. ' + 'z'.repeat(3000))
-      const c = await coverCollection([COLL], { model: fakeTarget(failing.baseURL), budgetChars: 2500 })
-      expect(c.block).toContain('### [C1] a.txt\nOpening words.')
-      expect(sqlite.prepare('SELECT count(*) AS n FROM resource_digests').get()).toEqual({ n: 0 })
-    } finally {
-      failing.stop()
-    }
+  test('falls back to the opening of a document whose extract and digest both fail', async () => {
+    const f = serve([{ error: { status: 400, message: 'refused' } }])
+    seedDoc('a.txt', 'Opening words. ' + 'z'.repeat(3000))
+    const c = await coverCollection([COLL], opts(fakeTarget(f.baseURL)))
+    expect(c.block).toContain('### [C1] a.txt\nOpening words.')
+    expect(sqlite.prepare('SELECT count(*) AS n FROM resource_digests').get()).toEqual({ n: 0 })
+  })
+
+  test('leaves a confidential document out of an unlocked turn, and reads it in a locked one', async () => {
+    const f = serve([{ text: ['x'] }])
+    seedDoc('a.txt', 'Open paper.')
+    const secret = seedDoc('b.txt', 'Secret paper.')
+    sqlite.run('UPDATE uploaded_files SET confidential = 1 WHERE id = ?', [secret])
+    const model = fakeTarget(f.baseURL)
+    expect((await coverCollection([COLL], opts(model, { fullTextMaxChars: 10_000 }))).block).not.toContain('Secret paper.')
+    expect((await coverCollection([COLL], opts(model, { fullTextMaxChars: 10_000, includeConfidential: true }))).block).toContain('Secret paper.')
+  })
+})
+
+describe('joinParts', () => {
+  test('keeps the parts that found something, and is irrelevant only when none did', () => {
+    expect(joinParts(['A.\n- x', 'A.\nNOTHING RELEVANT'])).toEqual({ text: 'A.\n- x', relevant: true })
+    expect(joinParts(['A.\nNOTHING RELEVANT', 'A.\nNOTHING RELEVANT'])).toEqual({ text: 'A.\nNothing on this task.', relevant: false })
   })
 })
 
@@ -116,7 +164,7 @@ describe('map concurrency', () => {
   async function peakFor(model: ModelTarget) {
     for (const name of ['a', 'b', 'c', 'd']) seedDoc(`${name}.txt`, name.repeat(3000))
     peak = 0
-    await coverCollection([COLL], { model, budgetChars: 1000 })
+    await coverCollection([COLL], opts(model))
     return peak
   }
 

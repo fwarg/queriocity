@@ -805,12 +805,17 @@ export async function suggestUserMemories(
   // queries, not conversations the user had, and their recurring prompt is instruction-shaped
   // ("report on X, be concise, cite sources") — read as a profile it yields the assistant's
   // standing orders rather than anything about the person.
+  // Locked chats are excluded too, by their own lock or their space's: user memory is read by every
+  // chat, so a fact drawn from one would carry what it read out of the lock.
   const sessions = await db.select({ id: chatSessions.id })
     .from(chatSessions)
     .leftJoin(monitorRuns, eq(chatSessions.id, monitorRuns.sessionId))
+    .leftJoin(spaces, eq(chatSessions.spaceId, spaces.id))
     .where(and(
       eq(chatSessions.userId, userId),
       or(isNull(monitorRuns.id), eq(chatSessions.graduated, 1)),
+      eq(chatSessions.locked, false),
+      or(isNull(spaces.id), eq(spaces.offline, false)),
     ))
     .orderBy(desc(chatSessions.updatedAt))
     .limit(limit)

@@ -267,7 +267,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
   if (customPrompt?.trim()) system += `\n\nAdditional instructions from the user:\n${customPrompt.trim()}`
   if (hasFiles) system += `\n\nYou have an uploads_search tool to search the user's uploaded documents. When the query might be answered by personal, domain-specific, or proprietary documents, call uploads_search before or alongside web_search.`
   if (spaceId && spaceWrites) system += `\n\nYou have a save_to_memory tool. Use it when the user expresses a preference, makes a decision, or shares context that would be useful in future conversations. Do not save trivial or ephemeral details.`
-  if (userMemoryEnabled) system += `\n\nYou have a save_user_fact tool for facts about the user that hold in *every* conversation — how they want answers written, languages they work in, durable constraints. Use it rarely: anything topic-specific belongs in save_to_memory instead.`
+  if (userMemoryEnabled && !locked) system += `\n\nYou have a save_user_fact tool for facts about the user that hold in *every* conversation — how they want answers written, languages they work in, durable constraints. Use it rarely: anything topic-specific belongs in save_to_memory instead.`
   if (spaceId) system += `\n\nYou also have a search_space_history tool for looking up earlier conversations in this space. Relevant excerpts are already provided above when they exist, so call it only when the user refers to something earlier that is not covered there.`
   // The mode prompts above instruct the model to search; without contradicting them explicitly it
   // writes the tool call as prose instead, which nothing parses and the user sees as the answer —
@@ -504,8 +504,9 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
   }
 
   // Registered only on opt-in, so the default tool count — and the prompt space it costs — is
-  // unchanged for everyone else.
-  if (userMemoryEnabled) {
+  // unchanged for everyone else. Never in a locked turn: every chat reads user memory, so a fact
+  // saved here would carry what the turn read out of the lock.
+  if (userMemoryEnabled && !locked) {
     tools.save_user_fact = tool({
       description: 'Save a durable fact about the user that applies to every future conversation, not just this topic: how they want answers written, languages they work in, lasting constraints. Use sparingly.',
       inputSchema: z.object({ fact: z.string().describe('The durable fact about the user') }),

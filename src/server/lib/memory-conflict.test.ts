@@ -186,6 +186,27 @@ describe('write-time conflict resolution', () => {
     expect(userContent[0].content.length).toBeLessThan(1400)
   })
 
+  test('the suggestion scan skips locked chats, by their own lock or their space\'s', async () => {
+    const { suggestUserMemories } = await import('./memory.ts')
+    const { chatSessions, messages, spaces } = await import('./db.ts')
+    const { randomUUID } = await import('crypto')
+    const now = new Date()
+    await db.insert(spaces).values({ id: 'locked-space', name: 'Sealed', userId: 'cu', kind: 'space', offline: true, createdAt: now, updatedAt: now })
+    const addSession = async (id: string, text: string, extra: { locked?: boolean; spaceId?: string }) => {
+      await db.insert(chatSessions).values({ id, title: id, userId: 'cu', spaceId: extra.spaceId ?? null, locked: extra.locked ?? false, createdAt: now, updatedAt: new Date(Date.now() + 60_000), graduated: 0 })
+      await db.insert(messages).values({ id: randomUUID(), sessionId: id, role: 'user', content: text, createdAt: now })
+    }
+    await addSession('locked-chat', 'LOCKED_CHAT_SECRET', { locked: true })
+    await addSession('locked-space-chat', 'LOCKED_SPACE_SECRET', { spaceId: 'locked-space' })
+
+    plannerReply = '- The user wants answers in Swedish'
+    const before = server.requests.length
+    await suggestUserMemories('cu')
+    const sent = JSON.stringify(server.requests.slice(before))
+    expect(sent).not.toContain('LOCKED_CHAT_SECRET')
+    expect(sent).not.toContain('LOCKED_SPACE_SECRET')
+  })
+
   test('the scan depth is caller-selectable but bounded', async () => {
     const { suggestUserMemories } = await import('./memory.ts')
     const { chatSessions, messages } = await import('./db.ts')

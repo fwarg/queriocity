@@ -27,7 +27,7 @@ function startFakeSearxng() {
 
 afterEach(() => { fake?.stop(); fake = null; searxng?.stop(); searxng = null })
 
-async function toolNamesOffered(locked: boolean, spaceWrites = true): Promise<string[][]> {
+async function toolNamesOffered(locked: boolean, spaceWrites = true, userMemoryEnabled = false): Promise<string[][]> {
   searxng = startFakeSearxng()
   process.env.SEARXNG_URL = searxng.url
   fake = startFakeOpenAI([{ text: ['An answer from the document.'] }])
@@ -37,7 +37,7 @@ async function toolNamesOffered(locked: boolean, spaceWrites = true): Promise<st
 
   const res = await runResearcher({
     messages: [{ role: 'user', content: 'what does the attached contract say about termination?' }],
-    focusMode: 'balanced', userId: 'u1', model, spaceId: 'space-1', hasFiles: true, locked, spaceWrites,
+    focusMode: 'balanced', userId: 'u1', model, spaceId: 'space-1', hasFiles: true, locked, spaceWrites, userMemoryEnabled,
   })
   for await (const part of res.stream) void part
 
@@ -150,5 +150,13 @@ describe('locked chat in an unlocked space', () => {
     const names = (await toolNamesOffered(true, false)).flat()
     expect(names).not.toContain('save_to_memory')
     expect(names).toContain('search_space_history')
+  })
+})
+
+describe('user memory in a locked turn', () => {
+  // Every chat reads user memory, so a locked turn must not write to it.
+  test('is not offered save_user_fact, which an unlocked turn is', async () => {
+    expect((await toolNamesOffered(true, true, true)).flat()).not.toContain('save_user_fact')
+    expect((await toolNamesOffered(false, true, true)).flat()).toContain('save_user_fact')
   })
 })

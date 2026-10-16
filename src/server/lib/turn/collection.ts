@@ -1,5 +1,7 @@
 import { streamText } from 'ai'
-import { languageModel, outputCap, RESEARCH_MAX_TOKENS } from '../llm.ts'
+import { getAppSetting } from '../db.ts'
+import { languageModel, outputCap, tokensToChars, RESEARCH_MAX_TOKENS } from '../llm.ts'
+import { splitAttachments } from '../../../shared/context.ts'
 import { userMemoryBlockIfEnabled, joinMemoryBlocks } from '../memory.ts'
 import { coverCollection } from '../files/collection-coverage.ts'
 import { trimMessages, meterBudgetChars, CONTEXT_RESERVE_FRACTION } from '../trim-messages.ts'
@@ -14,6 +16,11 @@ Use ## headings, lists and tables where they help. Always respond in the same la
 
 /** Room kept for earlier messages, which are trimmed to fit once the documents are in. */
 const HISTORY_RESERVE_CHARS = 4000
+/** Up to this many tokens a collection goes in full; above, each document is read for the task.
+ *  Admin setting, since how long a full read takes depends on the model server. */
+export const DEFAULT_COLLECTION_FULL_TEXT_TOKENS = '30000'
+/** The task when a message is only an attachment. */
+const ATTACHMENT_ONLY_TASK = 'Review the attached document against the documents in the collection.'
 
 /** Whole-collection mode: one answer call over every document in the picked collections.
  *
@@ -33,17 +40,21 @@ async function answerFromCollection(ctx: TurnContext, sink: TurnSink): Promise<T
     COLLECTION_SYSTEM + (ctx.customPrompt ? `\n\nAdditional instructions:\n${ctx.customPrompt}` : ''),
     await userMemoryBlockIfEnabled(ctx.userId, ctx.settings, query),
   )
+  const { text, attachments } = splitAttachments(query)
   const coverage = await coverCollection(ctx.collections, {
     model,
+    task: text || ATTACHMENT_ONLY_TASK,
+    draft: attachments || undefined,
+    fullTextMaxChars: tokensToChars(Number(await getAppSetting('collection_full_text_tokens', DEFAULT_COLLECTION_FULL_TEXT_TOKENS))),
     includeConfidential: ctx.locked,
     budgetChars: meterBudgetChars(model.contextTokens) - head.length - query.length - HISTORY_RESERVE_CHARS,
     abortSignal: ctx.abortSignal,
-    // Digest progress rewrites one log row; nothing to wait for, so it is not awaited.
+    // Reading progress rewrites one log row; nothing to wait for, so it is not awaited.
     onProgress: (index, total) => { void sink.step({ kind: 'documents', index, total, update: index > 0 }) },
   })
   if (coverage.fileSources.length) await sink.emit({ type: 'file_sources', sources: coverage.fileSources })
   // For the answer's footer, in place of the search results the other modes report.
-  await sink.emit({ type: 'coverage', documents: coverage.fileSources.length, mode: coverage.mode, trimmed: coverage.trimmed })
+  await sink.emit({ type: 'coverage', documents: coverage.fileSources.length, mode: coverage.mode, trimmed: coverage.trimmed, irrelevant: coverage.irrelevant })
   await sink.step({ kind: 'write' })
   const system = joinMemoryBlocks(head, coverage.block)
   const history = trimMessages(ctx.msgs, Math.floor(model.contextTokens * CONTEXT_RESERVE_FRACTION), system, ctx.pinned)
@@ -62,5 +73,5 @@ async function answerFromCollection(ctx: TurnContext, sink: TurnSink): Promise<T
   return { content, sources: [], fileSources: coverage.fileSources, cacheable: false, answeredBy: model }
 }
 
-/** The model that answers, and so writes the digests: flash's model in flash, else as research picks it. */
+/** The model that answers, and so reads each document: flash's model in flash, else as research picks it. */
 const answerModel = (ctx: TurnContext) => ctx.focusMode === 'flash' ? ctx.models.flash : thinkingFor(ctx).researchModel

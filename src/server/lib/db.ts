@@ -437,6 +437,17 @@ function initSchema() {
     PRIMARY KEY (file_id, model)
   )`)
 
+  // What a resource says about one task (lib/files/collection-extracts.ts), per model; `key_hash`
+  // covers the prompt, the task, the draft card and the text read. Pruned to the newest per resource.
+  sqlite.run(`CREATE TABLE IF NOT EXISTS resource_extracts (
+    file_id    TEXT NOT NULL REFERENCES uploaded_files(id) ON DELETE CASCADE,
+    model      TEXT NOT NULL,
+    key_hash   TEXT NOT NULL,
+    extract    TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (file_id, model, key_hash)
+  )`)
+
   // Migration: drop old memory_chunks table (replaced by chat_chunks)
   sqlite.run('DROP TABLE IF EXISTS memory_chunks')
 

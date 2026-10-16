@@ -120,7 +120,7 @@ export class ChatRun {
         this.setModel({ id: chunk.id as string, label: chunk.label as string, kind: chunk.kind as AnswerModel['kind'], provider: chunk.provider as string })
         return true
       case 'model_notice': this.modelNote = t(`modelNotice.${chunk.reason as ModelFallbackReason}`); return true
-      case 'coverage': this.coverage = { documents: chunk.documents as number, mode: chunk.mode as Coverage['mode'], trimmed: !!chunk.trimmed }; return true
+      case 'coverage': this.coverage = { documents: chunk.documents as number, mode: chunk.mode as Coverage['mode'], trimmed: !!chunk.trimmed, irrelevant: (chunk.irrelevant as number | undefined) ?? 0 }; return true
       case 'confidential_excluded': this.lockNote = t('answer.confidentialExcluded', { count: chunk.count as number }); return true
       case 'model_error': this.errorNote = t('answer.modelError', { provider: chunk.provider as string, message: chunk.message as string }); return true
       default: return false
@@ -200,12 +200,14 @@ export class ChatRun {
   }
 }
 
-/** How a whole-collection answer read the collection: its documents in full, or as digests. */
+/** How a whole-collection answer read the collection: its documents in full, or each read for the task. */
 export interface Coverage {
   documents: number
-  mode: 'full' | 'digest'
-  /** The digests were shortened to fit the model. */
+  mode: 'full' | 'extract'
+  /** What the documents said was shortened to fit the model. */
   trimmed: boolean
+  /** Documents read for the task that had nothing on it. */
+  irrelevant: number
 }
 
 /** The line under a finished answer: time taken, what the search found (or which documents were
@@ -234,7 +236,11 @@ function searchText(t: TFunction, focusMode: FocusMode, sources: number, blocked
   return alwaysSearches ? ` · ${t('answer.noSearchResults')}` : ''
 }
 
-function coverageText(t: TFunction, { documents, mode, trimmed }: Coverage): string {
+function coverageText(t: TFunction, { documents, mode, trimmed, irrelevant }: Coverage): string {
   if (mode === 'full') return t('answer.documentsInFull', { count: documents })
-  return t(trimmed ? 'answer.documentsDigestsTrimmed' : 'answer.documentsDigests', { count: documents })
+  return [
+    t('answer.documentsForTask', { count: documents }),
+    ...(irrelevant ? [t('answer.documentsNothingRelevant', { count: irrelevant })] : []),
+    ...(trimmed ? [t('answer.documentsShortened')] : []),
+  ].join(', ')
 }

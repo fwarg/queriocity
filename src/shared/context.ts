@@ -25,3 +25,9 @@ export interface ContextReport {
 /** A user message carrying an attached document, as ChatInput inlines it: `\n\n---\n[name]\n…`.
  *  Such a message is pinned by default — the conversation is usually about the document. */
 export const hasAttachment = (content: string) => /\n\n---\n\[/.test(content)
+
+/** A message's own text, and the attachments the composer appended to it (each `\n\n---\n[name]\n…`). */
+export function splitAttachments(content: string): { text: string; attachments: string } {
+  const at = content.search(/\n\n---\n\[/)
+  return at === -1 ? { text: content.trim(), attachments: '' } : { text: content.slice(0, at).trim(), attachments: content.slice(at).trim() }
+}
