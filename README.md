@@ -1176,8 +1176,10 @@ reranker configured, passages are held to a relevance floor of 0.05, or the retr
 *rag_min_relevance* if set higher. That is low on purpose: question-to-passage scores run far lower
 than document-to-document ones, so relevant passages often score 0.15–0.4. A document with nothing
 above it is shown as having *nothing close*,
-and the agent is told it can rule it out without searching it; searches drop passages below the floor
-too. Without a reranker there is no floor, as elsewhere in the app.
+and the agent is told it can rule it out without searching it. The agent's own searches show it every
+hit it asked for, and it judges them itself; only hits above the floor are passed to the answer
+unasked, while anything the agent finds relevant it notes. Without a reranker there is no floor, as
+elsewhere in the app.
 
 The agent keeps its prompt small, however long it explores: parts read earlier are dropped once read,
 and its notes are restated at every step. After each part it reads it is asked for a note (offered, not
@@ -1186,8 +1188,11 @@ to read the two or three parts that match most, not just one. The answer is writ
 from the notes, the passages searches showed (up to about 15,000 characters), and **every part read**,
 in full, most relevant first and above the floor (up to about 20,000 characters, or a quarter of the
 model's room) — notes included or not, since a model's note may be a sentence where the part holds a
-page. It is asked to use everything relevant and be thorough; it cites `[C1]`. The progress log shows
-each search, read and note, and the server log each step's tool calls.
+page. It also gets a list of where relevant material was found (which documents and parts) and must
+account for each document on it, so it cannot call a document silent whose passages it was given. It is
+asked to use everything relevant and be thorough; it cites `[C1]`. Reading the same part twice is
+turned away. The progress log shows each search, read and note; the server log shows each step's tool
+calls and the first look's score per document.
 
 It stops when it judges its notes enough, or at a step limit (Admin → Settings, *Explore: step limit*,
 default 20). If it hits the limit or its tool calls fail, it answers from what it noted so far, and the

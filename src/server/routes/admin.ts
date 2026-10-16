@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { generateText, embed } from 'ai'
 import { db, users, invites, chatSessions, spaces, spaceMemories, userMemories, uploadedFiles, authCredentials, getAppSetting, setAppSetting, bumpTokenVersion } from '../lib/db.ts'
 import { similarityReport, SIMILARITY_REPORT_LIMIT } from '../lib/files/related.ts'
-import { relatedMinSimilarity as relatedMinSimilaritySetting, relatedMinRelevance as relatedMinRelevanceSetting, notesRagBudget as notesRagBudgetSetting, topicMinSimilarity as topicMinSimilaritySetting } from '../lib/rag-settings.ts'
+import { relatedMinSimilarity as relatedMinSimilaritySetting, relatedMinRelevance as relatedMinRelevanceSetting, notesRagBudget as notesRagBudgetSetting, topicMinSimilarity as topicMinSimilaritySetting, exploreMinRelevance } from '../lib/rag-settings.ts'
 import { eq, desc } from 'drizzle-orm'
 import { indexSession, deindexSession } from '../lib/chat-indexer.ts'
 import { EMBED_MAX_INPUT_CHARS, SMALL_MODEL_INPUT_CHARS, DEFAULT_MEMORY_TOKEN_BUDGET } from '../lib/llm.ts'
@@ -60,7 +60,7 @@ adminRouter.use('*', authMiddleware)
 adminRouter.use('*', adminMiddleware)
 
 adminRouter.get('/settings', async (c) => {
-  const [memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, ragMinRelevance, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow, compressHistoryOverflow, resourceSummary, relatedMinSimilarity, relatedMinRelevance, notesRagBudget, topicMinSimilarity, collectionFullTextTokens, collectionFullTextTokensCloud, collectionExploreMaxSteps] = await Promise.all([
+  const [memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, ragMinRelevance, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow, compressHistoryOverflow, resourceSummary, relatedMinSimilarity, relatedMinRelevance, notesRagBudget, topicMinSimilarity, collectionFullTextTokens, collectionFullTextTokensCloud, collectionExploreMaxSteps, collectionExploreMinRelevance] = await Promise.all([
     getAppSetting('memory_token_budget', DEFAULT_MEMORY_TOKEN_BUDGET).then(Number),
     getAppSetting('user_memory_token_budget', '300').then(Number),
     getAppSetting('dream_hour', '-1').then(Number),
@@ -87,11 +87,12 @@ adminRouter.get('/settings', async (c) => {
     getAppSetting('collection_full_text_tokens', DEFAULT_COLLECTION_FULL_TEXT_TOKENS).then(Number),
     getAppSetting('collection_full_text_tokens_cloud', DEFAULT_COLLECTION_FULL_TEXT_TOKENS_CLOUD).then(Number),
     getAppSetting('collection_explore_max_steps', DEFAULT_EXPLORE_MAX_STEPS).then(Number),
+    exploreMinRelevance(),
   ])
   // Read-only, derived from the model context env vars. Two of the settings above are silently
   // clamped by these at use time, so the panel needs them to show what a value actually does
   // rather than what was typed.
-  return c.json({ memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, ragMinRelevance, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow, compressHistoryOverflow, resourceSummary, relatedMinSimilarity, relatedMinRelevance, notesRagBudget, topicMinSimilarity, collectionFullTextTokens, collectionFullTextTokensCloud, collectionExploreMaxSteps, rerankEnabled: rerankEnabled(), limits: { smallModelInputChars: SMALL_MODEL_INPUT_CHARS, embedInputChars: EMBED_MAX_INPUT_CHARS, scrapeMaxChars: SCRAPE_MAX_CHARS, minUrlContextChars: MIN_URL_CONTEXT_CHARS } })
+  return c.json({ memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, ragMinRelevance, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow, compressHistoryOverflow, resourceSummary, relatedMinSimilarity, relatedMinRelevance, notesRagBudget, topicMinSimilarity, collectionFullTextTokens, collectionFullTextTokensCloud, collectionExploreMaxSteps, collectionExploreMinRelevance, rerankEnabled: rerankEnabled(), limits: { smallModelInputChars: SMALL_MODEL_INPUT_CHARS, embedInputChars: EMBED_MAX_INPUT_CHARS, scrapeMaxChars: SCRAPE_MAX_CHARS, minUrlContextChars: MIN_URL_CONTEXT_CHARS } })
 })
 
 adminRouter.patch('/settings', zValidator('json', z.object({
@@ -113,6 +114,7 @@ adminRouter.patch('/settings', zValidator('json', z.object({
   collectionFullTextTokens: z.number().int().min(0).max(1_000_000).optional(),
   collectionFullTextTokensCloud: z.number().int().min(0).max(1_000_000).optional(),
   collectionExploreMaxSteps: z.number().int().min(3).max(100).optional(),
+  collectionExploreMinRelevance: z.number().min(0).max(1).optional(),
   topicMinSimilarity: z.number().min(0).max(1).optional(),
   queryReformulation: z.boolean().optional(),
   rssFeedCharsBudget: z.number().int().min(5000).max(500000).optional(),
@@ -146,6 +148,7 @@ adminRouter.patch('/settings', zValidator('json', z.object({
   if (body.collectionFullTextTokens != null) ops.push(setAppSetting('collection_full_text_tokens', String(body.collectionFullTextTokens)))
   if (body.collectionFullTextTokensCloud != null) ops.push(setAppSetting('collection_full_text_tokens_cloud', String(body.collectionFullTextTokensCloud)))
   if (body.collectionExploreMaxSteps != null) ops.push(setAppSetting('collection_explore_max_steps', String(body.collectionExploreMaxSteps)))
+  if (body.collectionExploreMinRelevance != null) ops.push(setAppSetting('collection_explore_min_relevance', String(body.collectionExploreMinRelevance)))
   if (body.topicMinSimilarity != null) ops.push(setAppSetting('topic_min_similarity', String(body.topicMinSimilarity)))
   if (body.queryReformulation != null) ops.push(setAppSetting('query_reformulation', String(body.queryReformulation)))
   if (body.rssFeedCharsBudget != null) ops.push(setAppSetting('rss_feed_chars_budget', String(body.rssFeedCharsBudget)))

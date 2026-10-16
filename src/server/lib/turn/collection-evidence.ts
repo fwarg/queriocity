@@ -1,6 +1,6 @@
 import { embedText } from '../embeddings.ts'
 import { rerankEnabled, rerankScores } from '../reranker.ts'
-import { ragMinRelevance } from '../rag-settings.ts'
+import { exploreMinRelevance } from '../rag-settings.ts'
 import { searchFile, type ChunkResult } from '../files/uploads-search.ts'
 import { partOfChunk } from '../files/collection-parts.ts'
 
@@ -26,6 +26,8 @@ export const READ_MAX_CHARS = 20_000
 export const READ_MAX_SHARE = 0.25
 /** A part is scored by its best stretch of this length: the reranker reads only so much at once. */
 const SCORE_WINDOW_CHARS = 1500
+/** Parts are scored against the message and at most this many of the model's latest searches. */
+const SCORE_QUERIES = 6
 
 export interface Doc { label: string; fileId: string; filename: string; summary: string | null }
 export interface Note { doc: string; part?: number; finding: string; quote?: string }
@@ -34,29 +36,27 @@ interface Read { doc: Doc; part: number; text: string }
 type Hit = { doc: Doc; row: ChunkResult }
 
 /** What an exploration has gathered: its notes, every relevant passage a search showed it (by chunk),
- *  every part it read (by "C2:5"); and what judges relevance — the message's text and embedding, and
- *  the reranker's floor when there is one. */
+ *  every part it read (by "C2:5"); and what judges relevance — the message's text and embedding, the
+ *  model's searches, and the reranker's floor when there is one. */
 export interface Gathered {
   notes: Note[]
   seen: Map<string, Seen>
   reads: Map<string, Read>
   locked: boolean
   task?: string
+  /** The model's searches, latest last: they say what it looked for when the message does not
+   *  ("can you check again?"). */
+  queries: string[]
   query?: number[]
   floor?: number
 }
 
-/** Below this reranker score a passage is taken as unrelated. Question-to-passage scores run low,
- *  far lower than document-to-document "similar content" ones: in a real run, relevant passages
- *  scored 0.15–0.86 against a conversational question and unrelated ones 0.035 or less. A floor of 0.5,
- *  borrowed from similar content, discarded every relevant passage. */
-const EXPLORE_MIN_RELEVANCE = 0.05
-
-/** The floor for what reaches the model and the answer: EXPLORE_MIN_RELEVANCE, or the retrieval floor
- *  (`rag_min_relevance`) when an admin set that higher, when a reranker is configured; none without —
- *  as elsewhere, raw vector distance has no model-agnostic equivalent. */
+/** The floor for what reaches the model and the answer, its own setting rather than the retrieval
+ *  floor: a passage is judged against a question, and those scores run far lower than a retrieval
+ *  floor tuned for injected excerpts. None without a reranker — as elsewhere, raw vector distance has
+ *  no model-agnostic equivalent. */
 async function relevanceFloor(): Promise<number | undefined> {
-  return rerankEnabled() ? Math.max(EXPLORE_MIN_RELEVANCE, await ragMinRelevance()) : undefined
+  return rerankEnabled() ? exploreMinRelevance() : undefined
 }
 
 /** The nearest chunks of each document, best hits first across documents, then second-best: every
@@ -88,6 +88,10 @@ export async function firstLook(task: string, docs: Doc[], gathered: Gathered): 
     gathered.query = await embedText(task)
     gathered.floor = await relevanceFloor()
     const { kept, best } = await relevantHits(task, searchSpread(docs, gathered.query, gathered.locked), gathered.floor)
+    logFirstLook(docs, kept, best)
+    // Nothing kept says more about how the message is worded than about the documents: a model told
+    // every document has nothing close answers without searching.
+    if (!kept.length) return `\n\n## A first look\nNo passage matched the message as worded. This rules no document out: search each one yourself.`
     const lines = kept.map(h => seeHit(h, gathered))
     // Only when scored: without a reranker, a document missing here was cut by the cap, not judged.
     const nothing = best.size ? docs.filter(d => !kept.some(h => h.doc === d))
@@ -99,12 +103,25 @@ export async function firstLook(task: string, docs: Doc[], gathered: Gathered): 
   }
 }
 
+/** "first look: C1 0.15 kept, C2 0.24 kept, C3 0.01 nothing close" — which document each score was. */
+function logFirstLook(docs: Doc[], kept: Hit[], best: Map<Doc, number>) {
+  const each = docs.map(d => {
+    const score = best.has(d) ? ` ${best.get(d)!.toFixed(2)}` : ''
+    return `${d.label}${score} ${kept.some(h => h.doc === d) ? 'kept' : best.size ? 'nothing close' : 'not shown'}`
+  })
+  console.log(`  [explore] first look: ${each.join(', ')}`)
+}
+
+/** A search hit as the model sees it. */
+export function formatHit({ doc, row }: Hit): string {
+  return `[${doc.label}] part ${partOfChunk(Number(row.chunkId.split(':').pop()))}: ${row.content.slice(0, EXCERPT_CHARS)}`
+}
+
 /** A search hit as the model sees it, recorded as seen so it can reach the answer. */
-export function seeHit({ doc, row }: Hit, gathered: Gathered): string {
-  const part = partOfChunk(Number(row.chunkId.split(':').pop()))
-  const text = row.content.slice(0, EXCERPT_CHARS)
-  gathered.seen.set(row.chunkId, { label: doc.label, part, text })
-  return `[${doc.label}] part ${part}: ${text}`
+export function seeHit(hit: Hit, gathered: Gathered): string {
+  const { doc, row } = hit
+  gathered.seen.set(row.chunkId, { label: doc.label, part: partOfChunk(Number(row.chunkId.split(':').pop())), text: row.content.slice(0, EXCERPT_CHARS) })
+  return formatHit(hit)
 }
 
 export const formatNote = (n: Note) => `- [${n.doc.toUpperCase()}${n.part ? ` part ${n.part}` : ''}] ${n.finding}${n.quote ? ` — "${n.quote}"` : ''}`
@@ -128,35 +145,72 @@ export function seenBlock(seen: Map<string, Seen>): string {
 /** Every part read, in full, most relevant first, within `budget` characters — noted or not, since a
  *  model's notes may be a sentence where the part holds a page. A part under the floor is left out:
  *  being read does not make it relevant. */
-export async function readsBlock(gathered: Gathered, budget: number): Promise<string> {
+export async function readsBlock(gathered: Gathered, budget: number): Promise<{ block: string; included: Read[] }> {
   const reads = [...gathered.reads.values()]
-  if (!reads.length) return ''
+  if (!reads.length) return { block: '', included: [] }
   const rank = await partRanks(reads, gathered)
   const ranked = reads.filter(r => rank.has(r)).sort((a, b) => rank.get(b)! - rank.get(a)!)
   let left = budget
-  const sections: string[] = []
+  const included: Read[] = []
   for (const r of ranked) {
-    const section = `### [${r.doc.label} part ${r.part}]\n${r.text}`
-    if (section.length > left) continue
-    left -= section.length
-    sections.push(section)
+    const size = r.text.length + 40
+    if (size > left) continue
+    left -= size
+    included.push(r)
   }
-  return sections.length ? `## Parts read, in full\n${sections.join('\n\n')}` : ''
+  const block = included.length ? `## Parts read, in full\n${included.map(r => `### [${r.doc.label} part ${r.part}]\n${r.text}`).join('\n\n')}` : ''
+  return { block, included }
 }
 
-/** How relevant each part is, higher first: the reranker's score of its best window, parts under the
- *  floor absent; without a reranker, its nearest excerpt's closeness, none absent. */
+/** Where relevant material was found — the documents and parts behind the notes, the passages and the
+ *  parts passed on — with an instruction to account for each: a model otherwise answers from the
+ *  richest document and calls the rest silent, though their passages are in front of it. */
+export function evidenceBlock(gathered: Gathered, included: Read[]): string {
+  const parts = new Map<string, Set<number>>()
+  const add = (label: string, part?: number) => {
+    const set = parts.get(label) ?? parts.set(label, new Set()).get(label)!
+    if (part) set.add(part)
+  }
+  for (const n of gathered.notes) add(n.doc.trim().toUpperCase(), n.part)
+  for (const s of gathered.seen.values()) add(s.label, s.part)
+  for (const r of included) add(r.doc.label, r.part)
+  if (!parts.size) return ''
+  const lines = [...parts].sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
+    .map(([label, set]) => `- ${label}${set.size ? `: part${set.size > 1 ? 's' : ''} ${[...set].sort((a, b) => a - b).join(', ')}` : ''}`)
+  return `## Where relevant material was found\n${lines.join('\n')}\nAccount for each of these documents in the answer: say what it contributes, or why it does not bear on the message after all.`
+}
+
+/** How relevant each part is, higher first: the reranker's score of its best window against the
+ *  message or any of the model's searches, parts under the floor absent; without a reranker, its
+ *  nearest excerpt's closeness, none absent. */
 async function partRanks(reads: Read[], gathered: Gathered): Promise<Map<Read, number>> {
   if (gathered.floor !== undefined && gathered.task) {
     const windows = reads.flatMap((r, i) => Array.from({ length: Math.ceil(r.text.length / SCORE_WINDOW_CHARS) }, (_, w) => ({ i, text: r.text.slice(w * SCORE_WINDOW_CHARS, (w + 1) * SCORE_WINDOW_CHARS) })))
-    const scores = await rerankScores(gathered.task, windows.map(w => w.text))
+    const scores = await bestScores(scoringQueries(gathered), windows.map(w => w.text))
     if (scores) {
       const best = new Map<Read, number>()
       windows.forEach((w, k) => best.set(reads[w.i], Math.max(best.get(reads[w.i]) ?? 0, scores[k])))
-      return new Map([...best].filter(([, s]) => s >= gathered.floor!))
+      const kept = new Map([...best].filter(([, s]) => s >= gathered.floor!))
+      // None clearing it means the message scores poorly ("can you check again…"), not that every part
+      // the model chose to read is unrelated: keep them all, ranked.
+      if (kept.size) return kept
+      console.log('  [explore] no part read cleared the floor; passing all on, ranked')
+      return best
     }
   }
   return closeness(reads, gathered)
+}
+
+/** The message and the model's latest distinct searches. */
+function scoringQueries(gathered: Gathered): string[] {
+  return [...new Set([gathered.task!, ...gathered.queries.slice().reverse()])].slice(0, 1 + SCORE_QUERIES)
+}
+
+/** Each text's best reranker score across `queries`; null when the reranker fails for any. */
+async function bestScores(queries: string[], texts: string[]): Promise<number[] | null> {
+  const all = await Promise.all(queries.map(q => rerankScores(q, texts)))
+  if (all.some(s => !s)) return null
+  return texts.map((_, k) => Math.max(...all.map(s => s![k])))
 }
 
 /** Each part's closeness to the question by its nearest excerpt (negated distance, higher closer);

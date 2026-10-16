@@ -8,7 +8,7 @@ import { splitAttachments } from '../../../shared/context.ts'
 import { withoutConfidential } from '../files/confidential.ts'
 import { documentParts, outlineOf } from '../files/collection-parts.ts'
 import {
-  firstLook, searchSpread, relevantHits, seeHit, seenBlock, readsBlock, formatNote, READ_MAX_CHARS, READ_MAX_SHARE,
+  firstLook, searchSpread, relevantHits, seeHit, formatHit, seenBlock, readsBlock, evidenceBlock, formatNote, READ_MAX_CHARS, READ_MAX_SHARE,
   type Doc, type Note, type Gathered,
 } from './collection-evidence.ts'
 import { trimMessages, meterBudgetChars, CONTEXT_RESERVE_FRACTION } from '../trim-messages.ts'
@@ -50,7 +50,7 @@ async function exploreAndAnswer(ctx: TurnContext, sink: TurnSink): Promise<TurnR
   const docs = collectionIndex(ctx.collections, ctx.locked)
   const fileSources = docs.map(d => ({ title: `[${d.label}] ${d.filename}`, url: `file:${d.fileId}`, label: d.label }))
   if (fileSources.length) await sink.emit({ type: 'file_sources', sources: fileSources })
-  const gathered: Gathered = { notes: [], seen: new Map(), reads: new Map(), locked: ctx.locked }
+  const gathered: Gathered = { notes: [], seen: new Map(), reads: new Map(), queries: [], locked: ctx.locked }
   const maxSteps = Number(await getAppSetting('collection_explore_max_steps', DEFAULT_EXPLORE_MAX_STEPS))
   const overview = await firstLook(splitAttachments(userQueryOf(ctx.msgs)).text, docs, gathered)
   const { steps, endedEarly } = await explore(ctx, sink, model, docs, gathered, overview, maxSteps)
@@ -78,6 +78,7 @@ export function collectionIndex(collectionIds: string[], includeConfidential: bo
 async function explore(ctx: TurnContext, sink: TurnSink, model: ModelTarget, docs: Doc[], gathered: Gathered, overview: string, maxSteps: number) {
   const history = trimMessages(ctx.msgs, Math.floor(model.contextTokens * CONTEXT_RESERVE_FRACTION), EXPLORE_SYSTEM + overview, ctx.pinned)
   let step = 0
+  let readsBefore = 0
   try {
     const result = await generateText({
       model: languageModel(model),
@@ -86,12 +87,14 @@ async function explore(ctx: TurnContext, sink: TurnSink, model: ModelTarget, doc
       tools: exploreTools(ctx, sink, docs, gathered),
       stopWhen: stepCountIs(maxSteps),
       abortSignal: ctx.abortSignal,
-      prepareStep: ({ messages, steps }) => {
+      prepareStep: ({ messages }) => {
         // After a part is read, the next step offers only `note` and asks for it: a model that skips
         // its bookkeeping is prompted, and still decides what the note says. Offered, not enforced —
         // a local server may not honour a forced tool, and the SDK fails the whole run when one is
         // ignored; a model that answers instead simply ends the exploration.
-        const justRead = steps.at(-1)?.toolResults.some(r => r.toolName === 'read_part')
+        // A new part read since the last step — not a failed or repeated read.
+        const justRead = gathered.reads.size > readsBefore
+        readsBefore = gathered.reads.size
         return {
           instructions: EXPLORE_SYSTEM + overview + notesBlock(gathered.notes) + (justRead ? NOTE_NOW : ''),
           messages: compactReads(messages),
@@ -145,10 +148,14 @@ function exploreTools(ctx: TurnContext, sink: TurnSink, docs: Doc[], gathered: G
         const one = doc ? byLabel(doc) : undefined
         if (doc && !one) return `No document ${doc}.`
         await sink.step({ kind: 'search', queries: [one ? `${query} (${one.label})` : query] })
+        // The model sees every hit it asked for and judges them itself — a floor cut thin but real
+        // matches (one document's whole treatment of a topic scored 0.05). Only those above it are
+        // passed to the answer unasked; anything the model finds relevant it notes.
+        gathered.queries.push(query)
         const found = searchSpread(one ? [one] : docs, await embedText(query), ctx.locked)
-        const { kept, best } = await relevantHits(query, found, gathered.floor)
-        if (!kept.length && found.length) return `Nothing close to "${query}"${best.size ? ` (best match scored ${Math.max(...best.values()).toFixed(2)})` : ''}.`
-        return kept.map(h => seeHit(h, gathered)).join('\n\n') || 'Nothing found.'
+        const { kept } = await relevantHits(query, found, gathered.floor)
+        for (const h of kept) seeHit(h, gathered)
+        return found.map(formatHit).join('\n\n') || 'Nothing found.'
       },
     }),
     read_part: tool({
@@ -158,6 +165,7 @@ function exploreTools(ctx: TurnContext, sink: TurnSink, docs: Doc[], gathered: G
         const d = byLabel(doc)
         const parts = d ? documentParts(d.fileId) : []
         if (!d || !parts[part - 1]) return `No part ${part} in ${doc}${d ? ` (it has ${parts.length})` : ''}.`
+        if (gathered.reads.has(`${d.label}:${part}`)) return `Already read ${d.label} part ${part}: what mattered is in your notes. Read another part, or another document.`
         await sink.step({ kind: 'readPart', detail: `${d.label} · ${part}/${parts.length}` })
         gathered.reads.set(`${d.label}:${part}`, { doc: d, part, text: parts[part - 1].text })
         return parts[part - 1].text
@@ -200,6 +208,7 @@ export function compactReads(messages: ModelMessage[]): ModelMessage[] {
 async function answerFromNotes(ctx: TurnContext, sink: TurnSink, model: ModelTarget, docs: Doc[], gathered: Gathered): Promise<string> {
   const { notes } = gathered
   const query = userQueryOf(ctx.msgs)
+  const reads = await readsBlock(gathered, Math.min(READ_MAX_CHARS, Math.floor(meterBudgetChars(model.contextTokens) * READ_MAX_SHARE)))
   const documents = '## The documents\n' + docs.map(d => `- [${d.label}] ${d.filename}`).join('\n')
   const noted = notes.length ? `## Notes from exploring them\n${notes.map(formatNote).join('\n')}` : '## Notes from exploring them\n(nothing was noted)'
   const system = joinMemoryBlocks(
@@ -208,7 +217,8 @@ async function answerFromNotes(ctx: TurnContext, sink: TurnSink, model: ModelTar
     documents,
     noted,
     seenBlock(gathered.seen),
-    await readsBlock(gathered, Math.min(READ_MAX_CHARS, Math.floor(meterBudgetChars(model.contextTokens) * READ_MAX_SHARE))),
+    reads.block,
+    evidenceBlock(gathered, reads.included),
   )
   await sink.step({ kind: 'readNotes', count: notes.length })
   const history = trimMessages(ctx.msgs, Math.floor(model.contextTokens * CONTEXT_RESERVE_FRACTION), system, ctx.pinned)

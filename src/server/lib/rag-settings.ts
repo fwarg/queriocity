@@ -25,6 +25,15 @@ export const ragTopK = async (): Promise<number> =>
 export const ragMinRelevance = async (): Promise<number> =>
   parseFloat(await getAppSetting('rag_min_relevance', '0')) || 0
 
+/** Reranker relevance (0–1) below which an Explore answer takes a passage or part as unrelated.
+ *  Lower than the retrieval floor: question-to-passage scores run low — relevant passages scored
+ *  0.05–0.86 in real runs, unrelated ones 0.035 or less. */
+export const DEFAULT_EXPLORE_MIN_RELEVANCE = 0.05
+export const exploreMinRelevance = async (): Promise<number> => {
+  const v = parseFloat(await getAppSetting('collection_explore_min_relevance', String(DEFAULT_EXPLORE_MIN_RELEVANCE)))
+  return Number.isNaN(v) ? DEFAULT_EXPLORE_MIN_RELEVANCE : v
+}
+
 /** Cosine similarity a resource must reach to be offered as "similar content". What counts as
  *  similar depends on the embedding model, hence a setting; the scores are logged to calibrate it. */
 export const DEFAULT_RELATED_MIN_SIMILARITY = 0.5
