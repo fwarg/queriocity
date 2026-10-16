@@ -71,7 +71,9 @@ describe('ChatRun', () => {
     expect(run.storedIds).toEqual({ user: 'u1', assistant: 'a1' })
     expect(liveSessionRef.current).toBe('s1')
     expect(seen.sessions).toEqual([['s1', 'Bees']])
-    expect(seen.answerTime).toContain('this message was sent to Cloudy')
+    // Just the model in the footer; where it went is on the badge, the rest in its tooltip.
+    expect(seen.answerTime).toContain('Model: Big.')
+    expect(seen.answerTime).not.toContain('Cloudy')
   })
 
   test('names the session after the question when the server sends no title', () => {
@@ -113,8 +115,8 @@ describe('ChatRun', () => {
       done({ model: { id: 'm', label: 'Big', kind: 'cloud', provider: 'Cortecs', via: 'entrim', cost: 0.00002, currency: 'EUR' } }),
     )
     expect(run.answer()?.model).toMatchObject({ via: 'entrim', cost: 0.00002 })
-    expect(seen.answerTime).toContain('passed it to entrim')
-    expect(seen.answerTime).toContain('Cost: 0.000020 EUR.')
+    expect(seen.answerTime).toContain('Model: Big.')
+    expect(seen.answerTime).not.toContain('Cost')
   })
 
   test('puts a cloud model\'s error in the footer, after the model note', () => {

@@ -98,7 +98,7 @@ function renderCoverage(docs: CollectionDoc[], texts: string[], mode: Coverage['
     ? `## All ${n} documents in the selected collections, in full`
     : `## What each of the ${n} documents in the selected collections says about the task`
   const sections = docs.map((d, i) => `### [C${i + 1}] ${d.filename}\n${texts[i]}`)
-  const read = mode === 'full' ? '' : ' Each section was extracted from its document for this task; one saying it has nothing on the task means the document was read and found to have nothing on it.'
+  const read = mode === 'full' ? '' : ' Each section was extracted from its document for this task; one saying it has nothing on the task means the document was read and found to have nothing on it. A claim about all or several documents (who wrote them, what they share) must hold in each one\'s section: check before generalising.'
   const instruction = `These are every document in the collections the user selected, not search results: when the task concerns the collection, take all ${n} into account.${read} Cite a document inline by its label (e.g. [C1]); do not invent any other citation format.`
   return {
     block: [heading, ...sections, instruction].join('\n\n'),

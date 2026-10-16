@@ -113,7 +113,8 @@ describe('a cloud pick', () => {
     const events = await chat({ modelId: 'rt-model', ephemeral: false, sessionId: 'cloud-routed', messages: [{ role: 'user', content: 'Routed' }] })
     // 25 millionths of a euro, not the catalogue estimate of (14 + 73) / 1e6.
     expect(userSpend(USER, 'rt') - before).toBeCloseTo(0.000025, 9)
-    const answered = { id: 'rt-model', label: 'Routed', kind: 'cloud', provider: 'Router', via: 'entrim', cost: 0.000025, currency: 'EUR' }
+    // The tokens are the call's as the provider reported them, for the badge's tooltip.
+    const answered = { id: 'rt-model', label: 'Routed', kind: 'cloud', provider: 'Router', via: 'entrim', cost: 0.000025, currency: 'EUR', tokens: { input: 14, output: 73, calls: 1 } }
     const done = events.find(e => e.type === 'done')?.model as typeof answered
     expect({ ...done, cost: undefined }).toEqual({ ...answered, cost: undefined })
     expect(done.cost).toBeCloseTo(0.000025, 9)
@@ -149,12 +150,13 @@ describe('a cloud pick', () => {
     expect([local.callCount, cloud.callCount]).toEqual([localCalls, cloudCalls + 1])
     // Each stored answer records the model that wrote it, the default one included, and what the
     // answer cost: the catalogue estimate here, (1000 + 1000) × 1 per million, and nothing for a
-    // cached replay, which made no calls.
+    // cached replay, which made no calls. Tokens likewise: a generated answer has them, local
+    // included; a cached replay made no calls and has none.
     const storedModel = async (n: number) => JSON.parse((await db.select({ model: messages.model }).from(messages)
       .where(and(eq(messages.sessionId, `cloud-cache-${n}`), eq(messages.role, 'assistant'))).get())?.model ?? 'null')
     const defaultModel = { id: 'local', label: 'local', kind: 'default' }
     const cloudModel = { id: 'cl-both', label: 'Both', kind: 'cloud', provider: 'Cloud' }
-    expect([await storedModel(1), await storedModel(3), await storedModel(4)]).toEqual([defaultModel, defaultModel, cloudModel])
+    expect([await storedModel(1), await storedModel(3), await storedModel(4)]).toEqual([{ ...defaultModel, tokens: { input: 0, output: 0, calls: 1 } }, defaultModel, cloudModel])
     expect(await storedModel(2)).toMatchObject({ ...cloudModel, currency: 'EUR' })
     expect((await storedModel(2)).cost).toBeCloseTo(0.002)
   })

@@ -9,12 +9,14 @@ import { randomUUID } from 'node:crypto'
 import type { ModelMessage } from 'ai'
 import { fakeTarget, startFakeOpenAI, captureSSE, type ScriptedStep } from '../test-support/fake-openai.ts'
 import { envOverride } from '../test-support/env-override.ts'
+import { startFakeEmbeddings } from '../test-support/fake-embeddings.ts'
 import type { TurnContext } from './context.ts'
 
 const { sqlite, EMBED_DIMS } = await import('../db.ts')
 const { joinChunks, documentParts, partOfChunk, outlineOf } = await import('../files/collection-parts.ts')
 const { parseChoice, chooseMode } = await import('./collection-mode.ts')
-const { compactReads, searchSpread } = await import('./collection-agent.ts')
+const { compactReads } = await import('./collection-agent.ts')
+const { searchSpread, readsBlock, firstLook } = await import('./collection-evidence.ts')
 const { runTurn, createSink } = await import('./index.ts')
 
 const USER = 'explore-user'
@@ -107,13 +109,82 @@ describe('searchSpread', () => {
     const a = seedVectors('A', [0, 0.01, 0.02, 0.03])
     const b = seedVectors('B', [0.1])
     const c = seedVectors('C', [2])
-    const hits = searchSpread([a, b, c], vec(0), false).map(h => h.doc.label)
+    const hits = searchSpread([a, b, c], vec(0), false).map((h: { doc: { label: string } }) => h.doc.label)
     expect(hits.slice(0, 3)).toEqual(['A', 'B', 'C'])
     expect(hits).toEqual(['A', 'B', 'C', 'A'])
   })
 })
 
+describe('readsBlock', () => {
+  test('without a reranker, ranks parts by closeness to the question and stops at the budget', async () => {
+    const vec = (off: number) => Array.from({ length: EMBED_DIMS }, (_, i) => i === 0 ? 1 : i === 1 ? off : 0)
+    const id = seedDoc('ranked.txt', ['far one', 'x', 'y', 'close one'])
+    // Every excerpt has a vector, as ingest gives them: sqlite-vec returns nothing for a filter that
+    // names an id without one. Part 1 (excerpts 0–2) is far from the question, part 2 (excerpt 3) close.
+    ;[2, 2, 2, 0].forEach((off, i) => sqlite.run('INSERT INTO file_chunks(chunk_id, embedding) VALUES (?,?)', [`${id}:${i}`, JSON.stringify(vec(off))]))
+    const doc = { label: 'C9', fileId: id, filename: 'ranked.txt', summary: null }
+    const reads = new Map([
+      ['C9:1', { doc, part: 1, text: 'FAR PART '.repeat(20) }],
+      ['C9:2', { doc, part: 2, text: 'CLOSE PART '.repeat(20) }],
+    ])
+    const block = await readsBlock({ notes: [], seen: new Map(), reads, query: vec(0), locked: false }, 300)
+    // Room for one part: the closer one goes in.
+    expect(block).toContain('CLOSE PART')
+    expect(block).not.toContain('FAR PART')
+  })
+})
+
+describe('relevance floor', () => {
+  /** A reranker scoring a passage 0.9 if it mentions "contract", else 0.01 — the range unrelated
+   *  passages scored in a real run. */
+  function fakeReranker() {
+    return Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const { documents } = await req.json() as { documents: string[] }
+        return Response.json({ results: documents.map((d, index) => ({ index, relevance_score: /contract/i.test(d) ? 0.9 : 0.01 })) })
+      },
+    })
+  }
+
+  test('the first look says a document has nothing close, and parts under the floor stay out of the answer', async () => {
+    const reranker = fakeReranker()
+    const embeddings = startFakeEmbeddings(EMBED_DIMS)
+    const undo = envOverride({ RERANK_MODEL: 'fake', RERANK_BASE_URL: `http://localhost:${reranker.port}`, EMBED_BASE_URL: embeddings.baseURL, EMBED_API_KEY: 't', EMBED_MODEL: 'fake-embed' })
+    try {
+      const { embedText } = await import('../embeddings.ts')
+      const docs = []
+      for (const [name, text] of [['on.txt', 'Safety contracts with guarantees.'], ['off.txt', 'Risk norms for driving.']]) {
+        const id = seedDoc(name, [text])
+        sqlite.run('INSERT INTO file_chunks(chunk_id, embedding) VALUES (?,?)', [`${id}:0`, JSON.stringify(await embedText(text))])
+        docs.push({ label: name === 'on.txt' ? 'C1' : 'C2', fileId: id, filename: name, summary: null })
+      }
+      const gathered = { notes: [], seen: new Map(), reads: new Map(), locked: false }
+      const look = await firstLook('Which papers discuss contracts?', docs, gathered)
+      expect(look).toContain('[C1] part 1: Safety contracts with guarantees.')
+      expect(look).toContain('[C2] nothing close to the message (best match scored 0.01)')
+      gathered.reads.set('C1:1', { doc: docs[0], part: 1, text: 'Safety contracts with guarantees.' })
+      gathered.reads.set('C2:1', { doc: docs[1], part: 1, text: 'Risk norms for driving.' })
+      const block = await readsBlock(gathered, 10_000)
+      expect(block).toContain('Safety contracts with guarantees.')
+      expect(block).not.toContain('Risk norms for driving.')
+    } finally {
+      undo()
+      reranker.stop(true)
+      embeddings.stop()
+    }
+  })
+})
+
 describe('explore turn', () => {
+  // Every explore turn embeds the message for its first look, so the embeddings are served throughout.
+  let embeddings: ReturnType<typeof startFakeEmbeddings>
+  let undoEmbed: () => void
+  beforeAll(() => {
+    embeddings = startFakeEmbeddings(EMBED_DIMS)
+    undoEmbed = envOverride({ EMBED_BASE_URL: embeddings.baseURL, EMBED_API_KEY: 't', EMBED_MODEL: 'fake-embed' })
+  })
+  afterAll(() => { undoEmbed(); embeddings.stop() })
   const ctxFor = (model: ReturnType<typeof fakeTarget>): TurnContext => ({
     userId: USER, sid: 's', msgs: [{ role: 'user', content: 'Which paper uses GSN?' }], pinned: new Set(),
     models: { chat: model, thinking: model, flash: model }, focusMode: 'balanced', locked: false,
@@ -138,6 +209,68 @@ describe('explore turn', () => {
     expect(cap.ofType('exploration')).toEqual([{ type: 'exploration', steps: 4, notes: 1, endedEarly: false }])
     const steps = cap.events.flatMap(e => e.step ? [(e.step as { kind: string }).kind] : [])
     expect(steps).toEqual(['readPart', 'note', 'readNotes', 'write'])
+  })
+
+  test('looks at every document first, and answers from what searches showed even without notes', async () => {
+    sqlite.run('DELETE FROM space_files WHERE space_id = ?', [COLL])
+    {
+      const { embedText } = await import('../embeddings.ts')
+      for (const [name, text] of [['a.txt', 'Contracts with assumptions and guarantees.'], ['b.txt', 'Risk norms for driving.']]) {
+        const id = seedDoc(name, [text])
+        sqlite.run('INSERT INTO file_chunks(chunk_id, embedding) VALUES (?,?)', [`${id}:0`, JSON.stringify(await embedText(text))])
+      }
+      const f = serve([call('search_collection', { query: 'contracts' }), { text: ['done'] }, { text: ['[C1] has contracts.'] }])
+      await runTurn(ctxFor(fakeTarget(f.baseURL)), createSink(captureSSE().stream as never))
+      // The first look is in the very first prompt, one passage per document.
+      const first = JSON.stringify(f.requests[0])
+      expect(first).toContain('A first look')
+      expect(first).toContain('Risk norms for driving.')
+      // Nothing was noted, yet the passages the agent saw reach the answer.
+      const answer = JSON.stringify(f.requests.at(-1))
+      expect(answer).toContain('(nothing was noted)')
+      expect(answer).toContain('[C1 part 1] Contracts with assumptions and guarantees.')
+    }
+  })
+
+  test('asks for a note after each read, and passes every part read on in full, noted or not', async () => {
+    sqlite.run('DELETE FROM space_files WHERE space_id = ?', [COLL])
+    seedDoc('a.txt', ['Noted part about GSN.'])
+    seedDoc('b.txt', ['Unnoted part about contracts.'])
+    const f = serve([
+      call('read_part', { doc: 'C1', part: 1 }, 'r1'),
+      call('note', { doc: 'C1', part: 1, finding: 'Uses GSN' }, 'n1'),
+      call('read_part', { doc: 'C2', part: 1 }, 'r2'),
+      call('note', { doc: 'C2', finding: 'Something on contracts' }, 'n2'),
+      { text: ['done'] },
+      { text: ['Answer.'] },
+    ])
+    await runTurn(ctxFor(fakeTarget(f.baseURL)), createSink(captureSSE().stream as never))
+    // The step after each read offers only `note`; the others offer every tool.
+    const offered = (i: number) => ((f.requests[i] as { tools?: Array<{ function: { name: string } }> }).tools ?? []).map(t => t.function.name)
+    expect(offered(1)).toEqual(['note'])
+    expect(offered(3)).toEqual(['note'])
+    expect(offered(2).length).toBeGreaterThan(1)
+    const answer = JSON.stringify(f.requests.at(-1))
+    expect(answer).toContain('### [C2 part 1]')
+    expect(answer).toContain('Unnoted part about contracts.')
+    // Noted too: a note may be a sentence where the part holds a page.
+    expect(answer).toContain('### [C1 part 1]')
+  })
+
+  test('takes a part number sent as text, and a model that answers instead of noting just ends the exploration', async () => {
+    sqlite.run('DELETE FROM space_files WHERE space_id = ?', [COLL])
+    seedDoc('a.txt', ['The only part.'])
+    const f = serve([
+      call('read_part', { doc: 'C1', part: '1' }),
+      // Asked for a note, it answers instead: no failure, and the part read still reaches the answer.
+      { text: ['I have what I need.'] },
+      { text: ['Answer.'] },
+    ])
+    const cap = captureSSE()
+    const result = await runTurn(ctxFor(fakeTarget(f.baseURL)), createSink(cap.stream as never))
+    expect(result.content).toBe('Answer.')
+    expect(cap.ofType('exploration')).toEqual([{ type: 'exploration', steps: 2, notes: 0, endedEarly: false }])
+    expect(JSON.stringify(f.requests.at(-1))).toContain('The only part.')
   })
 
   test('at the step limit, answers from what was noted and says it ended early', async () => {

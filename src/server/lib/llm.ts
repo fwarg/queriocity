@@ -152,6 +152,8 @@ export interface ModelTarget extends ProviderConfig {
   label?: string
   /** Called with each call's token usage; set for metered (cloud) targets only. */
   onUsage?: (usage: TokenUsage) => void
+  /** Called with each call's token counts, metered or not, so the answer can say what it used. */
+  onTokens?: (usage: TokenUsage) => void
   /** Called with the provider's message when a call fails. */
   onError?: (message: string) => void
   /** Output cap from the catalogue; unset for env models, which use the caller's default. */
@@ -226,10 +228,10 @@ function provider(config: ProviderConfig) {
 // Ollama's /v1 — do not implement. They speak Chat Completions, so pin to it explicitly.
 export function languageModel(t: ModelTarget) {
   // Unmetered models still get a provider's separate reasoning field turned into reasoning parts, and report errors.
-  if (!t.onUsage) return wrapLanguageModel({ model: provider(t).chat(t.model), middleware: modelMiddleware({ onError: t.onError }, {}) })
+  if (!t.onUsage) return wrapLanguageModel({ model: provider(t).chat(t.model), middleware: modelMiddleware({ onError: t.onError, onTokens: t.onTokens }, {}) })
   // Metered: a provider of its own, so what a response reports belongs to this model instance's calls.
   const probe: ResponseProbe = {}
-  return wrapLanguageModel({ model: makeProvider(t, probe).chat(t.model), middleware: modelMiddleware({ onUsage: t.onUsage, onError: t.onError }, probe) })
+  return wrapLanguageModel({ model: makeProvider(t, probe).chat(t.model), middleware: modelMiddleware({ onUsage: t.onUsage, onTokens: t.onTokens, onError: t.onError }, probe) })
 }
 
 

@@ -254,7 +254,7 @@ läses ett dokument i taget för din fråga, och svaret skrivs utifrån vad vart
   meddelande läser om, så byt till Utdrag för en snabb följdfråga.
 
 **Utforska** — en agent söker i dokumenten, läser de delar som spelar roll och antecknar vad den
-hittar; svaret skrivs utifrån anteckningarna.
+hittar; svaret skrivs utifrån anteckningarna och de stycken den såg.
 - *Bra för* riktade frågor: vilka artiklar gör X, säger något emot mitt avsnitt 3.
 - *Kan missa* det den bedömer som oviktigt; sidfoten visar hur många anrop och anteckningar den använde.
 - *Kostnad:* 5–20 korta modellanrop. Fungerar bäst på en modell som är bra på verktyg.

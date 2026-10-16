@@ -1170,9 +1170,24 @@ A *part* is three consecutive indexed excerpts (about 5,000 characters), the sam
 uses, so nothing is stored twice and a search hit names its part exactly. Outlines are written once by
 the small model and cached until the document is re-indexed.
 
+Before the agent's first step, the server itself shows it each document's passages nearest the
+question (a *first look*), so every document is considered whatever the model then decides. With a
+reranker configured, passages are held to a relevance floor of 0.05, or the retrieval floor
+*rag_min_relevance* if set higher. That is low on purpose: question-to-passage scores run far lower
+than document-to-document ones, so relevant passages often score 0.15–0.4. A document with nothing
+above it is shown as having *nothing close*,
+and the agent is told it can rule it out without searching it; searches drop passages below the floor
+too. Without a reranker there is no floor, as elsewhere in the app.
+
 The agent keeps its prompt small, however long it explores: parts read earlier are dropped once read,
-and its notes are restated at every step. The answer is written from the notes in a separate call, with
-`[C1]` citations. The progress log shows each search, read and note.
+and its notes are restated at every step. After each part it reads it is asked for a note (offered, not
+forced: a model that answers instead just ends the exploration), and to summarise a document it is told
+to read the two or three parts that match most, not just one. The answer is written in a separate call
+from the notes, the passages searches showed (up to about 15,000 characters), and **every part read**,
+in full, most relevant first and above the floor (up to about 20,000 characters, or a quarter of the
+model's room) — notes included or not, since a model's note may be a sentence where the part holds a
+page. It is asked to use everything relevant and be thorough; it cites `[C1]`. The progress log shows
+each search, read and note, and the server log each step's tool calls.
 
 It stops when it judges its notes enough, or at a step limit (Admin → Settings, *Explore: step limit*,
 default 20). If it hits the limit or its tool calls fail, it answers from what it noted so far, and the
@@ -1348,7 +1363,7 @@ Admins can offer extra models that users pick from a menu next to the research m
 
 Each model has a role — chat, thinking or both — a context size and an output cap. A chat model also answers flash; a thinking model is offered in thorough only, where it runs the research with thinking switched on and the default model writes the answer. **Test** sends one tiny request with the saved settings (metered, for a cloud model). A provider can carry extra request fields sent with every call, e.g. Cortecs `{"preference": "cost", "eu_native": true, "allow_zero_data_retention": true}`, and a model can add its own on top (the model's win), e.g. pinning Cortecs to one hosting provider with `{"allowed_providers": ["…"], "provider_order": "custom"}` so the price entered for that model matches what is billed. Values may be text, numbers, true/false or lists of text; fields that would change the model, messages, tools or output limits are refused.
 
-In **Admin → Users**, each user's **Models ▾** fold-out switches model picking on for them, with access per provider: a monthly budget for a cloud provider (blank = no access), a tick for a local one, and their spend this month. **Admin → Models** shows each cloud provider's spend against its cap; months are UTC. A cloud model's reasoning, which providers send in a separate field, is shown under *show thinking* like a local model's. If a cloud model fails, the note under the answer gives the provider's error message. The note also gives a cloud answer's cost, and the context meter is sized for whichever model the next message will use: each catalogue model has its own **Context tokens**, the default models theirs from `CONTEXT_TOKEN_LIMIT`. A call stopped before the provider reports its usage is still charged, as an estimate from the prompt and the text received. A pick falls back to the default model, with a note under the answer, when it does not apply (image mode, a locked space, a thinking model outside thorough), when the model or provider is disabled or its key unset, when the user has no access, or when a budget or cap is spent. The note under an answer also names the model that answered. Image mode, monitors and background helpers (titles, query rewriting, memory) always use the default models.
+In **Admin → Users**, each user's **Models ▾** fold-out switches model picking on for them, with access per provider: a monthly budget for a cloud provider (blank = no access), a tick for a local one, and their spend this month. **Admin → Models** shows each cloud provider's spend against its cap; months are UTC. A cloud model's reasoning, which providers send in a separate field, is shown under *show thinking* like a local model's. If a cloud model fails, the note under the answer gives the provider's error message. The note under an answer names just the model; the badge on the answer says where a cloud answer went (amber, e.g. *Cloud · Cortecs via entrim*), and its tooltip adds the cost and the tokens the answer used — input, output (with reasoning, where the provider reports it) and the number of model calls, counted for local models too. Helper calls on the small model (titles, Auto's choice, outlines) are not included; a cached answer made no calls and shows none. The context meter is sized for whichever model the next message will use: each catalogue model has its own **Context tokens**, the default models theirs from `CONTEXT_TOKEN_LIMIT`. A call stopped before the provider reports its usage is still charged, as an estimate from the prompt and the text received. A pick falls back to the default model, with a note under the answer, when it does not apply (image mode, a locked space, a thinking model outside thorough), when the model or provider is disabled or its key unset, when the user has no access, or when a budget or cap is spent. Image mode, monitors and background helpers (titles, query rewriting, memory) always use the default models.
 
 ## Environment variables
 

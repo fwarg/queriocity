@@ -82,6 +82,14 @@ describe('what the SDK alone would lose', () => {
     expect(calls).toEqual([])
   })
 
+  test('counts a default (unmetered) model\'s tokens too, for the answer\'s badge', async () => {
+    fake = startFakeOpenAI([{ text: ['OK'], usage: { prompt_tokens: 120, completion_tokens: 30 } }])
+    const counted: TokenUsage[] = []
+    const model = languageModel({ ...fakeTarget(fake.baseURL), onTokens: u => { counted.push(u) } })
+    await streamText({ model, prompt: 'Hi' }).consumeStream()
+    expect(counted).toMatchObject([{ inputTokens: 120, outputTokens: 30 }])
+  })
+
   test('passes on a default (unmetered) model\'s error too, such as a local server losing its GPU', async () => {
     fake = startFakeOpenAI([{ error: { status: 400, message: 'decode() failed: ErrorDeviceLost' } }])
     const errors: string[] = []

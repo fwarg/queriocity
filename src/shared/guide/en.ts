@@ -250,7 +250,7 @@ is read one document at a time for your question, then answered from what each s
   message reads again, so for a quick follow-up switch to Excerpts.
 
 **Explore** — an agent searches the documents, reads the parts that matter and notes what it finds;
-the answer is written from its notes.
+the answer is written from its notes and the passages it saw.
 - *Good for* targeted questions: which papers do X, does anything contradict my section 3.
 - *Can miss* what it judges irrelevant; the footer shows how many calls and notes it used.
 - *Cost:* 5–20 short model calls. Works best on a model that is good with tools.

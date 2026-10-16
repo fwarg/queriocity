@@ -4,7 +4,7 @@ import type { LogStep } from '../components/ProgressLog.tsx'
 import type { TFunction } from '../lib/i18n.tsx'
 import type { ContextReport } from '@shared/context.ts'
 import type { AnswerModel, ModelFallbackReason } from '@shared/llm-catalogue.ts'
-import { describeAnswerModel } from '../lib/answer-model.ts'
+import { answerFooterNote } from '../lib/answer-model.ts'
 
 export type FocusMode = 'flash' | 'balanced' | 'thorough' | 'image'
 export type ChatChunk = { type: string; [k: string]: unknown }
@@ -188,7 +188,7 @@ export class ChatRun {
    *  hosting provider and the cost, or which default model answered. */
   private setModel(model: AnswerModel) {
     this.model = model
-    this.modelNote = describeAnswerModel(model, this.view.t)
+    this.modelNote = answerFooterNote(model, this.view.t)
   }
 
   private finish(chunk: ChatChunk) {

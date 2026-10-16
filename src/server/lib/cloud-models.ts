@@ -7,7 +7,7 @@ import { loadCatalogue, cloudTarget } from './llm-catalogue.ts'
 import { getLlmAccess, userSpend, providerSpend, meteredUsage, addAnswerCost } from './llm-usage.ts'
 import { isLocalEndpoint } from './space-lock.ts'
 import { meterBudgetChars } from './trim-messages.ts'
-import type { AnswerModel, CloudModel, CloudProvider, ModelChoices, ModelFallbackReason, PickableModel } from '../../shared/llm-catalogue.ts'
+import type { AnswerModel, AnswerTokens, CloudModel, CloudProvider, ModelChoices, ModelFallbackReason, PickableModel } from '../../shared/llm-catalogue.ts'
 
 
 const FALLBACK_MESSAGES: Record<ModelFallbackReason, string> = {
@@ -47,9 +47,11 @@ interface PickRequest {
 export async function resolveTurnModels({ userId, modelId, focusMode, locked, cloudAcknowledged }: PickRequest): Promise<ResolvedModels> {
   const observed: TurnObserved = {}
   const onError = (message: string) => { observed.error ??= message }
-  // The default models report their errors too: a local server failing is otherwise only in the server log.
+  const onTokens = (u: TokenUsage) => addTokens(observed, u)
+  // The default models report their errors too: a local server failing is otherwise only in the server
+  // log. And their tokens, which the answer's badge shows like a cloud answer's.
   const local = localTurnModels()
-  const models: TurnModels = { chat: { ...local.chat, onError }, thinking: { ...local.thinking, onError }, flash: { ...local.flash, onError } }
+  const models: TurnModels = { chat: { ...local.chat, onError, onTokens }, thinking: { ...local.thinking, onError, onTokens }, flash: { ...local.flash, onError, onTokens } }
   if (!modelId) return { models, observed, forceThinking: false }
   const refuse = (reason: ModelFallbackReason): ResolvedModels => {
     console.log(`  [cloud] pick "${modelId}" refused for user ${userId}: ${reason}`)
@@ -83,8 +85,9 @@ export async function resolveTurnModels({ userId, modelId, focusMode, locked, cl
           onCorrection: delta => correctAnswer(observed, delta),
         }),
         onError,
+        onTokens,
       }
-    : { ...target, onError }
+    : { ...target, onError, onTokens }
   const usesChat = entry.role !== 'thinking'
   const usesThinking = entry.role !== 'chat'
   console.log(`  [cloud] turn on ${provider.id}/${entry.model} for user ${userId} (${provider.kind}, ${entry.role})`)
@@ -111,6 +114,17 @@ interface TurnObserved {
   messageId?: string
   /** Corrections that arrived before the answer was saved. */
   pendingCorrection?: number
+  /** Every call's tokens, summed. */
+  tokens?: AnswerTokens
+}
+
+function addTokens(observed: TurnObserved, u: TokenUsage) {
+  const t = observed.tokens ??= { input: 0, output: 0, calls: 0 }
+  t.input += u.inputTokens
+  t.output += u.outputTokens
+  t.calls++
+  if (u.reasoningTokens) t.reasoning = (t.reasoning ?? 0) + u.reasoningTokens
+  if (u.estimated) t.estimated = true
 }
 
 /** A stopped call's real cost arrived: correct the stored answer, or hold it until it is stored. */
@@ -144,8 +158,10 @@ export const pickedModelOf = ({ cloud, provider, observed }: ResolvedModels): An
 /** The model stored with the answer: the pick, or the default model that wrote it. Flash answers
  *  on the flash model; every other mode's answer is written by the chat model, unless the turn
  *  says otherwise (`answeredBy`). */
-export const answerModelOf = (resolved: ResolvedModels, focusMode: string, answeredBy?: ModelTarget): AnswerModel =>
-  pickedModelOf(resolved) ?? defaultAnswerModel(answeredBy ?? (focusMode === 'flash' ? resolved.models.flash : resolved.models.chat))
+export const answerModelOf = (resolved: ResolvedModels, focusMode: string, answeredBy?: ModelTarget): AnswerModel => ({
+  ...(pickedModelOf(resolved) ?? defaultAnswerModel(answeredBy ?? (focusMode === 'flash' ? resolved.models.flash : resolved.models.chat))),
+  ...(resolved.observed.tokens && { tokens: { ...resolved.observed.tokens } }),
+})
 
 export const defaultAnswerModel = (t: ModelTarget): AnswerModel => ({ id: t.model, label: displayName(t), kind: 'default' })
 
