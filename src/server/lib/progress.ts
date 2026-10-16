@@ -19,7 +19,13 @@ export type StepKind =
   | 'write'        // final answer pass (thorough writer, synthesis fallback)
   | 'memory'       // save_to_memory tool
   | 'image'        // diffusion generate/edit
-  | 'documents'    // digesting a collection's documents, k of N
+  | 'documents'    // reading a collection's documents for the task, k of N
+  | 'readFull'     // the model reading N documents in full before it writes (`total`: tokens)
+  | 'combine'      // the model reading what N documents said before it writes
+  | 'outline'      // exploring: outlining one document (`detail`: its label)
+  | 'readPart'     // exploring: reading one part (`detail`: "C2 · 3/9")
+  | 'note'         // exploring: notes taken so far (`count`)
+  | 'readNotes'    // exploring done: the model reading its notes before it writes (`count`)
 
 export interface ProgressStep {
   kind: StepKind
@@ -53,6 +59,12 @@ export function stepText(step: ProgressStep): string {
     case 'memory':     return 'Saving to memory…'
     case 'image':      return step.detail ?? 'Generating image…'
     case 'documents':  return `Reading documents (${step.index ?? 0} of ${step.total ?? 0})…`
+    case 'readFull':   return `Reading ${step.count ?? 0} documents in full (~${step.total ?? 0} tokens)…`
+    case 'combine':    return `Reading what the ${step.count ?? 0} documents said…`
+    case 'outline':    return `Outlining ${step.detail ?? ''}`
+    case 'readPart':   return `Reading ${step.detail ?? ''}`
+    case 'note':       return `Noted (${step.count ?? 0})`
+    case 'readNotes':  return `Reading the notes (${step.count ?? 0})…`
   }
 }
 

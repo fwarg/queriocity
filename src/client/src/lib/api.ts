@@ -3,6 +3,7 @@ import type { Theme } from '@shared/theme.ts'
 import type { ContextReport } from '@shared/context.ts'
 import type { ApiErrorBody, ErrorCode } from '@shared/error-codes.ts'
 import type { LlmCatalogue, LlmAccess, UsageRow, AnswerModel, ModelChoices } from '@shared/llm-catalogue.ts'
+import type { CollectionMode } from '@shared/context.ts'
 
 /** An API failure, carrying the server's stable code where the route sends one.
  *
@@ -234,7 +235,7 @@ export async function* streamChat(
   regenerate?: boolean,
   notesFirst?: boolean,
   modelId?: string,
-  wholeCollection?: boolean,
+  collectionMode?: CollectionMode,
   attachedFileIds?: string[],
 ): AsyncGenerator<{ type: string; [k: string]: unknown }> {
   const res = await fetch(`${BASE}/chat`, {
@@ -259,7 +260,7 @@ export async function* streamChat(
       ...(regenerate ? { regenerate: true } : {}),
       ...(notesFirst ? { notesFirst: true } : {}),
       ...(modelId ? { modelId } : {}),
-      ...(wholeCollection && collectionIds?.length ? { wholeCollection: true } : {}),
+      ...(collectionMode && collectionIds?.length ? { collectionMode } : {}),
       ...(attachedFileIds?.length ? { attachedFileIds } : {}),
     }),
     signal,
@@ -565,11 +566,11 @@ export async function ingestUrl(url: string): Promise<{ fileId: string; filename
   return res.json()
 }
 
-export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; userMemoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; ragTopK: number; ragMinRelevance: number; relatedMinSimilarity: number; relatedMinRelevance: number; rerankEnabled: boolean; attachmentChars: number; spaceRagBudget: number; notesRagBudget: number; topicMinSimilarity: number; collectionFullTextTokens: number; queryReformulation: boolean; rssFeedCharsBudget: number; fetchMaxPages: number; fetchMaxUrlContextChars: number; fetchSummarizeOverflow: boolean; compressHistoryOverflow: boolean; resourceSummary: boolean; limits: { smallModelInputChars: number; embedInputChars: number; scrapeMaxChars: number; minUrlContextChars: number } }> {
+export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; userMemoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; ragTopK: number; ragMinRelevance: number; relatedMinSimilarity: number; relatedMinRelevance: number; rerankEnabled: boolean; attachmentChars: number; spaceRagBudget: number; notesRagBudget: number; topicMinSimilarity: number; collectionFullTextTokens: number; collectionFullTextTokensCloud: number; collectionExploreMaxSteps: number; queryReformulation: boolean; rssFeedCharsBudget: number; fetchMaxPages: number; fetchMaxUrlContextChars: number; fetchSummarizeOverflow: boolean; compressHistoryOverflow: boolean; resourceSummary: boolean; limits: { smallModelInputChars: number; embedInputChars: number; scrapeMaxChars: number; minUrlContextChars: number } }> {
   return fetch(`${BASE}/admin/settings`).then(r => r.json())
 }
 
-export async function updateAdminSettings(s: { memoryTokenBudget?: number; userMemoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; dreamDeep?: boolean; memoryExtractChars?: number; rerankTopN?: number; ragTopK?: number; ragMinRelevance?: number; relatedMinSimilarity?: number; relatedMinRelevance?: number; attachmentChars?: number; spaceRagBudget?: number; notesRagBudget?: number; topicMinSimilarity?: number; collectionFullTextTokens?: number; queryReformulation?: boolean; rssFeedCharsBudget?: number; fetchMaxPages?: number; fetchMaxUrlContextChars?: number; fetchSummarizeOverflow?: boolean; compressHistoryOverflow?: boolean; resourceSummary?: boolean }): Promise<void> {
+export async function updateAdminSettings(s: { memoryTokenBudget?: number; userMemoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; dreamDeep?: boolean; memoryExtractChars?: number; rerankTopN?: number; ragTopK?: number; ragMinRelevance?: number; relatedMinSimilarity?: number; relatedMinRelevance?: number; attachmentChars?: number; spaceRagBudget?: number; notesRagBudget?: number; topicMinSimilarity?: number; collectionFullTextTokens?: number; collectionFullTextTokensCloud?: number; collectionExploreMaxSteps?: number; queryReformulation?: boolean; rssFeedCharsBudget?: number; fetchMaxPages?: number; fetchMaxUrlContextChars?: number; fetchSummarizeOverflow?: boolean; compressHistoryOverflow?: boolean; resourceSummary?: boolean }): Promise<void> {
   await fetch(`${BASE}/admin/settings`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },

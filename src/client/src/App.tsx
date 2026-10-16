@@ -38,6 +38,7 @@ import { useLang, useT } from './lib/i18n.tsx'
 import { applyTheme } from './lib/theme.ts'
 import { DEFAULT_THEME } from '@shared/theme.ts'
 import type { ContextReport } from '@shared/context.ts'
+import type { CollectionMode } from '@shared/context.ts'
 
 /** One per mode worth showing off: something current, something comparative, something explained. */
 const EXAMPLE_KEYS = ['guide.example1', 'guide.example2', 'guide.example3'] as const
@@ -99,7 +100,7 @@ export default function App() {
    *  are visibly lit, so an unwanted one is obvious and one click away, whereas silently clearing a
    *  shelf the user had set up would be the more surprising of the two. */
   const [selectedCollections, setSelectedCollections] = useState<string[]>([])
-  const [wholeCollection, setWholeCollection] = useState(false)
+  const [collectionMode, setCollectionMode] = useState<CollectionMode>('auto')
 
   const [sessionId, setSessionId] = useState<string | undefined>()
   const [sessions, setSessions] = useState<Session[]>([])
@@ -233,7 +234,7 @@ export default function App() {
     notesFirst,
     includeFileIds: pinnedFileIds.length ? pinnedFileIds : undefined,
     collectionIds: selectedCollections.length ? selectedCollections : undefined,
-    wholeCollection,
+    collectionMode,
     includeMemoryIds: pinnedMemoryIds.length ? pinnedMemoryIds : undefined,
     spaceId: activeSpaceId ?? undefined,
     followUpSuggestions: currentUser?.settings?.followUpSuggestions !== false,
@@ -442,11 +443,11 @@ export default function App() {
   }
 
 
-  /** Picked collections and Whole collection belong to the chat they were picked in, like the model
+  /** Picked collections and how they are read belong to the chat they were picked in, like the model
    *  pick: carried into another chat, a confidential one would lock it without asking. */
   function clearCollectionPicks() {
     setSelectedCollections([])
-    setWholeCollection(false)
+    setCollectionMode('auto')
   }
 
   function loadSession(id: string, title: string, addToHistory = true, fromMonitor = false) {
@@ -489,7 +490,7 @@ export default function App() {
     if (collection?.offline && !await confirm({ message: t('chat.lockConfirmNew', { name: collection.name }), confirmLabel: t('chat.lockConfirmAction') })) return
     newChat()
     setSelectedCollections([collectionId])
-    setWholeCollection(true)
+    setCollectionMode('whole')
   }
 
   /** Provenance front-matter for exported chats — EU AI Act Art 50(2).
@@ -1712,8 +1713,8 @@ export default function App() {
               collections={spaces.filter(sp => sp.kind === 'collection')}
               selectedCollections={selectedCollections}
               onCollectionsChange={setSelectedCollections}
-              wholeCollection={wholeCollection}
-              onWholeCollectionChange={setWholeCollection}
+              collectionMode={collectionMode}
+              onCollectionModeChange={setCollectionMode}
               notesAvailable={files.some(f => f.kind === 'note')}
               notesFirst={notesFirst}
               onNotesFirstChange={setNotesFirst}

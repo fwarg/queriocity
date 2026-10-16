@@ -23,10 +23,12 @@ const NOTHING_RELEVANT = 'NOTHING RELEVANT'
 
 const EXTRACT_SYSTEM = `You read one document from a collection for a task the user gave. Another step combines what you write with the same from every other document, so extract from this one only.
 Write:
-- First line: what the document is, in one sentence (type, topic, authors or venue if stated).
+- First line: what the document is, in one sentence (type and topic).
+- Second line: its authors, venue, year and funding, as far as the document states them.
+- If it cites, mentions or builds on any of the other documents in the collection (listed with the task), say which and how, as a bullet each. Its reference list is where to look.
 - Then the points in it that bear on the task, as short bullets. Quote the document's own words in quotation marks where the exact wording matters, and say where (section or heading) when you can tell.
 - Include what it says against or differently from the task's premise, not only what supports it.
-If nothing in it bears on the task, write the first line and then exactly: ${NOTHING_RELEVANT}
+If nothing in it bears on the task, write the first two lines and then exactly: ${NOTHING_RELEVANT}
 At most ${EXTRACT_MAX_CHARS} characters. No preamble. ${LANGUAGE_RULE}`
 
 const DRAFT_CARD_SYSTEM = `You summarise the user's own draft so that other documents can be read with it in mind: its topic, main claims, method, results, and its structure (section headings).
@@ -39,8 +41,8 @@ export interface Extract {
 }
 
 /** What one document says about the task, or its digest when no extract can be made. */
-export async function extractOf(doc: CollectionDoc, task: string, card: string, model: ModelTarget, abortSignal?: AbortSignal): Promise<Extract> {
-  const brief = taskBrief(task, card)
+export async function extractOf(doc: CollectionDoc, others: string[], task: string, card: string, model: ModelTarget, abortSignal?: AbortSignal): Promise<Extract> {
+  const brief = taskBrief(task, card, others)
   const size = mapInputChars(model, brief.length)
   const parts = Array.from({ length: Math.ceil(doc.text.length / size) }, (_, i) => doc.text.slice(i * size, (i + 1) * size))
   try {
@@ -57,8 +59,12 @@ export async function extractOf(doc: CollectionDoc, task: string, card: string, 
   }
 }
 
-const taskBrief = (task: string, card: string) =>
-  `The task: ${task}` + (card ? `\n\nThe user's draft, which the task concerns:\n${card}` : '')
+/** The task, the draft's card, and the other documents' titles — so each document is read for how it
+ *  relates to them, which reading it alone would otherwise miss. */
+const taskBrief = (task: string, card: string, others: string[]) =>
+  `The task: ${task}`
+  + (card ? `\n\nThe user's draft, which the task concerns:\n${card}` : '')
+  + (others.length ? `\n\nThe other documents in the collection:\n${others.map(o => `- ${o}`).join('\n')}` : '')
 
 /** One map call, from the cache when this document, model and brief were read before. */
 async function cachedCall(fileId: string, model: ModelTarget, brief: string, prompt: string, abortSignal?: AbortSignal): Promise<string> {

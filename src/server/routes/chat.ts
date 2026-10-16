@@ -17,7 +17,7 @@ import type { AnswerModel } from '../../shared/llm-catalogue.ts'
 import { extractMemoriesPostHoc, toMemorySources } from '../lib/memory.ts'
 import { ownedCollectionIds } from '../lib/files/collections.ts'
 import { readsConfidential, confidentialInCollections, trackLeftOut, parseLockedBy } from '../lib/files/confidential.ts'
-import { hasAttachment, type ContextReport } from '../../shared/context.ts'
+import { hasAttachment, COLLECTION_MODES, type ContextReport } from '../../shared/context.ts'
 import { indexContents, deindexContent } from '../lib/chat-indexer.ts'
 import { ownsSpace, sessionOwnership } from '../lib/ownership.ts'
 import { isSpaceLocked } from '../lib/space-lock.ts'
@@ -56,8 +56,8 @@ const chatSchema = z.object({
   notesFirst: z.boolean().optional(),
   /** A cloud catalogue model picked for this message only; refused picks fall back to local. */
   modelId: z.string().max(80).optional(),
-  /** Read every document in the picked collections, not the excerpts nearest the question. */
-  wholeCollection: z.boolean().optional(),
+  /** How the picked collections are read (shared/context.ts); auto when absent. */
+  collectionMode: z.enum(COLLECTION_MODES).optional(),
   /** Library resources whose text the client attached to the message, so a confidential one locks the turn. */
   attachedFileIds: z.array(z.string()).max(20).optional(),
 })
@@ -194,7 +194,7 @@ chatRouter.post('/:sessionId/approve', zValidator('json', z.object({
 
 chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', chatSchema), async (c) => {
   const userId = c.get('userId') as string
-  const { sessionId, spaceId, messages: requestMsgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, collectionIds, ephemeral, regenerate, notesFirst, modelId, wholeCollection, attachedFileIds } = c.req.valid('json')
+  const { sessionId, spaceId, messages: requestMsgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, collectionIds, ephemeral, regenerate, notesFirst, modelId, collectionMode = 'auto', attachedFileIds } = c.req.valid('json')
   const sid = sessionId ?? randomUUID()
   const msgs = requestMsgs.map(({ role, content }) => ({ role, content }))
 
@@ -236,8 +236,8 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     [...(includeFileIds ?? [])].sort().join(','),
     [...(includeMemoryIds ?? [])].sort().join(','),
     collections.join(','),
-    // Whole-collection answers are never stored, but must not be served an excerpt answer either.
-    wholeCollection ? 'whole' : '',
+    // Whole-collection and explored answers are never stored, but must not be served an excerpt answer either.
+    collections.length ? collectionMode : '',
     customPrompt ?? '',
     [...(searchCategories ?? [])].sort().join(','),
     locked ? 'locked' : '',
@@ -264,7 +264,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   if (cached) return streamRun(c, run, out => replayCached(out, cached, { ...tail, model: answerModelOf(resolved, focusMode) }, resolved))
 
   const ctx: TurnContext = {
-    userId, sid, msgs, focusMode, spaceId, locked, spaceWrites, settings, customPrompt, collections, wholeCollection,
+    userId, sid, msgs, focusMode, spaceId, locked, spaceWrites, settings, customPrompt, collections, collectionMode,
     // Pins travel as indices, so the messages handed to the model carry nothing but role and content.
     pinned: new Set(requestMsgs.flatMap((m, i) => m.pinned ? [i] : [])),
     models: resolved.models,

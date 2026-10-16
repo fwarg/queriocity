@@ -76,6 +76,8 @@ describe('coverCollection', () => {
     expect(c.mode).toBe('extract')
     expect(c.block).toContain('### [C2] b.txt\nA paper on bees.')
     expect(asked(f, 0)).toContain('What do they say about bees?')
+    // Each document is read knowing the others, so it can say which it cites or builds on.
+    expect(JSON.stringify(f.requests[0])).toContain('The other documents in the collection:\\n- b.txt')
     expect(f.callCount).toBe(2)
     expect(progress).toEqual([0, 1, 2])
     await coverCollection([COLL], opts(fakeTarget(f.baseURL)))

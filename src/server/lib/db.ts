@@ -439,6 +439,16 @@ function initSchema() {
 
   // What a resource says about one task (lib/files/collection-extracts.ts), per model; `key_hash`
   // covers the prompt, the task, the draft card and the text read. Pruned to the newest per resource.
+  // One outline line per part of a resource (lib/files/collection-parts.ts), keyed by the part's text,
+  // so a re-indexed resource gets new lines and its old ones go with the resource.
+  sqlite.run(`CREATE TABLE IF NOT EXISTS resource_outlines (
+    file_id    TEXT NOT NULL REFERENCES uploaded_files(id) ON DELETE CASCADE,
+    part_hash  TEXT NOT NULL,
+    line       TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (file_id, part_hash)
+  )`)
+
   sqlite.run(`CREATE TABLE IF NOT EXISTS resource_extracts (
     file_id    TEXT NOT NULL REFERENCES uploaded_files(id) ON DELETE CASCADE,
     model      TEXT NOT NULL,

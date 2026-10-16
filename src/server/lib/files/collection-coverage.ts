@@ -61,7 +61,8 @@ export async function coverCollection(collectionIds: string[], opts: CoverOption
   if (full.block.length <= Math.min(opts.budgetChars, opts.fullTextMaxChars)) return { ...full, mode: 'full', trimmed: false, irrelevant: 0 }
 
   const card = opts.draft ? await draftCard(opts.draft, opts.model, opts.abortSignal) : ''
-  const extracts: Extract[] = await mapDocs(docs, opts, doc => extractOf(doc, opts.task, card, opts.model, opts.abortSignal))
+  const extracts: Extract[] = await mapDocs(docs, opts, doc =>
+    extractOf(doc, docs.filter(d => d !== doc).map(d => d.filename), opts.task, card, opts.model, opts.abortSignal))
   const overhead = renderCoverage(docs, docs.map(() => ''), 'extract').block.length
   const fitted = fitTexts(extracts.map(e => e.text), opts.budgetChars - overhead)
   const irrelevant = extracts.filter(e => !e.relevant).length

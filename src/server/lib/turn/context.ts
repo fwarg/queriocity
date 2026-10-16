@@ -4,7 +4,7 @@ import type { EgressApprovalRequest } from '../researcher.ts'
 import type { SSEStream } from '../researcher-stream.ts'
 import type { ModelTarget, TurnModels } from '../llm.ts'
 import type { SearchResult } from '../search/index.ts'
-import type { ContextReport } from '../../../shared/context.ts'
+import type { ContextReport, CollectionMode } from '../../../shared/context.ts'
 import { stepEvent, type ProgressStep } from '../progress.ts'
 
 export const KEEPALIVE_INTERVAL_MS = 15000
@@ -31,8 +31,8 @@ export interface TurnContext {
   customPrompt?: string
   /** Owned collection ids, sorted. */
   collections: string[]
-  /** Read every document in the collections rather than the excerpts nearest the question. */
-  wholeCollection?: boolean
+  /** How the collections are read; `auto` lets the small model choose (collection-mode.ts). Absent: excerpts. */
+  collectionMode?: CollectionMode
   includeFileIds?: string[]
   includeMemoryIds?: string[]
   notesFirst?: boolean

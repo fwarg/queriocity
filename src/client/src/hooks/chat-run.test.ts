@@ -138,6 +138,17 @@ describe('ChatRun', () => {
     expect(seen.answerTime).not.toContain(translate('en', 'answer.noSearchResults'))
   })
 
+  test('says how Auto read the collection, and how an exploration went', () => {
+    const { seen, feed } = harness()
+    feed(
+      { type: 'collection_mode', mode: 'explore', reason: 'a targeted question' },
+      { type: 'exploration', steps: 12, notes: 5, endedEarly: true },
+      { type: 'text', delta: 'x' }, done(),
+    )
+    expect(seen.answerTime).toContain('12 model calls exploring the collection, 5 notes, ended before the model was done')
+    expect(seen.answerTime).toContain('Auto read the collection as Explore: a targeted question.')
+  })
+
   test('puts a refused model pick in the footer', () => {
     const { seen, feed } = harness()
     feed({ type: 'model_notice', reason: 'budget' }, { type: 'text', delta: 'x' }, done())

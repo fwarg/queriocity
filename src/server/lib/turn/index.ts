@@ -2,6 +2,8 @@ import { runFlashTurn } from './flash.ts'
 import { runImageTurn } from './image.ts'
 import { runResearchTurn } from './research.ts'
 import { runCollectionTurn } from './collection.ts'
+import { runCollectionAgent } from './collection-agent.ts'
+import { collectionModeFor } from './collection-mode.ts'
 import type { TurnContext, TurnResult, TurnSink } from './context.ts'
 
 export * from './context.ts'
@@ -9,8 +11,12 @@ export { toSearxngCategories } from './prepare.ts'
 export { toStoredSource } from './research.ts'
 
 /** Runs one turn in its focus mode, writing events to `sink`; the caller emits `session` first and persists after. */
-export function runTurn(ctx: TurnContext, sink: TurnSink): Promise<TurnResult> {
-  if (ctx.wholeCollection && ctx.collections.length && ctx.focusMode !== 'image') return runCollectionTurn(ctx, sink)
+export async function runTurn(ctx: TurnContext, sink: TurnSink): Promise<TurnResult> {
+  if (ctx.collections.length && ctx.focusMode !== 'image') {
+    const mode = await collectionModeFor(ctx, sink)
+    if (mode === 'whole') return runCollectionTurn(ctx, sink)
+    if (mode === 'explore') return runCollectionAgent(ctx, sink)
+  }
   switch (ctx.focusMode) {
     case 'flash': return runFlashTurn(ctx, sink)
     case 'image': return runImageTurn(ctx, sink)

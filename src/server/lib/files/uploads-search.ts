@@ -59,6 +59,11 @@ export async function searchUploads(query: string, userId: string, limit?: numbe
   return indices.map(i => rows[i])
 }
 
+/** The `k` chunks of one resource nearest the embedding — for spreading a search across documents. */
+export function searchFile(fileId: string, embedding: number[], k: number, includeConfidential = false): ChunkResult[] {
+  return nearestChunks(JSON.stringify(embedding), k, 'SELECT m2.chunk_id FROM file_chunk_meta m2 WHERE m2.file_id = ?', [fileId], 'm2.file_id', includeConfidential)
+}
+
 /** The `topK` chunks nearest the embedding within `scope` (a subquery selecting chunk ids; `fileCol`
  *  names its file id column). Without `includeConfidential`, confidential resources are left out,
  *  and those that would have been among the results are recorded for the turn (noteLeftOut). */

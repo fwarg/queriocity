@@ -65,6 +65,12 @@ function label(step: LogStep, t: TFunction): string {
     case 'memory':     return t('log.memory')
     case 'image':      return detail ?? t('log.image')
     case 'documents':  return t('log.documents', { index: step.index ?? 0, total: step.total ?? 0 })
+    case 'readFull':   return t('log.readFull', { count: step.count ?? 0, tokens: step.total ?? 0 })
+    case 'combine':    return t('log.combine', { count: step.count ?? 0 })
+    case 'outline':    return t('log.outline', { doc: step.detail ?? '' })
+    case 'readPart':   return t('log.readPart', { part: step.detail ?? '' })
+    case 'note':       return t('log.note', { count: step.count ?? 0 })
+    case 'readNotes':  return t('log.readNotes', { count: step.count ?? 0 })
     default:           return step.text
   }
 }

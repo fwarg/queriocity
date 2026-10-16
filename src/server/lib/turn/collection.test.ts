@@ -34,7 +34,7 @@ function ctxFor(): TurnContext {
   return {
     userId: USER, sid: 's', msgs: [{ role: 'user', content: 'Compare these papers.' }], pinned: new Set(),
     models: { chat: model, thinking: model, flash: model }, focusMode: 'balanced', locked: false,
-    settings: {}, collections: [COLL], wholeCollection: true, abortSignal: new AbortController().signal,
+    settings: {}, collections: [COLL], collectionMode: 'whole', abortSignal: new AbortController().signal,
   }
 }
 
@@ -51,6 +51,11 @@ describe('whole-collection turn', () => {
     expect(cap.ofType('file_sources')[0].sources).toHaveLength(2)
     expect(cap.events.some(e => (e.step as { kind?: string } | undefined)?.kind === 'search')).toBe(false)
     expect(result).toMatchObject({ content: 'Both papers study bees [C1][C2].', cacheable: false })
+    // Reading the documents is its own step; writing starts with the first output, after it.
+    const steps = cap.events.flatMap(e => e.step ? [(e.step as { kind: string }).kind] : [])
+    expect(steps).toEqual(['readFull', 'write'])
+    expect(cap.events.findIndex(e => (e.step as { kind?: string } | undefined)?.kind === 'write'))
+      .toBeLessThan(cap.events.findIndex(e => e.type === 'text'))
   })
 
   test('above the threshold, reads each document for the message, with the attached draft as a card', async () => {

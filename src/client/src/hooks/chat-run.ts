@@ -50,8 +50,11 @@ export class ChatRun {
   private modelNote = ''
   private errorNote = ''
   private lockNote = ''
+  // Which way Auto read the collections, and how an exploration went, for the footer.
+  private collectionNote = ''
   private model: AnswerModel | undefined
   private coverage: Coverage | undefined
+  private exploration: Exploration | undefined
   // Built here rather than in the component so a step's end time is the moment the next one
   // arrives, not the moment React happened to re-render.
   private readonly log: LogStep[] = []
@@ -121,6 +124,10 @@ export class ChatRun {
         return true
       case 'model_notice': this.modelNote = t(`modelNotice.${chunk.reason as ModelFallbackReason}`); return true
       case 'coverage': this.coverage = { documents: chunk.documents as number, mode: chunk.mode as Coverage['mode'], trimmed: !!chunk.trimmed, irrelevant: (chunk.irrelevant as number | undefined) ?? 0 }; return true
+      case 'collection_mode':
+        this.collectionNote = t('answer.autoChose', { mode: t(`collection.mode.${chunk.mode as 'excerpts' | 'whole' | 'explore'}`), reason: chunk.reason as string })
+        return true
+      case 'exploration': this.exploration = { steps: chunk.steps as number, notes: chunk.notes as number, endedEarly: !!chunk.endedEarly }; return true
       case 'confidential_excluded': this.lockNote = t('answer.confidentialExcluded', { count: chunk.count as number }); return true
       case 'model_error': this.errorNote = t('answer.modelError', { provider: chunk.provider as string, message: chunk.message as string }); return true
       default: return false
@@ -191,7 +198,8 @@ export class ChatRun {
     if (chunk.elapsedMs) {
       view.setAnswerTime(answerFooter(view.t, {
         elapsedMs: chunk.elapsedMs as number, focusMode: this.focusMode, images: this.images.length,
-        sources: this.sources.length, blockedEngines: this.blockedEngines.map(e => e.engine), coverage: this.coverage, modelNote: [this.modelNote, this.errorNote, this.lockNote].filter(Boolean).join(' '),
+        sources: this.sources.length, blockedEngines: this.blockedEngines.map(e => e.engine), coverage: this.coverage, exploration: this.exploration,
+        modelNote: [this.collectionNote, this.modelNote, this.errorNote, this.lockNote].filter(Boolean).join(' '),
       }))
     }
     view.liveSessionRef.current = chunk.sessionId as string
@@ -212,17 +220,20 @@ export interface Coverage {
 
 /** The line under a finished answer: time taken, what the search found (or which documents were
  *  read, for a whole-collection answer, which does not search), and which model answered. */
-export function answerFooter(t: TFunction, { elapsedMs, focusMode, images, sources, blockedEngines, coverage, modelNote }: {
+export function answerFooter(t: TFunction, { elapsedMs, focusMode, images, sources, blockedEngines, coverage, exploration, modelNote }: {
   elapsedMs: number
   focusMode: FocusMode
   images: number
   sources: number
   blockedEngines: string[]
   coverage?: Coverage
+  exploration?: Exploration
   modelNote: string
 }): string {
   const label = t(images > 0 ? 'answer.generatedIn' : 'answer.answeredIn')
-  const detail = coverage ? ` · ${coverageText(t, coverage)}` : searchText(t, focusMode, sources, blockedEngines)
+  const detail = exploration ? ` · ${explorationText(t, exploration)}`
+    : coverage ? ` · ${coverageText(t, coverage)}`
+      : searchText(t, focusMode, sources, blockedEngines)
   return t('answer.time', { label, seconds: (elapsedMs / 1000).toFixed(1) }) + detail + '.' + (modelNote ? ` ${modelNote}` : '')
 }
 
@@ -234,6 +245,17 @@ function searchText(t: TFunction, focusMode: FocusMode, sources: number, blocked
   if (sources > 0) return ` · ${t('answer.searchResults', { count: sources })}`
   if (blockedEngines.length) return ` · ${t('answer.enginesUnavailable', { engines: blockedEngines.join(', ') })}`
   return alwaysSearches ? ` · ${t('answer.noSearchResults')}` : ''
+}
+
+/** How an Explore answer went: its steps and notes, and whether it ended before the model was done. */
+export interface Exploration {
+  steps: number
+  notes: number
+  endedEarly: boolean
+}
+
+function explorationText(t: TFunction, { steps, notes, endedEarly }: Exploration): string {
+  return t('answer.explored', { steps, notes }) + (endedEarly ? `, ${t('answer.exploredEarly')}` : '')
 }
 
 function coverageText(t: TFunction, { documents, mode, trimmed, irrelevant }: Coverage): string {

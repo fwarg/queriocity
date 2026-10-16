@@ -9,6 +9,7 @@ import type { PickableModel } from '@shared/llm-catalogue.ts'
 import { useT } from '../lib/i18n.tsx'
 import type { TranslationKey } from '@shared/i18n/index.ts'
 import { useConfirm } from './confirm.tsx'
+import { COLLECTION_MODES, type CollectionMode } from '@shared/context.ts'
 
 type FocusMode = 'flash' | 'balanced' | 'thorough' | 'image'
 type SearchCategory = 'news' | 'science' | 'discussions' | 'tech'
@@ -36,8 +37,8 @@ interface Props {
   selectedCollections: string[]
   onCollectionsChange: (ids: string[]) => void
   /** Read every document in the picked collections rather than the excerpts nearest the question. */
-  wholeCollection?: boolean
-  onWholeCollectionChange?: (on: boolean) => void
+  collectionMode?: CollectionMode
+  onCollectionModeChange?: (mode: CollectionMode) => void
   /** "Notes first": answer from the user's own notes before the web. Offered once they have notes. */
   notesAvailable?: boolean
   notesFirst?: boolean
@@ -96,7 +97,7 @@ const CATEGORY_LABEL_KEYS: Record<SearchCategory, TranslationKey> = {
   tech: 'category.tech',
 }
 
-export function ChatInput({ models = [], modelId = '', defaultModel, onModelChange, onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, collections, selectedCollections, onCollectionsChange, wholeCollection = false, onWholeCollectionChange, notesAvailable = false, notesFirst = false, onNotesFirstChange, suggestionsEnabled, lockedSpace = false, chatLocked = false, hasHistory = false, related = [], onRelatedSelect, spaceId, onAddedToLibrary }: Props) {
+export function ChatInput({ models = [], modelId = '', defaultModel, onModelChange, onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, collections, selectedCollections, onCollectionsChange, collectionMode = 'auto', onCollectionModeChange, notesAvailable = false, notesFirst = false, onNotesFirstChange, suggestionsEnabled, lockedSpace = false, chatLocked = false, hasHistory = false, related = [], onRelatedSelect, spaceId, onAddedToLibrary }: Props) {
   const t = useT()
   const confirm = useConfirm()
   const [value, setValue] = useState('')
@@ -153,7 +154,7 @@ export function ChatInput({ models = [], modelId = '', defaultModel, onModelChan
     ...(notesOffered && notesFirst ? [t('notesFirst.label')] : []),
     ...(categoriesAvailable && searchCategories.length > 0 ? [searchCategories.map(c => t(CATEGORY_LABEL_KEYS[c])).join('+')] : []),
     ...collections.filter(c => selectedCollections.includes(c.id)).map(c => c.name),
-    ...(wholeCollection && selectedCollections.length > 0 && focusMode !== 'image' ? [t('collection.whole')] : []),
+    ...(collectionMode !== 'auto' && selectedCollections.length > 0 && focusMode !== 'image' ? [t(COLLECTION_MODE_LABEL_KEYS[collectionMode])] : []),
   ]
   // "All" is a statement about categories only, and unqualified it reads as "everything" once
   // collections share the button — no collection is picked by default.
@@ -302,7 +303,7 @@ export function ChatInput({ models = [], modelId = '', defaultModel, onModelChan
             onFocusModeChange(mode)
             setShowTemplates(false)
             // Opened too, so the collection to read is picked where the switch is.
-            if (whole && onWholeCollectionChange) { onWholeCollectionChange(true); setSourcesOpen(true) }
+            if (whole && onCollectionModeChange) { onCollectionModeChange('whole'); setSourcesOpen(true) }
           }}
           onClose={() => setShowTemplates(false)}
         />
@@ -401,8 +402,8 @@ export function ChatInput({ models = [], modelId = '', defaultModel, onModelChan
               collections={collections}
               selected={selectedCollections}
               onChange={pickCollections}
-              whole={focusMode !== 'image' ? wholeCollection : undefined}
-              onWholeChange={onWholeCollectionChange}
+              mode={focusMode !== 'image' ? collectionMode : undefined}
+              onModeChange={onCollectionModeChange}
             />
           )}
         </div>
@@ -586,40 +587,65 @@ function NotePicker({ onPick, onClose }: { onPick: (id: string) => void; onClose
   )
 }
 
-/** The collection chips, and once one is picked, whether to read the whole of them: every
- *  document rather than the excerpts nearest the question. `whole` is undefined where it does not apply. */
-function CollectionsGroup({ collections, selected, onChange, whole, onWholeChange }: {
+/** Copy for each way of reading the picked collections, keyed by mode. */
+const COLLECTION_MODE_LABEL_KEYS: Record<CollectionMode, TranslationKey> = {
+  auto: 'collection.mode.auto', excerpts: 'collection.mode.excerpts', whole: 'collection.mode.whole', explore: 'collection.mode.explore',
+}
+const COLLECTION_MODE_DESC_KEYS: Record<CollectionMode, TranslationKey> = {
+  auto: 'collection.modeDesc.auto', excerpts: 'collection.modeDesc.excerpts', whole: 'collection.modeDesc.whole', explore: 'collection.modeDesc.explore',
+}
+
+/** The collection chips, and once one is picked, how to read them. `mode` is undefined where the
+ *  choice does not apply (image mode). The chosen mode's description is shown, not only in a tooltip:
+ *  a phone never shows a title. */
+function CollectionsGroup({ collections, selected, onChange, mode, onModeChange }: {
   collections: Array<{ id: string; name: string; offline?: boolean }>
   selected: string[]
   onChange: (ids: string[]) => void
-  whole?: boolean
-  onWholeChange?: (on: boolean) => void
+  mode?: CollectionMode
+  onModeChange?: (mode: CollectionMode) => void
 }) {
   const t = useT()
   return (
-    <div className="flex items-center gap-1.5 flex-wrap">
-      <span className="text-xs text-gray-500 mr-0.5">{t('collection.plural')}</span>
-      {collections.map(collection => {
-        const on = selected.includes(collection.id)
-        return (
-          <button
-            key={collection.id}
-            type="button"
-            aria-pressed={on}
-            onClick={() => onChange(on ? selected.filter(id => id !== collection.id) : [...selected, collection.id])}
-            title={collection.offline ? t('collection.confidentialChipTitle') : undefined}
-            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${on ? 'bg-amber-700 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'}`}
-          >
-            {collection.offline && <EyeOff size={10} aria-label={t('resource.confidential')} />}
-            {collection.name}
-          </button>
-        )
-      })}
-      {selected.length > 0 && whole !== undefined && onWholeChange && (
-        <label className="flex items-center gap-1 text-xs text-gray-400 ml-1" title={t('collection.wholeTitle')}>
-          <input type="checkbox" checked={whole} onChange={e => onWholeChange(e.target.checked)} className="accent-amber-600" />
-          {t('collection.whole')}
-        </label>
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className="text-xs text-gray-500 mr-0.5">{t('collection.plural')}</span>
+        {collections.map(collection => {
+          const on = selected.includes(collection.id)
+          return (
+            <button
+              key={collection.id}
+              type="button"
+              aria-pressed={on}
+              onClick={() => onChange(on ? selected.filter(id => id !== collection.id) : [...selected, collection.id])}
+              title={collection.offline ? t('collection.confidentialChipTitle') : undefined}
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${on ? 'bg-amber-700 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'}`}
+            >
+              {collection.offline && <EyeOff size={10} aria-label={t('resource.confidential')} />}
+              {collection.name}
+            </button>
+          )
+        })}
+      </div>
+      {selected.length > 0 && mode !== undefined && onModeChange && (
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-1 flex-wrap" role="radiogroup" aria-label={t('collection.modeGroup')}>
+            <span className="text-xs text-gray-500 mr-0.5">{t('collection.modeGroup')}</span>
+            {COLLECTION_MODES.map(m => (
+              <button
+                key={m}
+                type="button"
+                role="radio"
+                aria-checked={mode === m}
+                onClick={() => onModeChange(m)}
+                className={`px-2 py-0.5 rounded text-xs ${mode === m ? 'bg-amber-700 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'}`}
+              >
+                {t(COLLECTION_MODE_LABEL_KEYS[m])}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-gray-500">{t(COLLECTION_MODE_DESC_KEYS[mode])}</p>
+        </div>
       )}
     </div>
   )

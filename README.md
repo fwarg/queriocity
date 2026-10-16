@@ -1089,37 +1089,85 @@ Because these excerpts are asked for explicitly, they are not made to compete wi
 itself holds: they carry their own retrieval budget rather than being ranked against it. A request
 with collections selected therefore builds a somewhat larger prompt.
 
-**Working on the whole collection.** Excerpts suit questions *answered somewhere* in a collection. For
-tasks *about* the collection (compare these papers, place my work among them, review my attached
-draft against these reviewed papers), tick **Whole collection** next to the picked collections, or use
-**Analyze in chat** on the collection's page. That turn then reads every document, not the passages
-nearest the question:
+**How the collections are read.** Once a collection is picked, a **Read** choice appears below the
+chips: **Auto** (the default), **Excerpts**, **Whole collection** or **Explore**. The chosen one's
+description is shown under it.
 
-- **A small collection goes in full**: up to *Whole collection: full text up to* in Admin → Settings
-  (default 30,000 tokens, never above the model's context).
+- **Excerpts**: the passages nearest the question, as described above. Quick; suits a question
+  *answered somewhere* in the collection.
+- **Whole collection**: every document, for tasks *about* the collection: compare these papers, place
+  my work among them, review my attached draft against these reviewed papers. See below.
+- **Explore**: an agent for targeted questions across the documents ("which of these use GSN?",
+  "does anything here contradict my section 3?"). See [Exploring a collection](#exploring-a-collection).
+- **Auto** asks the small model, in one short call, which of the three fits the message, and falls
+  back to Excerpts if it cannot say. The footer says what it chose and why ("Auto read the collection
+  as Explore: a targeted question"), so you can override it next time.
+
+The pick, like the collections, lasts for the chat. *Analyze in chat* on a collection's page and the
+**Collection report** template set Whole collection.
+
+**Working on the whole collection.** That turn reads every document, not the passages nearest the
+question:
+
+- **A small collection goes in full**: up to *Whole collection: full text up to* in Admin → Settings,
+  set separately for local models (default 30,000 tokens) and cloud models (default: whatever fits the
+  model's context). Seeing every document side by side finds the links between them best; a cloud model
+  reads a long prompt quickly, while a local GPU slows sharply with prompt length.
 - **A larger one is read document by document for your message.** Each document gets its own call,
-  with your message as the task, and returns what it is, the points in it that bear on the task (with
-  short quotes), or that it has nothing on it. The answer is then written from what every document
+  with your message as the task and the other documents' titles, and returns what it is; its authors,
+  venue, year and funding; which of the other documents it cites or builds on; and the points in it
+  that bear on the task (with short quotes) — or that it has nothing on it. The answer is then written from what every document
   said, so none is skipped and none is crowded out. Many short calls are also much faster than one long
   prompt on a local GPU; see the timings in `perftest.md` if you have run it.
 - **An attached draft** (review it against the collection) is first summarised into a short card,
   which goes into every document's call so each is read with your draft in mind. The answer still gets
   the draft in full.
 - **Each message is its own task.** Extracts are cached per document, model and task, so retrying
-  is free, but a new question reads the documents again. For a quick follow-up on the answer, turn
-  *Whole collection* off and chat normally.
+  is free, but a new question reads the documents again. For a quick follow-up on the answer, switch
+  to *Excerpts* and chat normally.
 - A document too long for one call is read in consecutive parts. If a call fails, the document's
   generic **digest** stands in. Digests are listed on the resource's page under *Digests*.
 - Calls run one at a time on a local model and three at a time on a cloud model, where they count
   toward its cost and budget like any other call.
+- The progress log shows each stage: *Reading documents (k of N)* for the per-document pass, then
+  *Reading N documents in full (~T tokens)* or *Reading what the N documents said* while the model takes
+  in its prompt before the first word, then *Writing answer*.
 - The footer says how the collection was read: "12 documents read for this question, 3 with nothing on
   it", and whether what they said had to be shortened to fit.
 - Each document is cited as `[C1]`, `[C2]`, one label per document.
 - The turn makes no web search, and its answer is not cached, because the collection can change.
 
 The built-in **Collection report** template asks for a summary of each work, how they relate, where they
-agree and disagree, the pros and cons of each, and a comparison table. Choosing it turns *Whole
-collection* on. Save a good answer as a note with the answer's note action.
+agree and disagree, the pros and cons of each, and a comparison table. Choosing it sets *Whole
+collection*. Save a good answer as a note with the answer's note action.
+
+#### Exploring a collection
+
+**Explore** answers a targeted question by working through the documents the way a person would,
+rather than reading all of them. An agent (the answering model) has four tools:
+
+- **list the documents**: label, title, one-line summary, and how many parts each has;
+- **outline** a document: one line per part, saying what it covers and its headings;
+- **search** the documents, or one of them: which document and part a passage is in, with an
+  excerpt. Across all documents it returns each document's best matches first (up to 2 each, 8–30
+  in all as the collection grows), so a paper full of matches cannot hide one with a few. A document
+  whose best matches are clearly unrelated can be ruled out from that; one that did not appear, or
+  whose matches are ambiguous, the agent searches or outlines on its own;
+- **read** a part in full, and **note** a finding with where it is and a short quote.
+
+A *part* is three consecutive indexed excerpts (about 5,000 characters), the same excerpts search
+uses, so nothing is stored twice and a search hit names its part exactly. Outlines are written once by
+the small model and cached until the document is re-indexed.
+
+The agent keeps its prompt small, however long it explores: parts read earlier are dropped once read,
+and its notes are restated at every step. The answer is written from the notes in a separate call, with
+`[C1]` citations. The progress log shows each search, read and note.
+
+It stops when it judges its notes enough, or at a step limit (Admin → Settings, *Explore: step limit*,
+default 20). If it hits the limit or its tool calls fail, it answers from what it noted so far, and the
+footer says so. Like whole-collection mode, it makes no web search, its answers are not cached, it
+follows the chat's model pick, and confidential documents are read only in locked chats. A model that
+handles many tool calls reliably works best; on a small local model, prefer *Whole collection*.
 
 *Summarize resources* is offered in spaces only: it saves a memory, which only a space's chats read.
 In a collection, use *Analyze in chat*, whose per-document reading is cached and reused.
