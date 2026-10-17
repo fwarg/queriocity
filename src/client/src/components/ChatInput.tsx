@@ -665,21 +665,17 @@ function CollectionsGroup({ collections, selected, onChange, spaceReadable, web,
                 {t(COLLECTION_MODE_LABEL_KEYS[m])}
               </button>
             ))}
+            {/* Beside the chips rather than a row of its own: it qualifies Explore, and the mode's
+                description below says what it does. */}
+            {mode === 'explore' && web && (
+              <label className="ml-1 inline-flex items-center gap-1 text-xs text-gray-400 cursor-pointer" title={t('collection.exploreWebDesc')}>
+                <input type="checkbox" checked={web.on} onChange={e => web.onChange(e.target.checked)} className="accent-amber-600 cursor-pointer" />
+                {t('collection.exploreWeb')}
+              </label>
+            )}
           </div>
           <p className="text-xs text-gray-500">{t(COLLECTION_MODE_DESC_KEYS[mode])} <GuideLink topic="collectionModes" /></p>
-          {mode === 'explore' && web && (
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <button
-                type="button"
-                aria-pressed={web.on}
-                onClick={() => web.onChange(!web.on)}
-                className={`px-2 py-0.5 rounded text-xs ${web.on ? 'bg-amber-700 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'}`}
-              >
-                {t('collection.exploreWeb')}
-              </button>
-              <span className="text-xs text-gray-500">{t('collection.exploreWebDesc')}</span>
-            </div>
-          )}
+
         </div>
       )}
     </div>

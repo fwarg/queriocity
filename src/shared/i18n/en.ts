@@ -339,7 +339,7 @@ export const en = {
   'collection.modeDesc.auto': 'Chooses per message: excerpts for a fact, the whole collection for a report or comparison, exploring for a targeted question.',
   'collection.modeDesc.excerpts': 'The passages nearest your question, as in any chat. Quick.',
   'collection.modeDesc.whole': 'Every document, for comparing, summarising or reviewing against the collection. No web search; each message reads the documents again, so turn this off for a quick follow-up.',
-  'collection.modeDesc.explore': 'An agent searches the documents, reads the parts that matter and notes what it finds — for targeted questions such as which papers do X, or checking a draft\'s claims. No web search unless you turn it on below.',
+  'collection.modeDesc.explore': 'An agent searches the documents, reads the parts that matter and notes what it finds — for targeted questions such as which papers do X, or checking a draft\'s claims. No web search unless you tick Also search the web.',
   'collection.new': 'New collection',
   'collection.none': 'No collections yet. A collection groups resources without a conversation.',
   'collection.aboutTitle': 'About collections',

@@ -1212,8 +1212,8 @@ default 20). If it hits the limit or its tool calls fail, it answers from what i
 footer says so. Like whole-collection mode, its answers are not cached, it follows the chat's model
 pick, and confidential documents are read only in locked chats.
 
-**Web search is opt-in.** By default Explore reads only the documents. Ticking *Also search the web*
-under the Read row (offered while Explore is chosen, never in a locked chat) gives the agent a
+**Web search is opt-in.** By default Explore reads only the documents. Ticking *Also search the web*,
+a checkbox beside the Explore chip (offered while Explore is chosen, never in a locked chat), gives the agent a
 `web_search` tool for context the documents lack — a work they cite, whether something has changed
 since. It is told to explore the documents first. Its results reach the answer as numbered web
 sources (`[1]`, `[2]`… beside the documents' `[C1]`), with the instruction never to present them as

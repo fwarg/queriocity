@@ -335,7 +335,7 @@ export const sv: Catalog = {
   'collection.modeDesc.auto': 'Väljer per meddelande: utdrag för ett faktum, hela samlingen för en rapport eller jämförelse, utforskning för en riktad fråga.',
   'collection.modeDesc.excerpts': 'De stycken som ligger närmast din fråga, som i vilken chatt som helst. Snabbt.',
   'collection.modeDesc.whole': 'Alla dokument, för att jämföra, sammanfatta eller granska mot samlingen. Ingen webbsökning; varje meddelande läser dokumenten igen, så slå av detta för en snabb följdfråga.',
-  'collection.modeDesc.explore': 'En agent söker i dokumenten, läser de delar som spelar roll och antecknar vad den hittar — för riktade frågor som vilka artiklar som gör X, eller för att kontrollera ett utkasts påståenden. Ingen webbsökning om du inte slår på den nedan.',
+  'collection.modeDesc.explore': 'En agent söker i dokumenten, läser de delar som spelar roll och antecknar vad den hittar — för riktade frågor som vilka artiklar som gör X, eller för att kontrollera ett utkasts påståenden. Ingen webbsökning om du inte kryssar i Sök även på webben.',
   'collection.new': 'Ny samling',
   'collection.none': 'Inga samlingar än. En samling grupperar resurser utan någon konversation.',
   'collection.aboutTitle': 'Om samlingar',
