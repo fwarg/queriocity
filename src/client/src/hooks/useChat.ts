@@ -19,6 +19,8 @@ interface UseChatOptions {
   collectionIds?: string[]
   /** How the picked collections are read; auto lets the server choose per message. */
   collectionMode?: CollectionMode
+  /** Explore may also search the web. */
+  exploreWeb?: boolean
   includeMemoryIds?: string[]
   spaceId?: string
   /** User setting; when false no related-questions call is made at all. */
@@ -92,9 +94,9 @@ export function useChat(options: UseChatOptions) {
     setBusy(true)
     setAnswerTime('')
     const chatRun = new ChatRun({ t, setStreaming, setStreamingThinking, setStatus, setSteps, setAnswerTime, setApproval, setContext, rafRef, liveSessionRef, onSessionCreated }, text, focusMode)
-    const { searchCategories, includeFileIds, includeMemoryIds, collectionIds, spaceId, notesFirst, collectionMode } = options
+    const { searchCategories, includeFileIds, includeMemoryIds, collectionIds, spaceId, notesFirst, collectionMode, exploreWeb } = options
     try {
-      for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId, undefined, searchCategories, includeFileIds, includeMemoryIds, collectionIds, regenerating, notesFirst, modelId, collectionMode, attachedFileIds)) {
+      for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId, undefined, searchCategories, includeFileIds, includeMemoryIds, collectionIds, regenerating, notesFirst, modelId, collectionMode, attachedFileIds, exploreWeb)) {
         chatRun.handle(chunk)
       }
     } catch (err: unknown) {

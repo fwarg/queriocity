@@ -237,6 +237,7 @@ export async function* streamChat(
   modelId?: string,
   collectionMode?: CollectionMode,
   attachedFileIds?: string[],
+  exploreWeb?: boolean,
 ): AsyncGenerator<{ type: string; [k: string]: unknown }> {
   const res = await fetch(`${BASE}/chat`, {
     method: 'POST',
@@ -260,8 +261,10 @@ export async function* streamChat(
       ...(regenerate ? { regenerate: true } : {}),
       ...(notesFirst ? { notesFirst: true } : {}),
       ...(modelId ? { modelId } : {}),
-      ...(collectionMode && collectionIds?.length ? { collectionMode } : {}),
+      // A space chat reads its own resources in the chosen mode too, with no collection picked.
+      ...(collectionMode && (collectionIds?.length || spaceId) ? { collectionMode } : {}),
       ...(attachedFileIds?.length ? { attachedFileIds } : {}),
+      ...(exploreWeb ? { exploreWeb: true } : {}),
     }),
     signal,
   })
@@ -522,7 +525,7 @@ export async function recreateChatMemories(chatId: string): Promise<void> {
   await fetch(`${BASE}/history/${chatId}/recreate-memories`, { method: 'POST' })
 }
 
-export interface SpaceFile { id: string; filename: string; size: number; createdAt: number }
+export interface SpaceFile { id: string; filename: string; size: number; createdAt: number; kind: 'file' | 'note'; origin: string | null }
 
 export async function fetchSpaceFiles(spaceId: string): Promise<SpaceFile[]> {
   return fetch(`${BASE}/spaces/${spaceId}/files`).then(r => r.json())
@@ -938,7 +941,8 @@ export interface Resource {
 }
 
 /** A resource reference thin enough to render as a chip and click through to. */
-export interface ResourceRef { id: string; filename: string; kind: 'file' | 'note' }
+/** `origin` tells an ingested web page (a URL) from an upload, for its icon. */
+export interface ResourceRef { id: string; filename: string; kind: 'file' | 'note'; origin: string | null }
 
 export interface ResourceDetail extends Resource {
   body: string | null

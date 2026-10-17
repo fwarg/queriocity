@@ -1,20 +1,23 @@
 import { generateText, streamText, tool, stepCountIs, type ModelMessage, type ToolSet } from 'ai'
 import { z } from 'zod'
-import { getAppSetting, sqlite } from '../db.ts'
+import { getAppSetting } from '../db.ts'
 import { languageModel, outputCap, RESEARCH_MAX_TOKENS, type ModelTarget } from '../llm.ts'
 import { embedText } from '../embeddings.ts'
 import { userMemoryBlockIfEnabled, joinMemoryBlocks } from '../memory.ts'
 import { splitAttachments } from '../../../shared/context.ts'
-import { withoutConfidential } from '../files/confidential.ts'
+import { asDocumentReferences } from '../../../shared/citations.ts'
+import { scopedFiles, type DocumentScope } from '../files/collection-coverage.ts'
 import { documentParts, outlineOf } from '../files/collection-parts.ts'
 import {
   firstLook, searchSpread, relevantHits, seeHit, formatHit, seenBlock, readsBlock, evidenceBlock, formatNote, READ_MAX_CHARS, READ_MAX_SHARE,
   type Doc, type Note, type Gathered,
 } from './collection-evidence.ts'
 import { trimMessages, meterBudgetChars, CONTEXT_RESERVE_FRACTION } from '../trim-messages.ts'
-import { thinkingFor } from './prepare.ts'
+import { thinkingFor, spaceMemoryOnly } from './prepare.ts'
 import { AnswerStream } from './stream-answer.ts'
-import { userQueryOf, withKeepalive, type TurnContext, type TurnResult, type TurnSink } from './context.ts'
+import { startWeb, webSearchTool, webBlock, EXPLORE_WEB_INSTRUCTION, type WebSearching } from './collection-web.ts'
+import { toStoredSource } from './research.ts'
+import { userQueryOf, withKeepalive, documentSet, type TurnContext, type TurnResult, type TurnSink } from './context.ts'
 
 /** Explore mode: an agent reads the picked collections for a targeted question — lists the
  *  documents, searches them, reads the parts that matter, and notes what it finds — then the answer
@@ -47,44 +50,41 @@ export function runCollectionAgent(ctx: TurnContext, sink: TurnSink): Promise<Tu
 async function exploreAndAnswer(ctx: TurnContext, sink: TurnSink): Promise<TurnResult> {
   const t0 = Date.now()
   const model = thinkingFor(ctx).researchModel
-  const docs = collectionIndex(ctx.collections, ctx.locked)
+  const docs = collectionIndex(documentSet(ctx), ctx.locked)
   const fileSources = docs.map(d => ({ title: `[${d.label}] ${d.filename}`, url: `file:${d.fileId}`, label: d.label }))
   if (fileSources.length) await sink.emit({ type: 'file_sources', sources: fileSources })
   const gathered: Gathered = { notes: [], seen: new Map(), reads: new Map(), queries: [], locked: ctx.locked }
   const maxSteps = Number(await getAppSetting('collection_explore_max_steps', DEFAULT_EXPLORE_MAX_STEPS))
   const overview = await firstLook(splitAttachments(userQueryOf(ctx.msgs)).text, docs, gathered)
-  const { steps, endedEarly } = await explore(ctx, sink, model, docs, gathered, overview, maxSteps)
+  const web = await startWeb(ctx)
+  const { steps, endedEarly } = await explore(ctx, sink, model, docs, gathered, overview, maxSteps, web)
   const { notes } = gathered
   await sink.emit({ type: 'exploration', steps, notes: notes.length, endedEarly })
-  const content = await answerFromNotes(ctx, sink, model, docs, gathered)
-  console.log(`  [explore] ${steps} steps, ${notes.length} notes, ${gathered.seen.size} passages seen${endedEarly ? ', ended early' : ''}, ${Date.now() - t0}ms, ${content.length} chars`)
-  return { content, sources: [], fileSources, cacheable: false, answeredBy: model }
+  if (web?.results.length) await sink.emit({ type: 'sources', sources: web.results })
+  const content = await answerFromNotes(ctx, sink, model, docs, gathered, web)
+  console.log(`  [explore] ${steps} steps, ${notes.length} notes, ${gathered.seen.size} passages seen${web ? `, ${web.results.length} web results` : ''}${endedEarly ? ', ended early' : ''}, ${Date.now() - t0}ms, ${content.length} chars`)
+  return { content, sources: (web?.results ?? []).map(toStoredSource), fileSources, cacheable: false, answeredBy: model }
 }
 
-/** The documents in the collections, labelled C1… by filename, without their text. */
-export function collectionIndex(collectionIds: string[], includeConfidential: boolean): Doc[] {
-  if (!collectionIds.length) return []
-  const rows = sqlite.prepare(`
-    SELECT DISTINCT f.id, f.filename, f.summary FROM space_files sf
-    JOIN uploaded_files f ON f.id = sf.file_id
-    WHERE sf.space_id IN (${collectionIds.map(() => '?').join(',')}) ${withoutConfidential('f.id', includeConfidential)}
-    ORDER BY f.filename, f.id
-  `).all(...collectionIds) as Array<{ id: string; filename: string; summary: string | null }>
-  return rows.map((r, i) => ({ label: `C${i + 1}`, fileId: r.id, filename: r.filename, summary: r.summary }))
+/** The documents in scope, labelled C1… by filename, without their text. */
+export function collectionIndex(scope: string[] | DocumentScope, includeConfidential: boolean): Doc[] {
+  return scopedFiles(scope, includeConfidential).map((r, i) => ({ label: `C${i + 1}`, fileId: r.id, filename: r.filename, summary: r.summary }))
 }
 
 /** The tool loop. Ends when the model stops calling tools, at `maxSteps`, or on an error — the last
  *  two count as ending early, and the answer is then written from whatever was gathered. */
-async function explore(ctx: TurnContext, sink: TurnSink, model: ModelTarget, docs: Doc[], gathered: Gathered, overview: string, maxSteps: number) {
-  const history = trimMessages(ctx.msgs, Math.floor(model.contextTokens * CONTEXT_RESERVE_FRACTION), EXPLORE_SYSTEM + overview, ctx.pinned)
+async function explore(ctx: TurnContext, sink: TurnSink, model: ModelTarget, docs: Doc[], gathered: Gathered, overview: string, maxSteps: number, web?: WebSearching) {
+  const system = EXPLORE_SYSTEM + (web ? EXPLORE_WEB_INSTRUCTION : '') + overview
+  const tools: ToolSet = { ...exploreTools(ctx, sink, docs, gathered), ...(web && { web_search: webSearchTool(ctx, sink, web, gathered) }) }
+  const history = trimMessages(ctx.msgs, Math.floor(model.contextTokens * CONTEXT_RESERVE_FRACTION), system, ctx.pinned)
   let step = 0
   let readsBefore = 0
   try {
     const result = await generateText({
       model: languageModel(model),
-      system: EXPLORE_SYSTEM + overview,
+      system,
       messages: history.messages,
-      tools: exploreTools(ctx, sink, docs, gathered),
+      tools,
       stopWhen: stepCountIs(maxSteps),
       abortSignal: ctx.abortSignal,
       prepareStep: ({ messages }) => {
@@ -96,7 +96,7 @@ async function explore(ctx: TurnContext, sink: TurnSink, model: ModelTarget, doc
         const justRead = gathered.reads.size > readsBefore
         readsBefore = gathered.reads.size
         return {
-          instructions: EXPLORE_SYSTEM + overview + notesBlock(gathered.notes) + (justRead ? NOTE_NOW : ''),
+          instructions: system + notesBlock(gathered.notes) + (justRead ? NOTE_NOW : ''),
           messages: compactReads(messages),
           ...(justRead && { activeTools: ['note'] }),
         }
@@ -205,7 +205,7 @@ export function compactReads(messages: ModelMessage[]): ModelMessage[] {
 }
 
 /** The answer, streamed, from the notes; "writing" starts with its first output. */
-async function answerFromNotes(ctx: TurnContext, sink: TurnSink, model: ModelTarget, docs: Doc[], gathered: Gathered): Promise<string> {
+async function answerFromNotes(ctx: TurnContext, sink: TurnSink, model: ModelTarget, docs: Doc[], gathered: Gathered, web?: WebSearching): Promise<string> {
   const { notes } = gathered
   const query = userQueryOf(ctx.msgs)
   const reads = await readsBlock(gathered, Math.min(READ_MAX_CHARS, Math.floor(meterBudgetChars(model.contextTokens) * READ_MAX_SHARE)))
@@ -214,11 +214,10 @@ async function answerFromNotes(ctx: TurnContext, sink: TurnSink, model: ModelTar
   const system = joinMemoryBlocks(
     ANSWER_SYSTEM + (ctx.customPrompt ? `\n\nAdditional instructions:\n${ctx.customPrompt}` : ''),
     await userMemoryBlockIfEnabled(ctx.userId, ctx.settings, query),
-    documents,
-    noted,
-    seenBlock(gathered.seen),
-    reads.block,
-    evidenceBlock(gathered, reads.included),
+    await spaceMemoryOnly(ctx, query),
+    // The documents' own [7]-style references, rewritten so they cannot pass for the web's [1]….
+    asDocumentReferences(joinMemoryBlocks(documents, noted, seenBlock(gathered.seen), reads.block, evidenceBlock(gathered, reads.included))),
+    webBlock(web),
   )
   await sink.step({ kind: 'readNotes', count: notes.length })
   const history = trimMessages(ctx.msgs, Math.floor(model.contextTokens * CONTEXT_RESERVE_FRACTION), system, ctx.pinned)
@@ -231,5 +230,6 @@ async function answerFromNotes(ctx: TurnContext, sink: TurnSink, model: ModelTar
       yield part
     }
   })()
-  return new AnswerStream(sink, { citations: false, showThinking: thinkingFor(ctx).showThinking }).consume(stream, { reasoning: true })
+  // Web results are cited [1]…, which the normaliser tidies; the documents' [C1] labels need none.
+  return new AnswerStream(sink, { citations: !!web?.results.length, showThinking: thinkingFor(ctx).showThinking }).consume(stream, { reasoning: true })
 }

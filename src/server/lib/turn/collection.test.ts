@@ -8,8 +8,10 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test'
 import { randomUUID } from 'node:crypto'
 import { fakeTarget, startFakeOpenAI, captureSSE } from '../test-support/fake-openai.ts'
 import type { TurnContext } from './context.ts'
+import { envOverride } from '../test-support/env-override.ts'
+import { startFakeEmbeddings } from '../test-support/fake-embeddings.ts'
 
-const { sqlite } = await import('../db.ts')
+const { sqlite, EMBED_DIMS } = await import('../db.ts')
 const { runTurn, createSink } = await import('./index.ts')
 
 const USER = 'whole-coll-user'
@@ -73,6 +75,70 @@ describe('whole-collection turn', () => {
       expect(asked[3]).toContain('MY DRAFT TEXT')
     } finally {
       sqlite.run("DELETE FROM app_settings WHERE key = 'collection_full_text_tokens'")
+    }
+  })
+})
+
+describe('in a space chat', () => {
+  const SPACE = 'whole-space'
+  // Space memory is ranked against the message, which embeds it.
+  let embeddings: ReturnType<typeof startFakeEmbeddings>
+  let restoreEnv: () => void
+  const SPEC = randomUUID()
+  afterAll(() => { restoreEnv(); embeddings.stop() })
+  beforeAll(() => {
+    embeddings = startFakeEmbeddings(EMBED_DIMS)
+    restoreEnv = envOverride({ EMBED_BASE_URL: embeddings.baseURL, EMBED_API_KEY: 't', EMBED_MODEL: 'fake-embed' })
+    sqlite.run('INSERT OR IGNORE INTO spaces(id, name, user_id, kind, created_at, updated_at) VALUES (?,?,?,?,?,?)', [SPACE, 'Project', USER, 'space', 0, 0])
+    for (const [id, name, text] of [[SPEC, 'spec.txt', 'The project spec on hives.'], [randomUUID(), 'log.txt', 'The field log on swarms.']]) {
+      sqlite.run('INSERT INTO uploaded_files(id, user_id, filename, mime_type, size, kind, created_at) VALUES (?,?,?,?,?,?,?)', [id, USER, name, 'text/plain', 0, 'file', 0])
+      sqlite.run('INSERT INTO file_chunk_meta(chunk_id, file_id, content) VALUES (?,?,?)', [`${id}:0`, id, text])
+      sqlite.run('INSERT INTO space_files(space_id, file_id) VALUES (?,?)', [SPACE, id])
+    }
+    sqlite.run('INSERT INTO space_memories(id, space_id, content, source, created_at, updated_at) VALUES (?,?,?,?,?,?)', [randomUUID(), SPACE, 'The user studies urban bees.', 'manual', 0, 0])
+  })
+
+  test('Whole reads the space\'s own resources with nothing picked, and its memory', async () => {
+    const from = fake.requests.length
+    const cap = captureSSE()
+    await runTurn({ ...ctxFor(), spaceId: SPACE, collections: [] }, createSink(cap.stream as never))
+    const asked = fake.requests.slice(from).map(r => JSON.stringify(r))
+    expect(asked).toHaveLength(1)
+    expect(asked[0]).toContain('The project spec on hives.')
+    expect(asked[0]).not.toContain('Paper A on bees.')
+    expect(asked[0]).toContain('The user studies urban bees.')
+    expect(asked[0]).toContain('The field log on swarms.')
+    expect(cap.ofType('coverage')[0]).toMatchObject({ documents: 2 })
+  })
+
+  test('reads only the space\'s pinned resources when any are pinned, as the space\'s search does', async () => {
+    const from = fake.requests.length
+    await runTurn({ ...ctxFor(), spaceId: SPACE, collections: [], includeFileIds: [SPEC] }, createSink(captureSSE().stream as never))
+    const system = JSON.stringify(fake.requests.slice(from)[0])
+    expect(system).toContain('The project spec on hives.')
+    expect(system).not.toContain('The field log on swarms.')
+  })
+
+  test('reads the space and a picked collection as one set', async () => {
+    const from = fake.requests.length
+    await runTurn({ ...ctxFor(), spaceId: SPACE }, createSink(captureSSE().stream as never))
+    const system = JSON.stringify(fake.requests.slice(from)[0])
+    for (const text of ['The project spec on hives.', 'Paper A on bees.', 'Paper B on bees.']) expect(system).toContain(text)
+  })
+
+  test('Auto with nothing picked reads excerpts, without asking a model', async () => {
+    const { collectionModeFor } = await import('./collection-mode.ts')
+    const calls = fake.callCount
+    const mode = await collectionModeFor({ ...ctxFor(), spaceId: SPACE, collections: [], collectionMode: 'auto' }, createSink(captureSSE().stream as never))
+    expect(mode).toBe('excerpts')
+    expect(fake.callCount).toBe(calls)
+  })
+
+  test('Whole or Explore with nothing to read falls back to excerpts', async () => {
+    const { collectionModeFor } = await import('./collection-mode.ts')
+    sqlite.run('INSERT OR IGNORE INTO spaces(id, name, user_id, kind, created_at, updated_at) VALUES (?,?,?,?,?,?)', ['empty-space', 'Empty', USER, 'space', 0, 0])
+    for (const collectionMode of ['whole', 'explore'] as const) {
+      expect(await collectionModeFor({ ...ctxFor(), spaceId: 'empty-space', collections: [], collectionMode }, createSink(captureSSE().stream as never))).toBe('excerpts')
     }
   })
 })

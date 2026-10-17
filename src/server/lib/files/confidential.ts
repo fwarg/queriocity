@@ -36,15 +36,6 @@ export function readsConfidential({ collectionIds = [], fileIds = [] }: { collec
   return [...collections, ...files].map(r => r.name)
 }
 
-/** The confidential resources these collections hold — what an unlocked turn leaves out of them. */
-export function confidentialInCollections(collectionIds: string[]): string[] {
-  if (!collectionIds.length) return []
-  return (sqlite.prepare(`
-    SELECT DISTINCT sf.file_id AS id FROM space_files sf
-    WHERE sf.space_id IN (${marks(collectionIds)}) AND ${confidentialSql('sf.file_id')}
-  `).all(...collectionIds) as Array<{ id: string }>).map(r => r.id)
-}
-
 /** A chat's `locked_by` column: the names of what locked it, stored as a JSON array. */
 export function parseLockedBy(json: string | null | undefined): string[] {
   try {

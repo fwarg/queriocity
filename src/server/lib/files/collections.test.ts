@@ -13,7 +13,8 @@ import { envOverride } from '../test-support/env-override.ts'
 const { db, sqlite, users, spaces, EMBED_DIMS } = await import('../db.ts')
 const { embedText } = await import('../embeddings.ts')
 const { ownedCollectionIds, searchCollections } = await import('./collections.ts')
-const { readsConfidential, confidentialInCollections, trackLeftOut } = await import('./confidential.ts')
+const { readsConfidential, trackLeftOut } = await import('./confidential.ts')
+const { confidentialInScope } = await import('./collection-coverage.ts')
 const { searchUploads } = await import('./uploads-search.ts')
 
 const OWNER = 'coll-owner'
@@ -181,7 +182,9 @@ describe('confidential resources', () => {
     expect(readsConfidential({ collectionIds: ['c1'] })).toEqual([])
     expect(readsConfidential({ collectionIds: ['c2'] })).toEqual(['Secret'])
     expect(readsConfidential({ fileIds: ['open', 'own', 'viacoll'] }).sort()).toEqual(['own.pdf', 'viacoll.pdf'])
-    expect(confidentialInCollections(['c1']).sort()).toEqual(['own', 'viacoll'])
+    expect(confidentialInScope(['c1']).sort()).toEqual(['own', 'viacoll'])
+    // Pins narrow what is read, so they narrow what is left out.
+    expect(confidentialInScope({ ids: ['c1'], pinned: { spaceId: 'c1', fileIds: ['open', 'own'] } })).toEqual(['own'])
   })
 
   test('records what an unlocked search left out, when a turn is tracking', async () => {

@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test'
-import { splitGroupedCitations } from './citations.ts'
+import { splitGroupedCitations, asDocumentReferences } from './citations.ts'
 
 describe('splitGroupedCitations', () => {
   test('splits comma-separated groups into single-token citations', () => {
@@ -18,5 +18,16 @@ describe('splitGroupedCitations', () => {
 
   test('handles multiple groups in one string', () => {
     expect(splitGroupedCitations('a [1, 2] b [3, 4, 5] c')).toBe('a [1][2] b [3][4][5] c')
+  })
+})
+
+describe('asDocumentReferences', () => {
+  test('rewrites a document\'s numeric references so they cannot pass for web citations', () => {
+    expect(asDocumentReferences('design-by-contract [7] programming; see [3, 4] and [12–14].'))
+      .toBe('design-by-contract (ref. 7) programming; see (ref. 3, 4) and (ref. 12–14).')
+  })
+
+  test('leaves resource labels alone', () => {
+    expect(asDocumentReferences('as [C1] and [F2] say')).toBe('as [C1] and [F2] say')
   })
 })

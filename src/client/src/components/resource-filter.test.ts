@@ -3,7 +3,7 @@
  *  and that the text match covers what a user would actually recall about a resource. */
 
 import { describe, expect, test } from 'bun:test'
-import { ALL_SPACES, EMPTY_FILTER, isFiltered, matchesFilter, tagLevel, toggleSpace, toggleTag, UNTAGGED } from './ResourceFilters.tsx'
+import { ALL_SPACES, EMPTY_FILTER, isFiltered, matchesFilter, resourceType, tagLevel, toggleSpace, toggleTag, UNTAGGED } from './ResourceFilters.tsx'
 import type { Resource } from '../lib/api.ts'
 
 const resource = (partial: Partial<Resource>): Resource => ({
@@ -74,14 +74,14 @@ describe('matchesFilter', () => {
   })
 
   test('suggested topics do not satisfy a tag filter', () => {
-    expect(matchesFilter(resource({ topics: ['rag'] }), { ...EMPTY_FILTER, tag: 'rag', show: '' })).toBe(false)
+    expect(matchesFilter(resource({ topics: ['rag'] }), { ...EMPTY_FILTER, tag: 'rag', show: '', type: '' })).toBe(false)
   })
 
   test('combines text, space and tag rather than treating them as alternatives', () => {
     const r = resource({ filename: 'survey.pdf', tags: ['rag'], spaces: [THESIS] })
-    expect(matchesFilter(r, { text: 'survey', space: THESIS.id, tag: 'rag', show: '' })).toBe(true)
-    expect(matchesFilter(r, { text: 'survey', space: CLIENT.id, tag: 'rag', show: '' })).toBe(false)
-    expect(matchesFilter(r, { text: 'other', space: THESIS.id, tag: 'rag', show: '' })).toBe(false)
+    expect(matchesFilter(r, { text: 'survey', space: THESIS.id, tag: 'rag', show: '', type: '' })).toBe(true)
+    expect(matchesFilter(r, { text: 'survey', space: CLIENT.id, tag: 'rag', show: '', type: '' })).toBe(false)
+    expect(matchesFilter(r, { text: 'other', space: THESIS.id, tag: 'rag', show: '', type: '' })).toBe(false)
   })
 })
 
@@ -104,7 +104,7 @@ describe('isFiltered', () => {
   test('reports each axis on its own', () => {
     expect(isFiltered({ ...EMPTY_FILTER, text: 'x' })).toBe(true)
     expect(isFiltered({ ...EMPTY_FILTER, space: UNTAGGED })).toBe(true)
-    expect(isFiltered({ ...EMPTY_FILTER, tag: 'rag', show: '' })).toBe(true)
+    expect(isFiltered({ ...EMPTY_FILTER, tag: 'rag', show: '', type: '' })).toBe(true)
   })
 
   test('a real space id counts, not only the pseudo-values', () => {
@@ -140,8 +140,8 @@ describe('chip toggling', () => {
   })
 
   test('toggling one axis leaves the others alone', () => {
-    const both = { text: 'survey', space: THESIS.id, tag: 'rag', show: '' as const }
-    expect(toggleTag(both, 'rag')).toEqual({ text: 'survey', space: THESIS.id, tag: '', show: '' })
+    const both = { text: 'survey', space: THESIS.id, tag: 'rag', show: '' as const, type: '' as const }
+    expect(toggleTag(both, 'rag')).toEqual({ text: 'survey', space: THESIS.id, tag: '', show: '', type: '' })
   })
 })
 
@@ -160,5 +160,21 @@ describe('tagLevel', () => {
   test('a level lists the direct children, counting their subtrees, and not the parent itself', () => {
     expect(tagLevel(library, 'ml')).toEqual([{ path: 'ml/eval', count: 1 }, { path: 'ml/rag', count: 2 }])
     expect(tagLevel(library, 'ml/rag/chunking')).toEqual([])
+  })
+})
+
+describe('type', () => {
+  const upload = resource({ kind: 'file', origin: 'paper.pdf', mimeType: 'application/pdf' })
+  const page = resource({ kind: 'file', origin: 'https://example.org/post', mimeType: 'text/html' })
+  const note = resource({ kind: 'note' })
+
+  test('tells uploads, web pages and notes apart', () => {
+    expect([upload, page, note].map(resourceType)).toEqual(['file', 'web', 'note'])
+  })
+
+  test('filters to one type, and counts as a filter', () => {
+    const shown = [upload, page, note].filter(r => matchesFilter(r, { ...EMPTY_FILTER, type: 'web' }))
+    expect(shown).toEqual([page])
+    expect(isFiltered({ ...EMPTY_FILTER, type: 'note' })).toBe(true)
   })
 })

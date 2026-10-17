@@ -451,10 +451,10 @@ filesRouter.get('/:id', async (c) => {
   // it. Ownership is already established by `resource`, and derived_from can only point at a
   // resource the same user owns, so neither query needs its own user filter.
   const source = resource.derivedFrom
-    ? await db.select({ id: uploadedFiles.id, filename: uploadedFiles.filename, kind: uploadedFiles.kind })
+    ? await db.select({ id: uploadedFiles.id, filename: uploadedFiles.filename, kind: uploadedFiles.kind, origin: uploadedFiles.origin })
         .from(uploadedFiles).where(eq(uploadedFiles.id, resource.derivedFrom)).get()
     : undefined
-  const derived = await db.select({ id: uploadedFiles.id, filename: uploadedFiles.filename, kind: uploadedFiles.kind })
+  const derived = await db.select({ id: uploadedFiles.id, filename: uploadedFiles.filename, kind: uploadedFiles.kind, origin: uploadedFiles.origin })
     .from(uploadedFiles).where(eq(uploadedFiles.derivedFrom, resource.id))
 
   // Resolved on read and owner-checked: a deleted chat leaves the id behind and simply shows nothing.

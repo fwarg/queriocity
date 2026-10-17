@@ -14,3 +14,11 @@ export function splitGroupedCitations(text: string): string {
   return text.replace(GROUPED_CITATION, (_m, group: string) =>
     group.split(/\s*[,;]\s*/).map(n => `[${n}]`).join(''))
 }
+
+/** A document's own numeric references — "[7]", "[3, 4]", "[12–14]" — rewritten as "(ref. 7)", for
+ *  document text handed to a model whose answer cites web sources as [1], [2]…: a faithful quote of
+ *  "design-by-contract [7]" would otherwise link the paper's reference to the seventh web result.
+ *  Letter labels such as [C1] are left alone. */
+export function asDocumentReferences(text: string): string {
+  return text.replace(/\[(\d+(?:\s*[,–-]\s*\d+)*)\]/g, '(ref. $1)')
+}

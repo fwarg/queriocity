@@ -22,6 +22,8 @@ import { EmptyState, PRIMARY_BTN, RowAction } from './components/ui.tsx'
 import { SectionHeader } from './components/SectionHeader.tsx'
 import { SpacesView } from './components/SpacesView.tsx'
 import { ResourcesView } from './components/ResourcesView.tsx'
+import { TagResourcePicker } from './components/TagResourcePicker.tsx'
+import { byTypeThenTitle, ResourceTypeIcon } from './components/ResourceFilters.tsx'
 import {
   fetchHistory, fetchSession, deleteSession, updateSessionTitle,
   fetchFiles, getMe, hasUsers, logout, updateSettings,
@@ -101,6 +103,7 @@ export default function App() {
    *  shelf the user had set up would be the more surprising of the two. */
   const [selectedCollections, setSelectedCollections] = useState<string[]>([])
   const [collectionMode, setCollectionMode] = useState<CollectionMode>('auto')
+  const [exploreWeb, setExploreWeb] = useState(false)
 
   const [sessionId, setSessionId] = useState<string | undefined>()
   const [sessions, setSessions] = useState<Session[]>([])
@@ -131,7 +134,7 @@ export default function App() {
   const [rebuildingIndex, setRebuildingIndex] = useState(false)
   const [rebuildIndexProgress, setRebuildIndexProgress] = useState<string | null>(null)
   const [filesSectionOpen, setFilesSectionOpen] = useState(false)
-  const [allUserFiles, setAllUserFiles] = useState<Array<{ id: string; filename: string; size: number }>>([])
+  const [allUserFiles, setAllUserFiles] = useState<Resource[]>([])
   const [filePickerOpen, setFilePickerOpen] = useState(false)
   const [pinnedFileIds, setPinnedFileIds] = useState<string[]>([])
   const [pinnedMemoryIds, setPinnedMemoryIds] = useState<string[]>([])
@@ -235,6 +238,8 @@ export default function App() {
     includeFileIds: pinnedFileIds.length ? pinnedFileIds : undefined,
     collectionIds: selectedCollections.length ? selectedCollections : undefined,
     collectionMode,
+    // Only an Explore turn reads it; the server also drops it when the turn is locked.
+    exploreWeb: collectionMode === 'explore' && exploreWeb,
     includeMemoryIds: pinnedMemoryIds.length ? pinnedMemoryIds : undefined,
     spaceId: activeSpaceId ?? undefined,
     followUpSuggestions: currentUser?.settings?.followUpSuggestions !== false,
@@ -448,6 +453,7 @@ export default function App() {
   function clearCollectionPicks() {
     setSelectedCollections([])
     setCollectionMode('auto')
+    setExploreWeb(false)
   }
 
   function loadSession(id: string, title: string, addToHistory = true, fromMonitor = false) {
@@ -490,6 +496,12 @@ export default function App() {
     if (collection?.offline && !await confirm({ message: t('chat.lockConfirmNew', { name: collection.name }), confirmLabel: t('chat.lockConfirmAction') })) return
     newChat()
     setSelectedCollections([collectionId])
+    setCollectionMode('whole')
+  }
+
+  /** A new chat in the space that reads every resource tagged to it; the space's lock covers it. */
+  function analyzeSpace(spaceId: string) {
+    newChat(spaceId)
     setCollectionMode('whole')
   }
 
@@ -766,7 +778,12 @@ export default function App() {
   }
 
   /** ResourcesView mutates the library; the list stays here because the space panel tags from it. */
-  const reloadFiles = useCallback(() => { fetchFiles().then(setFiles).catch(() => {}) }, [])
+  // Spaces too: their resource counts follow tagging, adding and deleting, and decide whether a space
+  // chat offers to read its resources.
+  const reloadFiles = useCallback(() => {
+    fetchFiles().then(setFiles).catch(() => {})
+    fetchSpaces().then(setSpaces).catch(() => {})
+  }, [])
   // Refreshed whenever a view that lists the library opens: notes are also created from chat
   // answers, splits and the server side, none of which pass through these views.
   useEffect(() => { if (view === 'files' || view === 'explore') reloadFiles() }, [view, reloadFiles])
@@ -1067,12 +1084,23 @@ export default function App() {
                     </button>
                   </div>
                 ) : (
-                  <button
-                    onClick={() => newChat(currentSpaceId!)}
-                    className={`ml-auto ${PRIMARY_BTN}`}
-                  >
-                    + {t('chat.new')}
-                  </button>
+                  <div className="ml-auto flex flex-wrap gap-2">
+                    {(spaces.find(s => s.id === currentSpaceId)?.resourceCount ?? 0) > 0 && (
+                      <button
+                        onClick={() => analyzeSpace(currentSpaceId!)}
+                        title={t('space.analyzeTitle')}
+                        className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-sm font-medium whitespace-nowrap"
+                      >
+                        {t('collection.analyze')}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => newChat(currentSpaceId!)}
+                      className={PRIMARY_BTN}
+                    >
+                      + {t('chat.new')}
+                    </button>
+                  </div>
                 )}
               </div>
               {/* Memory describes conversations, which a collection has none of — as do the chat
@@ -1285,26 +1313,20 @@ export default function App() {
                       }}
                       className="text-xs text-gray-500 hover:text-gray-300"
                     >
-                      + Tag resource
+                      + {t('files.tagResource')}
                     </button>
                   )}
                 </div>
                 {filesSectionOpen && filePickerOpen && allUserFiles.length > 0 && (
-                  <div className="mt-2 flex flex-col gap-1 border border-gray-700 rounded p-2 bg-gray-900">
-                    {allUserFiles.map(f => (
-                      <button
-                        key={f.id}
-                        onClick={async () => {
-                          await tagFileToSpace(currentSpaceId!, f.id)
-                          fetchSpaceFiles(currentSpaceId!).then(setTaggedFiles).catch(() => {})
-                          setFilePickerOpen(false)
-                        }}
-                        className="text-left text-xs text-gray-300 hover:text-gray-50 px-1 py-0.5 hover:bg-gray-800 rounded truncate"
-                      >
-                        {f.filename}
-                      </button>
-                    ))}
-                  </div>
+                  <TagResourcePicker
+                    resources={allUserFiles}
+                    onTag={async id => {
+                      await tagFileToSpace(currentSpaceId!, id)
+                      setAllUserFiles(prev => prev.filter(f => f.id !== id))
+                      fetchSpaceFiles(currentSpaceId!).then(setTaggedFiles).catch(() => {})
+                      fetchSpaces().then(setSpaces).catch(() => {})
+                    }}
+                  />
                 )}
                 {filesSectionOpen && filePickerOpen && allUserFiles.length === 0 && (
                   <p className="text-xs text-gray-600 mt-2">{t('files.noneUntagged')}</p>
@@ -1312,22 +1334,33 @@ export default function App() {
                 {filesSectionOpen && taggedFiles.length === 0 && !filePickerOpen && (
                   <p className="text-xs text-gray-600 mt-2">{t('files.noneTagged')}</p>
                 )}
-                {filesSectionOpen && taggedFiles.map(f => (
+                {filesSectionOpen && [...taggedFiles].sort(byTypeThenTitle).map(f => (
                   <div key={f.id} className="flex items-center gap-1.5 justify-between group py-1">
-                    <input
-                      type="checkbox"
-                      checked={pinnedFileIds.includes(f.id)}
-                      onChange={() => setPinnedFileIds(prev => prev.includes(f.id) ? prev.filter(id => id !== f.id) : [...prev, f.id])}
-                      className="shrink-0 accent-indigo-500 cursor-pointer"
-                      title={t('files.pinTitle')}
-                    />
-                    <span className="text-xs text-gray-300 truncate flex-1 min-w-0">{f.filename}</span>
+                    {/* Pins narrow a space's chats to these resources; a collection has no chats. */}
+                    {!activeSpaceIsCollection && (
+                      <input
+                        type="checkbox"
+                        checked={pinnedFileIds.includes(f.id)}
+                        onChange={() => setPinnedFileIds(prev => prev.includes(f.id) ? prev.filter(id => id !== f.id) : [...prev, f.id])}
+                        className="shrink-0 accent-indigo-500 cursor-pointer"
+                        title={t('files.pinTitle')}
+                      />
+                    )}
+                    <ResourceTypeIcon resource={f} size={12} />
+                    <button
+                      onClick={() => openResource(f.id)}
+                      title={t('files.openResource')}
+                      className="text-left text-xs text-gray-300 hover:text-gray-50 hover:underline truncate flex-1 min-w-0"
+                    >
+                      {f.filename}
+                    </button>
                     <RowAction
                       icon={<X size={14} />}
                       tone="danger"
                       label={t('resource.untagFrom', { name: f.filename })}
                       onClick={async () => {
                         await untagFileFromSpace(currentSpaceId!, f.id)
+                        fetchSpaces().then(setSpaces).catch(() => {})
                         setPinnedFileIds(prev => prev.filter(id => id !== f.id))
                         setTaggedFiles(prev => prev.filter(t => t.id !== f.id))
                       }}
@@ -1715,6 +1748,9 @@ export default function App() {
               onCollectionsChange={setSelectedCollections}
               collectionMode={collectionMode}
               onCollectionModeChange={setCollectionMode}
+              exploreWeb={exploreWeb}
+              onExploreWebChange={setExploreWeb}
+              spaceResources={spaces.find(sp => sp.id === activeSpaceId && sp.kind === 'space')?.resourceCount ?? 0}
               notesAvailable={files.some(f => f.kind === 'note')}
               notesFirst={notesFirst}
               onNotesFirstChange={setNotesFirst}

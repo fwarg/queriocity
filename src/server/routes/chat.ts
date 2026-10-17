@@ -16,7 +16,8 @@ import { resolveTurnModels, modelChoices, answerModelOf, attachAnswer, pickedMod
 import type { AnswerModel } from '../../shared/llm-catalogue.ts'
 import { extractMemoriesPostHoc, toMemorySources } from '../lib/memory.ts'
 import { ownedCollectionIds } from '../lib/files/collections.ts'
-import { readsConfidential, confidentialInCollections, trackLeftOut, parseLockedBy } from '../lib/files/confidential.ts'
+import { readsConfidential, trackLeftOut, parseLockedBy } from '../lib/files/confidential.ts'
+import { confidentialInScope } from '../lib/files/collection-coverage.ts'
 import { hasAttachment, COLLECTION_MODES, type ContextReport } from '../../shared/context.ts'
 import { indexContents, deindexContent } from '../lib/chat-indexer.ts'
 import { ownsSpace, sessionOwnership } from '../lib/ownership.ts'
@@ -28,7 +29,7 @@ import {
   APPROVAL_TIMEOUT_MS, type LiveRun,
 } from '../lib/stream-buffer.ts'
 import { deleteSupersededImages } from '../lib/image-store.ts'
-import { runTurn, createSink, toSearxngCategories, userQueryOf, KEEPALIVE_INTERVAL_MS, type TurnContext } from '../lib/turn/index.ts'
+import { runTurn, createSink, toSearxngCategories, userQueryOf, documentSet, KEEPALIVE_INTERVAL_MS, type TurnContext } from '../lib/turn/index.ts'
 
 const SESSION_TITLE_MAX = 60
 
@@ -58,6 +59,8 @@ const chatSchema = z.object({
   modelId: z.string().max(80).optional(),
   /** How the picked collections are read (shared/context.ts); auto when absent. */
   collectionMode: z.enum(COLLECTION_MODES).optional(),
+  /** Explore may also search the web; ignored when the turn is locked. */
+  exploreWeb: z.boolean().optional(),
   /** Library resources whose text the client attached to the message, so a confidential one locks the turn. */
   attachedFileIds: z.array(z.string()).max(20).optional(),
 })
@@ -194,7 +197,7 @@ chatRouter.post('/:sessionId/approve', zValidator('json', z.object({
 
 chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', chatSchema), async (c) => {
   const userId = c.get('userId') as string
-  const { sessionId, spaceId, messages: requestMsgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, collectionIds, ephemeral, regenerate, notesFirst, modelId, collectionMode = 'auto', attachedFileIds } = c.req.valid('json')
+  const { sessionId, spaceId, messages: requestMsgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, collectionIds, ephemeral, regenerate, notesFirst, modelId, collectionMode = 'auto', attachedFileIds, exploreWeb } = c.req.valid('json')
   const sid = sessionId ?? randomUUID()
   const msgs = requestMsgs.map(({ role, content }) => ({ role, content }))
 
@@ -237,7 +240,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     [...(includeMemoryIds ?? [])].sort().join(','),
     collections.join(','),
     // Whole-collection and explored answers are never stored, but must not be served an excerpt answer either.
-    collections.length ? collectionMode : '',
+    collections.length || (spaceId && (collectionMode === 'whole' || collectionMode === 'explore')) ? collectionMode : '',
     customPrompt ?? '',
     [...(searchCategories ?? [])].sort().join(','),
     locked ? 'locked' : '',
@@ -264,7 +267,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   if (cached) return streamRun(c, run, out => replayCached(out, cached, { ...tail, model: answerModelOf(resolved, focusMode) }, resolved))
 
   const ctx: TurnContext = {
-    userId, sid, msgs, focusMode, spaceId, locked, spaceWrites, settings, customPrompt, collections, collectionMode,
+    userId, sid, msgs, focusMode, spaceId, locked, spaceWrites, settings, customPrompt, collections, collectionMode, exploreWeb: exploreWeb === true && !locked,
     // Pins travel as indices, so the messages handed to the model carry nothing but role and content.
     pinned: new Set(requestMsgs.flatMap((m, i) => m.pinned ? [i] : [])),
     models: resolved.models,
@@ -278,7 +281,9 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     for (const event of modelEvents(resolved)) await sink.emit(event)
     // An unlocked turn leaves confidential resources out — of the picked collections, and of every
     // search it runs; the footer says how many.
-    const leftOut = new Set<string>(locked ? [] : confidentialInCollections(collections))
+    // Whole and Explore asked for in a space read the space's resources too (turn/context.ts documentSet).
+    const readsSpace = !!spaceId && (collectionMode === 'whole' || collectionMode === 'explore')
+    const leftOut = new Set<string>(locked ? [] : confidentialInScope(readsSpace ? documentSet(ctx) : collections))
     const result = await trackLeftOut(leftOut, () => runTurn(ctx, sink))
     if (leftOut.size) await sink.emit({ type: 'confidential_excluded', count: leftOut.size })
     const aborted = ctx.abortSignal.aborted

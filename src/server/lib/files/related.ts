@@ -22,6 +22,7 @@ export interface RelatedResource {
   id: string
   filename: string
   kind: 'file' | 'note'
+  origin: string | null
   /** Already linked either way, or one derived from the other. */
   linked: boolean
   tags: string[]
@@ -124,7 +125,7 @@ export async function relatedResources(
   if (!vector) return { related: [], tags: [] }
   const ids = await selectRelated(fileId, nearestResources(userId, fileId, vector), thresholds)
   const related = ids.flatMap(id => {
-    const row = sqlite.query('SELECT filename, kind FROM uploaded_files WHERE id = ?').get(id) as { filename: string; kind: 'file' | 'note' } | null
+    const row = sqlite.query('SELECT filename, kind, origin FROM uploaded_files WHERE id = ?').get(id) as { filename: string; kind: 'file' | 'note'; origin: string | null } | null
     return row ? [{ id, ...row, linked: isConnected(fileId, id), tags: tagsOf(id) }] : []
   })
 

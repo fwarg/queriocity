@@ -7,7 +7,8 @@ import { sqlite } from '../db.ts'
  *  case-insensitive in JS rather than SQL: SQLite's lower() folds ASCII only, and titles are often
  *  Swedish. */
 
-export interface LinkRef { id: string; filename: string; kind: 'file' | 'note' }
+/** `origin` tells an ingested web page (a URL) from an upload, for its icon. */
+export interface LinkRef { id: string; filename: string; kind: 'file' | 'note'; origin: string | null }
 export interface OutgoingLink { title: string; target: LinkRef | null }
 
 const WIKILINK = /\[\[([^[\]|\n]+?)(?:\|([^[\]\n]*))?\]\]/g
@@ -87,17 +88,17 @@ export function bodiesRelinkedTo(userId: string, resourceId: string, oldTitle: s
 /** What a resource links to (notes only have outgoing links) and what links to it. */
 export function linksOf(userId: string, resourceId: string): { links: OutgoingLink[]; backlinks: LinkRef[] } {
   const out = sqlite.query(`
-    SELECT rl.dst_title AS title, f.id AS id, f.filename AS filename, f.kind AS kind
+    SELECT rl.dst_title AS title, f.id AS id, f.filename AS filename, f.kind AS kind, f.origin AS origin
     FROM resource_links rl LEFT JOIN uploaded_files f ON f.id = rl.dst_id AND f.user_id = ?
     WHERE rl.src_id = ? ORDER BY rl.rowid
-  `).all(userId, resourceId) as Array<{ title: string; id: string | null; filename: string | null; kind: 'file' | 'note' | null }>
+  `).all(userId, resourceId) as Array<{ title: string; id: string | null; filename: string | null; kind: 'file' | 'note' | null; origin: string | null }>
   const backlinks = sqlite.query(`
-    SELECT DISTINCT f.id AS id, f.filename AS filename, f.kind AS kind FROM resource_links rl
+    SELECT DISTINCT f.id AS id, f.filename AS filename, f.kind AS kind, f.origin AS origin FROM resource_links rl
     JOIN uploaded_files f ON f.id = rl.src_id
     WHERE rl.dst_id = ? AND f.user_id = ? ORDER BY f.filename
   `).all(resourceId, userId) as LinkRef[]
   return {
-    links: out.map(o => ({ title: o.title, target: o.id ? { id: o.id, filename: o.filename!, kind: o.kind! } : null })),
+    links: out.map(o => ({ title: o.title, target: o.id ? { id: o.id, filename: o.filename!, kind: o.kind!, origin: o.origin } : null })),
     backlinks,
   }
 }

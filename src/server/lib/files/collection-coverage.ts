@@ -54,8 +54,8 @@ export interface CoverOptions {
 const EMPTY: Coverage = { block: '', fileSources: [], mode: 'full', trimmed: false, irrelevant: 0 }
 
 /** Every document in the collections, in full or as what it says about the task, sized to `budgetChars`. */
-export async function coverCollection(collectionIds: string[], opts: CoverOptions): Promise<Coverage> {
-  const docs = collectionDocs(collectionIds, opts.includeConfidential)
+export async function coverCollection(scope: string[] | DocumentScope, opts: CoverOptions): Promise<Coverage> {
+  const docs = collectionDocs(scope, opts.includeConfidential)
   if (!docs.length) return EMPTY
   const full = renderCoverage(docs, docs.map(d => d.text), 'full')
   if (full.block.length <= Math.min(opts.budgetChars, opts.fullTextMaxChars)) return { ...full, mode: 'full', trimmed: false, irrelevant: 0 }
@@ -70,16 +70,39 @@ export async function coverCollection(collectionIds: string[], opts: CoverOption
   return { ...renderCoverage(docs, fitted.texts, 'extract'), mode: 'extract', trimmed: fitted.trimmed, irrelevant }
 }
 
-/** The documents in these collections that have text, each once, by filename. */
-export function collectionDocs(collectionIds: string[], includeConfidential = false): CollectionDoc[] {
-  if (!collectionIds.length) return []
-  const rows = sqlite.prepare(`
-    SELECT DISTINCT f.id, f.filename FROM space_files sf
+/** What a turn reads: the resources tagged to `ids` (spaces or collections) — except in
+ *  `pinned.spaceId`, only the resources pinned there. A bare id list reads them all. */
+export interface DocumentScope { ids: string[]; pinned?: { spaceId: string; fileIds: string[] } }
+
+/** The resources in scope, each once, by filename. */
+export function scopedFiles(scope: string[] | DocumentScope, includeConfidential: boolean): Array<{ id: string; filename: string; summary: string | null }> {
+  const { ids, pinned } = Array.isArray(scope) ? { ids: scope, pinned: undefined } : scope
+  if (!ids.length) return []
+  const params: string[] = []
+  const clauses = ids.map(id => {
+    params.push(id)
+    if (!pinned?.fileIds.length || id !== pinned.spaceId) return 'sf.space_id = ?'
+    params.push(...pinned.fileIds)
+    return `(sf.space_id = ? AND sf.file_id IN (${pinned.fileIds.map(() => '?').join(',')}))`
+  })
+  return sqlite.prepare(`
+    SELECT DISTINCT f.id, f.filename, f.summary FROM space_files sf
     JOIN uploaded_files f ON f.id = sf.file_id
-    WHERE sf.space_id IN (${collectionIds.map(() => '?').join(',')}) ${withoutConfidential('f.id', includeConfidential)}
+    WHERE (${clauses.join(' OR ')}) ${withoutConfidential('f.id', includeConfidential)}
     ORDER BY f.filename, f.id
-  `).all(...collectionIds) as Array<{ id: string; filename: string }>
-  return rows
+  `).all(...params) as Array<{ id: string; filename: string; summary: string | null }>
+}
+
+/** The confidential resources in scope — what an unlocked turn leaves out of it. Taken from the
+ *  same query that reads the scope, so pins narrow the count as they narrow the reading. */
+export function confidentialInScope(scope: string[] | DocumentScope): string[] {
+  const kept = new Set(scopedFiles(scope, false).map(f => f.id))
+  return scopedFiles(scope, true).map(f => f.id).filter(id => !kept.has(id))
+}
+
+/** The documents in scope that have text, each once, by filename. */
+export function collectionDocs(scope: string[] | DocumentScope, includeConfidential = false): CollectionDoc[] {
+  return scopedFiles(scope, includeConfidential)
     .map(r => ({ fileId: r.id, filename: r.filename, text: documentText(r.id, r.filename) }))
     .filter(d => d.text)
 }
@@ -95,11 +118,11 @@ function documentText(fileId: string, filename: string): string {
 function renderCoverage(docs: CollectionDoc[], texts: string[], mode: Coverage['mode']) {
   const n = docs.length
   const heading = mode === 'full'
-    ? `## All ${n} documents in the selected collections, in full`
-    : `## What each of the ${n} documents in the selected collections says about the task`
+    ? `## All ${n} documents being read, in full`
+    : `## What each of the ${n} documents being read says about the task`
   const sections = docs.map((d, i) => `### [C${i + 1}] ${d.filename}\n${texts[i]}`)
   const read = mode === 'full' ? '' : ' Each section was extracted from its document for this task; one saying it has nothing on the task means the document was read and found to have nothing on it. A claim about all or several documents (who wrote them, what they share) must hold in each one\'s section: check before generalising.'
-  const instruction = `These are every document in the collections the user selected, not search results: when the task concerns the collection, take all ${n} into account.${read} Cite a document inline by its label (e.g. [C1]); do not invent any other citation format.`
+  const instruction = `These are every document the user chose to read (the picked collections, and in a space its own resources), not search results: when the task concerns them, take all ${n} into account.${read} Cite a document inline by its label (e.g. [C1]); do not invent any other citation format.`
   return {
     block: [heading, ...sections, instruction].join('\n\n'),
     fileSources: docs.map((d, i) => ({ title: `[C${i + 1}] ${d.filename}`, url: `file:${d.fileId}`, label: `C${i + 1}` })),

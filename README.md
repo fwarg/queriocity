@@ -550,19 +550,26 @@ Once the library passes a handful of resources, a filter bar appears above the l
   remember about a document. Chunk *content* is deliberately not searched here; that is what the model's
   semantic search is for, and a substring match against every excerpt would return hits the list
   cannot explain.
-- **Grouping chips** with counts — every space and [collection](#collections) holding a resource,
-  plus **In no space** — so you can see and browse the grouping you already have rather than only
-  apply it. A resource in several appears under each.
+- **Grouping chips** with counts (the *Workspaces* row) — every space and [collection](#collections)
+  holding a resource, plus **In no space** — so you can see and browse the grouping you already have
+  rather than only apply it. A resource in several appears under each.
+- **Type chips** — *Files* (uploads), *Web pages* (ingested URLs) and *Notes*, each counted; shown
+  once the library holds more than one kind. Clicking the active one clears it.
 - A **tag row** that drills down one level at a time: the top-level tags first, then — once one is
   picked — its sub-tags. Picking `#ml` shows everything tagged `#ml` or anything under it. The
   picked tag can be **renamed** (its sub-tags move with it, merging into an existing tag of the new
   name) or **deleted** from every resource.
+- **Colours follow the axis**, in the bar and on each row alike: workspaces indigo, tags green, types
+  sky blue. Each row's icon gives its type: a document for a file, a globe for a web page, a notebook
+  for a note.
 - **Tag chips on each row are clickable**, and narrow the list to that tag — an axis that cuts
   *across* projects, unlike spaces which follow them.
 
 There is no folder concept. A resource is put in a space or collection from that space's own panel,
 or from the resource's detail panel — the first suits setting a grouping up, the second suits filing
-a document you are already looking at.
+a document you are already looking at. The panel's **+ Tag resource** picker has the same filter box
+and type chips, and stays open after each pick, so several resources can be tagged in a row. Both the
+picker and the panel's list of tagged resources are ordered by type, then title, with the type icons.
 
 For reference material that belongs to no conversation, a [collection](#collections) groups resources
 without the chats, memory and lock a space carries. Collections appear among the chips above like any
@@ -857,7 +864,7 @@ Open **Settings** from the bottom of the sidebar. Settings are saved per user.
 | **Show search process** | Display search queries and result snippets in a collapsed block before the answer. Toggleable separately for Balanced and Thorough modes. |
 | **Model thinking** | Use the `THINKING_MODEL` for the researcher phase in Thorough mode. Requires a reasoning-capable model (e.g. Qwen3). Falls back to the chat model if `THINKING_MODEL` is not configured. |
 | **Space RAG** | When chatting in a space, retrieve relevant past messages and document excerpts semantically on top of the fixed memory block. |
-| **Chat RAG** | When chatting outside a space, automatically retrieve relevant excerpts from your uploaded file library and inject them as context. |
+| **Chat RAG** | When chatting outside a space, automatically retrieve relevant excerpts from your uploaded file library and inject them as context. Not when collections are picked: they are the documents asked about, and the same passages would arrive twice. |
 | **Query suggestions** | Show AI-generated query completions as you type in the chat input (debounced, min 8 characters). Powered by the flash model. Disable on slow setups or if the extra latency is distracting. |
 | **Follow-up suggestions** | Show up to three suggested follow-up questions as chips under a finished answer. Powered by the flash model, one call per answer. Disabling it skips the call entirely. |
 | **Image labelling** | On by default. Adds a visible "AI-generated" caption bar beneath images saved with the **Download PNG** link. Machine-readable provenance metadata is embedded either way; the caption is what survives a site that strips metadata on upload. Note that the download link always re-encodes, which drops the diffusion server's prompt metadata — right-click if you want the file exactly as stored. See [AI transparency](#ai-transparency-eu-ai-act-article-50). |
@@ -1073,7 +1080,8 @@ filing it into a space would mean inventing a project that does not exist.
 
 Both kinds live under **Workspaces** in the sidebar, in two labelled sections — the entry is named for
 what it lists, and "space" keeps its usual meaning everywhere else in the app: the kind that holds
-chats. A resource is tagged to a collection exactly as it is tagged to a space, from either panel, and
+chats. Each space's row counts its chats, memories and resources; a collection's, its resources. A
+resource is tagged to a collection exactly as it is tagged to a space, from either panel, and
 collections appear alongside spaces as [filter chips](#finding-things-in-a-large-library) in the
 Resources list.
 
@@ -1201,12 +1209,34 @@ calls and the first look's score per document.
 
 It stops when it judges its notes enough, or at a step limit (Admin → Settings, *Explore: step limit*,
 default 20). If it hits the limit or its tool calls fail, it answers from what it noted so far, and the
-footer says so. Like whole-collection mode, it makes no web search, its answers are not cached, it
-follows the chat's model pick, and confidential documents are read only in locked chats. A model that
+footer says so. Like whole-collection mode, its answers are not cached, it follows the chat's model
+pick, and confidential documents are read only in locked chats.
+
+**Web search is opt-in.** By default Explore reads only the documents. Ticking *Also search the web*,
+a checkbox beside the Explore chip (offered while Explore is chosen, never in a locked chat), gives the agent a
+`web_search` tool for context the documents lack — a work they cite, whether something has changed
+since. It is told to explore the documents first. Its results reach the answer as numbered web
+sources (`[1]`, `[2]`… beside the documents' `[C1]`), with the instruction never to present them as
+what a document says. Each query is screened by the same egress guard as the researcher's: the agent
+has read the documents, so a query could carry their text out; an uncertain one is put to you, a
+clear one refused. The search budget is that of a balanced question. Like the collection picks, the
+choice resets on a new chat. A model that
 handles many tool calls reliably works best; on a small local model, prefer *Whole collection*.
 
 *Summarize resources* is offered in spaces only: it saves a memory, which only a space's chats read.
 In a collection, use *Analyze in chat*, whose per-document reading is cached and reused.
+
+**In a space.** A space's tagged resources are read the same ways, so promoting a collection to a
+space loses nothing. In a space chat the selector, labelled *Read this space's resources*, appears
+with nothing picked. *Excerpts* is the default there and is the space's usual per-turn search;
+*Auto* is offered only once a collection is picked, since choosing per message would cost a
+small-model call on every message in the space. *Whole collection* and *Explore* read the space's
+resources and any picked collections as one set, labelled `[C1]`… throughout, in place of the
+space's search for that turn — the same passages are not given twice under `[F]` and `[C]` labels.
+Both still get the space's memory (without its resource excerpts), and a space chat follows the
+space's lock as always. With nothing to read (a space with no resources), they fall back to
+excerpts. The space's page offers *Analyze in chat* too: a new chat in the space set to *Whole
+collection*.
 
 **Promotion.** A collection can be turned into a space from its detail view, keeping every tagged
 resource — nothing moves, because both kinds tag the same way. This is one-way: a space that already
@@ -1243,9 +1273,10 @@ Any file in your library can be tagged to a space from the space detail view, or
 
 #### Fine-grained context control
 
-Each tagged resource and each space memory has a **checkbox** in the space detail panel.
+Each tagged resource and each space memory has a **checkbox** in the space detail panel. A resource's
+name opens its page in Resources.
 
-- **Tagged resources** — checking one or more restricts the next query to those documents; unchecked resources are excluded. When nothing is checked, all tagged resources are searched as usual.
+- **Tagged resources** — checking one or more restricts the next query to those documents; unchecked resources are excluded. When nothing is checked, all tagged resources are searched as usual. This holds for every way of [reading the space's resources](#collections): *Whole collection* and *Explore* read only the checked ones too. A collection's page has no checkboxes, since a collection has no chats.
 - **Space memories** — checking one *guarantees* it a place in the next query's context. The rest of the memory budget is still filled with whatever else is most relevant, so pinning adds to the selection rather than replacing it.
 
 This lets you focus a query on a specific document or make sure a particular note is present, without removing anything from the space permanently.

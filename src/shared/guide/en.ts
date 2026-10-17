@@ -256,9 +256,17 @@ the answer is written from its notes and the passages it saw.
   that score as unrelated to your question and the agent's searches are left out of the answer; an
   administrator sets how strict that is.
 - *Cost:* 5–20 short model calls. Works best on a model that is good with tools.
+- *Web:* only if you tick **Also search the web**, for what the documents lack. Never when locked.
 
 **Auto**, the default, asks a small local model which of the three fits each message — one quick
 extra call — and the footer says what it chose and why, so you can pick yourself next time.
+
+**In a space**, the same choice reads the space's own resources, with no collection picked: the
+selector is labelled *Read this space's resources*. Excerpts is the default there, as in any space
+chat; Auto is offered only once a collection is picked, so ordinary messages cost no extra call.
+Whole collection and Explore read the space's resources and any picked collections together, and
+still use the space's memory. **Analyze in chat**, on the space's page, opens a chat set to Whole
+collection.
 
 The progress log shows each stage as it runs, and the footer how the collection was read.`,
   },

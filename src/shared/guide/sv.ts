@@ -260,9 +260,15 @@ hittar; svaret skrivs utifrån anteckningarna och de stycken den såg.
   Avsnitt som bedöms sakna samband med din fråga och agentens sökningar lämnas utanför svaret; en
   administratör ställer in hur strängt det är.
 - *Kostnad:* 5–20 korta modellanrop. Fungerar bäst på en modell som är bra på verktyg.
+- *Webb:* bara om du kryssar i **Sök även på webben**, för det dokumenten saknar. Aldrig i låst läge.
 
 **Auto**, förvalet, frågar en liten lokal modell vilket av de tre som passar varje meddelande — ett
 snabbt extra anrop — och sidfoten säger vad den valde och varför, så att du kan välja själv nästa gång.
+
+**I ett utrymme** läser samma val utrymmets egna resurser, utan att någon samling är vald: väljaren
+heter då *Läs utrymmets resurser*. Där är Utdrag förvalt, som i alla chattar i ett utrymme; Auto
+erbjuds först när en samling är vald, så vanliga meddelanden kostar inget extra anrop. Hela samlingen
+och Utforska läser utrymmets resurser och valda samlingar tillsammans, med utrymmets minne. **Analysera i chatt**, på utrymmets sida, öppnar en chatt inställd på Hela samlingen.
 
 Förloppsloggen visar varje steg medan det pågår, och sidfoten hur samlingen lästes.`,
   },
