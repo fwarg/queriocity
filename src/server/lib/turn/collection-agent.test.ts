@@ -280,11 +280,11 @@ describe('explore turn', () => {
 
   test('with the web opted in, may search it, and the answer gets the results numbered as sources', async () => {
     sqlite.run('DELETE FROM space_files WHERE space_id = ?', [COLL])
-    seedDoc('gsn.txt', ['This paper argues with GSN patterns.'])
+    seedDoc('gsn.txt', ['This paper argues with GSN patterns [7].'])
     const searxng = startFakeSearxng()
     const undo = envOverride({ SEARXNG_URL: searxng.url, SPEJAREN_URL: '', SEARCH_API_PROVIDER: '' })
     try {
-      const f = serve([call('web_search', { query: 'Meyer design by contract' }), { text: ['done'] }, { text: ['Meyer coined it [1]; [C1] uses GSN.'] }])
+      const f = serve([call('web_search', { query: 'Meyer design by contract' }), call('read_part', { doc: 'C1', part: 1 }), { text: ['done'] }, { text: ['Meyer coined it [1]; [C1] uses GSN.'] }])
       const cap = captureSSE()
       const result = await runTurn({ ...ctxFor(fakeTarget(f.baseURL)), exploreWeb: true }, createSink(cap.stream as never))
       expect(JSON.stringify(f.requests[0])).toContain('web_search')
@@ -292,6 +292,9 @@ describe('explore turn', () => {
       const answer = JSON.stringify(f.requests.at(-1))
       expect(answer).toContain('## Web results')
       expect(answer).toContain('[1] Result 1')
+      // The paper's own reference cannot pass for the seventh web result.
+      expect(answer).toContain('GSN patterns (ref. 7)')
+      expect(answer).not.toContain('GSN patterns [7]')
       expect(cap.ofType('sources')[0].sources).toHaveLength(3)
       expect(result.sources).toHaveLength(3)
     } finally {

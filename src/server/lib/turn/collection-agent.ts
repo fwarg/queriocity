@@ -5,6 +5,7 @@ import { languageModel, outputCap, RESEARCH_MAX_TOKENS, type ModelTarget } from 
 import { embedText } from '../embeddings.ts'
 import { userMemoryBlockIfEnabled, joinMemoryBlocks } from '../memory.ts'
 import { splitAttachments } from '../../../shared/context.ts'
+import { asDocumentReferences } from '../../../shared/citations.ts'
 import { scopedFiles, type DocumentScope } from '../files/collection-coverage.ts'
 import { documentParts, outlineOf } from '../files/collection-parts.ts'
 import {
@@ -214,11 +215,8 @@ async function answerFromNotes(ctx: TurnContext, sink: TurnSink, model: ModelTar
     ANSWER_SYSTEM + (ctx.customPrompt ? `\n\nAdditional instructions:\n${ctx.customPrompt}` : ''),
     await userMemoryBlockIfEnabled(ctx.userId, ctx.settings, query),
     await spaceMemoryOnly(ctx, query),
-    documents,
-    noted,
-    seenBlock(gathered.seen),
-    reads.block,
-    evidenceBlock(gathered, reads.included),
+    // The documents' own [7]-style references, rewritten so they cannot pass for the web's [1]….
+    asDocumentReferences(joinMemoryBlocks(documents, noted, seenBlock(gathered.seen), reads.block, evidenceBlock(gathered, reads.included))),
     webBlock(web),
   )
   await sink.step({ kind: 'readNotes', count: notes.length })

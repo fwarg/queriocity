@@ -9,7 +9,7 @@ import { rerank, rerankEnabled } from './reranker.ts'
 import { ragTopK, ragMinRelevance } from './rag-settings.ts'
 import { searchCollections } from './files/collections.ts'
 import { withoutConfidential } from './files/confidential.ts'
-import { splitGroupedCitations } from '../../shared/citations.ts'
+import { splitGroupedCitations, asDocumentReferences } from '../../shared/citations.ts'
 
 export interface MemorySource { url: string; title: string }
 
@@ -174,7 +174,7 @@ function renderFileBlock(
       citedFiles.set(chunk.fileId, { filename: chunk.filename, label: `${labelPrefix}${++fileCounter}` })
     }
     const { label } = citedFiles.get(chunk.fileId)!
-    fileLines.push(`[${label}] ${chunk.content}`)
+    fileLines.push(`[${label}] ${asDocumentReferences(chunk.content)}`)
     console.log(`    [rag:${logTag}] ${chunk.content.length} chars: ${JSON.stringify(chunk.content.slice(0, 60))}`)
     if (ragRemaining <= 0) break
   }
@@ -185,7 +185,7 @@ function renderFileBlock(
     .map(([fileId, { filename, label }]) => ({ title: `[${label}] ${filename}`, url: `file:${fileId}`, label }))
 
   let block = `## ${heading}\n` + fileLines.map(l => `> ${l}`).join('\n\n')
-  block += `\n\nWhen your answer draws on the excerpts above, cite them inline using their label (e.g. [${labelPrefix}1]). This is separate from any [N] web-source citations you are also instructed to use elsewhere — use both where appropriate, and do not invent any other citation format. Bracketed numbers inside the excerpts, such as [7], are the documents' own references, not sources: never cite them as [7].`
+  block += `\n\nWhen your answer draws on the excerpts above, cite them inline using their label (e.g. [${labelPrefix}1]). This is separate from any [N] web-source citations you are also instructed to use elsewhere — use both where appropriate, and do not invent any other citation format. A document's own references appear as (ref. 7): they are not sources, so never cite them as [7].`
 
   console.log(`  [memory] ${logTag}: ${fileLines.length} chunks, ${fileSources.length} files (~${estimateTokens(block)} tokens)`)
   return { block, fileSources }
@@ -560,7 +560,7 @@ export async function buildMemoryBlock(
           citedFiles.set(fileId, { filename, label: `F${++fileCounter}` })
         }
         const { label } = citedFiles.get(fileId)!
-        return `[${label}] ${content}`
+        return `[${label}] ${asDocumentReferences(content)}`
       }
 
       if (rerankEnabled() && (chatRows.length + fileRows.length) > 0) {

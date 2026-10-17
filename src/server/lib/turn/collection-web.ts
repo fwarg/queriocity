@@ -78,5 +78,5 @@ export function webBlock(web: WebSearching | undefined): string {
   const lines = web.results.map((r, i) => `[${i + 1}] ${r.title} — ${r.url}\n${(r.content ?? '').slice(0, SNIPPET_CHARS)}`)
   return `## Web results
 ${lines.join('\n\n')}
-These are from the web, not the documents: use them only for context the documents lack, cite them as [1], [2]…, and never present them as what a document says. Bracketed numbers inside the documents' own text are their references, not these.`
+These are from the web, not the documents: use them only for context the documents lack, cite them as [1], [2]…, and never present them as what a document says. The documents' own references are written (ref. 7): they are not these, so never cite them as [7].`
 }
