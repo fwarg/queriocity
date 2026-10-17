@@ -220,6 +220,8 @@ memoriesRouter.get('/:spaceId/files', async (c) => {
     filename: uploadedFiles.filename,
     size: uploadedFiles.size,
     createdAt: uploadedFiles.createdAt,
+    kind: uploadedFiles.kind,
+    origin: uploadedFiles.origin,
   })
     .from(spaceFiles)
     .innerJoin(uploadedFiles, eq(spaceFiles.fileId, uploadedFiles.id))

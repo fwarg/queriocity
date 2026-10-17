@@ -22,6 +22,8 @@ import { EmptyState, PRIMARY_BTN, RowAction } from './components/ui.tsx'
 import { SectionHeader } from './components/SectionHeader.tsx'
 import { SpacesView } from './components/SpacesView.tsx'
 import { ResourcesView } from './components/ResourcesView.tsx'
+import { TagResourcePicker } from './components/TagResourcePicker.tsx'
+import { byTypeThenTitle, ResourceTypeIcon } from './components/ResourceFilters.tsx'
 import {
   fetchHistory, fetchSession, deleteSession, updateSessionTitle,
   fetchFiles, getMe, hasUsers, logout, updateSettings,
@@ -131,7 +133,7 @@ export default function App() {
   const [rebuildingIndex, setRebuildingIndex] = useState(false)
   const [rebuildIndexProgress, setRebuildIndexProgress] = useState<string | null>(null)
   const [filesSectionOpen, setFilesSectionOpen] = useState(false)
-  const [allUserFiles, setAllUserFiles] = useState<Array<{ id: string; filename: string; size: number }>>([])
+  const [allUserFiles, setAllUserFiles] = useState<Resource[]>([])
   const [filePickerOpen, setFilePickerOpen] = useState(false)
   const [pinnedFileIds, setPinnedFileIds] = useState<string[]>([])
   const [pinnedMemoryIds, setPinnedMemoryIds] = useState<string[]>([])
@@ -772,7 +774,12 @@ export default function App() {
   }
 
   /** ResourcesView mutates the library; the list stays here because the space panel tags from it. */
-  const reloadFiles = useCallback(() => { fetchFiles().then(setFiles).catch(() => {}) }, [])
+  // Spaces too: their resource counts follow tagging, adding and deleting, and decide whether a space
+  // chat offers to read its resources.
+  const reloadFiles = useCallback(() => {
+    fetchFiles().then(setFiles).catch(() => {})
+    fetchSpaces().then(setSpaces).catch(() => {})
+  }, [])
   // Refreshed whenever a view that lists the library opens: notes are also created from chat
   // answers, splits and the server side, none of which pass through these views.
   useEffect(() => { if (view === 'files' || view === 'explore') reloadFiles() }, [view, reloadFiles])
@@ -1307,21 +1314,15 @@ export default function App() {
                   )}
                 </div>
                 {filesSectionOpen && filePickerOpen && allUserFiles.length > 0 && (
-                  <div className="mt-2 flex flex-col gap-1 border border-gray-700 rounded p-2 bg-gray-900">
-                    {allUserFiles.map(f => (
-                      <button
-                        key={f.id}
-                        onClick={async () => {
-                          await tagFileToSpace(currentSpaceId!, f.id)
-                          fetchSpaceFiles(currentSpaceId!).then(setTaggedFiles).catch(() => {})
-                          setFilePickerOpen(false)
-                        }}
-                        className="text-left text-xs text-gray-300 hover:text-gray-50 px-1 py-0.5 hover:bg-gray-800 rounded truncate"
-                      >
-                        {f.filename}
-                      </button>
-                    ))}
-                  </div>
+                  <TagResourcePicker
+                    resources={allUserFiles}
+                    onTag={async id => {
+                      await tagFileToSpace(currentSpaceId!, id)
+                      setAllUserFiles(prev => prev.filter(f => f.id !== id))
+                      fetchSpaceFiles(currentSpaceId!).then(setTaggedFiles).catch(() => {})
+                      fetchSpaces().then(setSpaces).catch(() => {})
+                    }}
+                  />
                 )}
                 {filesSectionOpen && filePickerOpen && allUserFiles.length === 0 && (
                   <p className="text-xs text-gray-600 mt-2">{t('files.noneUntagged')}</p>
@@ -1329,7 +1330,7 @@ export default function App() {
                 {filesSectionOpen && taggedFiles.length === 0 && !filePickerOpen && (
                   <p className="text-xs text-gray-600 mt-2">{t('files.noneTagged')}</p>
                 )}
-                {filesSectionOpen && taggedFiles.map(f => (
+                {filesSectionOpen && [...taggedFiles].sort(byTypeThenTitle).map(f => (
                   <div key={f.id} className="flex items-center gap-1.5 justify-between group py-1">
                     <input
                       type="checkbox"
@@ -1338,6 +1339,7 @@ export default function App() {
                       className="shrink-0 accent-indigo-500 cursor-pointer"
                       title={t('files.pinTitle')}
                     />
+                    <ResourceTypeIcon resource={f} size={12} />
                     <span className="text-xs text-gray-300 truncate flex-1 min-w-0">{f.filename}</span>
                     <RowAction
                       icon={<X size={14} />}
@@ -1345,6 +1347,7 @@ export default function App() {
                       label={t('resource.untagFrom', { name: f.filename })}
                       onClick={async () => {
                         await untagFileFromSpace(currentSpaceId!, f.id)
+                        fetchSpaces().then(setSpaces).catch(() => {})
                         setPinnedFileIds(prev => prev.filter(id => id !== f.id))
                         setTaggedFiles(prev => prev.filter(t => t.id !== f.id))
                       }}

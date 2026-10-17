@@ -553,6 +553,8 @@ Once the library passes a handful of resources, a filter bar appears above the l
 - **Grouping chips** with counts — every space and [collection](#collections) holding a resource,
   plus **In no space** — so you can see and browse the grouping you already have rather than only
   apply it. A resource in several appears under each.
+- **Type chips** — *Files* (uploads), *Web pages* (ingested URLs) and *Notes*, each counted; shown
+  once the library holds more than one kind. Clicking the active one clears it.
 - A **tag row** that drills down one level at a time: the top-level tags first, then — once one is
   picked — its sub-tags. Picking `#ml` shows everything tagged `#ml` or anything under it. The
   picked tag can be **renamed** (its sub-tags move with it, merging into an existing tag of the new
@@ -562,7 +564,8 @@ Once the library passes a handful of resources, a filter bar appears above the l
 
 There is no folder concept. A resource is put in a space or collection from that space's own panel,
 or from the resource's detail panel — the first suits setting a grouping up, the second suits filing
-a document you are already looking at.
+a document you are already looking at. The panel's **+ Tag resource** picker has the same filter box
+and type chips, and stays open after each pick, so several resources can be tagged in a row.
 
 For reference material that belongs to no conversation, a [collection](#collections) groups resources
 without the chats, memory and lock a space carries. Collections appear among the chips above like any

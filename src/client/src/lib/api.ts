@@ -523,7 +523,7 @@ export async function recreateChatMemories(chatId: string): Promise<void> {
   await fetch(`${BASE}/history/${chatId}/recreate-memories`, { method: 'POST' })
 }
 
-export interface SpaceFile { id: string; filename: string; size: number; createdAt: number }
+export interface SpaceFile { id: string; filename: string; size: number; createdAt: number; kind: 'file' | 'note'; origin: string | null }
 
 export async function fetchSpaceFiles(spaceId: string): Promise<SpaceFile[]> {
   return fetch(`${BASE}/spaces/${spaceId}/files`).then(r => r.json())

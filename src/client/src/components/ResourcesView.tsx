@@ -1,27 +1,16 @@
 import { useRef, useState } from 'react'
-import { EyeOff, FileText, NotebookPen, Trash2, X } from 'lucide-react'
+import { EyeOff, Trash2, X } from 'lucide-react'
 import { NoteEditor } from './NoteEditor.tsx'
 import { SectionHeader } from './SectionHeader.tsx'
 import { useConfirm } from './confirm.tsx'
 import { EmptyState, ListRow, PRIMARY_BTN, RowAction } from './ui.tsx'
 import { ResourceDetail } from './ResourceDetail.tsx'
-import { EMPTY_FILTER, isFiltered, matchesFilter, ResourceFilters, toggleSpace, toggleTag, type ResourceFilter } from './ResourceFilters.tsx'
+import { CHIP_TONES, EMPTY_FILTER, isFiltered, matchesFilter, ResourceFilters, ResourceTypeIcon, toggleSpace, toggleTag, type ResourceFilter } from './ResourceFilters.tsx'
 import { deleteFile, ingestUrl, uploadFile, type Resource } from '../lib/api.ts'
 import { useLang, useT } from '../lib/i18n.tsx'
 
 /** Above this many resources the filter bar is always shown; below it, only while filtering. */
 const FILTER_BAR_THRESHOLD = 8
-
-const CHIP_TONES = {
-  space: {
-    idle: 'bg-indigo-950 text-indigo-300 border-indigo-900 hover:border-indigo-700',
-    active: 'bg-indigo-700 text-white border-indigo-500',
-  },
-  tag: {
-    idle: 'bg-emerald-950 text-emerald-300 border-emerald-900 hover:border-emerald-700',
-    active: 'bg-emerald-700 text-white border-emerald-500',
-  },
-} as const
 
 /** A chip that toggles a filter. Stops the row's own click, which opens the resource. */
 function Chip({ tone, active, onClick, children }: {
@@ -210,9 +199,7 @@ export function ResourcesView({ resources, onChanged, openId, onOpenIdChange, on
             <div className="flex flex-col gap-2">
               {shown.map(r => (
                 <ListRow key={r.id} onClick={() => onOpenIdChange(r.id)}>
-                  {r.kind === 'note'
-                    ? <NotebookPen size={16} className="text-amber-400 shrink-0 mt-0.5" />
-                    : <FileText size={16} className="text-gray-500 shrink-0 mt-0.5" />}
+                  <ResourceTypeIcon resource={r} className="mt-0.5" />
                   <div className="flex-1 min-w-0">
                     <div className="text-sm text-gray-100 truncate flex items-center gap-1.5">
                       {!!r.confidential && <EyeOff size={12} className="shrink-0 text-amber-400" aria-label={t('resource.confidential')} />}

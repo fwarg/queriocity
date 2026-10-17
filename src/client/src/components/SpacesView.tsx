@@ -83,11 +83,12 @@ export function SpacesView({ spaces, onOpen, onCreate, onToggleLock, onDelete }:
                   : <MessagesSquare size={14} className="shrink-0 text-indigo-400" />}
                 {sp.offline && <Lock size={12} className="shrink-0 -ml-1.5 text-amber-400" aria-label={t('space.locked')} />}
                 <span className="truncate text-sm text-gray-100">{sp.name}</span>
-                {/* A collection is measured by what it holds, a space by what happens in it. */}
+                {/* A collection is measured by what it holds, a space by what happens in it and, since its
+                    resources can be read like a collection's, by those too. */}
                 <span className="ml-auto pl-2 text-xs text-gray-500 shrink-0">
                   {sp.kind === 'collection'
                     ? t('collection.holdsResources', { count: sp.resourceCount })
-                    : `${t('space.holdsChats', { count: sp.chatCount })}${sp.memoryCount > 0 ? ` · ${t('space.holdsMemories', { count: sp.memoryCount })}` : ''}`}
+                    : `${t('space.holdsChats', { count: sp.chatCount })}${sp.memoryCount > 0 ? ` · ${t('space.holdsMemories', { count: sp.memoryCount })}` : ''}${sp.resourceCount > 0 ? ` · ${t('collection.holdsResources', { count: sp.resourceCount })}` : ''}`}
                 </span>
                 {/* A space is locked (a container: its chats get no web); a collection is confidential
                     (content: only locked chats read it). Persistent once on: state the row should show at
