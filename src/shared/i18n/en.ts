@@ -314,6 +314,7 @@ export const en = {
   'resource.type.web': 'Web pages',
   'resource.type.note': 'Notes',
   'files.tagPickerFilter': 'Filter by title, tag or summary',
+  'files.openResource': 'Open its page in Resources',
   'files.filterAll': 'All {count}',
   'files.filterUntagged': 'In no space',
   'files.filterShowing': { one: '{count} resource', other: '{count} resources' },

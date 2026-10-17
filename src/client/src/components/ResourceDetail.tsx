@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { ArrowLeft, ChevronRight, ExternalLink, Eye, EyeOff, FileText, MessageSquare, NotebookPen, Plus, Scissors, X } from 'lucide-react'
+import { ArrowLeft, ChevronRight, ExternalLink, Eye, EyeOff, MessageSquare, Plus, Scissors, X } from 'lucide-react'
+import { ResourceTypeIcon } from './ResourceFilters.tsx'
 import { NoteEditor } from './NoteEditor.tsx'
 import { NoteMarkdown } from './NoteMarkdown.tsx'
 import { TagEditor } from './TagEditor.tsx'
@@ -76,9 +77,7 @@ export function ResourceDetail({ id, onBack, onChanged, onOpen, onOpenChat, onTa
     <Panel onBack={onBack}>
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-start gap-2 min-w-0">
-          {isNote
-            ? <NotebookPen size={18} className="text-amber-400 shrink-0 mt-0.5" />
-            : <FileText size={18} className="text-gray-500 shrink-0 mt-0.5" />}
+          <ResourceTypeIcon resource={detail} size={18} className="mt-0.5" />
           <div className="min-w-0">
             <ResourceTitle
               key={detail.id}
@@ -421,9 +420,7 @@ function ResourceChip({ resource, onOpen }: { resource: ResourceRef; onOpen: (id
       onClick={() => onOpen(resource.id)}
       className="flex items-center gap-1.5 px-2 py-1 rounded text-xs bg-gray-800 text-gray-300 border border-gray-700 hover:border-gray-500 hover:text-gray-100 max-w-full"
     >
-      {resource.kind === 'note'
-        ? <NotebookPen size={12} className="shrink-0 text-amber-400" />
-        : <FileText size={12} className="shrink-0 text-gray-500" />}
+      <ResourceTypeIcon resource={resource} size={12} />
       <span className="truncate">{resource.filename}</span>
     </button>
   )

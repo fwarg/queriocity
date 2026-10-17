@@ -310,6 +310,7 @@ export const sv: Catalog = {
   'resource.type.web': 'Webbsidor',
   'resource.type.note': 'Anteckningar',
   'files.tagPickerFilter': 'Filtrera på titel, tagg eller sammanfattning',
+  'files.openResource': 'Öppna dess sida i Resurser',
   'files.filterAll': 'Alla {count}',
   'files.filterUntagged': 'Utan utrymme',
   'files.filterShowing': { one: '{count} resurs', other: '{count} resurser' },

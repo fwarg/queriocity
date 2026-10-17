@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { FileText, NotebookPen, Plus } from 'lucide-react'
+import { Plus } from 'lucide-react'
+import { ResourceTypeIcon } from './ResourceFilters.tsx'
 import { addSeeAlso, fetchRelated, setResourceTags, type RelatedResource, type ResourceDetail } from '../lib/api.ts'
 import { useT } from '../lib/i18n.tsx'
 import { errorMessage } from '../lib/errors.ts'
@@ -48,9 +49,7 @@ export function RelatedResources({ detail, onOpen, onChanged }: {
                 onClick={() => onOpen(r.id)}
                 className="flex items-center gap-1.5 flex-1 min-w-0 px-2 py-1.5 rounded text-sm text-left text-gray-300 bg-gray-800 border border-gray-700 hover:border-gray-500 hover:text-gray-100"
               >
-                {r.kind === 'note'
-                  ? <NotebookPen size={13} className="shrink-0 text-amber-400" />
-                  : <FileText size={13} className="shrink-0 text-gray-500" />}
+                <ResourceTypeIcon resource={r} size={13} />
                 <span className="truncate">{r.filename}</span>
               </button>
               {link

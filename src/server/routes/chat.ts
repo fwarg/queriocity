@@ -16,7 +16,8 @@ import { resolveTurnModels, modelChoices, answerModelOf, attachAnswer, pickedMod
 import type { AnswerModel } from '../../shared/llm-catalogue.ts'
 import { extractMemoriesPostHoc, toMemorySources } from '../lib/memory.ts'
 import { ownedCollectionIds } from '../lib/files/collections.ts'
-import { readsConfidential, confidentialInCollections, trackLeftOut, parseLockedBy } from '../lib/files/confidential.ts'
+import { readsConfidential, trackLeftOut, parseLockedBy } from '../lib/files/confidential.ts'
+import { confidentialInScope } from '../lib/files/collection-coverage.ts'
 import { hasAttachment, COLLECTION_MODES, type ContextReport } from '../../shared/context.ts'
 import { indexContents, deindexContent } from '../lib/chat-indexer.ts'
 import { ownsSpace, sessionOwnership } from '../lib/ownership.ts'
@@ -28,7 +29,7 @@ import {
   APPROVAL_TIMEOUT_MS, type LiveRun,
 } from '../lib/stream-buffer.ts'
 import { deleteSupersededImages } from '../lib/image-store.ts'
-import { runTurn, createSink, toSearxngCategories, userQueryOf, KEEPALIVE_INTERVAL_MS, type TurnContext } from '../lib/turn/index.ts'
+import { runTurn, createSink, toSearxngCategories, userQueryOf, documentSet, KEEPALIVE_INTERVAL_MS, type TurnContext } from '../lib/turn/index.ts'
 
 const SESSION_TITLE_MAX = 60
 
@@ -280,7 +281,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     // search it runs; the footer says how many.
     // Whole and Explore asked for in a space read the space's resources too (turn/context.ts documentSet).
     const readsSpace = !!spaceId && (collectionMode === 'whole' || collectionMode === 'explore')
-    const leftOut = new Set<string>(locked ? [] : confidentialInCollections(readsSpace ? [spaceId, ...collections] : collections))
+    const leftOut = new Set<string>(locked ? [] : confidentialInScope(readsSpace ? documentSet(ctx) : collections))
     const result = await trackLeftOut(leftOut, () => runTurn(ctx, sink))
     if (leftOut.size) await sink.emit({ type: 'confidential_excluded', count: leftOut.size })
     const aborted = ctx.abortSignal.aborted

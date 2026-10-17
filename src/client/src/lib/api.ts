@@ -939,7 +939,8 @@ export interface Resource {
 }
 
 /** A resource reference thin enough to render as a chip and click through to. */
-export interface ResourceRef { id: string; filename: string; kind: 'file' | 'note' }
+/** `origin` tells an ingested web page (a URL) from an upload, for its icon. */
+export interface ResourceRef { id: string; filename: string; kind: 'file' | 'note'; origin: string | null }
 
 export interface ResourceDetail extends Resource {
   body: string | null

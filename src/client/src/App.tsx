@@ -1332,15 +1332,24 @@ export default function App() {
                 )}
                 {filesSectionOpen && [...taggedFiles].sort(byTypeThenTitle).map(f => (
                   <div key={f.id} className="flex items-center gap-1.5 justify-between group py-1">
-                    <input
-                      type="checkbox"
-                      checked={pinnedFileIds.includes(f.id)}
-                      onChange={() => setPinnedFileIds(prev => prev.includes(f.id) ? prev.filter(id => id !== f.id) : [...prev, f.id])}
-                      className="shrink-0 accent-indigo-500 cursor-pointer"
-                      title={t('files.pinTitle')}
-                    />
+                    {/* Pins narrow a space's chats to these resources; a collection has no chats. */}
+                    {!activeSpaceIsCollection && (
+                      <input
+                        type="checkbox"
+                        checked={pinnedFileIds.includes(f.id)}
+                        onChange={() => setPinnedFileIds(prev => prev.includes(f.id) ? prev.filter(id => id !== f.id) : [...prev, f.id])}
+                        className="shrink-0 accent-indigo-500 cursor-pointer"
+                        title={t('files.pinTitle')}
+                      />
+                    )}
                     <ResourceTypeIcon resource={f} size={12} />
-                    <span className="text-xs text-gray-300 truncate flex-1 min-w-0">{f.filename}</span>
+                    <button
+                      onClick={() => openResource(f.id)}
+                      title={t('files.openResource')}
+                      className="text-left text-xs text-gray-300 hover:text-gray-50 hover:underline truncate flex-1 min-w-0"
+                    >
+                      {f.filename}
+                    </button>
                     <RowAction
                       icon={<X size={14} />}
                       tone="danger"

@@ -1,11 +1,11 @@
 import { generateText, streamText, tool, stepCountIs, type ModelMessage, type ToolSet } from 'ai'
 import { z } from 'zod'
-import { getAppSetting, sqlite } from '../db.ts'
+import { getAppSetting } from '../db.ts'
 import { languageModel, outputCap, RESEARCH_MAX_TOKENS, type ModelTarget } from '../llm.ts'
 import { embedText } from '../embeddings.ts'
 import { userMemoryBlockIfEnabled, joinMemoryBlocks } from '../memory.ts'
 import { splitAttachments } from '../../../shared/context.ts'
-import { withoutConfidential } from '../files/confidential.ts'
+import { scopedFiles, type DocumentScope } from '../files/collection-coverage.ts'
 import { documentParts, outlineOf } from '../files/collection-parts.ts'
 import {
   firstLook, searchSpread, relevantHits, seeHit, formatHit, seenBlock, readsBlock, evidenceBlock, formatNote, READ_MAX_CHARS, READ_MAX_SHARE,
@@ -61,16 +61,9 @@ async function exploreAndAnswer(ctx: TurnContext, sink: TurnSink): Promise<TurnR
   return { content, sources: [], fileSources, cacheable: false, answeredBy: model }
 }
 
-/** The documents in the collections, labelled C1… by filename, without their text. */
-export function collectionIndex(collectionIds: string[], includeConfidential: boolean): Doc[] {
-  if (!collectionIds.length) return []
-  const rows = sqlite.prepare(`
-    SELECT DISTINCT f.id, f.filename, f.summary FROM space_files sf
-    JOIN uploaded_files f ON f.id = sf.file_id
-    WHERE sf.space_id IN (${collectionIds.map(() => '?').join(',')}) ${withoutConfidential('f.id', includeConfidential)}
-    ORDER BY f.filename, f.id
-  `).all(...collectionIds) as Array<{ id: string; filename: string; summary: string | null }>
-  return rows.map((r, i) => ({ label: `C${i + 1}`, fileId: r.id, filename: r.filename, summary: r.summary }))
+/** The documents in scope, labelled C1… by filename, without their text. */
+export function collectionIndex(scope: string[] | DocumentScope, includeConfidential: boolean): Doc[] {
+  return scopedFiles(scope, includeConfidential).map((r, i) => ({ label: `C${i + 1}`, fileId: r.id, filename: r.filename, summary: r.summary }))
 }
 
 /** The tool loop. Ends when the model stops calling tools, at `maxSteps`, or on an error — the last

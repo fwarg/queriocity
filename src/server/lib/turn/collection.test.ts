@@ -84,15 +84,17 @@ describe('in a space chat', () => {
   // Space memory is ranked against the message, which embeds it.
   let embeddings: ReturnType<typeof startFakeEmbeddings>
   let restoreEnv: () => void
+  const SPEC = randomUUID()
   afterAll(() => { restoreEnv(); embeddings.stop() })
   beforeAll(() => {
     embeddings = startFakeEmbeddings(EMBED_DIMS)
     restoreEnv = envOverride({ EMBED_BASE_URL: embeddings.baseURL, EMBED_API_KEY: 't', EMBED_MODEL: 'fake-embed' })
     sqlite.run('INSERT OR IGNORE INTO spaces(id, name, user_id, kind, created_at, updated_at) VALUES (?,?,?,?,?,?)', [SPACE, 'Project', USER, 'space', 0, 0])
-    const id = randomUUID()
-    sqlite.run('INSERT INTO uploaded_files(id, user_id, filename, mime_type, size, kind, created_at) VALUES (?,?,?,?,?,?,?)', [id, USER, 'spec.txt', 'text/plain', 0, 'file', 0])
-    sqlite.run('INSERT INTO file_chunk_meta(chunk_id, file_id, content) VALUES (?,?,?)', [`${id}:0`, id, 'The project spec on hives.'])
-    sqlite.run('INSERT INTO space_files(space_id, file_id) VALUES (?,?)', [SPACE, id])
+    for (const [id, name, text] of [[SPEC, 'spec.txt', 'The project spec on hives.'], [randomUUID(), 'log.txt', 'The field log on swarms.']]) {
+      sqlite.run('INSERT INTO uploaded_files(id, user_id, filename, mime_type, size, kind, created_at) VALUES (?,?,?,?,?,?,?)', [id, USER, name, 'text/plain', 0, 'file', 0])
+      sqlite.run('INSERT INTO file_chunk_meta(chunk_id, file_id, content) VALUES (?,?,?)', [`${id}:0`, id, text])
+      sqlite.run('INSERT INTO space_files(space_id, file_id) VALUES (?,?)', [SPACE, id])
+    }
     sqlite.run('INSERT INTO space_memories(id, space_id, content, source, created_at, updated_at) VALUES (?,?,?,?,?,?)', [randomUUID(), SPACE, 'The user studies urban bees.', 'manual', 0, 0])
   })
 
@@ -105,7 +107,16 @@ describe('in a space chat', () => {
     expect(asked[0]).toContain('The project spec on hives.')
     expect(asked[0]).not.toContain('Paper A on bees.')
     expect(asked[0]).toContain('The user studies urban bees.')
-    expect(cap.ofType('coverage')[0]).toMatchObject({ documents: 1 })
+    expect(asked[0]).toContain('The field log on swarms.')
+    expect(cap.ofType('coverage')[0]).toMatchObject({ documents: 2 })
+  })
+
+  test('reads only the space\'s pinned resources when any are pinned, as the space\'s search does', async () => {
+    const from = fake.requests.length
+    await runTurn({ ...ctxFor(), spaceId: SPACE, collections: [], includeFileIds: [SPEC] }, createSink(captureSSE().stream as never))
+    const system = JSON.stringify(fake.requests.slice(from)[0])
+    expect(system).toContain('The project spec on hives.')
+    expect(system).not.toContain('The field log on swarms.')
   })
 
   test('reads the space and a picked collection as one set', async () => {

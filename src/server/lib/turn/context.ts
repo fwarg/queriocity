@@ -4,6 +4,7 @@ import type { EgressApprovalRequest } from '../researcher.ts'
 import type { SSEStream } from '../researcher-stream.ts'
 import type { ModelTarget, TurnModels } from '../llm.ts'
 import type { SearchResult } from '../search/index.ts'
+import type { DocumentScope } from '../files/collection-coverage.ts'
 import type { ContextReport, CollectionMode } from '../../../shared/context.ts'
 import { stepEvent, type ProgressStep } from '../progress.ts'
 
@@ -99,6 +100,8 @@ export const userQueryOf = (msgs: Array<{ role: string; content: string }>) =>
   [...msgs].reverse().find(m => m.role === 'user')?.content ?? ''
 
 /** What Whole collection and Explore read: the picked collections and, in a space chat, the space's
- *  own resources — spaces and collections tag resources alike, so one id list covers both. */
-export const documentSet = (ctx: Pick<TurnContext, 'spaceId' | 'collections'>): string[] =>
-  ctx.spaceId ? [...new Set([ctx.spaceId, ...ctx.collections])] : ctx.collections
+ *  own resources — only those pinned, when any are, as the space's search does. Spaces and
+ *  collections tag resources alike, so one id list covers both. */
+export const documentSet = (ctx: Pick<TurnContext, 'spaceId' | 'collections' | 'includeFileIds'>): DocumentScope => ctx.spaceId
+  ? { ids: [...new Set([ctx.spaceId, ...ctx.collections])], ...(ctx.includeFileIds?.length && { pinned: { spaceId: ctx.spaceId, fileIds: ctx.includeFileIds } }) }
+  : { ids: ctx.collections }
