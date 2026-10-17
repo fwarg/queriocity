@@ -256,6 +256,7 @@ the answer is written from its notes and the passages it saw.
   that score as unrelated to your question and the agent's searches are left out of the answer; an
   administrator sets how strict that is.
 - *Cost:* 5–20 short model calls. Works best on a model that is good with tools.
+- *Web:* only if you tick **Also search the web**, for what the documents lack. Never when locked.
 
 **Auto**, the default, asks a small local model which of the three fits each message — one quick
 extra call — and the footer says what it chose and why, so you can pick yourself next time.

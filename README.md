@@ -1209,8 +1209,18 @@ calls and the first look's score per document.
 
 It stops when it judges its notes enough, or at a step limit (Admin → Settings, *Explore: step limit*,
 default 20). If it hits the limit or its tool calls fail, it answers from what it noted so far, and the
-footer says so. Like whole-collection mode, it makes no web search, its answers are not cached, it
-follows the chat's model pick, and confidential documents are read only in locked chats. A model that
+footer says so. Like whole-collection mode, its answers are not cached, it follows the chat's model
+pick, and confidential documents are read only in locked chats.
+
+**Web search is opt-in.** By default Explore reads only the documents. Ticking *Also search the web*
+under the Read row (offered while Explore is chosen, never in a locked chat) gives the agent a
+`web_search` tool for context the documents lack — a work they cite, whether something has changed
+since. It is told to explore the documents first. Its results reach the answer as numbered web
+sources (`[1]`, `[2]`… beside the documents' `[C1]`), with the instruction never to present them as
+what a document says. Each query is screened by the same egress guard as the researcher's: the agent
+has read the documents, so a query could carry their text out; an uncertain one is put to you, a
+clear one refused. The search budget is that of a balanced question. Like the collection picks, the
+choice resets on a new chat. A model that
 handles many tool calls reliably works best; on a small local model, prefer *Whole collection*.
 
 *Summarize resources* is offered in spaces only: it saves a memory, which only a space's chats read.

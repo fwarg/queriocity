@@ -43,6 +43,9 @@ interface Props {
   /** Resources tagged to the chat's space: a space chat can read them like a collection, with
    *  nothing picked. */
   spaceResources?: number
+  /** Explore may also search the web; offered only while Explore is chosen and the turn is not locked. */
+  exploreWeb?: boolean
+  onExploreWebChange?: (on: boolean) => void
   /** "Notes first": answer from the user's own notes before the web. Offered once they have notes. */
   notesAvailable?: boolean
   notesFirst?: boolean
@@ -101,7 +104,7 @@ const CATEGORY_LABEL_KEYS: Record<SearchCategory, TranslationKey> = {
   tech: 'category.tech',
 }
 
-export function ChatInput({ models = [], modelId = '', defaultModel, onModelChange, onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, collections, selectedCollections, onCollectionsChange, collectionMode = 'auto', onCollectionModeChange, spaceResources = 0, notesAvailable = false, notesFirst = false, onNotesFirstChange, suggestionsEnabled, lockedSpace = false, chatLocked = false, hasHistory = false, related = [], onRelatedSelect, spaceId, onAddedToLibrary }: Props) {
+export function ChatInput({ models = [], modelId = '', defaultModel, onModelChange, onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, collections, selectedCollections, onCollectionsChange, collectionMode = 'auto', onCollectionModeChange, spaceResources = 0, exploreWeb = false, onExploreWebChange, notesAvailable = false, notesFirst = false, onNotesFirstChange, suggestionsEnabled, lockedSpace = false, chatLocked = false, hasHistory = false, related = [], onRelatedSelect, spaceId, onAddedToLibrary }: Props) {
   const t = useT()
   const confirm = useConfirm()
   const [value, setValue] = useState('')
@@ -161,6 +164,7 @@ export function ChatInput({ models = [], modelId = '', defaultModel, onModelChan
     ...(categoriesAvailable && searchCategories.length > 0 ? [searchCategories.map(c => t(CATEGORY_LABEL_KEYS[c])).join('+')] : []),
     ...collections.filter(c => selectedCollections.includes(c.id)).map(c => c.name),
     ...(focusMode !== 'image' && (selectedCollections.length > 0 ? readMode !== 'auto' : spaceReadable && readMode !== 'excerpts') ? [t(COLLECTION_MODE_LABEL_KEYS[readMode])] : []),
+    ...(focusMode !== 'image' && readMode === 'explore' && exploreWeb && !lockedSpace ? [t('collection.exploreWeb')] : []),
   ]
   // "All" is a statement about categories only, and unqualified it reads as "everything" once
   // collections share the button — no collection is picked by default.
@@ -409,6 +413,7 @@ export function ChatInput({ models = [], modelId = '', defaultModel, onModelChan
               selected={selectedCollections}
               onChange={pickCollections}
               spaceReadable={spaceReadable}
+              web={!lockedSpace && onExploreWebChange ? { on: exploreWeb, onChange: onExploreWebChange } : undefined}
               mode={focusMode !== 'image' ? readMode : undefined}
               onModeChange={onCollectionModeChange}
             />
@@ -611,11 +616,13 @@ function shownReadMode(mode: CollectionMode, picked: boolean): CollectionMode {
 /** The collection chips, and once one is picked — or in a space chat, always — how to read them.
  *  `mode` is undefined where the choice does not apply (image mode). The chosen mode's description is
  *  shown, not only in a tooltip: a phone never shows a title. */
-function CollectionsGroup({ collections, selected, onChange, spaceReadable, mode, onModeChange }: {
+function CollectionsGroup({ collections, selected, onChange, spaceReadable, web, mode, onModeChange }: {
   collections: Array<{ id: string; name: string; offline?: boolean }>
   selected: string[]
   onChange: (ids: string[]) => void
   spaceReadable: boolean
+  /** The Explore web opt-in; undefined where it is not offered (a locked turn). */
+  web?: { on: boolean; onChange: (on: boolean) => void }
   mode?: CollectionMode
   onModeChange?: (mode: CollectionMode) => void
 }) {
@@ -660,6 +667,19 @@ function CollectionsGroup({ collections, selected, onChange, spaceReadable, mode
             ))}
           </div>
           <p className="text-xs text-gray-500">{t(COLLECTION_MODE_DESC_KEYS[mode])} <GuideLink topic="collectionModes" /></p>
+          {mode === 'explore' && web && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <button
+                type="button"
+                aria-pressed={web.on}
+                onClick={() => web.onChange(!web.on)}
+                className={`px-2 py-0.5 rounded text-xs ${web.on ? 'bg-amber-700 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200'}`}
+              >
+                {t('collection.exploreWeb')}
+              </button>
+              <span className="text-xs text-gray-500">{t('collection.exploreWebDesc')}</span>
+            </div>
+          )}
         </div>
       )}
     </div>

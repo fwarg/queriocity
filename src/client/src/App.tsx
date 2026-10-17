@@ -103,6 +103,7 @@ export default function App() {
    *  shelf the user had set up would be the more surprising of the two. */
   const [selectedCollections, setSelectedCollections] = useState<string[]>([])
   const [collectionMode, setCollectionMode] = useState<CollectionMode>('auto')
+  const [exploreWeb, setExploreWeb] = useState(false)
 
   const [sessionId, setSessionId] = useState<string | undefined>()
   const [sessions, setSessions] = useState<Session[]>([])
@@ -237,6 +238,8 @@ export default function App() {
     includeFileIds: pinnedFileIds.length ? pinnedFileIds : undefined,
     collectionIds: selectedCollections.length ? selectedCollections : undefined,
     collectionMode,
+    // Only an Explore turn reads it; the server also drops it when the turn is locked.
+    exploreWeb: collectionMode === 'explore' && exploreWeb,
     includeMemoryIds: pinnedMemoryIds.length ? pinnedMemoryIds : undefined,
     spaceId: activeSpaceId ?? undefined,
     followUpSuggestions: currentUser?.settings?.followUpSuggestions !== false,
@@ -450,6 +453,7 @@ export default function App() {
   function clearCollectionPicks() {
     setSelectedCollections([])
     setCollectionMode('auto')
+    setExploreWeb(false)
   }
 
   function loadSession(id: string, title: string, addToHistory = true, fromMonitor = false) {
@@ -1309,7 +1313,7 @@ export default function App() {
                       }}
                       className="text-xs text-gray-500 hover:text-gray-300"
                     >
-                      + Tag resource
+                      + {t('files.tagResource')}
                     </button>
                   )}
                 </div>
@@ -1744,6 +1748,8 @@ export default function App() {
               onCollectionsChange={setSelectedCollections}
               collectionMode={collectionMode}
               onCollectionModeChange={setCollectionMode}
+              exploreWeb={exploreWeb}
+              onExploreWebChange={setExploreWeb}
               spaceResources={spaces.find(sp => sp.id === activeSpaceId && sp.kind === 'space')?.resourceCount ?? 0}
               notesAvailable={files.some(f => f.kind === 'note')}
               notesFirst={notesFirst}

@@ -237,6 +237,7 @@ export async function* streamChat(
   modelId?: string,
   collectionMode?: CollectionMode,
   attachedFileIds?: string[],
+  exploreWeb?: boolean,
 ): AsyncGenerator<{ type: string; [k: string]: unknown }> {
   const res = await fetch(`${BASE}/chat`, {
     method: 'POST',
@@ -263,6 +264,7 @@ export async function* streamChat(
       // A space chat reads its own resources in the chosen mode too, with no collection picked.
       ...(collectionMode && (collectionIds?.length || spaceId) ? { collectionMode } : {}),
       ...(attachedFileIds?.length ? { attachedFileIds } : {}),
+      ...(exploreWeb ? { exploreWeb: true } : {}),
     }),
     signal,
   })

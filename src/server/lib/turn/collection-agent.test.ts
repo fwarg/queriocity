@@ -10,6 +10,7 @@ import type { ModelMessage } from 'ai'
 import { fakeTarget, startFakeOpenAI, captureSSE, type ScriptedStep } from '../test-support/fake-openai.ts'
 import { envOverride } from '../test-support/env-override.ts'
 import { startFakeEmbeddings } from '../test-support/fake-embeddings.ts'
+import { startFakeSearxng } from '../test-support/fake-searxng.ts'
 import type { TurnContext } from './context.ts'
 
 const { sqlite, EMBED_DIMS } = await import('../db.ts')
@@ -276,6 +277,38 @@ describe('explore turn', () => {
     settings: {}, collections: [COLL], collectionMode: 'explore', abortSignal: new AbortController().signal,
   })
   const call = (name: string, args: unknown, id = name): ScriptedStep => ({ toolCall: { id, name, args } })
+
+  test('with the web opted in, may search it, and the answer gets the results numbered as sources', async () => {
+    sqlite.run('DELETE FROM space_files WHERE space_id = ?', [COLL])
+    seedDoc('gsn.txt', ['This paper argues with GSN patterns.'])
+    const searxng = startFakeSearxng()
+    const undo = envOverride({ SEARXNG_URL: searxng.url, SPEJAREN_URL: '', SEARCH_API_PROVIDER: '' })
+    try {
+      const f = serve([call('web_search', { query: 'Meyer design by contract' }), { text: ['done'] }, { text: ['Meyer coined it [1]; [C1] uses GSN.'] }])
+      const cap = captureSSE()
+      const result = await runTurn({ ...ctxFor(fakeTarget(f.baseURL)), exploreWeb: true }, createSink(cap.stream as never))
+      expect(JSON.stringify(f.requests[0])).toContain('web_search')
+      expect(searxng.queries).toContain('Meyer design by contract')
+      const answer = JSON.stringify(f.requests.at(-1))
+      expect(answer).toContain('## Web results')
+      expect(answer).toContain('[1] Result 1')
+      expect(cap.ofType('sources')[0].sources).toHaveLength(3)
+      expect(result.sources).toHaveLength(3)
+    } finally {
+      undo()
+      searxng.stop()
+    }
+  })
+
+  test('offers no web search unless opted in, nor in a locked turn', async () => {
+    sqlite.run('DELETE FROM space_files WHERE space_id = ?', [COLL])
+    seedDoc('gsn.txt', ['This paper argues with GSN patterns.'])
+    for (const extra of [{}, { exploreWeb: true, locked: true }]) {
+      const f = serve([{ text: ['done'] }, { text: ['Answer.'] }])
+      await runTurn({ ...ctxFor(fakeTarget(f.baseURL)), ...extra }, createSink(captureSSE().stream as never))
+      expect(JSON.stringify(f.requests[0])).not.toContain('web_search')
+    }
+  })
 
   test('lists, reads and notes, then answers from its notes', async () => {
     sqlite.run('DELETE FROM space_files WHERE space_id = ?', [COLL])

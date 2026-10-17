@@ -34,6 +34,8 @@ export interface TurnContext {
   collections: string[]
   /** How the collections are read; `auto` lets the small model choose (collection-mode.ts). Absent: excerpts. */
   collectionMode?: CollectionMode
+  /** Explore may also search the web (turn/collection-web.ts); ignored in a locked turn. */
+  exploreWeb?: boolean
   includeFileIds?: string[]
   includeMemoryIds?: string[]
   notesFirst?: boolean

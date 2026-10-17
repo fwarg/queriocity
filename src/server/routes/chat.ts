@@ -59,6 +59,8 @@ const chatSchema = z.object({
   modelId: z.string().max(80).optional(),
   /** How the picked collections are read (shared/context.ts); auto when absent. */
   collectionMode: z.enum(COLLECTION_MODES).optional(),
+  /** Explore may also search the web; ignored when the turn is locked. */
+  exploreWeb: z.boolean().optional(),
   /** Library resources whose text the client attached to the message, so a confidential one locks the turn. */
   attachedFileIds: z.array(z.string()).max(20).optional(),
 })
@@ -195,7 +197,7 @@ chatRouter.post('/:sessionId/approve', zValidator('json', z.object({
 
 chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', chatSchema), async (c) => {
   const userId = c.get('userId') as string
-  const { sessionId, spaceId, messages: requestMsgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, collectionIds, ephemeral, regenerate, notesFirst, modelId, collectionMode = 'auto', attachedFileIds } = c.req.valid('json')
+  const { sessionId, spaceId, messages: requestMsgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, collectionIds, ephemeral, regenerate, notesFirst, modelId, collectionMode = 'auto', attachedFileIds, exploreWeb } = c.req.valid('json')
   const sid = sessionId ?? randomUUID()
   const msgs = requestMsgs.map(({ role, content }) => ({ role, content }))
 
@@ -265,7 +267,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   if (cached) return streamRun(c, run, out => replayCached(out, cached, { ...tail, model: answerModelOf(resolved, focusMode) }, resolved))
 
   const ctx: TurnContext = {
-    userId, sid, msgs, focusMode, spaceId, locked, spaceWrites, settings, customPrompt, collections, collectionMode,
+    userId, sid, msgs, focusMode, spaceId, locked, spaceWrites, settings, customPrompt, collections, collectionMode, exploreWeb: exploreWeb === true && !locked,
     // Pins travel as indices, so the messages handed to the model carry nothing but role and content.
     pinned: new Set(requestMsgs.flatMap((m, i) => m.pinned ? [i] : [])),
     models: resolved.models,
