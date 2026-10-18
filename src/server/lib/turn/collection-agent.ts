@@ -18,7 +18,7 @@ import { AnswerStream } from './stream-answer.ts'
 import { startWeb, webSearchTool, webBlock, EXPLORE_WEB_INSTRUCTION, type WebSearching } from './collection-web.ts'
 import { saveNoteTool, savedNotesBlock, EXPLORE_NOTES_INSTRUCTION, type SavedNote } from './collection-notes.ts'
 import { toStoredSource } from './research.ts'
-import { userQueryOf, withKeepalive, documentSet, type TurnContext, type TurnResult, type TurnSink } from './context.ts'
+import { userQueryOf, withInstructions, withKeepalive, documentSet, type TurnContext, type TurnResult, type TurnSink } from './context.ts'
 
 /** Explore mode: an agent reads the picked collections for a targeted question — lists the
  *  documents, searches them, reads the parts that matter, and notes what it finds — then the answer
@@ -220,7 +220,7 @@ async function answerFromNotes(ctx: TurnContext, sink: TurnSink, model: ModelTar
   const documents = '## The documents\n' + docs.map(d => `- [${d.label}] ${d.filename}`).join('\n')
   const noted = notes.length ? `## Notes from exploring them\n${notes.map(formatNote).join('\n')}` : '## Notes from exploring them\n(nothing was noted)'
   const system = joinMemoryBlocks(
-    ANSWER_SYSTEM + (ctx.customPrompt ? `\n\nAdditional instructions:\n${ctx.customPrompt}` : ''),
+    ANSWER_SYSTEM + withInstructions(ctx),
     await userMemoryBlockIfEnabled(ctx.userId, ctx.settings, query),
     await spaceMemoryOnly(ctx, query),
     // The documents' own [7]-style references, rewritten so they cannot pass for the web's [1]….

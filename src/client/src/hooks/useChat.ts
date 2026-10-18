@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react'
 import { streamChat, stopChat, fetchRelatedQuestions } from '../lib/api.ts'
 import { hasAttachment, type ContextReport, type CollectionMode } from '@shared/context.ts'
+import type { ActiveRecipe } from '@shared/recipes.ts'
 import type { Message } from '../lib/api.ts'
 import { useT } from '../lib/i18n.tsx'
 import { ChatRun, type FocusMode } from './chat-run.ts'
@@ -23,6 +24,8 @@ interface UseChatOptions {
   exploreWeb?: boolean
   /** Explore may save notes to the library. */
   exploreNotes?: boolean
+  /** The recipe whose chip is in the input; every message carries it. */
+  recipe?: ActiveRecipe
   includeMemoryIds?: string[]
   spaceId?: string
   /** User setting; when false no related-questions call is made at all. */
@@ -96,9 +99,9 @@ export function useChat(options: UseChatOptions) {
     setBusy(true)
     setAnswerTime('')
     const chatRun = new ChatRun({ t, setStreaming, setStreamingThinking, setStatus, setSteps, setAnswerTime, setApproval, setContext, rafRef, liveSessionRef, onSessionCreated }, text, focusMode)
-    const { searchCategories, includeFileIds, includeMemoryIds, collectionIds, spaceId, notesFirst, collectionMode, exploreWeb, exploreNotes } = options
+    const { searchCategories, includeFileIds, includeMemoryIds, collectionIds, spaceId, notesFirst, collectionMode, exploreWeb, exploreNotes, recipe } = options
     try {
-      for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId, undefined, searchCategories, includeFileIds, includeMemoryIds, collectionIds, regenerating, notesFirst, modelId, collectionMode, attachedFileIds, exploreWeb, exploreNotes)) {
+      for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId, undefined, searchCategories, includeFileIds, includeMemoryIds, collectionIds, regenerating, notesFirst, modelId, collectionMode, attachedFileIds, exploreWeb, exploreNotes, recipe)) {
         chatRun.handle(chunk)
       }
     } catch (err: unknown) {

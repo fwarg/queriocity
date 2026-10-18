@@ -233,6 +233,10 @@ export const customTemplates = sqliteTable('custom_templates', {
   description: text('description'),
   promptText: text('prompt_text').notNull(),
   suggestedMode: text('suggested_mode').notNull().default('balanced'),
+  /** A recipe's parts (lib/recipes.ts), JSON; null on a plain template. */
+  instructionNoteIds: text('instruction_note_ids'),
+  exampleFileIds: text('example_file_ids'),
+  settings: text('settings'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 })
@@ -556,6 +560,9 @@ function initSchema() {
     description    TEXT,
     prompt_text    TEXT NOT NULL,
     suggested_mode TEXT NOT NULL DEFAULT 'balanced',
+    instruction_note_ids TEXT,
+    example_file_ids TEXT,
+    settings       TEXT,
     created_at     INTEGER NOT NULL,
     updated_at     INTEGER NOT NULL
   )`)
@@ -642,6 +649,9 @@ function initSchema() {
   try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN generated_by TEXT') } catch {}
   try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN verified_at INTEGER') } catch {}
   try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN status TEXT') } catch {}
+  try { sqlite.run('ALTER TABLE custom_templates ADD COLUMN instruction_note_ids TEXT') } catch {}
+  try { sqlite.run('ALTER TABLE custom_templates ADD COLUMN example_file_ids TEXT') } catch {}
+  try { sqlite.run('ALTER TABLE custom_templates ADD COLUMN settings TEXT') } catch {}
   sqlite.run(`CREATE TABLE IF NOT EXISTS tags (
     id      TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

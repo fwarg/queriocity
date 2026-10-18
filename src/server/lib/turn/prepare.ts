@@ -9,7 +9,7 @@ import { notesRagBudget } from '../rag-settings.ts'
 import { buildMemoryBlock, buildChatFileBlock, buildCollectionBlock, buildNotesBlock, userMemoryBlockIfEnabled, joinMemoryBlocks } from '../memory.ts'
 import { contextCharBudget } from '../trim-messages.ts'
 import { hasAttachment } from '../../../shared/context.ts'
-import { userQueryOf, type TurnContext, type TurnMessage } from './context.ts'
+import { userQueryOf, additionalInstructions, type TurnContext, type TurnMessage } from './context.ts'
 
 /** Token budget for the collections picked this request, or 0 when none are.
  *
@@ -70,7 +70,7 @@ export function thinkingFor(ctx: TurnContext) {
 
 /** Context left for prefetched page text once the system prompt and history are counted. */
 function urlBudgetChars(ctx: TurnContext, contextTokens: number, memoryBlock: string): number {
-  const estSystemChars = 500 + (memoryBlock?.length ?? 0) + (ctx.customPrompt?.length ?? 0)
+  const estSystemChars = 500 + (memoryBlock?.length ?? 0) + (additionalInstructions(ctx)?.length ?? 0)
   const estMsgsChars = ctx.msgs.reduce((s, m) => s + m.content.length, 0)
   return Math.max(0, contextCharBudget(contextTokens) - estSystemChars - estMsgsChars)
 }

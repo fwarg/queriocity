@@ -7,7 +7,7 @@ import { buildMemoryBlock, buildCollectionBlock, buildNotesBlock, userMemoryBloc
 import { trimMessages, CONTEXT_RESERVE_FRACTION } from '../trim-messages.ts'
 import { collectionRagBudget } from './prepare.ts'
 import { AnswerStream } from './stream-answer.ts'
-import { userQueryOf, type TurnContext, type TurnResult, type TurnSink } from './context.ts'
+import { userQueryOf, withInstructions, type TurnContext, type TurnResult, type TurnSink } from './context.ts'
 
 /** Flash mode: one model call, no search, answering from memory and picked documents only. */
 export async function runFlashTurn(ctx: TurnContext, sink: TurnSink): Promise<TurnResult> {
@@ -18,7 +18,7 @@ export async function runFlashTurn(ctx: TurnContext, sink: TurnSink): Promise<Tu
   const { block, fileSources } = await flashBlocks(ctx)
   if (fileSources.length > 0) await sink.emit({ type: 'file_sources', sources: fileSources })
   const system = FLASH_SYSTEM
-    + (ctx.customPrompt ? `\n\nAdditional instructions:\n${ctx.customPrompt}` : '')
+    + withInstructions(ctx)
     + (block ? '\n\n' + block : '')
   const history = trimMessages(ctx.msgs, Math.floor(ctx.models.flash.contextTokens * CONTEXT_RESERVE_FRACTION), system, ctx.pinned)
   await sink.context(history.report)

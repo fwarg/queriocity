@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, type FormEvent, type KeyboardEvent } from 'react'
-import { Send, Paperclip, X, Square, LayoutGrid, ChevronDown, ChevronUp, NotebookPen, Library, EyeOff } from 'lucide-react'
+import { Send, Paperclip, X, Square, LayoutGrid, ChevronDown, ChevronUp, NotebookPen, Library, EyeOff, BookMarked } from 'lucide-react'
 import { AI_SYSTEM_NOTICE_SHORT } from '../lib/ai-notice.ts'
-import { extractFileForContext, uploadFile, tagFileToSpace, fetchFiles, fetchNoteText, fetchSuggestions, type Resource } from '../lib/api.ts'
+import { extractFileForContext, uploadFile, tagFileToSpace, fetchFiles, fetchNoteText, fetchSuggestions, type Resource, type CustomTemplate } from '../lib/api.ts'
 import { Modal } from './Modal.tsx'
 import { TemplateSelector } from './TemplateSelector.tsx'
 import { ModelPicker } from './ModelPicker.tsx'
@@ -51,6 +51,9 @@ interface Props {
   onExploreNotesChange?: (on: boolean) => void
   /** Text to put in the message box, from outside it; a new `n` puts it in again. */
   seed?: { text: string; n: number }
+  /** The recipe whose chip is shown; every message carries it until the chip is removed. */
+  recipe?: CustomTemplate | null
+  onRecipeChange?: (recipe: CustomTemplate | null) => void
   /** "Notes first": answer from the user's own notes before the web. Offered once they have notes. */
   notesAvailable?: boolean
   notesFirst?: boolean
@@ -109,7 +112,7 @@ const CATEGORY_LABEL_KEYS: Record<SearchCategory, TranslationKey> = {
   tech: 'category.tech',
 }
 
-export function ChatInput({ models = [], modelId = '', defaultModel, onModelChange, onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, collections, selectedCollections, onCollectionsChange, collectionMode = 'auto', onCollectionModeChange, spaceResources = 0, exploreWeb = false, onExploreWebChange, exploreNotes = false, onExploreNotesChange, seed, notesAvailable = false, notesFirst = false, onNotesFirstChange, suggestionsEnabled, lockedSpace = false, chatLocked = false, hasHistory = false, related = [], onRelatedSelect, spaceId, onAddedToLibrary }: Props) {
+export function ChatInput({ models = [], modelId = '', defaultModel, onModelChange, onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, collections, selectedCollections, onCollectionsChange, collectionMode = 'auto', onCollectionModeChange, spaceResources = 0, exploreWeb = false, onExploreWebChange, exploreNotes = false, onExploreNotesChange, seed, recipe, onRecipeChange, notesAvailable = false, notesFirst = false, onNotesFirstChange, suggestionsEnabled, lockedSpace = false, chatLocked = false, hasHistory = false, related = [], onRelatedSelect, spaceId, onAddedToLibrary }: Props) {
   const t = useT()
   const confirm = useConfirm()
   const [value, setValue] = useState('')
@@ -219,6 +222,16 @@ export function ChatInput({ models = [], modelId = '', defaultModel, onModelChan
     onCollectionsChange(ids)
   }
 
+  /** Takes on a recipe's chip and the settings it names; a collection since deleted is dropped. */
+  async function applyRecipe(r: CustomTemplate) {
+    onRecipeChange?.(r)
+    const { collectionIds, collectionMode: readMode, exploreWeb: web } = r.settings
+    const ids = collectionIds?.filter(id => collections.some(c => c.id === id))
+    if (ids?.length) await pickCollections(ids)
+    if (readMode) onCollectionModeChange?.(readMode)
+    if (web !== undefined) onExploreWebChange?.(web)
+  }
+
   function handleSubmit(e: FormEvent) {
     e.preventDefault()
     const text = value.trim()
@@ -316,12 +329,13 @@ export function ChatInput({ models = [], modelId = '', defaultModel, onModelChan
       <div className={`overflow-hidden transition-all duration-300 flex flex-col gap-2 px-4 ${collapsed ? 'max-h-0' : 'max-h-[34rem] pb-4'}`}>
       {showTemplates && (
         <TemplateSelector
-          onSelect={(text, mode, whole) => {
+          onSelect={(text, mode, whole, picked) => {
             setValue(text)
             onFocusModeChange(mode)
             setShowTemplates(false)
             // Opened too, so the collection to read is picked where the switch is.
             if (whole && onCollectionModeChange) { onCollectionModeChange('whole'); setSourcesOpen(true) }
+            if (picked) applyRecipe(picked)
           }}
           onClose={() => setShowTemplates(false)}
         />
@@ -463,6 +477,7 @@ export function ChatInput({ models = [], modelId = '', defaultModel, onModelChan
           ))}
         </div>
       )}
+      {recipe && <RecipeChip recipe={recipe} onRemove={() => onRecipeChange?.(null)} />}
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {attachments.map((att, i) => (
@@ -608,8 +623,25 @@ function NotePicker({ onPick, onClose }: { onPick: (id: string) => void; onClose
   )
 }
 
+/** The active recipe. Warns, without blocking, when an instruction note is one nobody has reviewed:
+ *  a model-written style guide steers every answer of the chat. */
+function RecipeChip({ recipe, onRemove }: { recipe: CustomTemplate; onRemove: () => void }) {
+  const t = useT()
+  const unreviewed = recipe.instructions.some(n => n.trust === 'unreviewed' || n.trust === 'unknown')
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 text-xs">
+      <span className="inline-flex items-center gap-1 max-w-full px-2 py-1 rounded bg-teal-900 text-teal-100">
+        <BookMarked size={12} className="shrink-0" />
+        <span className="truncate">{t('recipe.chip', { name: recipe.name })}</span>
+        <button type="button" onClick={onRemove} aria-label={t('recipe.chipRemove')} className="shrink-0 text-teal-300 hover:text-white ml-0.5"><X size={12} /></button>
+      </span>
+      {unreviewed && <span className="text-amber-300">{t('recipe.unreviewed')}</span>}
+    </div>
+  )
+}
+
 /** Copy for each way of reading the picked collections, keyed by mode. */
-const COLLECTION_MODE_LABEL_KEYS: Record<CollectionMode, TranslationKey> = {
+export const COLLECTION_MODE_LABEL_KEYS: Record<CollectionMode, TranslationKey> = {
   auto: 'collection.mode.auto', excerpts: 'collection.mode.excerpts', whole: 'collection.mode.whole', explore: 'collection.mode.explore',
 }
 const COLLECTION_MODE_DESC_KEYS: Record<CollectionMode, TranslationKey> = {

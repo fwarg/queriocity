@@ -19,6 +19,9 @@ import { ownedCollectionIds } from '../lib/files/collections.ts'
 import { readsConfidential, trackLeftOut, parseLockedBy } from '../lib/files/confidential.ts'
 import { confidentialInScope } from '../lib/files/collection-coverage.ts'
 import { hasAttachment, COLLECTION_MODES, type ContextReport } from '../../shared/context.ts'
+import { MAX_EXAMPLES, MAX_INSTRUCTION_NOTES } from '../../shared/recipes.ts'
+import { recipePrompt } from '../lib/recipes.ts'
+import { contextCharBudget } from '../lib/trim-messages.ts'
 import { indexContents, deindexContent } from '../lib/chat-indexer.ts'
 import { ownsSpace, sessionOwnership } from '../lib/ownership.ts'
 import { isSpaceLocked } from '../lib/space-lock.ts'
@@ -65,6 +68,12 @@ const chatSchema = z.object({
   exploreNotes: z.boolean().optional(),
   /** Library resources whose text the client attached to the message, so a confidential one locks the turn. */
   attachedFileIds: z.array(z.string()).max(20).optional(),
+  /** The recipe whose chip is in the chat input (lib/recipes.ts); its resources lock the turn like attachments. */
+  recipe: z.object({
+    name: z.string().min(1).max(100),
+    instructionNoteIds: z.array(z.string()).max(MAX_INSTRUCTION_NOTES),
+    exampleFileIds: z.array(z.string()).max(MAX_EXAMPLES),
+  }).optional(),
 })
 
 export const chatRouter = new Hono<AppEnv>()
@@ -199,7 +208,7 @@ chatRouter.post('/:sessionId/approve', zValidator('json', z.object({
 
 chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', chatSchema), async (c) => {
   const userId = c.get('userId') as string
-  const { sessionId, spaceId, messages: requestMsgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, collectionIds, ephemeral, regenerate, notesFirst, modelId, collectionMode = 'auto', attachedFileIds, exploreWeb, exploreNotes } = c.req.valid('json')
+  const { sessionId, spaceId, messages: requestMsgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, collectionIds, ephemeral, regenerate, notesFirst, modelId, collectionMode = 'auto', attachedFileIds, exploreWeb, exploreNotes, recipe } = c.req.valid('json')
   const sid = sessionId ?? randomUUID()
   const msgs = requestMsgs.map(({ role, content }) => ({ role, content }))
 
@@ -213,7 +222,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   // Sorted so the cache key does not depend on the order the client happened to send.
   const collections = (await ownedCollectionIds(collectionIds ?? [], userId)).sort()
 
-  const { locked, spaceLocked, lockedBy } = await turnLock(sessionId, spaceId, { collectionIds: collections, fileIds: [...includeFileIds ?? [], ...attachedFileIds ?? []] })
+  const { locked, spaceLocked, lockedBy } = await turnLock(sessionId, spaceId, { collectionIds: collections, fileIds: [...includeFileIds ?? [], ...attachedFileIds ?? [], ...recipe?.instructionNoteIds ?? [], ...recipe?.exampleFileIds ?? []] })
   if (locked && focusMode === 'image') {
     return c.json({ error: 'Image generation is unavailable in a locked chat — it would send the prompt to the diffusion server.' }, 409)
   }
@@ -233,6 +242,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   const resolved = await resolveTurnModels({ userId, modelId, focusMode, locked, cloudAcknowledged: storedSettings.cloudAcknowledged === true })
   const settings = resolved.forceThinking ? { ...storedSettings, useThinking: true } : storedSettings
   const customPrompt = settings.customPrompt as string | undefined
+  const recipeText = recipe ? recipePrompt(userId, recipe, contextCharBudget(resolved.models.chat.contextTokens)) : undefined
   // Everything that changes the answer for the same question belongs here. `searchCategories`
   // picks which corpus is searched and `locked` removes web search entirely, so leaving either
   // out served the previous filter's answer to a question asked under a different one.
@@ -244,6 +254,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     // Whole-collection and explored answers are never stored, but must not be served an excerpt answer either.
     collections.length || (spaceId && (collectionMode === 'whole' || collectionMode === 'explore')) ? collectionMode : '',
     customPrompt ?? '',
+    recipeText ? recipeText.instructions + recipeText.examples : '',
     [...(searchCategories ?? [])].sort().join(','),
     locked ? 'locked' : '',
     // The model that actually answers, so a cloud answer is never replayed for a local request.
@@ -269,7 +280,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   if (cached) return streamRun(c, run, out => replayCached(out, cached, { ...tail, model: answerModelOf(resolved, focusMode) }, resolved))
 
   const ctx: TurnContext = {
-    userId, sid, msgs, focusMode, spaceId, locked, spaceWrites, settings, customPrompt, collections, collectionMode, exploreWeb: exploreWeb === true && !locked, exploreNotes: exploreNotes === true,
+    userId, sid, msgs, focusMode, spaceId, locked, spaceWrites, settings, customPrompt, recipe: recipeText, collections, collectionMode, exploreWeb: exploreWeb === true && !locked, exploreNotes: exploreNotes === true,
     // Pins travel as indices, so the messages handed to the model carry nothing but role and content.
     pinned: new Set(requestMsgs.flatMap((m, i) => m.pinned ? [i] : [])),
     models: resolved.models,

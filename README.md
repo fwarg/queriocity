@@ -867,6 +867,14 @@ Saved templates appear in the template picker under **Custom**. Each card has al
 
 Templates are stored per user in the database and persist across sessions.
 
+**Recipes.** The Studio's *Recipe (optional)* section turns a template into a recipe — the app's take on agent "skills", without scripts:
+
+- **Instruction notes** (up to 3): a style guide or a procedure. They go into the system prompt as instructions, ahead of *About you* and space memory where they conflict. A note acts as an instruction **only** through a recipe you picked — a note retrieval returns stays data, so a bad or injected note cannot steer answers.
+- **Examples** (up to 2): resources whose *form* to imitate — structure, tone, length, citation habits — never their facts. Each gets a share of the answering model's room; a long one is cut to its opening, where its form shows. In thorough mode only the writer sees them, not the researcher.
+- **Collections to read**, with a read mode and, for Explore, *Also search the web*.
+
+Picking a recipe fills the message box like any template, applies its settings, and puts a **Recipe: name** chip above the message box. Every message of that chat carries the recipe until you remove the chip; a new or other chat starts without it. Notes are referenced by id, so editing the style note changes the next answer. An instruction note you haven't reviewed (see *Authorship and review*) shows a warning beside the chip, without blocking. A confidential note or example locks the chat, as attaching it would. **▶ Run** in the Studio tries the whole recipe before it is saved; recipe cards in the picker carry a *recipe* badge.
+
 ---
 
 ## Settings

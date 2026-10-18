@@ -7,7 +7,7 @@ import { coverCollection } from '../files/collection-coverage.ts'
 import { trimMessages, meterBudgetChars, CONTEXT_RESERVE_FRACTION } from '../trim-messages.ts'
 import { thinkingFor, spaceMemoryOnly } from './prepare.ts'
 import { AnswerStream } from './stream-answer.ts'
-import { userQueryOf, withKeepalive, documentSet, type TurnContext, type TurnResult, type TurnSink } from './context.ts'
+import { userQueryOf, withInstructions, withKeepalive, documentSet, type TurnContext, type TurnResult, type TurnSink } from './context.ts'
 
 const COLLECTION_SYSTEM = `You work on a collection of documents the user selected, all of which are given below, together with anything the user attaches to their message (for instance a draft of their own).
 Do the task the user asks for, grounded in these documents. Do not invent what they do not say; say so when they do not cover something.
@@ -41,7 +41,7 @@ async function answerFromCollection(ctx: TurnContext, sink: TurnSink): Promise<T
   const model = answerModel(ctx)
   const query = userQueryOf(ctx.msgs)
   const head = joinMemoryBlocks(
-    COLLECTION_SYSTEM + (ctx.customPrompt ? `\n\nAdditional instructions:\n${ctx.customPrompt}` : ''),
+    COLLECTION_SYSTEM + withInstructions(ctx),
     await userMemoryBlockIfEnabled(ctx.userId, ctx.settings, query),
     await spaceMemoryOnly(ctx, query),
   )

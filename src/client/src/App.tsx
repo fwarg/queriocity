@@ -31,9 +31,9 @@ import {
   fetchSpaceMemories, createSpaceMemory, updateSpaceMemory, deleteSpaceMemory, compactSpaceMemories, recreateAllSpaceMemories, clearSpaceMemories,
   fetchChatIndexStatus, rebuildChatIndex, searchHistory,
   fetchSpaceFiles, tagFileToSpace, untagFileFromSpace, transformSpace,
-  fetchMonitors,
+  fetchMonitors, activeRecipe,
 } from './lib/api.ts'
-import type { AuthUser, Message, Resource, Space, SpaceKind, SpaceMemory, SpaceFile } from './lib/api.ts'
+import type { AuthUser, Message, Resource, Space, SpaceKind, SpaceMemory, SpaceFile, CustomTemplate } from './lib/api.ts'
 import { useChat } from './hooks/useChat.ts'
 import { useModelPicker } from './hooks/useModelPicker.ts'
 import { useLang, useT } from './lib/i18n.tsx'
@@ -105,6 +105,9 @@ export default function App() {
   const [collectionMode, setCollectionMode] = useState<CollectionMode>('auto')
   const [exploreWeb, setExploreWeb] = useState(false)
   const [exploreNotes, setExploreNotes] = useState(false)
+  // The recipe whose chip is in the input: it applies to every message of this chat until removed,
+  // and a new or other chat starts without it.
+  const [recipe, setRecipe] = useState<CustomTemplate | null>(null)
   // Text put into the message box from outside it (Compile into notes); `n` makes a repeat count.
   const [inputSeed, setInputSeed] = useState<{ text: string; n: number }>()
 
@@ -244,6 +247,7 @@ export default function App() {
     // Only an Explore turn reads it; the server also drops it when the turn is locked.
     exploreWeb: collectionMode === 'explore' && exploreWeb,
     exploreNotes: collectionMode === 'explore' && exploreNotes,
+    recipe: recipe ? activeRecipe(recipe) : undefined,
     includeMemoryIds: pinnedMemoryIds.length ? pinnedMemoryIds : undefined,
     spaceId: activeSpaceId ?? undefined,
     followUpSuggestions: currentUser?.settings?.followUpSuggestions !== false,
@@ -459,6 +463,7 @@ export default function App() {
     setCollectionMode('auto')
     setExploreWeb(false)
     setExploreNotes(false)
+    setRecipe(null)
   }
 
   function loadSession(id: string, title: string, addToHistory = true, fromMonitor = false) {
@@ -1788,6 +1793,8 @@ export default function App() {
               exploreNotes={exploreNotes}
               onExploreNotesChange={setExploreNotes}
               seed={inputSeed}
+              recipe={recipe}
+              onRecipeChange={setRecipe}
               spaceResources={spaces.find(sp => sp.id === activeSpaceId && sp.kind === 'space')?.resourceCount ?? 0}
               notesAvailable={files.some(f => f.kind === 'note')}
               notesFirst={notesFirst}

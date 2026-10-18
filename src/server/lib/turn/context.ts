@@ -6,6 +6,7 @@ import type { ModelTarget, TurnModels } from '../llm.ts'
 import type { SearchResult } from '../search/index.ts'
 import type { DocumentScope } from '../files/collection-coverage.ts'
 import type { ContextReport, CollectionMode } from '../../../shared/context.ts'
+import type { RecipePrompt } from '../recipes.ts'
 import { stepEvent, type ProgressStep } from '../progress.ts'
 
 export const KEEPALIVE_INTERVAL_MS = 15000
@@ -30,6 +31,8 @@ export interface TurnContext {
   spaceWrites?: boolean
   settings: Record<string, unknown>
   customPrompt?: string
+  /** The recipe whose chip is in the chat input (lib/recipes.ts). */
+  recipe?: RecipePrompt
   /** Owned collection ids, sorted. */
   collections: string[]
   /** How the collections are read; `auto` lets the small model choose (collection-mode.ts). Absent: excerpts. */
@@ -99,6 +102,19 @@ export async function withKeepalive<T>(sink: TurnSink, fn: () => Promise<T>): Pr
   } finally {
     clearInterval(timer)
   }
+}
+
+/** The user's custom prompt and the active recipe, for a system prompt's additional instructions.
+ *  A recipe's examples only reach the pass that writes the answer. */
+export function additionalInstructions(ctx: TurnContext, { examples = true } = {}): string | undefined {
+  const parts = [ctx.customPrompt?.trim(), ctx.recipe?.instructions, examples ? ctx.recipe?.examples : undefined].filter(Boolean)
+  return parts.length ? parts.join('\n\n') : undefined
+}
+
+/** `additionalInstructions` as a system-prompt suffix; empty when there are none. */
+export function withInstructions(ctx: TurnContext): string {
+  const extra = additionalInstructions(ctx)
+  return extra ? `\n\nAdditional instructions:\n${extra}` : ''
 }
 
 /** Latest user message, the query every relevance decision is made against. */

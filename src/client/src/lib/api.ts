@@ -1,7 +1,8 @@
 import type { Lang } from '@shared/i18n/index.ts'
 import type { Theme } from '@shared/theme.ts'
 import type { ContextReport } from '@shared/context.ts'
-import type { NoteStatus } from '@shared/note-trust.ts'
+import type { NoteStatus, NoteTrust } from '@shared/note-trust.ts'
+import type { ActiveRecipe, RecipeSettings } from '@shared/recipes.ts'
 import type { ApiErrorBody, ErrorCode } from '@shared/error-codes.ts'
 import type { LlmCatalogue, LlmAccess, UsageRow, AnswerModel, ModelChoices } from '@shared/llm-catalogue.ts'
 import type { CollectionMode } from '@shared/context.ts'
@@ -240,6 +241,7 @@ export async function* streamChat(
   attachedFileIds?: string[],
   exploreWeb?: boolean,
   exploreNotes?: boolean,
+  recipe?: ActiveRecipe,
 ): AsyncGenerator<{ type: string; [k: string]: unknown }> {
   const res = await fetch(`${BASE}/chat`, {
     method: 'POST',
@@ -268,6 +270,7 @@ export async function* streamChat(
       ...(attachedFileIds?.length ? { attachedFileIds } : {}),
       ...(exploreWeb ? { exploreWeb: true } : {}),
       ...(exploreNotes ? { exploreNotes: true } : {}),
+      ...(recipe ? { recipe } : {}),
     }),
     signal,
   })
@@ -1284,15 +1287,28 @@ export interface CustomTemplate {
   description?: string
   promptText: string
   suggestedMode: 'flash' | 'balanced' | 'thorough' | 'image'
+  /** A recipe's parts (shared/recipes.ts); empty on a plain template. */
+  instructions: Array<{ id: string; title: string; trust: NoteTrust }>
+  examples: Array<{ id: string; title: string }>
+  settings: RecipeSettings
   createdAt: number
 }
+
+export type CustomTemplateInput = Pick<CustomTemplate, 'name' | 'description' | 'promptText' | 'suggestedMode' | 'settings'> & {
+  instructionNoteIds: string[]
+  exampleFileIds: string[]
+}
+
+/** What a chat request carries for a recipe's chip. */
+export const activeRecipe = (t: CustomTemplate): ActiveRecipe =>
+  ({ name: t.name, instructionNoteIds: t.instructions.map(n => n.id), exampleFileIds: t.examples.map(e => e.id) })
 
 export async function fetchCustomTemplates(): Promise<CustomTemplate[]> {
   const res = await fetch(`${BASE}/templates`)
   return res.json()
 }
 
-export async function createCustomTemplate(t: Omit<CustomTemplate, 'id' | 'createdAt'>): Promise<CustomTemplate> {
+export async function createCustomTemplate(t: CustomTemplateInput): Promise<CustomTemplate> {
   const res = await fetch(`${BASE}/templates`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1305,12 +1321,17 @@ export async function createCustomTemplate(t: Omit<CustomTemplate, 'id' | 'creat
   return res.json()
 }
 
-export async function updateCustomTemplate(id: string, t: Partial<Omit<CustomTemplate, 'id' | 'createdAt'>>): Promise<void> {
-  await fetch(`${BASE}/templates/${id}`, {
+export async function updateCustomTemplate(id: string, t: Partial<CustomTemplateInput>): Promise<CustomTemplate> {
+  const res = await fetch(`${BASE}/templates/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(t),
   })
+  if (!res.ok) {
+    const { error } = await res.json().catch(() => ({ error: 'Update failed' }))
+    throw new Error(error ?? 'Update failed')
+  }
+  return res.json()
 }
 
 export async function deleteCustomTemplate(id: string): Promise<void> {
