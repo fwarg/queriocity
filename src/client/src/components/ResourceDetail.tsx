@@ -8,6 +8,8 @@ import { LocalGraph } from './LocalGraph.tsx'
 import { RelatedResources } from './RelatedResources.tsx'
 import { LinkSuggestions } from './LinkSuggestions.tsx'
 import { SplitNotesDialog } from './SplitNotesDialog.tsx'
+import { NoteTrustSection } from './NoteTrust.tsx'
+import { NoteRevisions } from './NoteRevisions.tsx'
 import {
   fetchResource, fetchCustomTemplates, fetchSpaces, renameResource, setResourceConfidential, setResourceTags, tagFileToSpace, transformResource, untagFileFromSpace,
   type CustomTemplate, type ResourceDetail as Detail, type ResourceRef, type Space, type TransformOperation,
@@ -123,6 +125,12 @@ export function ResourceDetail({ id, onBack, onChanged, onOpen, onOpenChat, onTa
         </Section>
       )}
 
+      {isNote && (
+        <Section title={t('trust.title')}>
+          <NoteTrustSection note={detail} onChanged={changed} />
+        </Section>
+      )}
+
       <Section title={t('resource.summary')}>
         {detail.summary
           ? <p className="text-sm text-gray-300">{detail.summary}</p>
@@ -195,6 +203,8 @@ export function ResourceDetail({ id, onBack, onChanged, onOpen, onOpenChat, onTa
       <IndexedExcerpts chunks={detail.chunks} />
 
       {detail.digests.length > 0 && <Digests digests={detail.digests} />}
+
+      {isNote && <NoteRevisions noteId={detail.id} version={detail.updatedAt} onRestored={changed} />}
 
       {editing && (
         <NoteEditor
@@ -602,6 +612,7 @@ function TransformPanel({ id, sourceTitle, onSaved }: { id: string; sourceTitle:
           // cannot travel that far. Editable like the rest, since it is only a first line.
           initialBody={`> ${t('resource.derivedFromLine', { operation: result.label, source: sourceTitle })}\n\n${result.content}`}
           derivedFrom={id}
+          author="model"
           onClose={() => setSaving(false)}
           onSaved={() => { setSaving(false); setResult(null); onSaved() }}
         />

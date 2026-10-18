@@ -313,6 +313,31 @@ describe('explore turn', () => {
     }
   })
 
+  test('with notes opted in, saves a cited draft note to the library and tells the answer; not offered otherwise', async () => {
+    sqlite.run('DELETE FROM space_files WHERE space_id = ?', [COLL])
+    seedDoc('gsn.txt', ['This paper argues with GSN patterns.'])
+    const f = serve([
+      call('read_part', { doc: 'C1', part: 1 }), call('note', { doc: 'C1', part: 1, finding: 'uses GSN' }),
+      call('save_note', { title: 'GSN in the papers', body: 'The paper argues with GSN patterns [C1].' }),
+      { text: ['done'] }, { text: ['Saved a note.'] },
+    ])
+    const cap = captureSSE()
+    const result = await runTurn({ ...ctxFor(fakeTarget(f.baseURL)), exploreNotes: true, locked: true }, createSink(cap.stream as never))
+    const [saved] = result.savedNoteIds ?? []
+    const note = sqlite.query('SELECT body, generated_by AS by, status, confidential, origin_session_id AS sid FROM uploaded_files WHERE id = ?').get(saved) as Record<string, unknown>
+    // The chat of origin is set once the answer is stored (linkNotesToAnswer): a new chat has no row yet.
+    expect(note).toMatchObject({ status: 'draft', confidential: 1, sid: null })
+    expect(note.by).toBeTruthy()
+    expect(note.body).toContain('- **[C1]** gsn.txt')
+    expect(cap.ofType('saved_notes')[0].notes).toEqual([{ id: saved, title: 'GSN in the papers' }])
+    expect(JSON.stringify(f.requests.at(-1))).toContain('Notes saved to the user')
+    sqlite.run('DELETE FROM uploaded_files WHERE id = ?', [saved])
+
+    const plain = serve([{ text: ['done'] }, { text: ['Answer.'] }])
+    await runTurn(ctxFor(fakeTarget(plain.baseURL)), createSink(captureSSE().stream as never))
+    expect(JSON.stringify(plain.requests[0])).not.toContain('save_note')
+  })
+
   test('lists, reads and notes, then answers from its notes', async () => {
     sqlite.run('DELETE FROM space_files WHERE space_id = ?', [COLL])
     seedDoc('gsn.txt', ['This paper argues with GSN patterns.'])

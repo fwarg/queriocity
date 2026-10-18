@@ -43,6 +43,8 @@ export class ChatRun {
   readonly sources: Source[] = []
   readonly fileSources: FileSource[] = []
   readonly images: Array<{ url: string; alt: string }> = []
+  // Notes an Explore turn saved to the library, listed under the answer.
+  private savedNotes: Array<{ id: string; title: string }> = []
   storedIds: { user?: string; assistant?: string } = {}
   aborted = false
   private readonly blockedEngines: Array<{ engine: string; reason: string }> = []
@@ -82,6 +84,7 @@ export class ChatRun {
       thinking: this.thinking || undefined,
       images: this.images.length > 0 ? this.images : undefined,
       model: this.model,
+      savedNotes: this.savedNotes.length > 0 ? this.savedNotes : undefined,
     }
   }
 
@@ -118,6 +121,7 @@ export class ChatRun {
         return true
       case 'sources': this.sources.push(...(chunk.sources as Source[])); return true
       case 'file_sources': this.fileSources.push(...(chunk.sources as FileSource[])); return true
+      case 'saved_notes': this.savedNotes = chunk.notes as Array<{ id: string; title: string }>; return true
       case 'search_warning': this.blockedEngines.push(...(chunk.engines as Array<{ engine: string; reason: string }>)); return true
       case 'model':
         this.setModel({ id: chunk.id as string, label: chunk.label as string, kind: chunk.kind as AnswerModel['kind'], provider: chunk.provider as string })

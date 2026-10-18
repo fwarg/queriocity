@@ -184,6 +184,14 @@ export const uploadedFiles = sqliteTable('uploaded_files', {
    *  owner-checked, and simply shows nothing once the chat is gone. */
   originSessionId: text('origin_session_id'),
   originMessageId: text('origin_message_id'),
+  /** Who wrote a note: `human`, or the label of the model that wrote it. Null means unknown (notes
+   *  saved before this was recorded) and for files. See shared/note-trust.ts. */
+  generatedBy: text('generated_by'),
+  /** When the owner marked the note reviewed; null when not. Notes are per user, so the reviewer is
+   *  always the owner. */
+  verifiedAt: integer('verified_at', { mode: 'timestamp' }),
+  /** draft | stable | deprecated, after OKF's lifecycle. Null means stable. */
+  status: text('status', { enum: ['draft', 'stable', 'deprecated'] }),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }),
 })
@@ -365,6 +373,9 @@ function initSchema() {
       derived_from TEXT REFERENCES uploaded_files(id) ON DELETE SET NULL,
       origin_session_id TEXT,
       origin_message_id TEXT,
+      generated_by TEXT,
+      verified_at INTEGER,
+      status     TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER
     );
@@ -628,6 +639,9 @@ function initSchema() {
   try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN origin TEXT') } catch {}
   try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN origin_session_id TEXT') } catch {}
   try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN origin_message_id TEXT') } catch {}
+  try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN generated_by TEXT') } catch {}
+  try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN verified_at INTEGER') } catch {}
+  try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN status TEXT') } catch {}
   sqlite.run(`CREATE TABLE IF NOT EXISTS tags (
     id      TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -656,6 +670,17 @@ function initSchema() {
     tag     TEXT,
     PRIMARY KEY (user_id, key)
   )`)
+  // Earlier versions of a note, kept when an agent rewrites one (lib/files/agent-notes.ts) and when
+  // a version is restored, so either can be undone. Newest few per note.
+  sqlite.run(`CREATE TABLE IF NOT EXISTS note_revisions (
+    id         TEXT PRIMARY KEY,
+    note_id    TEXT NOT NULL REFERENCES uploaded_files(id) ON DELETE CASCADE,
+    title      TEXT NOT NULL,
+    body       TEXT NOT NULL,
+    actor      TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  )`)
+  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_note_revisions_note ON note_revisions(note_id, created_at)`)
   // Suggested links the user turned down, so the same pair is not proposed again.
   sqlite.run(`CREATE TABLE IF NOT EXISTS link_dismissals (
     src_id TEXT NOT NULL REFERENCES uploaded_files(id) ON DELETE CASCADE,

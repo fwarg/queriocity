@@ -434,6 +434,21 @@ by picking it from the notebook icon beside the paperclip in the chat input; and
 attached that way — a file's text is stored solely as overlapping excerpts, so injecting it would
 repeat passages; the paperclip already covers sending a document whole.
 
+**Authorship and review.** Every note records who wrote it: you, or the model that wrote it (an
+answer saved as a note, a transform, the parts of a split, and notes Explore saves). The note's
+*Authorship* section says which, and a model's note stays marked *unreviewed* until you click **Mark
+reviewed** (or tick the box when saving an answer). Editing a note does not count as a review: a fixed
+typo is not a checked claim. Notes saved before this was recorded show *author unknown*; **I wrote
+this** or **A model wrote this** settles it, once — a recorded author is never changed. A note also has a status — *current*,
+*draft* or *outdated* — and reviewing a draft makes it current. The Resources list marks unreviewed,
+unknown, draft and outdated notes. [Notes first](#notes-first) leaves outdated notes out and tells the
+model which of the notes it was given you have not vouched for. Only notes have this: a file's text is
+extracted, not written, so there is nothing to review in it.
+
+**Earlier versions.** When the model reworks one of its own drafts (Explore's *Save notes*, below), the
+version it replaced is kept under *Earlier versions* in the note, with **Restore**. Restoring keeps the
+current text as a version in turn. The newest ten are kept.
+
 ### Links and tags
 
 Notes can link to each other, Zettelkasten-style, and any resource can carry tags.
@@ -873,7 +888,7 @@ Open **Settings** from the bottom of the sidebar. Settings are saved per user.
 | **Font size** | UI font size: Small (15 px), Normal (17 px), Large (19 px), XL (21 px). Sizes scale up automatically on narrow viewports. |
 | **Theme** | Dark (default), Light, or E-ink: black on white with no animations, for e-paper readers such as Boox. Colour stays only where it carries meaning (graph topics, mode badges, errors), in strong hues that read as tints on a colour panel and distinct greys on a mono one. Remembered in the browser too, so the sign-in screen uses it. |
 | **Timezone** | IANA timezone (e.g. `Europe/Stockholm`) used when scheduling monitors at a specific hour of the day. Defaults to server time (UTC in Docker) if not set. |
-| **Export** | **Download vault (.zip)**: your notes and resources as an Obsidian vault. Tick *Also include every chat and the images generated in them* for a full export: `Chats/` holds one markdown file per chat (each turn under *You* / *Assistant*, sources listed), `Images/` the generated images they show, and a note's *saved from chat* links to its chat file. The app keeps only the text of uploads, not the original files. One markdown file per item named by its title, so `[[links]]` resolve (titles with characters a file name can't hold are renamed, links rewritten to match and the original kept as an alias); `Notes/` and `Resources/` folders; tags, spaces and collections, dates, source URL, "made from" and the chat a note was saved from in YAML frontmatter. Uploaded files and pages are included as their extracted text. |
+| **Export** | Pick a format and **Download (.zip)**: *Obsidian vault* (your notes and resources), or *Open Knowledge Format* for an [OKF v0.2](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) bundle for AI agents instead: the same files with OKF frontmatter (`type` Note / Document / Web page, `title`, `description` from the summary, `resource` for a page's URL, `sources` keyed by citation marker, `generated` and `verified` from a note's authorship and review, `status`), bundle-absolute markdown links in place of `[[wikilinks]]`, citations as footnotes (`[^1]`), and an `index.md` in every folder (the root one carries `okf_version`). Obsidian opens it but follows the links less well. In either format, tick *Also include every chat and the images generated in them* for a full export: `Chats/` holds one markdown file per chat (each turn under *You* / *Assistant*, sources listed), `Images/` the generated images they show, and a note's *saved from chat* links to its chat file (in OKF, each chat file has `type: Chat` and is listed in `Chats/index.md`). The app keeps only the text of uploads, not the original files. One markdown file per item named by its title, so `[[links]]` resolve (titles with characters a file name can't hold are renamed, links rewritten to match and the original kept as an alias); `Notes/` and `Resources/` folders; tags, spaces and collections, dates, source URL, "made from" and the chat a note was saved from in YAML frontmatter. Uploaded files and pages are included as their extracted text. |
 | **Password** | Change your password. Requires the current one; the new one needs 8+ characters with upper and lower case, a digit and a symbol. Changing it signs out your other devices but keeps the current session. |
 
 ### Languages
@@ -1222,6 +1237,17 @@ has read the documents, so a query could carry their text out; an uncertain one 
 clear one refused. The search budget is that of a balanced question. Like the collection picks, the
 choice resets on a new chat. A model that
 handles many tool calls reliably works best; on a small local model, prefer *Whole collection*.
+
+**Saving notes is opt-in too.** Ticking *Save notes* beside the Explore chip gives the agent a
+`save_note` tool: it keeps findings as notes in your library, one idea per note, and every note must
+cite the documents it draws on (`[C1]`, listed under *Sources* with the documents' titles). A note it
+saves is marked as written by the model, unreviewed, and a draft. It may rework its own unreviewed
+drafts, keeping the old text as an [earlier version](#notes), but never a note you wrote or reviewed: a
+note of that title is left alone and the draft is saved beside it as *Title (draft)*, linking to it. In a
+locked chat the notes are confidential. The step limit doubles while saving notes, and the answer lists
+the notes saved. **Compile into notes**, on a collection's page (or a space's), opens a new chat set up
+for this — Explore with *Save notes* on, and a prompt to go through every document and save its main
+ideas — for you to check and send.
 
 *Summarize resources* is offered in spaces only: it saves a memory, which only a space's chats read.
 In a collection, use *Analyze in chat*, whose per-document reading is cached and reused.

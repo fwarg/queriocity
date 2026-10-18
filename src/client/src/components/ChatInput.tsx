@@ -46,6 +46,11 @@ interface Props {
   /** Explore may also search the web; offered only while Explore is chosen and the turn is not locked. */
   exploreWeb?: boolean
   onExploreWebChange?: (on: boolean) => void
+  /** Explore may save notes to the library, marked as the model's drafts; offered while Explore is chosen. */
+  exploreNotes?: boolean
+  onExploreNotesChange?: (on: boolean) => void
+  /** Text to put in the message box, from outside it; a new `n` puts it in again. */
+  seed?: { text: string; n: number }
   /** "Notes first": answer from the user's own notes before the web. Offered once they have notes. */
   notesAvailable?: boolean
   notesFirst?: boolean
@@ -104,10 +109,12 @@ const CATEGORY_LABEL_KEYS: Record<SearchCategory, TranslationKey> = {
   tech: 'category.tech',
 }
 
-export function ChatInput({ models = [], modelId = '', defaultModel, onModelChange, onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, collections, selectedCollections, onCollectionsChange, collectionMode = 'auto', onCollectionModeChange, spaceResources = 0, exploreWeb = false, onExploreWebChange, notesAvailable = false, notesFirst = false, onNotesFirstChange, suggestionsEnabled, lockedSpace = false, chatLocked = false, hasHistory = false, related = [], onRelatedSelect, spaceId, onAddedToLibrary }: Props) {
+export function ChatInput({ models = [], modelId = '', defaultModel, onModelChange, onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, collections, selectedCollections, onCollectionsChange, collectionMode = 'auto', onCollectionModeChange, spaceResources = 0, exploreWeb = false, onExploreWebChange, exploreNotes = false, onExploreNotesChange, seed, notesAvailable = false, notesFirst = false, onNotesFirstChange, suggestionsEnabled, lockedSpace = false, chatLocked = false, hasHistory = false, related = [], onRelatedSelect, spaceId, onAddedToLibrary }: Props) {
   const t = useT()
   const confirm = useConfirm()
   const [value, setValue] = useState('')
+  // Keyed on `n`, so the same text can be put in twice.
+  useEffect(() => { if (seed) setValue(seed.text) }, [seed?.n])
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [extractStatus, setExtractStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [extractError, setExtractError] = useState('')
@@ -165,6 +172,7 @@ export function ChatInput({ models = [], modelId = '', defaultModel, onModelChan
     ...collections.filter(c => selectedCollections.includes(c.id)).map(c => c.name),
     ...(focusMode !== 'image' && (selectedCollections.length > 0 ? readMode !== 'auto' : spaceReadable && readMode !== 'excerpts') ? [t(COLLECTION_MODE_LABEL_KEYS[readMode])] : []),
     ...(focusMode !== 'image' && readMode === 'explore' && exploreWeb && !lockedSpace ? [t('collection.exploreWeb')] : []),
+    ...(focusMode !== 'image' && readMode === 'explore' && exploreNotes ? [t('collection.exploreNotes')] : []),
   ]
   // "All" is a statement about categories only, and unqualified it reads as "everything" once
   // collections share the button — no collection is picked by default.
@@ -414,6 +422,7 @@ export function ChatInput({ models = [], modelId = '', defaultModel, onModelChan
               onChange={pickCollections}
               spaceReadable={spaceReadable}
               web={!lockedSpace && onExploreWebChange ? { on: exploreWeb, onChange: onExploreWebChange } : undefined}
+              notes={onExploreNotesChange ? { on: exploreNotes, onChange: onExploreNotesChange } : undefined}
               mode={focusMode !== 'image' ? readMode : undefined}
               onModeChange={onCollectionModeChange}
             />
@@ -616,13 +625,15 @@ function shownReadMode(mode: CollectionMode, picked: boolean): CollectionMode {
 /** The collection chips, and once one is picked — or in a space chat, always — how to read them.
  *  `mode` is undefined where the choice does not apply (image mode). The chosen mode's description is
  *  shown, not only in a tooltip: a phone never shows a title. */
-function CollectionsGroup({ collections, selected, onChange, spaceReadable, web, mode, onModeChange }: {
+function CollectionsGroup({ collections, selected, onChange, spaceReadable, web, notes, mode, onModeChange }: {
   collections: Array<{ id: string; name: string; offline?: boolean }>
   selected: string[]
   onChange: (ids: string[]) => void
   spaceReadable: boolean
   /** The Explore web opt-in; undefined where it is not offered (a locked turn). */
   web?: { on: boolean; onChange: (on: boolean) => void }
+  /** The Explore note-saving opt-in. */
+  notes?: { on: boolean; onChange: (on: boolean) => void }
   mode?: CollectionMode
   onModeChange?: (mode: CollectionMode) => void
 }) {
@@ -671,6 +682,12 @@ function CollectionsGroup({ collections, selected, onChange, spaceReadable, web,
               <label className="ml-1 inline-flex items-center gap-1 text-xs text-gray-400 cursor-pointer" title={t('collection.exploreWebDesc')}>
                 <input type="checkbox" checked={web.on} onChange={e => web.onChange(e.target.checked)} className="accent-amber-600 cursor-pointer" />
                 {t('collection.exploreWeb')}
+              </label>
+            )}
+            {mode === 'explore' && notes && (
+              <label className="ml-1 inline-flex items-center gap-1 text-xs text-gray-400 cursor-pointer" title={t('collection.exploreNotesDesc')}>
+                <input type="checkbox" checked={notes.on} onChange={e => notes.onChange(e.target.checked)} className="accent-amber-600 cursor-pointer" />
+                {t('collection.exploreNotes')}
               </label>
             )}
           </div>

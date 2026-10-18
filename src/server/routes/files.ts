@@ -15,10 +15,12 @@ import { linksOf } from '../lib/files/links.ts'
 import { exportVault } from '../lib/files/obsidian-export.ts'
 import { acceptLink, dismissLink, suggestLinks } from '../lib/files/link-suggest.ts'
 import { proposeSplit } from '../lib/files/note-split.ts'
+import { noteRevisions, restoreRevision } from '../lib/files/agent-notes.ts'
 import { collectResourceText } from '../lib/files/resource-context.ts'
 import { storedDigests } from '../lib/files/collection-digests.ts'
 import { confidentialSql, readsConfidential } from '../lib/files/confidential.ts'
 import { operationPrompt, transformPrompt, TRANSFORM_MAX_CHARS, TRANSFORM_OPERATIONS } from '../lib/files/transforms.ts'
+import { NOTE_STATUSES } from '../../shared/note-trust.ts'
 import { getChatModel } from '../lib/llm.ts'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { fetchUrl, urlLabel } from '../lib/fetch-url.ts'
@@ -112,6 +114,9 @@ filesRouter.get('/', async (c) => {
     summary: uploadedFiles.summary,
     topics: uploadedFiles.topics,
     origin: uploadedFiles.origin,
+    generatedBy: uploadedFiles.generatedBy,
+    verifiedAt: uploadedFiles.verifiedAt,
+    status: uploadedFiles.status,
     // Confidential by its own flag or a confidential collection's: what the list marks.
     confidential: sql<number>`CASE WHEN ${sql.raw(confidentialSql('uploaded_files.id'))} THEN 1 ELSE 0 END`,
     createdAt: uploadedFiles.createdAt,
@@ -148,6 +153,7 @@ filesRouter.get('/', async (c) => {
     spaces: byFile.get(f.id) ?? [],
     createdAt: epochSeconds(f.createdAt),
     updatedAt: epochSeconds(f.updatedAt),
+    verifiedAt: epochSeconds(f.verifiedAt),
   })))
 })
 
@@ -177,9 +183,13 @@ const noteBody = z.object({
   title: z.string().min(1).max(200),
   body: z.string().min(1).max(100_000),
   tags: tagList.optional(),
+  reviewed: z.boolean(),
+  status: z.enum(NOTE_STATUSES),
 })
 
-filesRouter.post('/notes', zValidator('json', noteBody.extend({
+filesRouter.post('/notes', zValidator('json', noteBody.partial({ tags: true, reviewed: true, status: true }).extend({
+  author: z.enum(['human', 'model']).optional(),
+  model: z.string().max(200).optional(),
   derivedFrom: z.string().optional(),
   originSessionId: z.string().optional(),
   originMessageId: z.string().optional(),
@@ -193,7 +203,7 @@ filesRouter.post('/notes', zValidator('json', noteBody.extend({
   }
 })
 
-filesRouter.patch('/notes/:id', zValidator('json', noteBody.partial()), async (c) => {
+filesRouter.patch('/notes/:id', zValidator('json', noteBody.partial().extend({ author: z.enum(['human', 'model']).optional() })), async (c) => {
   const userId = c.get('userId') as string
   const id = c.req.param('id')
   const patch = c.req.valid('json')
@@ -208,6 +218,9 @@ filesRouter.patch('/notes/:id', zValidator('json', noteBody.partial()), async (c
       title: patch.title ?? existing.filename,
       body: patch.body ?? existing.body ?? '',
       tags: patch.tags,
+      author: patch.author,
+      reviewed: patch.reviewed,
+      status: patch.status,
     })
     return c.json({ ok: true })
   } catch (e) {
@@ -256,14 +269,16 @@ filesRouter.post('/tags/bulk', zValidator('json', z.object({
   return c.json({ tagged: addTagToResources(c.get('userId') as string, ids, path) })
 })
 
-/** The caller's library as an Obsidian vault (zip of markdown files), optionally with chats and images. */
+/** The caller's library as an Obsidian vault (zip of markdown files), optionally with chats and
+ *  images, or as an OKF bundle. */
 filesRouter.get('/export/obsidian', async (c) => {
-  // `?full=1` adds chats and generated images.
-  const zip = await exportVault(c.get('userId') as string, { full: c.req.query('full') === '1' })
+  // `?full=1` adds chats and generated images; `?okf=1` writes the OKF flavour.
+  const okf = c.req.query('okf') === '1'
+  const zip = await exportVault(c.get('userId') as string, { full: c.req.query('full') === '1', okf })
   const stamp = new Date().toISOString().slice(0, 10)
   return c.body(zip.buffer as ArrayBuffer, 200, {
     'Content-Type': 'application/zip',
-    'Content-Disposition': `attachment; filename="queriocity-vault-${stamp}.zip"`,
+    'Content-Disposition': `attachment; filename="queriocity-${okf ? 'okf' : 'vault'}-${stamp}.zip"`,
   })
 })
 
@@ -480,6 +495,9 @@ filesRouter.get('/:id', async (c) => {
     summary: resource.summary,
     topics: parseTopics(resource.topics),
     origin: resource.origin,
+    generatedBy: resource.generatedBy,
+    verifiedAt: epochSeconds(resource.verifiedAt),
+    status: resource.status,
     createdAt: epochSeconds(resource.createdAt),
     updatedAt: epochSeconds(resource.updatedAt),
     spaces: taggedSpaces,
@@ -487,6 +505,18 @@ filesRouter.get('/:id', async (c) => {
     chunks: chunks.map(ch => ch.content),
     digests: await storedDigests(resource.id),
   })
+})
+
+/** A note's earlier versions: what an agent replaced, and what a restore replaced. */
+filesRouter.get('/:id/revisions', async (c) => {
+  const resource = await ownedResource(c.req.param('id'), c.get('userId') as string)
+  if (!resource) return c.json({ error: 'Not found' }, 404)
+  return c.json(noteRevisions(resource.id))
+})
+
+filesRouter.post('/:id/revisions/:revisionId/restore', async (c) => {
+  const restored = await restoreRevision(c.get('userId') as string, c.req.param('id'), c.req.param('revisionId'))
+  return restored ? c.json({ ok: true }) : c.json({ error: 'Not found' }, 404)
 })
 
 /** A note's text, for attaching it to a message. Notes only: a file's full text is not stored, and

@@ -36,6 +36,8 @@ export interface TurnContext {
   collectionMode?: CollectionMode
   /** Explore may also search the web (turn/collection-web.ts); ignored in a locked turn. */
   exploreWeb?: boolean
+  /** Explore may save notes to the library (turn/collection-notes.ts). */
+  exploreNotes?: boolean
   includeFileIds?: string[]
   includeMemoryIds?: string[]
   notesFirst?: boolean
@@ -60,6 +62,8 @@ export interface TurnResult {
   cacheable: boolean
   /** The model that wrote the answer, when the mode alone does not say (see answerModelOf). */
   answeredBy?: ModelTarget
+  /** Notes the turn saved to the library, to be linked to the stored answer. */
+  savedNoteIds?: string[]
 }
 
 /** Typed writes onto the turn's event stream. */

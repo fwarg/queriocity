@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { EyeOff, Trash2, X } from 'lucide-react'
 import { NoteEditor } from './NoteEditor.tsx'
+import { NoteTrustBadge } from './NoteTrust.tsx'
 import { SectionHeader } from './SectionHeader.tsx'
 import { useConfirm } from './confirm.tsx'
 import { EmptyState, ListRow, PRIMARY_BTN, RowAction } from './ui.tsx'
@@ -208,6 +209,7 @@ export function ResourcesView({ resources, onChanged, openId, onOpenIdChange, on
                     {r.summary && <div className="text-xs text-gray-400 mt-0.5 line-clamp-2">{r.summary}</div>}
                     <div className="text-xs text-gray-500 mt-0.5">
                       {r.kind === 'note' ? t('note.kind') : r.mimeType} · {formatSize(r.size)} · {new Date((r.updatedAt ?? r.createdAt) * 1000).toLocaleDateString(lang)}
+                      <NoteTrustBadge resource={r} />
                     </div>
                     {/* Space and tag chips both narrow the list rather than opening the resource,
                         so they stop the row's own click — two grouping axes, one following projects

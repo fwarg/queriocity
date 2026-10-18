@@ -21,6 +21,8 @@ interface UseChatOptions {
   collectionMode?: CollectionMode
   /** Explore may also search the web. */
   exploreWeb?: boolean
+  /** Explore may save notes to the library. */
+  exploreNotes?: boolean
   includeMemoryIds?: string[]
   spaceId?: string
   /** User setting; when false no related-questions call is made at all. */
@@ -94,9 +96,9 @@ export function useChat(options: UseChatOptions) {
     setBusy(true)
     setAnswerTime('')
     const chatRun = new ChatRun({ t, setStreaming, setStreamingThinking, setStatus, setSteps, setAnswerTime, setApproval, setContext, rafRef, liveSessionRef, onSessionCreated }, text, focusMode)
-    const { searchCategories, includeFileIds, includeMemoryIds, collectionIds, spaceId, notesFirst, collectionMode, exploreWeb } = options
+    const { searchCategories, includeFileIds, includeMemoryIds, collectionIds, spaceId, notesFirst, collectionMode, exploreWeb, exploreNotes } = options
     try {
-      for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId, undefined, searchCategories, includeFileIds, includeMemoryIds, collectionIds, regenerating, notesFirst, modelId, collectionMode, attachedFileIds, exploreWeb)) {
+      for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId, undefined, searchCategories, includeFileIds, includeMemoryIds, collectionIds, regenerating, notesFirst, modelId, collectionMode, attachedFileIds, exploreWeb, exploreNotes)) {
         chatRun.handle(chunk)
       }
     } catch (err: unknown) {

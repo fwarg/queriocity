@@ -71,6 +71,7 @@ function label(step: LogStep, t: TFunction): string {
     case 'readPart':   return t('log.readPart', { part: step.detail ?? '' })
     case 'note':       return t('log.note', { count: step.count ?? 0 })
     case 'readNotes':  return t('log.readNotes', { count: step.count ?? 0 })
+    case 'savedNote':  return t('log.savedNote', { count: step.count ?? 0 })
     default:           return step.text
   }
 }

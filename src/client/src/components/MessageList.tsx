@@ -410,6 +410,8 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
                 initialBody={answerAsNoteBody(msg, t('note.sources'))}
                 originSessionId={sessionId}
                 originMessageId={msg.id}
+                author="model"
+                model={msg.model?.label}
                 onClose={() => setSavingNote(false)}
                 onSaved={(id, title) => {
                   setSavingNote(false)

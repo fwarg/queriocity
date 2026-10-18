@@ -29,6 +29,7 @@ import {
   APPROVAL_TIMEOUT_MS, type LiveRun,
 } from '../lib/stream-buffer.ts'
 import { deleteSupersededImages } from '../lib/image-store.ts'
+import { linkNotesToAnswer } from '../lib/files/agent-notes.ts'
 import { runTurn, createSink, toSearxngCategories, userQueryOf, documentSet, KEEPALIVE_INTERVAL_MS, type TurnContext } from '../lib/turn/index.ts'
 
 const SESSION_TITLE_MAX = 60
@@ -61,6 +62,7 @@ const chatSchema = z.object({
   collectionMode: z.enum(COLLECTION_MODES).optional(),
   /** Explore may also search the web; ignored when the turn is locked. */
   exploreWeb: z.boolean().optional(),
+  exploreNotes: z.boolean().optional(),
   /** Library resources whose text the client attached to the message, so a confidential one locks the turn. */
   attachedFileIds: z.array(z.string()).max(20).optional(),
 })
@@ -197,7 +199,7 @@ chatRouter.post('/:sessionId/approve', zValidator('json', z.object({
 
 chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', chatSchema), async (c) => {
   const userId = c.get('userId') as string
-  const { sessionId, spaceId, messages: requestMsgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, collectionIds, ephemeral, regenerate, notesFirst, modelId, collectionMode = 'auto', attachedFileIds, exploreWeb } = c.req.valid('json')
+  const { sessionId, spaceId, messages: requestMsgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, collectionIds, ephemeral, regenerate, notesFirst, modelId, collectionMode = 'auto', attachedFileIds, exploreWeb, exploreNotes } = c.req.valid('json')
   const sid = sessionId ?? randomUUID()
   const msgs = requestMsgs.map(({ role, content }) => ({ role, content }))
 
@@ -267,7 +269,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   if (cached) return streamRun(c, run, out => replayCached(out, cached, { ...tail, model: answerModelOf(resolved, focusMode) }, resolved))
 
   const ctx: TurnContext = {
-    userId, sid, msgs, focusMode, spaceId, locked, spaceWrites, settings, customPrompt, collections, collectionMode, exploreWeb: exploreWeb === true && !locked,
+    userId, sid, msgs, focusMode, spaceId, locked, spaceWrites, settings, customPrompt, collections, collectionMode, exploreWeb: exploreWeb === true && !locked, exploreNotes: exploreNotes === true,
     // Pins travel as indices, so the messages handed to the model carry nothing but role and content.
     pinned: new Set(requestMsgs.flatMap((m, i) => m.pinned ? [i] : [])),
     models: resolved.models,
@@ -297,7 +299,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     }
     // The latest report is also stored with the chat, so the meter reappears when it is reopened.
     // Read now, not before the turn: the hosting provider is known only once the calls report it.
-    await finishTurn(out, { ...tail, fullContent: result.content, sources: result.sources, fileSources: result.fileSources, context: sink.lastContext, aborted, model, onStored: id => attachAnswer(resolved, id) })
+    await finishTurn(out, { ...tail, fullContent: result.content, sources: result.sources, fileSources: result.fileSources, context: sink.lastContext, aborted, model, onStored: id => { attachAnswer(resolved, id); linkNotesToAnswer(userId, result.savedNoteIds ?? [], sid, id) } })
   })
 })
 

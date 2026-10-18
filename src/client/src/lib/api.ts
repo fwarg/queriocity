@@ -1,6 +1,7 @@
 import type { Lang } from '@shared/i18n/index.ts'
 import type { Theme } from '@shared/theme.ts'
 import type { ContextReport } from '@shared/context.ts'
+import type { NoteStatus } from '@shared/note-trust.ts'
 import type { ApiErrorBody, ErrorCode } from '@shared/error-codes.ts'
 import type { LlmCatalogue, LlmAccess, UsageRow, AnswerModel, ModelChoices } from '@shared/llm-catalogue.ts'
 import type { CollectionMode } from '@shared/context.ts'
@@ -238,6 +239,7 @@ export async function* streamChat(
   collectionMode?: CollectionMode,
   attachedFileIds?: string[],
   exploreWeb?: boolean,
+  exploreNotes?: boolean,
 ): AsyncGenerator<{ type: string; [k: string]: unknown }> {
   const res = await fetch(`${BASE}/chat`, {
     method: 'POST',
@@ -265,6 +267,7 @@ export async function* streamChat(
       ...(collectionMode && (collectionIds?.length || spaceId) ? { collectionMode } : {}),
       ...(attachedFileIds?.length ? { attachedFileIds } : {}),
       ...(exploreWeb ? { exploreWeb: true } : {}),
+      ...(exploreNotes ? { exploreNotes: true } : {}),
     }),
     signal,
   })
@@ -936,6 +939,11 @@ export interface Resource {
   /** Where it came from: the URL for an ingested page, the original filename for an upload, null
    *  for a note. Never edited — `filename` is a renameable title, this is the record of the source. */
   origin: string | null
+  /** A note's author: `human` or a model's label; null when unknown, and for files. */
+  generatedBy: string | null
+  /** When the owner marked the note reviewed. */
+  verifiedAt: number | null
+  status: NoteStatus | null
   createdAt: number
   updatedAt: number | null
 }
@@ -966,6 +974,10 @@ export interface ResourceDetail extends Resource {
 }
 
 export interface NoteOptions {
+  /** `model` for text a model wrote; `model` names it, else the default chat model is assumed. */
+  author?: 'human' | 'model'
+  model?: string
+  reviewed?: boolean
   derivedFrom?: string
   originSessionId?: string
   originMessageId?: string
@@ -1029,13 +1041,28 @@ export async function renameResource(id: string, filename: string): Promise<void
   if (!res.ok) throw await apiError(res, 'Could not rename')
 }
 
-export async function updateNote(id: string, patch: { title?: string; body?: string; tags?: string[] }): Promise<void> {
+/** `author` sets the author of a note whose author is unknown; the server ignores it otherwise. */
+export async function updateNote(id: string, patch: { title?: string; body?: string; tags?: string[]; author?: 'human' | 'model'; reviewed?: boolean; status?: NoteStatus }): Promise<void> {
   const res = await fetch(`${BASE}/files/notes/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
   })
   if (!res.ok) throw await apiError(res, 'Could not save note')
+}
+
+export interface NoteRevision { id: string; title: string; body: string; actor: string; createdAt: number }
+
+/** A note's earlier versions, newest first. */
+export async function fetchNoteRevisions(id: string): Promise<NoteRevision[]> {
+  const res = await fetch(`${BASE}/files/${id}/revisions`)
+  if (!res.ok) throw await apiError(res, 'Could not load versions')
+  return res.json()
+}
+
+export async function restoreNoteRevision(id: string, revisionId: string): Promise<void> {
+  const res = await fetch(`${BASE}/files/${id}/revisions/${revisionId}/restore`, { method: 'POST' })
+  if (!res.ok) throw await apiError(res, 'Could not restore the version')
 }
 
 export async function setResourceTags(id: string, tags: string[]): Promise<string[]> {

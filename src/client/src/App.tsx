@@ -104,6 +104,9 @@ export default function App() {
   const [selectedCollections, setSelectedCollections] = useState<string[]>([])
   const [collectionMode, setCollectionMode] = useState<CollectionMode>('auto')
   const [exploreWeb, setExploreWeb] = useState(false)
+  const [exploreNotes, setExploreNotes] = useState(false)
+  // Text put into the message box from outside it (Compile into notes); `n` makes a repeat count.
+  const [inputSeed, setInputSeed] = useState<{ text: string; n: number }>()
 
   const [sessionId, setSessionId] = useState<string | undefined>()
   const [sessions, setSessions] = useState<Session[]>([])
@@ -240,6 +243,7 @@ export default function App() {
     collectionMode,
     // Only an Explore turn reads it; the server also drops it when the turn is locked.
     exploreWeb: collectionMode === 'explore' && exploreWeb,
+    exploreNotes: collectionMode === 'explore' && exploreNotes,
     includeMemoryIds: pinnedMemoryIds.length ? pinnedMemoryIds : undefined,
     spaceId: activeSpaceId ?? undefined,
     followUpSuggestions: currentUser?.settings?.followUpSuggestions !== false,
@@ -454,6 +458,7 @@ export default function App() {
     setSelectedCollections([])
     setCollectionMode('auto')
     setExploreWeb(false)
+    setExploreNotes(false)
   }
 
   function loadSession(id: string, title: string, addToHistory = true, fromMonitor = false) {
@@ -503,6 +508,20 @@ export default function App() {
   function analyzeSpace(spaceId: string) {
     newChat(spaceId)
     setCollectionMode('whole')
+  }
+
+  /** A new chat set up to explore the collection (or the space's resources) and save its main ideas
+   *  as notes; the prompt is put in the message box for the user to check and send. */
+  async function compileIntoNotes(id: string, isCollection: boolean) {
+    if (isCollection) {
+      const collection = spaces.find(sp => sp.id === id)
+      if (collection?.offline && !await confirm({ message: t('chat.lockConfirmNew', { name: collection.name }), confirmLabel: t('chat.lockConfirmAction') })) return
+      newChat()
+      setSelectedCollections([id])
+    } else newChat(id)
+    setCollectionMode('explore')
+    setExploreNotes(true)
+    setInputSeed({ text: t('collection.compilePrompt'), n: Date.now() })
   }
 
   /** Provenance front-matter for exported chats — EU AI Act Art 50(2).
@@ -1076,6 +1095,13 @@ export default function App() {
                       {t('collection.analyze')}
                     </button>
                     <button
+                      onClick={() => compileIntoNotes(currentSpaceId!, true)}
+                      title={t('collection.compileTitle')}
+                      className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-sm font-medium whitespace-nowrap"
+                    >
+                      {t('collection.compile')}
+                    </button>
+                    <button
                       onClick={handlePromoteCollection}
                       title={t('collection.promoteTitle')}
                       className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-sm font-medium whitespace-nowrap"
@@ -1092,6 +1118,15 @@ export default function App() {
                         className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-sm font-medium whitespace-nowrap"
                       >
                         {t('collection.analyze')}
+                      </button>
+                    )}
+                    {(spaces.find(s => s.id === currentSpaceId)?.resourceCount ?? 0) > 0 && (
+                      <button
+                        onClick={() => compileIntoNotes(currentSpaceId!, false)}
+                        title={t('collection.compileTitle')}
+                        className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-sm font-medium whitespace-nowrap"
+                      >
+                        {t('collection.compile')}
                       </button>
                     )}
                     <button
@@ -1750,6 +1785,9 @@ export default function App() {
               onCollectionModeChange={setCollectionMode}
               exploreWeb={exploreWeb}
               onExploreWebChange={setExploreWeb}
+              exploreNotes={exploreNotes}
+              onExploreNotesChange={setExploreNotes}
+              seed={inputSeed}
               spaceResources={spaces.find(sp => sp.id === activeSpaceId && sp.kind === 'space')?.resourceCount ?? 0}
               notesAvailable={files.some(f => f.kind === 'note')}
               notesFirst={notesFirst}

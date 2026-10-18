@@ -139,6 +139,26 @@ describe('full Obsidian export', () => {
     expect(full).toContain('Chats/Bees.md')
     expect(full).toContain('## You\n\nDraw a bee\n\n## Assistant\n\nHere: ![bee](../Images/bee-1.png)\n\n- **[1]** [Bees](https://bees.example)')
     expect(full).toContain('saved_from_chat: "[[Bees]]"')
+    expect(full).not.toContain('type: "Chat"')
+    const okf = new TextDecoder().decode(new Uint8Array(await (await call('/export/obsidian?full=1&okf=1')).arrayBuffer()))
+    expect(okf).toContain('type: "Chat"')
+    expect(okf).toContain('saved_from_chat: "/Chats/Bees.md"')
+  })
+})
+
+describe('OKF export', () => {
+  test('writes OKF frontmatter, markdown links, index files, and keeps reserved names free', async () => {
+    await createNote({ title: 'index', body: 'Named like a reserved file.' })
+    await createNote({ title: 'Answer', body: 'See [[index]] [1].\n\n- **[1]** [Site](https://x.example)', author: 'model', model: 'GLM' })
+
+    const okf = new TextDecoder().decode(new Uint8Array(await (await call('/export/obsidian?okf=1')).arrayBuffer()))
+    expect(okf).toContain('Notes/index (2).md')
+    expect(okf).toContain('okf_version: "0.2"')
+    expect(okf).toContain('type: "Note"')
+    expect(okf).toContain('generated: {"by":"queriocity/GLM"')
+    expect(okf).toContain('sources: [{"id":"1","resource":"https://x.example","title":"Site"}]')
+    expect(okf).toContain('See [index](/Notes/index%20(2).md) [^1].')
+    expect(okf).toContain('Notes/index.md')
   })
 })
 

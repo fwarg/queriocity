@@ -9,6 +9,7 @@ import { rerank, rerankEnabled } from './reranker.ts'
 import { ragTopK, ragMinRelevance } from './rag-settings.ts'
 import { searchCollections } from './files/collections.ts'
 import { withoutConfidential } from './files/confidential.ts'
+import { trustByNote, trustInstruction } from './files/note-trust.ts'
 import { splitGroupedCitations, asDocumentReferences } from '../../shared/citations.ts'
 
 export interface MemorySource { url: string; title: string }
@@ -224,10 +225,14 @@ export async function buildNotesBlock(userId: string, query: string, ragBudget: 
     console.error('  [memory] notes RAG failed:', e)
     return { block: '', fileSources: [] }
   }
-  const rows = [...hits, ...linkedNoteOpenings(userId, [...new Set(hits.map(h => h.fileId))], includeConfidential)]
+  const found = [...hits, ...linkedNoteOpenings(userId, [...new Set(hits.map(h => h.fileId))], includeConfidential)]
+  // Deprecated notes are kept for links and history, not as what the user currently holds true.
+  const trust = trustByNote([...new Set(found.map(r => r.fileId))])
+  const rows = found.filter(r => trust.get(r.fileId)?.status !== 'deprecated')
   const rendered = renderFileBlock(rows, ragBudget, 'Your own notes (most relevant first, then notes they link with)', 'N', 'notes')
   if (!rendered.block) return rendered
-  return { ...rendered, block: `${rendered.block}
+  const caution = trustInstruction(rendered.fileSources)
+  return { ...rendered, block: `${rendered.block}${caution ? `\n\n${caution}` : ''}
 
 The user asked for an answer from their own notes first. Base the answer on the notes above; search the web only for what they do not cover, and make clear which parts come from the notes and which from elsewhere.` }
 }

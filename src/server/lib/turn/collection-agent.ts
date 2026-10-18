@@ -16,6 +16,7 @@ import { trimMessages, meterBudgetChars, CONTEXT_RESERVE_FRACTION } from '../tri
 import { thinkingFor, spaceMemoryOnly } from './prepare.ts'
 import { AnswerStream } from './stream-answer.ts'
 import { startWeb, webSearchTool, webBlock, EXPLORE_WEB_INSTRUCTION, type WebSearching } from './collection-web.ts'
+import { saveNoteTool, savedNotesBlock, EXPLORE_NOTES_INSTRUCTION, type SavedNote } from './collection-notes.ts'
 import { toStoredSource } from './research.ts'
 import { userQueryOf, withKeepalive, documentSet, type TurnContext, type TurnResult, type TurnSink } from './context.ts'
 
@@ -54,16 +55,19 @@ async function exploreAndAnswer(ctx: TurnContext, sink: TurnSink): Promise<TurnR
   const fileSources = docs.map(d => ({ title: `[${d.label}] ${d.filename}`, url: `file:${d.fileId}`, label: d.label }))
   if (fileSources.length) await sink.emit({ type: 'file_sources', sources: fileSources })
   const gathered: Gathered = { notes: [], seen: new Map(), reads: new Map(), queries: [], locked: ctx.locked }
-  const maxSteps = Number(await getAppSetting('collection_explore_max_steps', DEFAULT_EXPLORE_MAX_STEPS))
+  // Saving notes means writing as well as reading: twice the steps.
+  const maxSteps = Number(await getAppSetting('collection_explore_max_steps', DEFAULT_EXPLORE_MAX_STEPS)) * (ctx.exploreNotes ? 2 : 1)
   const overview = await firstLook(splitAttachments(userQueryOf(ctx.msgs)).text, docs, gathered)
   const web = await startWeb(ctx)
-  const { steps, endedEarly } = await explore(ctx, sink, model, docs, gathered, overview, maxSteps, web)
+  const saved: SavedNote[] | undefined = ctx.exploreNotes ? [] : undefined
+  const { steps, endedEarly } = await explore(ctx, sink, model, docs, gathered, overview, maxSteps, web, saved)
   const { notes } = gathered
   await sink.emit({ type: 'exploration', steps, notes: notes.length, endedEarly })
   if (web?.results.length) await sink.emit({ type: 'sources', sources: web.results })
-  const content = await answerFromNotes(ctx, sink, model, docs, gathered, web)
-  console.log(`  [explore] ${steps} steps, ${notes.length} notes, ${gathered.seen.size} passages seen${web ? `, ${web.results.length} web results` : ''}${endedEarly ? ', ended early' : ''}, ${Date.now() - t0}ms, ${content.length} chars`)
-  return { content, sources: (web?.results ?? []).map(toStoredSource), fileSources, cacheable: false, answeredBy: model }
+  if (saved?.length) await sink.emit({ type: 'saved_notes', notes: saved })
+  const content = await answerFromNotes(ctx, sink, model, docs, gathered, web, saved)
+  console.log(`  [explore] ${steps} steps, ${notes.length} notes, ${gathered.seen.size} passages seen${web ? `, ${web.results.length} web results` : ''}${saved ? `, ${saved.length} saved to the library` : ''}${endedEarly ? ', ended early' : ''}, ${Date.now() - t0}ms, ${content.length} chars`)
+  return { content, sources: (web?.results ?? []).map(toStoredSource), fileSources, cacheable: false, answeredBy: model, savedNoteIds: saved?.map(s => s.id) }
 }
 
 /** The documents in scope, labelled C1… by filename, without their text. */
@@ -73,9 +77,13 @@ export function collectionIndex(scope: string[] | DocumentScope, includeConfiden
 
 /** The tool loop. Ends when the model stops calling tools, at `maxSteps`, or on an error — the last
  *  two count as ending early, and the answer is then written from whatever was gathered. */
-async function explore(ctx: TurnContext, sink: TurnSink, model: ModelTarget, docs: Doc[], gathered: Gathered, overview: string, maxSteps: number, web?: WebSearching) {
-  const system = EXPLORE_SYSTEM + (web ? EXPLORE_WEB_INSTRUCTION : '') + overview
-  const tools: ToolSet = { ...exploreTools(ctx, sink, docs, gathered), ...(web && { web_search: webSearchTool(ctx, sink, web, gathered) }) }
+async function explore(ctx: TurnContext, sink: TurnSink, model: ModelTarget, docs: Doc[], gathered: Gathered, overview: string, maxSteps: number, web?: WebSearching, saved?: SavedNote[]) {
+  const system = EXPLORE_SYSTEM + (web ? EXPLORE_WEB_INSTRUCTION : '') + (saved ? EXPLORE_NOTES_INSTRUCTION : '') + overview
+  const tools: ToolSet = {
+    ...exploreTools(ctx, sink, docs, gathered),
+    ...(web && { web_search: webSearchTool(ctx, sink, web, gathered) }),
+    ...(saved && { save_note: saveNoteTool(ctx, sink, model, docs, saved) }),
+  }
   const history = trimMessages(ctx.msgs, Math.floor(model.contextTokens * CONTEXT_RESERVE_FRACTION), system, ctx.pinned)
   let step = 0
   let readsBefore = 0
@@ -205,7 +213,7 @@ export function compactReads(messages: ModelMessage[]): ModelMessage[] {
 }
 
 /** The answer, streamed, from the notes; "writing" starts with its first output. */
-async function answerFromNotes(ctx: TurnContext, sink: TurnSink, model: ModelTarget, docs: Doc[], gathered: Gathered, web?: WebSearching): Promise<string> {
+async function answerFromNotes(ctx: TurnContext, sink: TurnSink, model: ModelTarget, docs: Doc[], gathered: Gathered, web?: WebSearching, saved: SavedNote[] = []): Promise<string> {
   const { notes } = gathered
   const query = userQueryOf(ctx.msgs)
   const reads = await readsBlock(gathered, Math.min(READ_MAX_CHARS, Math.floor(meterBudgetChars(model.contextTokens) * READ_MAX_SHARE)))
@@ -218,6 +226,7 @@ async function answerFromNotes(ctx: TurnContext, sink: TurnSink, model: ModelTar
     // The documents' own [7]-style references, rewritten so they cannot pass for the web's [1]….
     asDocumentReferences(joinMemoryBlocks(documents, noted, seenBlock(gathered.seen), reads.block, evidenceBlock(gathered, reads.included))),
     webBlock(web),
+    savedNotesBlock(saved),
   )
   await sink.step({ kind: 'readNotes', count: notes.length })
   const history = trimMessages(ctx.msgs, Math.floor(model.contextTokens * CONTEXT_RESERVE_FRACTION), system, ctx.pinned)

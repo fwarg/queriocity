@@ -20,16 +20,20 @@ interface Props {
   /** The chat and answer this note is saved from. Recorded once, at creation. */
   originSessionId?: string
   originMessageId?: string
+  /** `model` when the initial text is a model's (an answer, a transform); `model` names it. */
+  author?: 'model'
+  model?: string
   onClose: () => void
   onSaved: (id: string, title: string) => void
 }
 
 /** The one place a note is written, used for a blank note, an edit, and an answer saved from a chat. */
-export function NoteEditor({ id, initialTitle = '', initialBody = '', initialTags = [], derivedFrom, originSessionId, originMessageId, onClose, onSaved }: Props) {
+export function NoteEditor({ id, initialTitle = '', initialBody = '', initialTags = [], derivedFrom, originSessionId, originMessageId, author, model, onClose, onSaved }: Props) {
   const t = useT()
   const [title, setTitle] = useState(initialTitle)
   const [body, setBody] = useState(initialBody)
   const [tags, setTags] = useState(initialTags)
+  const [reviewed, setReviewed] = useState(false)
   const linking = useWikilinkInsert(body, setBody)
   const [preview, setPreview] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -46,7 +50,7 @@ export function NoteEditor({ id, initialTitle = '', initialBody = '', initialTag
         await updateNote(id, { title: title.trim(), body: body.trim(), tags })
         onSaved(id, title.trim())
       } else {
-        const created = await createNote(title.trim(), body.trim(), { derivedFrom, originSessionId, originMessageId, tags })
+        const created = await createNote(title.trim(), body.trim(), { derivedFrom, originSessionId, originMessageId, tags, author, model, reviewed })
         onSaved(created.id, title.trim())
       }
     } catch (err: unknown) {
@@ -110,6 +114,13 @@ export function NoteEditor({ id, initialTitle = '', initialBody = '', initialTag
         {t('tags.title')}
         <TagEditor tags={tags} onChange={setTags} />
       </div>
+
+      {author === 'model' && !id && (
+        <label className="flex items-center gap-2 text-xs text-gray-400">
+          <input type="checkbox" checked={reviewed} onChange={e => setReviewed(e.target.checked)} />
+          {t('note.reviewedOnSave')}
+        </label>
+      )}
 
       {error && <p className="text-xs text-red-400">{error}</p>}
 
