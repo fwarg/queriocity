@@ -8,7 +8,8 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { Hono } from 'hono'
 import { startFakeEmbeddings } from '../lib/test-support/fake-embeddings.ts'
 import { envOverride } from '../lib/test-support/env-override.ts'
-import { db, sqlite, users, chatSessions, messages, setAppSetting, EMBED_DIMS } from '../lib/db.ts'
+import { db, sqlite, users, chatSessions, messages, uploadedFiles, setAppSetting, EMBED_DIMS } from '../lib/db.ts'
+import { readStoredZip, okfViolations } from '../lib/test-support/okf-conformance.ts'
 import { filesRouter } from './files.ts'
 import { signToken, AUTH_COOKIE } from '../lib/auth.ts'
 
@@ -159,6 +160,35 @@ describe('OKF export', () => {
     expect(okf).toContain('sources: [{"id":"1","resource":"https://x.example","title":"Site"}]')
     expect(okf).toContain('See [index](/Notes/index%20(2).md) [^1].')
     expect(okf).toContain('Notes/index.md')
+  })
+
+  test('a full bundle conforms to OKF v0.2 §11', async () => {
+    const now = new Date()
+    await db.insert(messages).values({ id: 'conf-q', sessionId: 'tags-chat', role: 'user', content: 'Hello', createdAt: now })
+    await db.insert(uploadedFiles).values({ id: 'conf-file', userId: OWNER, filename: 'paper.pdf', mimeType: 'application/pdf', size: 1, kind: 'file', body: 'Text.', summary: 'A paper.', createdAt: now, updatedAt: now })
+    await createNote({ title: 'log', body: 'Named like the other reserved file, linking [[Nowhere]].' })
+    await createNote({ title: 'Answer', body: 'Cites [1].\n\n- **[1]** [Site](https://x.example)', author: 'model', model: 'GLM' })
+
+    const files = readStoredZip(new Uint8Array(await (await call('/export/obsidian?full=1&okf=1')).arrayBuffer()))
+    expect([...files.keys()]).toEqual(expect.arrayContaining(['index.md', 'Notes/index.md', 'Resources/index.md', 'Chats/index.md']))
+    expect(okfViolations(files)).toEqual([])
+  })
+
+  test('the conformance check catches what breaks a bundle', () => {
+    const broken = new Map([
+      ['index.md', '---\nokf_version: "0.2"\n---\n\n# Contents\n\n* [Notes](Notes/)\n* [Gone](Gone/)'],
+      ['Notes/index.md', '---\ntitle: x\n---\n\nNo heading\n* [A](A.md)'],
+      ['Notes/A.md', '---\ntitle: "A"\n---\n\nNo type.'],
+      ['Notes/B.md', 'No frontmatter.'],
+    ])
+    expect(okfViolations(broken)).toEqual([
+      'index.md: entry links nowhere: Gone/',
+      'Notes/index.md: frontmatter other than a root okf_version: title',
+      'Notes/index.md: does not start with a section heading',
+      'Notes/index.md: not an index entry: No heading',
+      'Notes/A.md: no non-empty type',
+      'Notes/B.md: no frontmatter block',
+    ])
   })
 })
 
