@@ -11,7 +11,7 @@ import { envOverride } from '../test-support/env-override.ts'
 
 const { db, sqlite, users, uploadedFiles, chatSessions, setAppSetting, EMBED_DIMS } = await import('../db.ts')
 const { eq } = await import('drizzle-orm')
-const { saveNote, renameResource } = await import('./notes.ts')
+const { saveNote, renameResource, unlinkDeleted } = await import('./notes.ts')
 const { normaliseTag, setResourceTags, listTags, renameTag, deleteTag, resourceTagList, suggestedTags } = await import('./tags.ts')
 const { parseWikilinks, linksOf } = await import('./links.ts')
 
@@ -117,6 +117,15 @@ describe('wikilinks', () => {
     await renameResource(ME, target, 'Old name', 'New name')
     expect(await bodyOf(src)).toBe('See [[New name]] and [[New name|this]].')
     expect(linksOf(ME, target).backlinks.map(b => b.id)).toEqual([src])
+  })
+
+  test('unlinking a deleted note leaves plain text, an alias as its text, and other links alone', async () => {
+    const target = await note(ME, 'Doomed')
+    const other = await note(ME, 'Kept')
+    const src = await note(ME, 'Source', 'See [[doomed]], [[Doomed|this one]] and [[Kept]].')
+    await unlinkDeleted(ME, target, 'Doomed')
+    expect(await bodyOf(src)).toBe('See doomed, this one and [[Kept]].')
+    expect(linksOf(ME, src).links.map(l => l.target?.id ?? null)).toEqual([other])
   })
 
   test('renaming a note through saveNote relinks too', async () => {

@@ -457,7 +457,9 @@ Notes can link to each other, Zettelkasten-style, and any resource can carry tag
   by its title — or tap **Insert link** in the editor and pick one from a list, which works better on
   a phone; typing `[[` opens the same list. Matching ignores case. A link to a title nothing has
   yet is kept and shown as **Create note "…"**, so writing the link first and the note later works.
-  Renaming a resource rewrites `[[Old title]]` in every note linking to it. Code spans and blocks are
+  Renaming a resource rewrites `[[Old title]]` in every note linking to it. Deleting one leaves the
+  links to it dangling, so they reconnect if a resource with that title comes back; tick the option in
+  the delete dialog to turn them into plain text instead. Code spans and blocks are
   never parsed as links.
 - **Backlinks.** A resource's detail view lists what it **links to** and what is **linked from** it.
 - **Chat of origin.** A note saved from an answer remembers its chat and shows **Saved from chat**,

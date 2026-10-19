@@ -70,19 +70,29 @@ export function resolveDangling(userId: string, resourceId: string, title: strin
 
 const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
-/** Bodies of the user's notes that link to `resourceId`, with `[[oldTitle]]` rewritten to
- *  `[[newTitle]]` (aliases kept). The caller saves them; only changed bodies are returned. */
-export function bodiesRelinkedTo(userId: string, resourceId: string, oldTitle: string, newTitle: string): Array<{ id: string; title: string; body: string }> {
+/** Bodies of the user's notes that link to `resourceId`, with each `[[title]]` / `[[title|alias]]`
+ *  replaced by `rewrite(alias, written)`, `written` being the title as the link spelt it. The caller saves them; only changed bodies are returned. */
+function bodiesRewritten(userId: string, resourceId: string, title: string, rewrite: (alias: string | undefined, written: string) => string): Array<{ id: string; title: string; body: string }> {
   const sources = sqlite.query(`
     SELECT DISTINCT f.id AS id, f.filename AS title, f.body AS body FROM resource_links rl
     JOIN uploaded_files f ON f.id = rl.src_id
     WHERE rl.dst_id = ? AND f.user_id = ? AND f.kind = 'note'
   `).all(resourceId, userId) as Array<{ id: string; title: string; body: string | null }>
-  const pattern = new RegExp(`\\[\\[\\s*${escapeRegExp(oldTitle.trim())}\\s*(\\|[^\\[\\]\\n]*)?\\]\\]`, 'gi')
+  const pattern = new RegExp(`\\[\\[\\s*${escapeRegExp(title.trim())}\\s*(?:\\|([^\\[\\]\\n]*))?\\]\\]`, 'gi')
   return sources.flatMap(s => {
-    const body = (s.body ?? '').replace(pattern, (_m, alias: string | undefined) => `[[${newTitle}${alias ?? ''}]]`)
+    const body = (s.body ?? '').replace(pattern, (m: string, alias: string | undefined) => rewrite(alias, m.slice(2, -2).split('|')[0].trim()))
     return body !== s.body ? [{ id: s.id, title: s.title, body }] : []
   })
+}
+
+/** Linking bodies with `[[oldTitle]]` rewritten to `[[newTitle]]`, aliases kept. */
+export function bodiesRelinkedTo(userId: string, resourceId: string, oldTitle: string, newTitle: string) {
+  return bodiesRewritten(userId, resourceId, oldTitle, alias => `[[${newTitle}${alias !== undefined ? `|${alias}` : ''}]]`)
+}
+
+/** Linking bodies with `[[title]]` turned into plain text: the alias when it has one, else the title as written. */
+export function bodiesUnlinkedFrom(userId: string, resourceId: string, title: string) {
+  return bodiesRewritten(userId, resourceId, title, (alias, written) => alias?.trim() || written)
 }
 
 /** What a resource links to (notes only have outgoing links) and what links to it. */

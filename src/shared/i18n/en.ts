@@ -325,6 +325,7 @@ export const en = {
   'files.filterNone': 'No resources match this filter.',
   'files.deleteNamed': 'Delete resource "{name}"',
   'files.deleteConfirm': 'Delete "{name}"? Its excerpts are removed from every space it is tagged to.',
+  'files.deleteUnlink': 'Also turn [[{name}]] in other notes into plain text. Otherwise those links stay, and reconnect if a resource with this title comes back.',
 
   'space.kind': 'Space',
 

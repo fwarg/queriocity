@@ -118,12 +118,15 @@ export function ResourcesView({ resources, onChanged, openId, onOpenIdChange, on
   }
 
   async function handleDelete(resource: Resource) {
+    let unlink = false
     if (!await confirm({
       message: t('files.deleteConfirm', { name: resource.filename }),
       confirmLabel: t('common.delete'),
       danger: true,
+      // linkCount also counts outgoing links; with no incoming ones the option does nothing.
+      option: resource.linkCount ? { label: t('files.deleteUnlink', { name: resource.filename }), onChange: v => { unlink = v } } : undefined,
     })) return
-    deleteFile(resource.id).then(onChanged).catch(() => {})
+    deleteFile(resource.id, { unlink }).then(onChanged).catch(() => {})
   }
 
   return (

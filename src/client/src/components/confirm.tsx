@@ -7,6 +7,8 @@ interface ConfirmRequest {
   confirmLabel?: string
   /** Red button. For anything that destroys something or cannot be undone. */
   danger?: boolean
+  /** A checkbox under the message, unticked; its state is reported to `onChange`. */
+  option?: { label: string; onChange: (checked: boolean) => void }
 }
 
 type Ask = (req: ConfirmRequest) => Promise<boolean>
@@ -58,6 +60,12 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
             onClick={e => e.stopPropagation()}
           >
             <p className="text-sm text-gray-200 whitespace-pre-line">{pending.req.message}</p>
+            {pending.req.option && (
+              <label className="flex items-start gap-2 text-sm text-gray-300">
+                <input type="checkbox" className="mt-0.5" onChange={e => pending.req.option!.onChange(e.target.checked)} />
+                {pending.req.option.label}
+              </label>
+            )}
             <div className="flex justify-end gap-2">
               {/* Cancel takes focus: Enter on a dialog you did not expect should not confirm it. */}
               <button

@@ -1281,8 +1281,9 @@ export async function transformResource(
   return res.json()
 }
 
-export async function deleteFile(id: string): Promise<void> {
-  await fetch(`${BASE}/files/${id}`, { method: 'DELETE' })
+/** `unlink`: turn `[[links]]` to it in other notes into plain text instead of leaving them dangling. */
+export async function deleteFile(id: string, { unlink = false } = {}): Promise<void> {
+  await fetch(`${BASE}/files/${id}${unlink ? '?unlink=1' : ''}`, { method: 'DELETE' })
 }
 
 export interface CustomTemplate {

@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto'
 import { and, eq, sql } from 'drizzle-orm'
 import { chatSessions, db, uploadedFiles } from '../db.ts'
 import { indexResourceText } from './ingest.ts'
-import { addUnderHeading, bodiesRelinkedTo, parseWikilinks, resolveDangling, syncLinks } from './links.ts'
+import { addUnderHeading, bodiesRelinkedTo, bodiesUnlinkedFrom, parseWikilinks, resolveDangling, syncLinks } from './links.ts'
 import { wikilinkFor } from '../../../shared/wikilinks.ts'
 import { describeResource } from './summarise.ts'
 import { resourceTagList, setResourceTags } from './tags.ts'
@@ -159,6 +159,15 @@ async function relinkRenamed(userId: string, id: string, oldTitle: string, newTi
     await saveNote(userId, linking, { describe: false })
   }
   resolveDangling(userId, id, newTitle)
+}
+
+/** Turn `[[links]]` to a resource about to be deleted into plain text in the notes linking to it.
+ *  Asked for by the user on delete; otherwise the links are left dangling, to resolve again if a
+ *  resource with that title comes back. */
+export async function unlinkDeleted(userId: string, id: string, title: string): Promise<void> {
+  for (const linking of bodiesUnlinkedFrom(userId, id, title)) {
+    await saveNote(userId, linking, { describe: false })
+  }
 }
 
 /** Rewrites notes saved from answers in the older form, where every citation marker carried its own

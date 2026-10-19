@@ -7,7 +7,7 @@ import { relatedMinSimilarity, relatedMinRelevance, topicMinSimilarity } from '.
 import { MAX_TOPIC_RESOURCES, nameTopic, noteMap, topicMap } from '../lib/files/topics.ts'
 import { and, eq, sql } from 'drizzle-orm'
 import { ingestFile, extractFileText, isUsableText, ACCEPTED_MIME_TYPES } from '../lib/files/ingest.ts'
-import { saveNote, renameResource, addSeeAlso } from '../lib/files/notes.ts'
+import { saveNote, renameResource, addSeeAlso, unlinkDeleted } from '../lib/files/notes.ts'
 import { relatedResources } from '../lib/files/related.ts'
 import { globalGraph, linkCounts, localGraph } from '../lib/files/graph.ts'
 import { addTagToResources, deleteTag, listTags, MAX_TAG_CHARS, renameTag, resourceTagList, setResourceTags, suggestedTags, tagsByResource } from '../lib/files/tags.ts'
@@ -583,6 +583,7 @@ filesRouter.delete('/:id', async (c) => {
   // Before the row goes: file_chunk_meta has no foreign key and file_chunks is a vec0 table that
   // cannot have one, so nothing else would ever remove them.
   deleteFileChunks(fileId)
+  if (c.req.query('unlink') === '1') await unlinkDeleted(userId, fileId, file.filename)
   // Notes derived from this one keep their text and lose only the link. A database created before
   // notes existed has `derived_from` without its ON DELETE SET NULL — SQLite cannot add a
   // constraint to an existing table — so this is done here rather than left to the schema.

@@ -321,6 +321,7 @@ export const sv: Catalog = {
   'files.filterNone': 'Inga resurser matchar filtret.',
   'files.deleteNamed': 'Ta bort resursen ”{name}”',
   'files.deleteConfirm': 'Ta bort ”{name}”? Utdragen försvinner från alla utrymmen den är kopplad till.',
+  'files.deleteUnlink': 'Gör också om [[{name}]] i andra anteckningar till vanlig text. Annars ligger länkarna kvar och kopplas ihop igen om en resurs med den här titeln kommer tillbaka.',
 
   'space.kind': 'Utrymme',
 
