@@ -110,6 +110,22 @@ describe('tags', () => {
     expect(await suggestedTags(ME, ['Roses gardening'], [])).toEqual([{ path: 'gardening/roses', existing: true }])
   })
 
+  test('a topic only related to a tag is placed beside it, as a new tag', async () => {
+    await note(ME, 'A', 'x', { tags: ['plants/garden-roses', 'tax'] })
+    // Bag-of-words: two of three words shared (0.67) is related, not the same.
+    expect(await suggestedTags(ME, ['Garden plants tulips', 'Bicycle repair'], [])).toEqual([
+      { path: 'plants/garden-plants-tulips', existing: false }, { path: 'bicycle-repair', existing: false },
+    ])
+  })
+
+  test('the match similarity is the admin setting', async () => {
+    await note(ME, 'A', 'x', { tags: ['plants/garden-roses'] })
+    await setAppSetting('tag_match_similarity', '0.5')
+    try {
+      expect(await suggestedTags(ME, ['Garden plants tulips'], [])).toEqual([{ path: 'plants/garden-roses', existing: true }])
+    } finally { await setAppSetting('tag_match_similarity', '0.8') }
+  })
+
   test('without embeddings, matching falls back to names', async () => {
     await note(ME, 'A', 'x', { tags: ['plants/roses'] })
     expect(await server.whileFailing(() => suggestedTags(ME, ['Roses', 'Rose garden care'], []))).toEqual([

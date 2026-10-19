@@ -588,11 +588,11 @@ export async function ingestUrl(url: string): Promise<{ fileId: string; filename
   return res.json()
 }
 
-export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; userMemoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; ragTopK: number; ragMinRelevance: number; relatedMinSimilarity: number; relatedMinRelevance: number; rerankEnabled: boolean; attachmentChars: number; spaceRagBudget: number; notesRagBudget: number; topicMinSimilarity: number; collectionFullTextTokens: number; collectionFullTextTokensCloud: number; collectionExploreMaxSteps: number; collectionExploreMinRelevance: number; researchMaxTokens: number; queryReformulation: boolean; chatTitleModel: boolean; rssFeedCharsBudget: number; fetchMaxPages: number; fetchMaxUrlContextChars: number; fetchSummarizeOverflow: boolean; compressHistoryOverflow: boolean; resourceSummary: boolean; limits: { smallModelInputChars: number; embedInputChars: number; scrapeMaxChars: number; minUrlContextChars: number } }> {
+export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; userMemoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; ragTopK: number; ragMinRelevance: number; relatedMinSimilarity: number; relatedMinRelevance: number; rerankEnabled: boolean; attachmentChars: number; spaceRagBudget: number; notesRagBudget: number; topicMinSimilarity: number; tagMatchSimilarity: number; tagPlaceSimilarity: number; collectionFullTextTokens: number; collectionFullTextTokensCloud: number; collectionExploreMaxSteps: number; collectionExploreMinRelevance: number; researchMaxTokens: number; queryReformulation: boolean; chatTitleModel: boolean; rssFeedCharsBudget: number; fetchMaxPages: number; fetchMaxUrlContextChars: number; fetchSummarizeOverflow: boolean; compressHistoryOverflow: boolean; resourceSummary: boolean; limits: { smallModelInputChars: number; embedInputChars: number; scrapeMaxChars: number; minUrlContextChars: number } }> {
   return fetch(`${BASE}/admin/settings`).then(r => r.json())
 }
 
-export async function updateAdminSettings(s: { memoryTokenBudget?: number; userMemoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; dreamDeep?: boolean; memoryExtractChars?: number; rerankTopN?: number; ragTopK?: number; ragMinRelevance?: number; relatedMinSimilarity?: number; relatedMinRelevance?: number; attachmentChars?: number; spaceRagBudget?: number; notesRagBudget?: number; topicMinSimilarity?: number; collectionFullTextTokens?: number; collectionFullTextTokensCloud?: number; collectionExploreMaxSteps?: number; collectionExploreMinRelevance?: number; researchMaxTokens?: number; queryReformulation?: boolean; chatTitleModel?: boolean; rssFeedCharsBudget?: number; fetchMaxPages?: number; fetchMaxUrlContextChars?: number; fetchSummarizeOverflow?: boolean; compressHistoryOverflow?: boolean; resourceSummary?: boolean }): Promise<void> {
+export async function updateAdminSettings(s: { memoryTokenBudget?: number; userMemoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; dreamDeep?: boolean; memoryExtractChars?: number; rerankTopN?: number; ragTopK?: number; ragMinRelevance?: number; relatedMinSimilarity?: number; relatedMinRelevance?: number; attachmentChars?: number; spaceRagBudget?: number; notesRagBudget?: number; topicMinSimilarity?: number; tagMatchSimilarity?: number; tagPlaceSimilarity?: number; collectionFullTextTokens?: number; collectionFullTextTokensCloud?: number; collectionExploreMaxSteps?: number; collectionExploreMinRelevance?: number; researchMaxTokens?: number; queryReformulation?: boolean; chatTitleModel?: boolean; rssFeedCharsBudget?: number; fetchMaxPages?: number; fetchMaxUrlContextChars?: number; fetchSummarizeOverflow?: boolean; compressHistoryOverflow?: boolean; resourceSummary?: boolean }): Promise<void> {
   await fetch(`${BASE}/admin/settings`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -1265,6 +1265,16 @@ export async function fetchTags(): Promise<Array<{ path: string; count: number }
   const res = await fetch(`${BASE}/files/tags`)
   if (!res.ok) throw await apiError(res, 'Could not load tags')
   return res.json()
+}
+
+/** A rename proposed to tidy the tag tree. */
+export interface TagChange { from: string; to: string; count: number; merges: boolean }
+
+/** Asks the small model for renames that tidy the tag tree; nothing changes until each is applied. */
+export async function proposeTagTidy(): Promise<TagChange[]> {
+  const res = await fetch(`${BASE}/files/tags/tidy`, { method: 'POST' })
+  if (!res.ok) throw await apiError(res, 'Could not propose tag changes')
+  return (await res.json()).changes
 }
 
 /** Renames a tag and everything under it; an existing target merges. */

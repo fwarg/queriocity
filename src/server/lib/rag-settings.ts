@@ -65,3 +65,17 @@ export const topicMinSimilarity = async (): Promise<number> => {
   const v = parseFloat(await getAppSetting('topic_min_similarity', String(DEFAULT_TOPIC_MIN_SIMILARITY)))
   return Number.isNaN(v) ? DEFAULT_TOPIC_MIN_SIMILARITY : v
 }
+
+/** Cosine similarity at which a topic is offered as an existing tag, and the lower one at which a new
+ *  topic is placed beside its nearest tag. Short phrases embed noisily and the scale depends on the
+ *  model; each match and placement is logged as a `[tags]` line to calibrate them. */
+export const DEFAULT_TAG_MATCH_SIMILARITY = 0.8
+export const DEFAULT_TAG_PLACE_SIMILARITY = 0.6
+export const tagMatchSimilarity = async (): Promise<number> => {
+  const v = parseFloat(await getAppSetting('tag_match_similarity', String(DEFAULT_TAG_MATCH_SIMILARITY)))
+  return Number.isNaN(v) ? DEFAULT_TAG_MATCH_SIMILARITY : v
+}
+export const tagPlaceSimilarity = async (): Promise<number> => {
+  const v = parseFloat(await getAppSetting('tag_place_similarity', String(DEFAULT_TAG_PLACE_SIMILARITY)))
+  return Number.isNaN(v) ? DEFAULT_TAG_PLACE_SIMILARITY : v
+}

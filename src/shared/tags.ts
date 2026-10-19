@@ -19,6 +19,9 @@ export function normaliseTag(raw: string): string {
 /** True when `path` is `tag` itself or nested under it — `ml` covers `ml/rag`, not `mlops`. */
 export const isUnder = (path: string, tag: string) => path === tag || path.startsWith(`${tag}/`)
 
+/** `plants/roses` → `plants`; '' at the top level. */
+export const parentOf = (path: string) => path.split('/').slice(0, -1).join('/')
+
 /** `a/b/c` → ['a', 'a/b', 'a/b/c']: every level a path implies. */
 export function tagAncestry(path: string): string[] {
   const parts = path.split('/')

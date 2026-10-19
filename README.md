@@ -478,9 +478,11 @@ Notes can link to each other, Zettelkasten-style, and any resource can carry tag
   adopt — they are no longer applied automatically, and your tags are never overwritten when a note
   is re-summarised. Suggestions prefer the tags you have: a topic naming one of your tags, or its last
   segment, is offered as that tag (`roses` → `#plants/roses`), as is one close to it in meaning
-  (embedding cosine ≥ 0.8, a guess for short phrases — each match is logged as `[tags] topic …`), and
+  (embedding cosine ≥ *Tag match similarity*, default 0.8 — each topic's nearest tag and score is logged as `[tags] topic …` to calibrate it), and
   tags that similar resources share join them under **Your tags**; the remaining topics are listed as
-  **New**. Without embeddings, matching falls back to names. A tag disappears once nothing carries it.
+  **New** — placed beside the nearest tag when one is related (cosine ≥ *Tag placement similarity*, default 0.6: `tulips` near
+  `#plants/roses` is offered as `#plants/tulips`, under a tag that already has sub-tags, else beside
+  it), otherwise at the top level. Without embeddings, matching falls back to names. A tag disappears once nothing carries it.
 - **Inline tags.** `#tag` or `#tag/sub` written in a note's text is added to its tags on save and
   shown as a tappable tag (opening the library filtered on it). Removing it from the text leaves the
   tag on the note — the tag field is what counts; remove it there. Headings (`# Title`), `#12`,
@@ -522,7 +524,11 @@ you work (chats, memory, lock), a **collection** is a shelf you attach to a chat
   and by anything under it). Tap a tag to open the library filtered on it; the **⋯** menu renames
   (sub-tags move along, an existing name merges), **moves it under** another tag (`#roses` under
   `#plants` becomes `#plants/roses` — a rename, so the same applies), deletes, or shows it in the
-  graph. **To organise**
+  graph. **Tidy tags…** asks the small model to look over the whole tree and propose renames —
+  merging synonyms, plurals and translations, nesting a tag under the one it belongs to, grouping
+  siblings under a new parent — with tags close in meaning found by embedding first and handed over
+  as hints. Each proposal is ticked to apply as an ordinary rename; one touching a tag an earlier
+  proposal changes is dropped, so running it again after applying may find more. **To organise**
   at the bottom opens resources **without tags** and notes **without links**.
 - **Topics** — your notes grouped by what they are about, from the vectors already stored for
   retrieval: no tags or links needed, so it also covers what you haven't organised yet. Notes are
@@ -2173,6 +2179,8 @@ The **Admin panel > System settings** tab exposes runtime-configurable parameter
 | Resources | Minimum similarity for "Similar content" | 0.5 | Cosine similarity another resource must reach to be suggested as similar, when no reranker judges the candidates. Model-dependent; calibrate from the `[related] similarities` log line. 0 shows the nearest regardless. |
 | Resources | Minimum reranker relevance for "Similar content" | 0.5 | With `RERANK_MODEL` set, the reranker relevance (0–1) a candidate must reach. Calibrate from the `[reranker]` log lines. |
 | Resources | Topic map similarity | 0.6 | Average cosine similarity at which Explore → Topics stops merging notes into a topic. Higher: more, tighter topics. Depends on the embedding model; the Cosine column in Admin → Similarity shows what your related and unrelated notes score. |
+| Resources | Tag match similarity | 0.8 | Cosine similarity at which a suggested topic is offered as an existing tag, and at which Tidy tags hints two tags may be the same. Depends on the embedding model; calibrate from the `[tags] topic …` log lines, which give each topic's nearest tag and score. |
+| Resources | Tag placement similarity | 0.6 | Lower cosine similarity at which a new topic is suggested beside its nearest tag in the tree (`tulips` near `plants/roses` → `plants/tulips`). Keep it below the match similarity. |
 | Resources | Summarize on ingest | On | Generate a one-line summary and a few topics for every uploaded file, ingested URL and note, shown in the Resources list and detail view. One small-model call per resource, made after it is stored — a failure leaves it without a summary rather than losing it |
 | Attachments | Max context chars | 20000 | Max characters extracted from an attached file and sent as context. The chat model receives all of it and the text is indexed for later search, but the *query* embedding for that turn uses only the first `EMBED_MAX_INPUT_CHARS` — a startup warning appears if you set this much higher |
 

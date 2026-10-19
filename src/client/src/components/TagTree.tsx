@@ -5,8 +5,9 @@ import { buildTagTree, type TagTreeNode } from '../lib/tag-tree.ts'
 import { useT } from '../lib/i18n.tsx'
 import { errorMessage } from '../lib/errors.ts'
 import { useConfirm } from './confirm.tsx'
-import { isUnder, normaliseTag } from '@shared/tags.ts'
+import { isUnder, normaliseTag, parentOf } from '@shared/tags.ts'
 import { EmptyState } from './ui.tsx'
+import { TagTidyDialog } from './TagTidyDialog.tsx'
 
 interface Actions {
   onOpenTag: (path: string) => void
@@ -29,6 +30,7 @@ export function TagTree({ resources, onOpenTag, onShowInGraph, onShow, onTagsCha
   const t = useT()
   const confirm = useConfirm()
   const [error, setError] = useState('')
+  const [tidying, setTidying] = useState(false)
   const tree = useMemo(() => buildTagTree(resources), [resources])
   const paths = useMemo(() => descendants(tree).map(n => n.path), [tree])
   const untagged = resources.filter(r => r.tags.length === 0).length
@@ -66,9 +68,13 @@ export function TagTree({ resources, onOpenTag, onShowInGraph, onShow, onTagsCha
       )}
       <datalist id={PATHS_LIST}>{paths.map(p => <option key={p} value={p} />)}</datalist>
       {tree.length > 0 && (
-        <p className="text-xs text-gray-500">{t('tags.reorganiseHint')}</p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs text-gray-500">{t('tags.reorganiseHint')}</p>
+          <button onClick={() => setTidying(true)} className="px-2.5 py-1.5 rounded text-xs bg-gray-700 hover:bg-gray-600 text-gray-200">{t('tags.tidy')}</button>
+        </div>
       )}
       {error && <p className="text-xs text-red-400">{error}</p>}
+      {tidying && <TagTidyDialog onClose={() => setTidying(false)} onApplied={onTagsChanged} />}
       <div className="flex flex-col gap-1 border-t border-gray-800 pt-3">
         <h3 className="text-xs font-medium uppercase tracking-wide text-gray-500">{t('explore.toOrganise')}</h3>
         <button onClick={() => onShow('noTags')} className="flex justify-between py-2 text-sm text-gray-300 hover:text-gray-50">
@@ -151,6 +157,3 @@ function TagRow({ node, depth, actions }: { node: TagTreeNode; depth: number; ac
     </li>
   )
 }
-
-/** `plants/roses` → `plants`; '' at the top level. */
-const parentOf = (path: string) => path.split('/').slice(0, -1).join('/')

@@ -152,7 +152,8 @@ beslut och skälet till det.`,
 **Taggar** visar alla taggar som ett träd med antal — \`ml\` rymmer \`ml/rag\` och \`ml/agents\`.
 Tryck på en tagg för att se dess resurser; **⋯** bredvid byter namn på den (undertaggarna följer
 med), flyttar den under en annan tagg (\`rosor\` under \`växter\` blir \`växter/rosor\`), tar bort
-den eller visar den i grafen. Längst ner hittar **Att organisera** resurser utan
+den eller visar den i grafen. **Städa taggar…** föreslår sammanslagningar och flyttar för hela
+trädet; bocka i dem du vill ha. Längst ner hittar **Att organisera** resurser utan
 taggar och anteckningar utan länkar.
 
 **Ämnen** grupperar dina anteckningar efter vad de handlar om, även otaggade och olänkade, namnger

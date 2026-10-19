@@ -12,6 +12,7 @@ import { relatedResources } from '../lib/files/related.ts'
 import { globalGraph, linkCounts, localGraph } from '../lib/files/graph.ts'
 import { addTagToResources, deleteTag, listTags, MAX_TAG_CHARS, renameTag, resourceTagList, setResourceTags, tagsByResource } from '../lib/files/tags.ts'
 import { suggestedTags } from '../lib/files/tag-suggestions.ts'
+import { proposeTagTidy } from '../lib/files/tag-tidy.ts'
 import { linksOf } from '../lib/files/links.ts'
 import { exportVault } from '../lib/files/obsidian-export.ts'
 import { acceptLink, dismissLink, suggestLinks } from '../lib/files/link-suggest.ts'
@@ -299,6 +300,16 @@ filesRouter.get('/graph', zValidator('query', z.object({
 })
 
 filesRouter.get('/tags', (c) => c.json(listTags(c.get('userId') as string)))
+
+/** Proposed renames that tidy the tag tree; nothing changes until each is applied as a rename. */
+filesRouter.post('/tags/tidy', async (c) => {
+  try {
+    return c.json({ changes: await proposeTagTidy(c.get('userId') as string) })
+  } catch (e) {
+    console.warn(`  [tags] tidy failed: ${e instanceof Error ? e.message : e}`)
+    return c.json({ error: 'Could not propose tag changes' }, 502)
+  }
+})
 
 /** Rename a tag and everything under it; an existing target merges. */
 filesRouter.patch('/tags', zValidator('json', z.object({
