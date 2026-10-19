@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react'
-import { streamChat, stopChat, fetchRelatedQuestions } from '../lib/api.ts'
+import { streamChat, stopChat, fetchRelatedQuestions, refineChatTitle } from '../lib/api.ts'
 import { hasAttachment, type ContextReport, type CollectionMode } from '@shared/context.ts'
 import type { ActiveRecipe } from '@shared/recipes.ts'
 import type { Message } from '../lib/api.ts'
@@ -35,6 +35,8 @@ interface UseChatOptions {
   /** An extra model picked for this chat's messages. */
   modelId?: string
   onSessionCreated: (id: string, title: string, lockedBy?: string[]) => void
+  /** A chat's title changed after its answer: the small model named it. */
+  onSessionTitle?: (id: string, title: string) => void
 }
 
 /** Gives the just-sent question its stored id, so it can be pinned without reloading the chat. */
@@ -54,7 +56,7 @@ function retryOf(messages: Message[]): { history: Message[]; question: string } 
 }
 
 export function useChat(options: UseChatOptions) {
-  const { sessionId, focusMode, followUpSuggestions = true, modelId, onSessionCreated } = options
+  const { sessionId, focusMode, followUpSuggestions = true, modelId, onSessionCreated, onSessionTitle } = options
   const t = useT()
   const [messages, setMessages] = useState<Message[]>([])
   const [busy, setBusy] = useState(false)
@@ -133,6 +135,10 @@ export function useChat(options: UseChatOptions) {
       setStatus('')
     }
     setBusy(false)
+    const sid = liveSessionRef.current
+    if (chatRun.titlePending && sid && !chatRun.aborted) {
+      refineChatTitle(sid).then(title => { if (title) onSessionTitle?.(sid, title) }).catch(() => {})
+    }
     // Fire-and-forget: chips appear a moment after the answer, or not at all.
     if (followUpSuggestions && chatRun.text.length >= 200 && !chatRun.aborted && chatRun.images.length === 0) {
       fetchRelatedQuestions(question, chatRun.text).then(setRelated).catch(() => {})

@@ -46,6 +46,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   const [researchMaxTokensDraft, setResearchMaxTokensDraft] = useState('6000')
   const [userMemoryBudgetDraft, setUserMemoryBudgetDraft] = useState('300')
   const [queryReformulationDraft, setQueryReformulationDraft] = useState(true)
+  const [chatTitleModelDraft, setChatTitleModelDraft] = useState(true)
   const [rssFeedCharsBudgetDraft, setRssFeedCharsBudgetDraft] = useState('50000')
   const [fetchMaxPagesDraft, setFetchMaxPagesDraft] = useState('8')
   const [fetchMaxUrlContextCharsDraft, setFetchMaxUrlContextCharsDraft] = useState('40000')
@@ -100,6 +101,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
       setResearchMaxTokensDraft(String(s.researchMaxTokens))
       setUserMemoryBudgetDraft(String(s.userMemoryTokenBudget))
       setQueryReformulationDraft(s.queryReformulation)
+      setChatTitleModelDraft(s.chatTitleModel)
       setRssFeedCharsBudgetDraft(String(s.rssFeedCharsBudget))
       setFetchMaxPagesDraft(String(s.fetchMaxPages))
       setFetchMaxUrlContextCharsDraft(String(s.fetchMaxUrlContextChars))
@@ -170,7 +172,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     setError('')
     setSavingBudget(true)
     try {
-      await updateAdminSettings({ memoryTokenBudget: budget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, ragTopK, ragMinRelevance, relatedMinSimilarity, relatedMinRelevance, topicMinSimilarity, attachmentChars, spaceRagBudget, notesRagBudget, collectionFullTextTokens, collectionFullTextTokensCloud, collectionExploreMaxSteps, collectionExploreMinRelevance, researchMaxTokens, queryReformulation: queryReformulationDraft, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow: fetchSummarizeOverflowDraft, compressHistoryOverflow: compressHistoryOverflowDraft, resourceSummary: resourceSummaryDraft })
+      await updateAdminSettings({ memoryTokenBudget: budget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, ragTopK, ragMinRelevance, relatedMinSimilarity, relatedMinRelevance, topicMinSimilarity, attachmentChars, spaceRagBudget, notesRagBudget, collectionFullTextTokens, collectionFullTextTokensCloud, collectionExploreMaxSteps, collectionExploreMinRelevance, researchMaxTokens, queryReformulation: queryReformulationDraft, chatTitleModel: chatTitleModelDraft, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow: fetchSummarizeOverflowDraft, compressHistoryOverflow: compressHistoryOverflowDraft, resourceSummary: resourceSummaryDraft })
 
       onBudgetChange?.(budget)
       setBudgetSaved(true)
@@ -477,6 +479,15 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                 <p className="text-xs text-gray-500">Use a small LLM to rewrite queries before searching. Improves relevance but adds latency. Disable on slow hardware.</p>
                 <label className="flex items-center gap-2 cursor-pointer w-fit">
                   <input type="checkbox" checked={queryReformulationDraft} onChange={e => setQueryReformulationDraft(e.target.checked)}
+                    className="accent-blue-500 w-3.5 h-3.5" />
+                  <span className="text-xs text-gray-400">Enabled</span>
+                </label>
+              </div>
+              <div className="flex flex-col gap-1.5 border-t border-gray-800/60 pt-3">
+                <p className="text-xs text-gray-400 font-medium">Chat titles by the small model</p>
+                <p className="text-xs text-gray-500">A new chat is titled from its first question and what it reads (document, collection, recipe). When that title is cut short or too brief, the small model names the chat after the first answer — one short call per such chat, never delaying the answer.</p>
+                <label className="flex items-center gap-2 cursor-pointer w-fit">
+                  <input type="checkbox" checked={chatTitleModelDraft} onChange={e => setChatTitleModelDraft(e.target.checked)}
                     className="accent-blue-500 w-3.5 h-3.5" />
                   <span className="text-xs text-gray-400">Enabled</span>
                 </label>

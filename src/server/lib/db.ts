@@ -99,6 +99,9 @@ export const chatSessions = sqliteTable('chat_sessions', {
   locked: integer('locked', { mode: 'boolean' }).notNull().default(false),
   /** JSON array: the confidential collections and resources that locked it, named for its banner. */
   lockedBy: text('locked_by'),
+  /** Set while the title is a weak first one the small model may replace (lib/chat-title.ts): the
+   *  scope prefix the replacement keeps, '' for none. Cleared by that replacement or a rename. */
+  autoTitleScope: text('auto_title_scope'),
 })
 
 export const spaceMemories = sqliteTable('space_memories', {
@@ -710,6 +713,7 @@ function initSchema() {
   try { sqlite.run('ALTER TABLE chat_sessions ADD COLUMN history_summary TEXT') } catch {}
   try { sqlite.run('ALTER TABLE chat_sessions ADD COLUMN locked INTEGER NOT NULL DEFAULT 0') } catch {}
   try { sqlite.run('ALTER TABLE chat_sessions ADD COLUMN locked_by TEXT') } catch {}
+  try { sqlite.run('ALTER TABLE chat_sessions ADD COLUMN auto_title_scope TEXT') } catch {}
   // Briefly named `locked`, before content and chats got a word each; renamed where it exists.
   try { sqlite.run('ALTER TABLE uploaded_files RENAME COLUMN locked TO confidential') } catch {}
   try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN confidential INTEGER NOT NULL DEFAULT 0') } catch {}

@@ -60,7 +60,7 @@ adminRouter.use('*', authMiddleware)
 adminRouter.use('*', adminMiddleware)
 
 adminRouter.get('/settings', async (c) => {
-  const [memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, ragMinRelevance, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow, compressHistoryOverflow, resourceSummary, relatedMinSimilarity, relatedMinRelevance, notesRagBudget, topicMinSimilarity, collectionFullTextTokens, collectionFullTextTokensCloud, collectionExploreMaxSteps, collectionExploreMinRelevance, researchMaxTokens] = await Promise.all([
+  const [memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, ragMinRelevance, attachmentChars, spaceRagBudget, queryReformulation, chatTitleModel, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow, compressHistoryOverflow, resourceSummary, relatedMinSimilarity, relatedMinRelevance, notesRagBudget, topicMinSimilarity, collectionFullTextTokens, collectionFullTextTokensCloud, collectionExploreMaxSteps, collectionExploreMinRelevance, researchMaxTokens] = await Promise.all([
     getAppSetting('memory_token_budget', DEFAULT_MEMORY_TOKEN_BUDGET).then(Number),
     getAppSetting('user_memory_token_budget', '300').then(Number),
     getAppSetting('dream_hour', '-1').then(Number),
@@ -74,6 +74,7 @@ adminRouter.get('/settings', async (c) => {
     getAppSetting('attachment_chars', '20000').then(Number),
     getAppSetting('space_rag_budget', '500').then(Number),
     getAppSetting('query_reformulation', 'true').then(v => v === 'true'),
+    getAppSetting('chat_title_model', 'true').then(v => v === 'true'),
     getAppSetting('rss_feed_chars_budget', '50000').then(Number),
     getAppSetting('fetch_max_pages', '8').then(Number),
     getAppSetting('fetch_max_url_context_chars', String(DEFAULT_MAX_URL_CONTEXT_CHARS)).then(Number),
@@ -93,7 +94,7 @@ adminRouter.get('/settings', async (c) => {
   // Read-only, derived from the model context env vars. Two of the settings above are silently
   // clamped by these at use time, so the panel needs them to show what a value actually does
   // rather than what was typed.
-  return c.json({ memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, ragMinRelevance, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow, compressHistoryOverflow, resourceSummary, relatedMinSimilarity, relatedMinRelevance, notesRagBudget, topicMinSimilarity, collectionFullTextTokens, collectionFullTextTokensCloud, collectionExploreMaxSteps, collectionExploreMinRelevance, researchMaxTokens, rerankEnabled: rerankEnabled(), limits: { smallModelInputChars: SMALL_MODEL_INPUT_CHARS, embedInputChars: EMBED_MAX_INPUT_CHARS, scrapeMaxChars: SCRAPE_MAX_CHARS, minUrlContextChars: MIN_URL_CONTEXT_CHARS } })
+  return c.json({ memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, ragMinRelevance, attachmentChars, spaceRagBudget, queryReformulation, chatTitleModel, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow, compressHistoryOverflow, resourceSummary, relatedMinSimilarity, relatedMinRelevance, notesRagBudget, topicMinSimilarity, collectionFullTextTokens, collectionFullTextTokensCloud, collectionExploreMaxSteps, collectionExploreMinRelevance, researchMaxTokens, rerankEnabled: rerankEnabled(), limits: { smallModelInputChars: SMALL_MODEL_INPUT_CHARS, embedInputChars: EMBED_MAX_INPUT_CHARS, scrapeMaxChars: SCRAPE_MAX_CHARS, minUrlContextChars: MIN_URL_CONTEXT_CHARS } })
 })
 
 adminRouter.patch('/settings', zValidator('json', z.object({
@@ -119,6 +120,7 @@ adminRouter.patch('/settings', zValidator('json', z.object({
   researchMaxTokens: z.number().int().min(1000).max(200_000).optional(),
   topicMinSimilarity: z.number().min(0).max(1).optional(),
   queryReformulation: z.boolean().optional(),
+  chatTitleModel: z.boolean().optional(),
   rssFeedCharsBudget: z.number().int().min(5000).max(500000).optional(),
   fetchMaxPages: z.number().int().min(0).max(50).optional(),
   fetchMaxUrlContextChars: z.number().int().min(MIN_URL_CONTEXT_CHARS).max(SCRAPE_MAX_CHARS).optional(),
@@ -154,6 +156,7 @@ adminRouter.patch('/settings', zValidator('json', z.object({
   if (body.collectionExploreMinRelevance != null) ops.push(setAppSetting('collection_explore_min_relevance', String(body.collectionExploreMinRelevance)))
   if (body.topicMinSimilarity != null) ops.push(setAppSetting('topic_min_similarity', String(body.topicMinSimilarity)))
   if (body.queryReformulation != null) ops.push(setAppSetting('query_reformulation', String(body.queryReformulation)))
+  if (body.chatTitleModel != null) ops.push(setAppSetting('chat_title_model', String(body.chatTitleModel)))
   if (body.rssFeedCharsBudget != null) ops.push(setAppSetting('rss_feed_chars_budget', String(body.rssFeedCharsBudget)))
   if (body.fetchMaxPages != null) ops.push(setAppSetting('fetch_max_pages', String(body.fetchMaxPages)))
   if (body.fetchMaxUrlContextChars != null) ops.push(setAppSetting('fetch_max_url_context_chars', String(body.fetchMaxUrlContextChars)))

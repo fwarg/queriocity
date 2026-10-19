@@ -270,6 +270,10 @@ export default function App() {
         }
       }
     },
+    onSessionTitle: (id, title) => {
+      setSessions(prev => prev.map(s => s.id === id ? { ...s, title } : s))
+      setSpaceChats(prev => prev && prev.map(s => s.id === id ? { ...s, title } : s))
+    },
   })
 
   /** While idle the meter is sized for the next message's model, which a pick or a mode switch

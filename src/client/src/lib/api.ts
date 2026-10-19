@@ -374,6 +374,17 @@ export async function decideEgress(sessionId: string, id: string, allow: boolean
  *  and the attachment body would just cost the small model context it does not have. */
 const RELATED_QUESTION_MAX = 2000
 
+/** The small model's title for a new chat whose first title was weak; null when it failed. */
+export async function refineChatTitle(sessionId: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${BASE}/chat/${sessionId}/title`, { method: 'POST' })
+    if (!res.ok) return null
+    return (await res.json()).title ?? null
+  } catch {
+    return null
+  }
+}
+
 export async function fetchRelatedQuestions(question: string, answer: string): Promise<string[]> {
   try {
     const res = await fetch(`${BASE}/chat/related`, {
@@ -577,11 +588,11 @@ export async function ingestUrl(url: string): Promise<{ fileId: string; filename
   return res.json()
 }
 
-export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; userMemoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; ragTopK: number; ragMinRelevance: number; relatedMinSimilarity: number; relatedMinRelevance: number; rerankEnabled: boolean; attachmentChars: number; spaceRagBudget: number; notesRagBudget: number; topicMinSimilarity: number; collectionFullTextTokens: number; collectionFullTextTokensCloud: number; collectionExploreMaxSteps: number; collectionExploreMinRelevance: number; researchMaxTokens: number; queryReformulation: boolean; rssFeedCharsBudget: number; fetchMaxPages: number; fetchMaxUrlContextChars: number; fetchSummarizeOverflow: boolean; compressHistoryOverflow: boolean; resourceSummary: boolean; limits: { smallModelInputChars: number; embedInputChars: number; scrapeMaxChars: number; minUrlContextChars: number } }> {
+export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; userMemoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; ragTopK: number; ragMinRelevance: number; relatedMinSimilarity: number; relatedMinRelevance: number; rerankEnabled: boolean; attachmentChars: number; spaceRagBudget: number; notesRagBudget: number; topicMinSimilarity: number; collectionFullTextTokens: number; collectionFullTextTokensCloud: number; collectionExploreMaxSteps: number; collectionExploreMinRelevance: number; researchMaxTokens: number; queryReformulation: boolean; chatTitleModel: boolean; rssFeedCharsBudget: number; fetchMaxPages: number; fetchMaxUrlContextChars: number; fetchSummarizeOverflow: boolean; compressHistoryOverflow: boolean; resourceSummary: boolean; limits: { smallModelInputChars: number; embedInputChars: number; scrapeMaxChars: number; minUrlContextChars: number } }> {
   return fetch(`${BASE}/admin/settings`).then(r => r.json())
 }
 
-export async function updateAdminSettings(s: { memoryTokenBudget?: number; userMemoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; dreamDeep?: boolean; memoryExtractChars?: number; rerankTopN?: number; ragTopK?: number; ragMinRelevance?: number; relatedMinSimilarity?: number; relatedMinRelevance?: number; attachmentChars?: number; spaceRagBudget?: number; notesRagBudget?: number; topicMinSimilarity?: number; collectionFullTextTokens?: number; collectionFullTextTokensCloud?: number; collectionExploreMaxSteps?: number; collectionExploreMinRelevance?: number; researchMaxTokens?: number; queryReformulation?: boolean; rssFeedCharsBudget?: number; fetchMaxPages?: number; fetchMaxUrlContextChars?: number; fetchSummarizeOverflow?: boolean; compressHistoryOverflow?: boolean; resourceSummary?: boolean }): Promise<void> {
+export async function updateAdminSettings(s: { memoryTokenBudget?: number; userMemoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; dreamDeep?: boolean; memoryExtractChars?: number; rerankTopN?: number; ragTopK?: number; ragMinRelevance?: number; relatedMinSimilarity?: number; relatedMinRelevance?: number; attachmentChars?: number; spaceRagBudget?: number; notesRagBudget?: number; topicMinSimilarity?: number; collectionFullTextTokens?: number; collectionFullTextTokensCloud?: number; collectionExploreMaxSteps?: number; collectionExploreMinRelevance?: number; researchMaxTokens?: number; queryReformulation?: boolean; chatTitleModel?: boolean; rssFeedCharsBudget?: number; fetchMaxPages?: number; fetchMaxUrlContextChars?: number; fetchSummarizeOverflow?: boolean; compressHistoryOverflow?: boolean; resourceSummary?: boolean }): Promise<void> {
   await fetch(`${BASE}/admin/settings`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },

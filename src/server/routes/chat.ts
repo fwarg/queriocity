@@ -16,6 +16,7 @@ import { resolveTurnModels, modelChoices, answerModelOf, attachAnswer, pickedMod
 import type { AnswerModel } from '../../shared/llm-catalogue.ts'
 import { extractMemoriesPostHoc, toMemorySources } from '../lib/memory.ts'
 import { ownedCollectionIds, ownedResourceIds } from '../lib/files/collections.ts'
+import { initialChatTitle, refineChatTitle, type InitialTitle } from '../lib/chat-title.ts'
 import { readsConfidential, trackLeftOut, parseLockedBy } from '../lib/files/confidential.ts'
 import { confidentialInScope } from '../lib/files/collection-coverage.ts'
 import { hasAttachment, COLLECTION_MODES, type ContextReport } from '../../shared/context.ts'
@@ -35,7 +36,6 @@ import { deleteSupersededImages } from '../lib/image-store.ts'
 import { linkNotesToAnswer } from '../lib/files/agent-notes.ts'
 import { runTurn, createSink, toSearxngCategories, userQueryOf, documentSet, KEEPALIVE_INTERVAL_MS, type TurnContext } from '../lib/turn/index.ts'
 
-const SESSION_TITLE_MAX = 60
 
 // Content is generously bounded rather than tightly: a user message can carry an inlined
 // attachment, capped separately by the attachment_chars setting (admin max 500000).
@@ -112,6 +112,13 @@ chatRouter.post('/suggest', rateLimitByUser(suggestLimiter, 'suggest'), zValidat
 const RELATED_INPUT_CHARS = 1500
 /** Suggests follow-up questions from a finished exchange. Best-effort: an empty array simply
  *  means no chips are shown, so a slow or unavailable small model costs nothing. */
+/** The small model's title for a new chat whose first title was weak, asked for by the client once
+ *  the answer is shown — so the call never holds up the answer. Returns the title as it now stands. */
+chatRouter.post('/:sessionId/title', rateLimitByUser(suggestLimiter, 'title'), async (c) => {
+  const title = await refineChatTitle(c.req.param('sessionId'), c.get('userId') as string)
+  return title === null ? c.json({ error: 'Not found' }, 404) : c.json({ title })
+})
+
 chatRouter.post('/related', rateLimitByUser(suggestLimiter, 'related'), zValidator('json', z.object({
   question: z.string().min(1).max(2000),
   answer: z.string().min(1),
@@ -276,7 +283,9 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   const run = startRun(sid, userId)
   c.req.raw.signal.addEventListener('abort', () => scheduleAbandon(run))
   // A turn locked by what it read, outside a locked space, locks its chat for good, naming why.
-  const tail = { sid, userId, msgs, spaceId, regenerate, ephemeral, t0: Date.now(), lockedBy: locked && !spaceLocked ? lockedBy : undefined, spaceWrites }
+  const firstUser = msgs.find(m => m.role === 'user')?.content ?? ''
+  const title = initialChatTitle(firstUser, { documentIds, collections, attachedFileIds, recipeName: recipe?.name })
+  const tail = { sid, userId, msgs, spaceId, regenerate, ephemeral, t0: Date.now(), lockedBy: locked && !spaceLocked ? lockedBy : undefined, spaceWrites, title }
 
   // A cache hit is a real turn, not a shortcut around one: it emits the same events and runs the
   // same tail as a generated answer, so the exchange is saved and its citations still resolve.
@@ -407,26 +416,28 @@ interface TurnTail {
   lockedBy?: string[]
   /** False when the space's memory and history index must not take this turn (see `spaceWrites`). */
   spaceWrites?: boolean
+  /** The title a new chat is stored with; ignored for an existing one. */
+  title: InitialTitle
 }
 
 /** Common tail for every mode: persist the exchange, close the stream, and kick off the
  *  background memory/index work. Centralised because four branches ran their own copy and the
  *  cached-answer path quietly omitted all of it — losing the turn from the conversation. */
 async function finishTurn(out: SSEStream, {
-  sid, userId, msgs, fullContent, sources, fileSources, spaceId, regenerate, ephemeral, t0, context, aborted, model, onStored, lockedBy, spaceWrites = true,
+  sid, userId, msgs, fullContent, sources, fileSources, spaceId, regenerate, ephemeral, t0, context, aborted, model, onStored, lockedBy, spaceWrites = true, title: initial,
 }: TurnTail): Promise<void> {
   const elapsedMs = Date.now() - t0
   if (ephemeral || (aborted && !fullContent.trim())) {
     await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, elapsedMs, ...(model && { model }) }) })
     return
   }
-  const { title, supersededAnswer, userMessageId, assistantMessageId } = await persistMessage(sid, userId, msgs, fullContent, sources, fileSources, spaceId, regenerate, model)
+  const { title, titlePending, supersededAnswer, userMessageId, assistantMessageId } = await persistMessage(sid, userId, msgs, fullContent, sources, fileSources, initial, spaceId, regenerate, model)
   onStored?.(assistantMessageId)
   if (lockedBy) await db.update(chatSessions).set({ locked: true, lockedBy: JSON.stringify(lockedBy) }).where(eq(chatSessions.id, sid))
   if (context) await db.update(chatSessions).set({ contextReport: JSON.stringify(context) }).where(eq(chatSessions.id, sid))
   // The stored ids let the client pin these messages without reloading the chat.
   // The model again, now with the hosting provider the calls reported, for the live answer's badge.
-  await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title, elapsedMs, userMessageId, assistantMessageId, ...(model && { model }), ...(lockedBy && { chatLocked: true, lockedBy }) }) })
+  await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title, elapsedMs, userMessageId, assistantMessageId, ...(titlePending && { titlePending }), ...(model && { model }), ...(lockedBy && { chatLocked: true, lockedBy }) }) })
   // Outside the spaceId block below: a regenerate strands its predecessor's image whether or not
   // the chat belongs to a space. Fire-and-forget, as the chat-delete path does — a failed unlink
   // costs a stray file the startup sweep will collect, and must not fail the turn.
@@ -507,19 +518,22 @@ async function persistMessage(
   assistantContent: string,
   sources: unknown[],
   fileSources: unknown[],
+  initial: InitialTitle,
   spaceId?: string,
   regenerate = false,
   model?: AnswerModel,
-): Promise<{ title: string; supersededAnswer?: string; userMessageId?: string; assistantMessageId: string }> {
+): Promise<{ title: string; titlePending: boolean; supersededAnswer?: string; userMessageId?: string; assistantMessageId: string }> {
   const now = new Date()
   const assistantMessageId = randomUUID()
   let userMessageId: string | undefined
-  const title = msgs.find(m => m.role === 'user')?.content.slice(0, SESSION_TITLE_MAX) ?? 'Chat'
+  const { title } = initial
+  // Only a chat's first exchange creates its row; later turns leave the stored title alone.
+  const titlePending = initial.scope !== null && msgs.filter(m => m.role === 'user').length === 1 && !regenerate
   const lastUser = [...msgs].reverse().find(m => m.role === 'user')
   let supersededAnswer: string | undefined
 
   await db.transaction(async (tx) => {
-    await tx.insert(chatSessions).values({ id: sessionId, title, createdAt: now, updatedAt: now, userId, spaceId: spaceId ?? null })
+    await tx.insert(chatSessions).values({ id: sessionId, title, autoTitleScope: titlePending ? initial.scope : null, createdAt: now, updatedAt: now, userId, spaceId: spaceId ?? null })
       .onConflictDoUpdate({ target: chatSessions.id, set: { updatedAt: now, graduated: 1 } })
     if (regenerate) {
       // The question is already stored from the first attempt — replace only the answer, so a
@@ -540,5 +554,5 @@ async function persistMessage(
     await tx.insert(messages).values({ id: assistantMessageId, sessionId, role: 'assistant', content: assistantContent, sources: JSON.stringify(sources), fileSources: JSON.stringify(fileSources), model: model ? JSON.stringify(model) : null, createdAt: now })
   })
 
-  return { title, supersededAnswer, userMessageId, assistantMessageId }
+  return { title, titlePending, supersededAnswer, userMessageId, assistantMessageId }
 }

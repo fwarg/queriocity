@@ -46,6 +46,8 @@ export class ChatRun {
   // Notes an Explore turn saved to the library, listed under the answer.
   private savedNotes: Array<{ id: string; title: string }> = []
   storedIds: { user?: string; assistant?: string } = {}
+  /** The new chat's first title was weak; the small model may name it once the answer is shown. */
+  titlePending = false
   aborted = false
   private readonly blockedEngines: Array<{ engine: string; reason: string }> = []
   // Which picked model answered, or why the pick was refused, for the answer's footer.
@@ -208,6 +210,7 @@ export class ChatRun {
     }
     view.liveSessionRef.current = chunk.sessionId as string
     this.storedIds = { user: chunk.userMessageId as string | undefined, assistant: chunk.assistantMessageId as string | undefined }
+    this.titlePending = chunk.titlePending === true
     view.onSessionCreated(chunk.sessionId as string, (chunk.title as string | undefined) ?? this.question.slice(0, 60), chunk.chatLocked === true ? (chunk.lockedBy as string[] ?? []) : undefined)
   }
 }

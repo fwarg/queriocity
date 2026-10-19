@@ -146,7 +146,7 @@ historyRouter.patch('/:id', zValidator('json', z.object({
   if (!session) return c.json({ error: 'Not found' }, 404)
 
   const update: Partial<typeof chatSessions.$inferInsert> = { updatedAt: new Date() }
-  if (body.title !== undefined) update.title = body.title
+  if (body.title !== undefined) Object.assign(update, { title: body.title, autoTitleScope: null })
   if (body.spaceId !== undefined) {
     if (body.spaceId !== null) {
       const space = await db.select().from(spaces).where(and(eq(spaces.id, body.spaceId), eq(spaces.userId, userId))).get()
