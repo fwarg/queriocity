@@ -47,6 +47,8 @@ export interface Gathered {
   /** The model's searches, latest last: they say what it looked for when the message does not
    *  ("can you check again?"). */
   queries: string[]
+  /** Text the model ended exploring with, when it wrote findings instead of "done". */
+  closing?: string
   query?: number[]
   floor?: number
 }

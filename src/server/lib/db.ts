@@ -734,6 +734,12 @@ export async function getAppSetting(key: string, fallback: string): Promise<stri
   return row?.value ?? fallback
 }
 
+/** getAppSetting for a caller that cannot await: one primary-key lookup. */
+export function getAppSettingSync(key: string, fallback: string): string {
+  const row = sqlite.query('SELECT value FROM app_settings WHERE key = ?').get(key) as { value: string } | null
+  return row?.value ?? fallback
+}
+
 /** Invalidates every JWT already issued to a user. Call on role change, password change,
  *  and anywhere else an existing session must stop being trusted. */
 export async function bumpTokenVersion(userId: string): Promise<void> {

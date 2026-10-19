@@ -19,6 +19,7 @@ const { parseChoice, chooseMode } = await import('./collection-mode.ts')
 const { compactReads } = await import('./collection-agent.ts')
 const { searchSpread, readsBlock, firstLook } = await import('./collection-evidence.ts')
 const { runTurn, createSink } = await import('./index.ts')
+const { savedNotesBlock } = await import('./collection-notes.ts')
 
 const USER = 'explore-user'
 const COLL = 'explore-coll'
@@ -93,6 +94,16 @@ describe('compactReads', () => {
     expect(out).not.toContain('text a')
     expect(out).toContain('text b')
     expect(out).toContain('text c')
+  })
+
+  test('keeps every part the latest step read at once, since none is noted yet', () => {
+    const result = (id: string) => ({ type: 'tool-result' as const, toolCallId: id, toolName: 'read_part', output: { type: 'text' as const, value: `text ${id}` } })
+    const out = JSON.stringify(compactReads([
+      { role: 'tool', content: [result('a')] },
+      { role: 'tool', content: ['b', 'c', 'd', 'e'].map(result) },
+    ]))
+    expect(out).not.toContain('text a')
+    for (const id of ['b', 'c', 'd', 'e']) expect(out).toContain(`text ${id}`)
   })
 })
 
@@ -330,12 +341,78 @@ describe('explore turn', () => {
     expect(note.by).toBeTruthy()
     expect(note.body).toContain('- **[C1]** gsn.txt')
     expect(cap.ofType('saved_notes')[0].notes).toEqual([{ id: saved, title: 'GSN in the papers' }])
-    expect(JSON.stringify(f.requests.at(-1))).toContain('Notes saved to the user')
+    const answer = JSON.stringify(f.requests.at(-1))
+    expect(answer).toContain('- GSN in the papers (cites C1)')
+    expect(answer).toContain('do not write the notes out again')
+    expect(answer).not.toContain('No saved note cites')
     sqlite.run('DELETE FROM uploaded_files WHERE id = ?', [saved])
 
     const plain = serve([{ text: ['done'] }, { text: ['Answer.'] }])
     await runTurn(ctxFor(fakeTarget(plain.baseURL)), createSink(captureSSE().stream as never))
     expect(JSON.stringify(plain.requests[0])).not.toContain('save_note')
+  })
+
+  test('with notes opted in, exploring that ends unsaved is followed by a pass that only saves; the answer is told when none were', async () => {
+    sqlite.run('DELETE FROM space_files WHERE space_id = ?', [COLL])
+    seedDoc('gsn.txt', ['This paper argues with GSN patterns.'])
+    // The model answers at the note step instead of calling note, which ends the exploration.
+    const f = serve([
+      call('read_part', { doc: 'C1', part: 1 }), { text: ['Here is what I found.'] },
+      call('save_note', { title: 'GSN', body: 'Uses GSN [C1].' }), { text: ['done'] },
+      { text: ['Saved a note.'] },
+    ])
+    const result = await runTurn({ ...ctxFor(fakeTarget(f.baseURL)), exploreNotes: true }, createSink(captureSSE().stream as never))
+    const savePass = f.requests.find(r => JSON.stringify(r).includes('You keep findings')) as { tools: Array<{ function: { name: string } }> }
+    expect(savePass.tools.map(t => t.function.name)).toEqual(['save_note'])
+    expect(JSON.stringify(savePass)).toContain('GSN patterns')
+    expect(result.savedNoteIds).toHaveLength(1)
+    sqlite.run('DELETE FROM uploaded_files WHERE id = ?', [result.savedNoteIds![0]])
+
+    // Nothing read, nothing to save: no saving pass, and the answer may not claim a save.
+    const none = serve([{ text: ['done'] }, { text: ['Answer.'] }])
+    await runTurn({ ...ctxFor(fakeTarget(none.baseURL)), exploreNotes: true }, createSink(captureSSE().stream as never))
+    expect(none.requests.some(r => JSON.stringify(r).includes('You keep findings'))).toBe(false)
+    expect(JSON.stringify(none.requests.at(-1))).toContain('## No notes were saved')
+  })
+
+  test('the answer is told which documents no saved note cites', () => {
+    const docs = ['C1', 'C2', 'C3'].map(label => ({ label, fileId: label, filename: `${label}.pdf`, summary: null }))
+    const block = savedNotesBlock([{ id: 'a', title: 'A', docs: ['C1'] }, { id: 'b', title: 'B', docs: ['C1', 'C3'] }], docs)
+    expect(block).toContain('- B (cites C1, C3)')
+    expect(block).toContain('No saved note cites C2.')
+    expect(savedNotesBlock(undefined, docs)).toBe('')
+  })
+
+  test('saving notes, a model that stops to write is told once to continue', async () => {
+    sqlite.run('DELETE FROM space_files WHERE space_id = ?', [COLL])
+    seedDoc('gsn.txt', ['This paper argues with GSN patterns.'])
+    const f = serve([
+      call('read_part', { doc: 'C1', part: 1 }), { text: ['The paper argues its safety case with GSN patterns throughout.'] },
+      call('note', { doc: 'C1', part: 1, finding: 'uses GSN' }), call('save_note', { title: 'GSN', body: 'Uses GSN [C1].' }),
+      { text: ['A second stop to write is taken as the end.'] },
+      { text: ['Saved a note.'] },
+    ])
+    const result = await runTurn({ ...ctxFor(fakeTarget(f.baseURL)), exploreNotes: true }, createSink(captureSSE().stream as never))
+    // The three steps after the nudge carry it; the answer does not.
+    expect(f.requests.filter(r => JSON.stringify(r).includes('Continue exploring')).length).toBe(3)
+    expect(f.requests.some(r => JSON.stringify(r).includes('You keep findings'))).toBe(false)
+    expect(result.savedNoteIds).toHaveLength(1)
+    const answer = JSON.stringify(f.requests.at(-1))
+    expect(answer).toContain('GSN patterns throughout')
+    expect(answer).toContain('A second stop to write')
+    sqlite.run('DELETE FROM uploaded_files WHERE id = ?', [result.savedNoteIds![0]])
+  })
+
+  test('findings a model ends exploring with, instead of "done", reach the answer', async () => {
+    sqlite.run('DELETE FROM space_files WHERE space_id = ?', [COLL])
+    seedDoc('gsn.txt', ['This paper argues with GSN patterns.'])
+    const f = serve([call('read_part', { doc: 'C1', part: 1 }), { text: ['The paper argues its safety case with GSN patterns throughout.'] }, { text: ['Answer.'] }])
+    await runTurn(ctxFor(fakeTarget(f.baseURL)), createSink(captureSSE().stream as never))
+    expect(JSON.stringify(f.requests.at(-1))).toContain('What the explorer wrote when it stopped')
+    expect(JSON.stringify(f.requests)).not.toContain('Continue exploring')
+    const done = serve([{ text: ['done'] }, { text: ['Answer.'] }])
+    await runTurn(ctxFor(fakeTarget(done.baseURL)), createSink(captureSSE().stream as never))
+    expect(JSON.stringify(done.requests.at(-1))).not.toContain('What the explorer wrote')
   })
 
   test('lists, reads and notes, then answers from its notes', async () => {

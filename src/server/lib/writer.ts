@@ -1,5 +1,5 @@
 import { streamText } from 'ai'
-import { languageModel, outputCap, RESEARCH_MAX_TOKENS, type ModelTarget } from './llm.ts'
+import { languageModel, outputCap, researchMaxTokens, type ModelTarget } from './llm.ts'
 import { contextCharBudget } from './trim-messages.ts'
 import type { SearchResult } from './search/index.ts'
 
@@ -93,6 +93,6 @@ export function runWriter(
     abortSignal,
     system,
     messages: [{ role: 'user', content: userContent }],
-    maxOutputTokens: outputCap(model, RESEARCH_MAX_TOKENS),
+    maxOutputTokens: outputCap(model, researchMaxTokens()),
   })
 }

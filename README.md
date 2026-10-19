@@ -1253,7 +1253,9 @@ saves is marked as written by the model, unreviewed, and a draft. It may rework 
 drafts, keeping the old text as an [earlier version](#notes), but never a note you wrote or reviewed: a
 note of that title is left alone and the draft is saved beside it as *Title (draft)*, linking to it. In a
 locked chat the notes are confidential. The step limit doubles while saving notes, and the answer lists
-the notes saved. **Compile into notes**, on a collection's page (or a space's), opens a new chat set up
+the notes saved. If exploring ends with nothing saved — the model ran out of steps, or answered instead
+of calling a tool — one more pass, offered only `save_note`, saves the findings from what was read and
+noted; if still nothing is saved, the answer says so rather than claiming otherwise. **Compile into notes**, on a collection's page (or a space's), opens a new chat set up
 for this — Explore with *Save notes* on, and a prompt to go through every document and save its main
 ideas — for you to check and send.
 
@@ -1698,7 +1700,8 @@ REFORMULATE_ASSISTANT_CTX=1000            # max chars of prior assistant turns
 # fallbacks. Backstop against runaway generation (especially thinking-model
 # reasoning loops); covers reasoning + answer tokens together. For a clean stop
 # on a thinking model, also bound reasoning server-side (e.g. llama.cpp
-# --reasoning-budget) so the cap isn't spent entirely on <think> tokens. Default 6000.
+# --reasoning-budget) so the cap isn't spent entirely on <think> tokens. Default 6000; Admin → Context
+# → Answer length cap overrides it.
 # RESEARCH_MAX_TOKENS=6000
 ```
 

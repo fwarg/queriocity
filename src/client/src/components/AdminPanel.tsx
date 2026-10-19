@@ -43,6 +43,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   const [collectionFullTextCloudDraft, setCollectionFullTextCloudDraft] = useState('1000000')
   const [exploreMaxStepsDraft, setExploreMaxStepsDraft] = useState('20')
   const [exploreMinRelevanceDraft, setExploreMinRelevanceDraft] = useState('0.05')
+  const [researchMaxTokensDraft, setResearchMaxTokensDraft] = useState('6000')
   const [userMemoryBudgetDraft, setUserMemoryBudgetDraft] = useState('300')
   const [queryReformulationDraft, setQueryReformulationDraft] = useState(true)
   const [rssFeedCharsBudgetDraft, setRssFeedCharsBudgetDraft] = useState('50000')
@@ -96,6 +97,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
       setCollectionFullTextCloudDraft(String(s.collectionFullTextTokensCloud))
       setExploreMaxStepsDraft(String(s.collectionExploreMaxSteps))
       setExploreMinRelevanceDraft(String(s.collectionExploreMinRelevance))
+      setResearchMaxTokensDraft(String(s.researchMaxTokens))
       setUserMemoryBudgetDraft(String(s.userMemoryTokenBudget))
       setQueryReformulationDraft(s.queryReformulation)
       setRssFeedCharsBudgetDraft(String(s.rssFeedCharsBudget))
@@ -133,6 +135,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     const collectionFullTextTokensCloud = parseInt(collectionFullTextCloudDraft)
     const collectionExploreMaxSteps = parseInt(exploreMaxStepsDraft)
     const collectionExploreMinRelevance = parseFloat(exploreMinRelevanceDraft)
+    const researchMaxTokens = parseInt(researchMaxTokensDraft)
     const userMemoryTokenBudget = parseInt(userMemoryBudgetDraft)
     const rssFeedCharsBudget = parseInt(rssFeedCharsBudgetDraft)
     const fetchMaxPages = parseInt(fetchMaxPagesDraft)
@@ -156,6 +159,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     if (isNaN(collectionFullTextTokensCloud) || collectionFullTextTokensCloud < 0) return
     if (isNaN(collectionExploreMaxSteps) || collectionExploreMaxSteps < 3) return
     if (isNaN(collectionExploreMinRelevance) || collectionExploreMinRelevance < 0 || collectionExploreMinRelevance > 1) return
+    if (isNaN(researchMaxTokens) || researchMaxTokens < 1000 || researchMaxTokens > 200_000) return
     if (isNaN(userMemoryTokenBudget) || userMemoryTokenBudget < 0) return
     if (isNaN(rssFeedCharsBudget) || rssFeedCharsBudget < 5000) return
     if (isNaN(fetchMaxPages) || fetchMaxPages < 0) return
@@ -166,7 +170,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     setError('')
     setSavingBudget(true)
     try {
-      await updateAdminSettings({ memoryTokenBudget: budget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, ragTopK, ragMinRelevance, relatedMinSimilarity, relatedMinRelevance, topicMinSimilarity, attachmentChars, spaceRagBudget, notesRagBudget, collectionFullTextTokens, collectionFullTextTokensCloud, collectionExploreMaxSteps, collectionExploreMinRelevance, queryReformulation: queryReformulationDraft, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow: fetchSummarizeOverflowDraft, compressHistoryOverflow: compressHistoryOverflowDraft, resourceSummary: resourceSummaryDraft })
+      await updateAdminSettings({ memoryTokenBudget: budget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, ragTopK, ragMinRelevance, relatedMinSimilarity, relatedMinRelevance, topicMinSimilarity, attachmentChars, spaceRagBudget, notesRagBudget, collectionFullTextTokens, collectionFullTextTokensCloud, collectionExploreMaxSteps, collectionExploreMinRelevance, researchMaxTokens, queryReformulation: queryReformulationDraft, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow: fetchSummarizeOverflowDraft, compressHistoryOverflow: compressHistoryOverflowDraft, resourceSummary: resourceSummaryDraft })
 
       onBudgetChange?.(budget)
       setBudgetSaved(true)
@@ -514,6 +518,13 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
             {/* Context */}
             <div className="flex flex-col gap-3 border-t border-gray-800 pt-5">
               <p className="text-xs font-semibold text-gray-300 uppercase tracking-wider">Context</p>
+              <div className="flex flex-col gap-1.5">
+                <p className="text-xs text-gray-400 font-medium">Answer length cap (tokens)</p>
+                <p className="text-xs text-gray-500">Most tokens a research or collection answer may write, thinking included — a backstop against runaway output. A long answer, such as a report or notes on a whole collection, stops mid-sentence at this cap. A model with its own output limit configured uses that instead. Defaults to the <code>RESEARCH_MAX_TOKENS</code> env var.</p>
+                <input type="number" min={1000} max={200000} step={500} value={researchMaxTokensDraft}
+                  onChange={e => setResearchMaxTokensDraft(e.target.value)}
+                  className="w-32 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
+              </div>
               <div className="flex flex-col gap-1.5">
                 <p className="text-xs text-gray-400 font-medium">Compress dropped history</p>
                 <p className="text-xs text-gray-500">When a research turn's conversation history must be trimmed to fit the context budget, summarize the dropped messages with the small model and fold the summary into the system prompt instead of discarding them outright. Adds latency; only applies to balanced/thorough research turns.</p>

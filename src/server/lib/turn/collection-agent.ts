@@ -1,7 +1,7 @@
 import { generateText, streamText, tool, stepCountIs, type ModelMessage, type ToolSet } from 'ai'
 import { z } from 'zod'
 import { getAppSetting } from '../db.ts'
-import { languageModel, outputCap, RESEARCH_MAX_TOKENS, type ModelTarget } from '../llm.ts'
+import { languageModel, outputCap, researchMaxTokens, type ModelTarget } from '../llm.ts'
 import { embedText } from '../embeddings.ts'
 import { userMemoryBlockIfEnabled, joinMemoryBlocks } from '../memory.ts'
 import { splitAttachments } from '../../../shared/context.ts'
@@ -16,7 +16,7 @@ import { trimMessages, meterBudgetChars, CONTEXT_RESERVE_FRACTION } from '../tri
 import { thinkingFor, spaceMemoryOnly } from './prepare.ts'
 import { AnswerStream } from './stream-answer.ts'
 import { startWeb, webSearchTool, webBlock, EXPLORE_WEB_INSTRUCTION, type WebSearching } from './collection-web.ts'
-import { saveNoteTool, savedNotesBlock, EXPLORE_NOTES_INSTRUCTION, type SavedNote } from './collection-notes.ts'
+import { saveNoteTool, savedNotesBlock, saveFindings, EXPLORE_NOTES_INSTRUCTION, type SavedNote } from './collection-notes.ts'
 import { toStoredSource } from './research.ts'
 import { userQueryOf, withInstructions, withKeepalive, documentSet, type TurnContext, type TurnResult, type TurnSink } from './context.ts'
 
@@ -42,7 +42,11 @@ Cite a document inline by its label (e.g. [C1]); do not invent any other citatio
 /** A part number, also when a model sends it as text ("5"). */
 const partNumber = z.coerce.number().int().min(1)
 
-const NOTE_NOW = `\n\nYou have just read a part: call note now with what in it bears on the message, with a short quote. If nothing does, note that.`
+/** Shorter closing text is a sign-off ("done"), not findings. */
+const CLOSING_MIN_CHARS = 40
+/** Sent once when, saving notes, the model stops to write before the step limit (explore). */
+const CONTINUE_NUDGE = `Continue exploring: call note for each part you have read, then outline and read the documents you have not covered yet, saving notes as you go. Reply with text only when you are done.`
+const NOTE_NOW = `\n\nYou have just read: call note now, once for each part you just read, with what in it bears on the message and a short quote. If nothing in a part does, note that. Do not reply with text yet — that ends the exploration.`
 
 export function runCollectionAgent(ctx: TurnContext, sink: TurnSink): Promise<TurnResult> {
   return withKeepalive(sink, () => exploreAndAnswer(ctx, sink))
@@ -61,10 +65,11 @@ async function exploreAndAnswer(ctx: TurnContext, sink: TurnSink): Promise<TurnR
   const web = await startWeb(ctx)
   const saved: SavedNote[] | undefined = ctx.exploreNotes ? [] : undefined
   const { steps, endedEarly } = await explore(ctx, sink, model, docs, gathered, overview, maxSteps, web, saved)
+  if (saved && !saved.length) await saveFindings(ctx, sink, model, docs, saved, await findings(gathered, model))
   const { notes } = gathered
   await sink.emit({ type: 'exploration', steps, notes: notes.length, endedEarly })
   if (web?.results.length) await sink.emit({ type: 'sources', sources: web.results })
-  if (saved?.length) await sink.emit({ type: 'saved_notes', notes: saved })
+  if (saved?.length) await sink.emit({ type: 'saved_notes', notes: saved.map(({ id, title }) => ({ id, title })) })
   const content = await answerFromNotes(ctx, sink, model, docs, gathered, web, saved)
   console.log(`  [explore] ${steps} steps, ${notes.length} notes, ${gathered.seen.size} passages seen${web ? `, ${web.results.length} web results` : ''}${saved ? `, ${saved.length} saved to the library` : ''}${endedEarly ? ', ended early' : ''}, ${Date.now() - t0}ms, ${content.length} chars`)
   return { content, sources: (web?.results ?? []).map(toStoredSource), fileSources, cacheable: false, answeredBy: model, savedNoteIds: saved?.map(s => s.id) }
@@ -87,32 +92,45 @@ async function explore(ctx: TurnContext, sink: TurnSink, model: ModelTarget, doc
   const history = trimMessages(ctx.msgs, Math.floor(model.contextTokens * CONTEXT_RESERVE_FRACTION), system, ctx.pinned)
   let step = 0
   let readsBefore = 0
+  const run = (messages: ModelMessage[], steps: number) => generateText({
+    model: languageModel(model),
+    system,
+    messages,
+    tools,
+    stopWhen: stepCountIs(steps),
+    abortSignal: ctx.abortSignal,
+    prepareStep: ({ messages }) => {
+      // After a part is read, the next step offers only `note` and asks for it: a model that skips
+      // its bookkeeping is prompted, and still decides what the note says. Offered, not enforced —
+      // a local server may not honour a forced tool, and the SDK fails the whole run when one is
+      // ignored; a model that answers instead simply ends the exploration.
+      // A new part read since the last step — not a failed or repeated read.
+      const justRead = gathered.reads.size > readsBefore
+      readsBefore = gathered.reads.size
+      return {
+        instructions: system + notesBlock(gathered.notes) + (justRead ? NOTE_NOW : ''),
+        messages: compactReads(messages),
+        ...(justRead && { activeTools: ['note'] }),
+      }
+    },
+    onStepFinish: s => logStep(++step, s),
+  })
   try {
-    const result = await generateText({
-      model: languageModel(model),
-      system,
-      messages: history.messages,
-      tools,
-      stopWhen: stepCountIs(maxSteps),
-      abortSignal: ctx.abortSignal,
-      prepareStep: ({ messages }) => {
-        // After a part is read, the next step offers only `note` and asks for it: a model that skips
-        // its bookkeeping is prompted, and still decides what the note says. Offered, not enforced —
-        // a local server may not honour a forced tool, and the SDK fails the whole run when one is
-        // ignored; a model that answers instead simply ends the exploration.
-        // A new part read since the last step — not a failed or repeated read.
-        const justRead = gathered.reads.size > readsBefore
-        readsBefore = gathered.reads.size
-        return {
-          instructions: system + notesBlock(gathered.notes) + (justRead ? NOTE_NOW : ''),
-          messages: compactReads(messages),
-          ...(justRead && { activeTools: ['note'] }),
-        }
-      },
-      onStepFinish: s => logStep(++step, s),
-    })
-    const last = result.steps.at(-1)
-    return { steps: result.steps.length, endedEarly: result.steps.length >= maxSteps && !!last?.toolCalls.length }
+    let result = await run(history.messages, maxSteps)
+    let steps = result.steps.length
+    const closings = [result.text.trim()]
+    // Saving notes, a model that stops to write rather than "done" leaves documents unread — seen
+    // with DeepSeek at the note step. Told once to go on; a second stop is taken as its answer.
+    if (saved && closings[0].length > CLOSING_MIN_CHARS && steps < maxSteps) {
+      console.log('  [explore] stopped to write; told to continue')
+      result = await run([...history.messages, ...result.response.messages, { role: 'user', content: CONTINUE_NUDGE }], maxSteps - steps)
+      steps += result.steps.length
+      closings.push(result.text.trim())
+    }
+    // A model may end by writing its findings rather than "done": kept, so they reach the answer.
+    const closing = closings.filter(c => c.length > CLOSING_MIN_CHARS).join('\n\n')
+    if (closing) gathered.closing = closing
+    return { steps, endedEarly: steps >= maxSteps && !!result.steps.at(-1)?.toolCalls.length }
   } catch (e) {
     if (ctx.abortSignal.aborted) throw e
     console.error('  [explore] exploration failed, answering from the notes so far:', e)
@@ -191,18 +209,31 @@ function exploreTools(ctx: TurnContext, sink: TurnSink, docs: Doc[], gathered: G
   }
 }
 
+/** What exploring found — the notes and the parts read — for the pass that saves it. */
+async function findings(gathered: Gathered, model: ModelTarget): Promise<string> {
+  const reads = await readsBlock(gathered, Math.min(READ_MAX_CHARS, Math.floor(meterBudgetChars(model.contextTokens) * READ_MAX_SHARE)))
+  const noted = gathered.notes.length ? `## Notes from exploring\n${gathered.notes.map(formatNote).join('\n')}` : ''
+  return joinMemoryBlocks(noted, closingBlock(gathered), reads.block)
+}
+
+/** What the model wrote when it stopped exploring, if it wrote findings rather than "done". */
+const closingBlock = (gathered: Gathered) => gathered.closing ? `## What the explorer wrote when it stopped\n${gathered.closing}` : ''
+
 /** The notes restated for the model, so they survive the part texts being dropped. */
 function notesBlock(notes: Note[]): string {
   if (!notes.length) return '\n\n## Your notes so far\n(none yet)'
   return `\n\n## Your notes so far (${notes.length})\n` + notes.map(formatNote).join('\n')
 }
 
-/** The messages with all but the latest read_part results replaced: what mattered is in the notes. */
+/** The messages with all but the latest read_part results replaced: what mattered is in the notes.
+ *  The latest step's reads are always kept, however many ran at once — they are not noted yet. */
 export function compactReads(messages: ModelMessage[]): ModelMessage[] {
-  const readIds = messages.flatMap(m => m.role === 'tool'
+  const readsIn = (m: ModelMessage) => m.role === 'tool'
     ? m.content.flatMap(p => p.type === 'tool-result' && p.toolName === 'read_part' ? [p.toolCallId] : [])
-    : [])
-  const dropped = new Set(readIds.slice(0, Math.max(0, readIds.length - PARTS_KEPT)))
+    : []
+  const readIds = messages.flatMap(readsIn)
+  const latest = readsIn(messages.findLast(m => m.role === 'tool') ?? { role: 'user', content: '' })
+  const dropped = new Set(readIds.slice(0, Math.max(0, readIds.length - Math.max(PARTS_KEPT, latest.length))))
   if (!dropped.size) return messages
   return messages.map(m => m.role !== 'tool' ? m : {
     ...m,
@@ -213,7 +244,7 @@ export function compactReads(messages: ModelMessage[]): ModelMessage[] {
 }
 
 /** The answer, streamed, from the notes; "writing" starts with its first output. */
-async function answerFromNotes(ctx: TurnContext, sink: TurnSink, model: ModelTarget, docs: Doc[], gathered: Gathered, web?: WebSearching, saved: SavedNote[] = []): Promise<string> {
+async function answerFromNotes(ctx: TurnContext, sink: TurnSink, model: ModelTarget, docs: Doc[], gathered: Gathered, web?: WebSearching, saved?: SavedNote[]): Promise<string> {
   const { notes } = gathered
   const query = userQueryOf(ctx.msgs)
   const reads = await readsBlock(gathered, Math.min(READ_MAX_CHARS, Math.floor(meterBudgetChars(model.contextTokens) * READ_MAX_SHARE)))
@@ -224,14 +255,14 @@ async function answerFromNotes(ctx: TurnContext, sink: TurnSink, model: ModelTar
     await userMemoryBlockIfEnabled(ctx.userId, ctx.settings, query),
     await spaceMemoryOnly(ctx, query),
     // The documents' own [7]-style references, rewritten so they cannot pass for the web's [1]….
-    asDocumentReferences(joinMemoryBlocks(documents, noted, seenBlock(gathered.seen), reads.block, evidenceBlock(gathered, reads.included))),
+    asDocumentReferences(joinMemoryBlocks(documents, noted, closingBlock(gathered), seenBlock(gathered.seen), reads.block, evidenceBlock(gathered, reads.included))),
     webBlock(web),
-    savedNotesBlock(saved),
+    savedNotesBlock(saved, docs),
   )
   await sink.step({ kind: 'readNotes', count: notes.length })
   const history = trimMessages(ctx.msgs, Math.floor(model.contextTokens * CONTEXT_RESERVE_FRACTION), system, ctx.pinned)
   await sink.context(history.report)
-  const result = streamText({ model: languageModel(model), abortSignal: ctx.abortSignal, system, messages: history.messages, maxOutputTokens: outputCap(model, RESEARCH_MAX_TOKENS) })
+  const result = streamText({ model: languageModel(model), abortSignal: ctx.abortSignal, system, messages: history.messages, maxOutputTokens: outputCap(model, researchMaxTokens()) })
   let started = false
   const stream = (async function* () {
     for await (const part of result.stream) {

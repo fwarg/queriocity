@@ -1,6 +1,6 @@
 import { streamText } from 'ai'
 import { getAppSetting } from '../db.ts'
-import { languageModel, outputCap, tokensToChars, estimateTokens, RESEARCH_MAX_TOKENS, type ModelTarget } from '../llm.ts'
+import { languageModel, outputCap, tokensToChars, estimateTokens, researchMaxTokens, type ModelTarget } from '../llm.ts'
 import { splitAttachments } from '../../../shared/context.ts'
 import { userMemoryBlockIfEnabled, joinMemoryBlocks } from '../memory.ts'
 import { coverCollection } from '../files/collection-coverage.ts'
@@ -72,7 +72,7 @@ async function answerFromCollection(ctx: TurnContext, sink: TurnSink): Promise<T
     abortSignal: ctx.abortSignal,
     system,
     messages: history.messages,
-    maxOutputTokens: outputCap(model, RESEARCH_MAX_TOKENS),
+    maxOutputTokens: outputCap(model, researchMaxTokens()),
   })
   const content = await new AnswerStream(sink, { citations: false, showThinking: thinkingFor(ctx).showThinking })
     .consume(onFirstOutput(result.stream, () => sink.step({ kind: 'write' })), { reasoning: true })

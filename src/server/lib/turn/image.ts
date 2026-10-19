@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { readFile } from 'node:fs/promises'
 import { streamText, tool, stepCountIs } from 'ai'
 import { webSearch, newSearchBudget, type SearchResult, type EngineError, type SearchBudget } from '../search/index.ts'
-import { languageModel, modelTarget, RESEARCH_MAX_TOKENS } from '../llm.ts'
+import { languageModel, modelTarget, researchMaxTokens } from '../llm.ts'
 import { ThinkExtractor } from '../think-extractor.ts'
 import { findLeakedToolCall, stripLeakedToolCall, coerceNumericArgs, findLeakedImageMarkdown, stripLeakedImageMarkdown } from '../leaked-tool-call.ts'
 import { trimMessages, CONTEXT_RESERVE_FRACTION } from '../trim-messages.ts'
@@ -272,7 +272,7 @@ async function streamImageModel(ctx: TurnContext, sink: TurnSink, job: ImageJob)
     messages: history.messages,
     tools: job.tools(),
     stopWhen: stepCountIs(4),
-    maxOutputTokens: RESEARCH_MAX_TOKENS,
+    maxOutputTokens: researchMaxTokens(),
   })
   // Image mode's text is buffered rather than streamed delta-by-delta: diffusion blocks the
   // stream for minutes anyway, and the system prompt permits at most one summary sentence — so
