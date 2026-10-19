@@ -21,9 +21,12 @@ interface Row {
   originSessionId: string | null
   generatedBy: string | null
   verifiedAt: number | null
+  editedAt: number | null
   status: string | null
   createdAt: number
   updatedAt: number | null
+  /** When the newest earlier version was kept, i.e. the text last replaced; null when never. */
+  revisedAt: number | null
 }
 
 /** Characters a file name cannot hold on some OS, or that Obsidian reads as link syntax. */
@@ -91,8 +94,9 @@ function frontmatter(fields: Record<string, unknown>): string {
 export async function exportVault(userId: string, { full = false, okf = false } = {}): Promise<Uint8Array> {
   const rows = sqlite.query(`
     SELECT id, kind, filename AS title, body, summary, origin, mime_type AS mimeType, derived_from AS derivedFrom,
-           origin_session_id AS originSessionId, generated_by AS generatedBy, verified_at AS verifiedAt, status,
-           created_at AS createdAt, updated_at AS updatedAt
+           origin_session_id AS originSessionId, generated_by AS generatedBy, verified_at AS verifiedAt, edited_at AS editedAt, status,
+           created_at AS createdAt, updated_at AS updatedAt,
+           (SELECT MAX(nr.created_at) FROM note_revisions nr WHERE nr.note_id = uploaded_files.id) AS revisedAt
     FROM uploaded_files WHERE user_id = ? ORDER BY created_at
   `).all(userId) as Row[]
   const sessions = full ? chatRows(userId) : []

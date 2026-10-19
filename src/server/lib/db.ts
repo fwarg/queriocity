@@ -193,6 +193,9 @@ export const uploadedFiles = sqliteTable('uploaded_files', {
   /** When the owner marked the note reviewed; null when not. Notes are per user, so the reviewer is
    *  always the owner. */
   verifiedAt: integer('verified_at', { mode: 'timestamp' }),
+  /** When the owner last changed the text of a note a model (or an unknown author) wrote; null when
+   *  never. Not a review: an edit may touch one sentence. */
+  editedAt: integer('edited_at', { mode: 'timestamp' }),
   /** draft | stable | deprecated, after OKF's lifecycle. Null means stable. */
   status: text('status', { enum: ['draft', 'stable', 'deprecated'] }),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
@@ -383,6 +386,7 @@ function initSchema() {
       origin_message_id TEXT,
       generated_by TEXT,
       verified_at INTEGER,
+      edited_at  INTEGER,
       status     TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER
@@ -653,6 +657,7 @@ function initSchema() {
   try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN origin_message_id TEXT') } catch {}
   try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN generated_by TEXT') } catch {}
   try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN verified_at INTEGER') } catch {}
+  try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN edited_at INTEGER') } catch {}
   try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN status TEXT') } catch {}
   try { sqlite.run('ALTER TABLE custom_templates ADD COLUMN instruction_note_ids TEXT') } catch {}
   try { sqlite.run('ALTER TABLE custom_templates ADD COLUMN instruction_text TEXT') } catch {}

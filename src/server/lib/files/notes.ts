@@ -10,6 +10,7 @@ import { inlineTags } from '../../../shared/tags.ts'
 import { plainCitations } from '../../../shared/note-citations.ts'
 import { HUMAN_AUTHOR, UNKNOWN_MODEL, type NoteStatus } from '../../../shared/note-trust.ts'
 import { modelTarget } from '../llm.ts'
+import { recordRevision } from './note-revisions.ts'
 
 /** Notes: the one resource the user writes rather than uploads.
  *
@@ -41,6 +42,9 @@ export interface NoteInput {
   model?: string
   /** Sets or clears the review mark; left alone when omitted. */
   reviewed?: boolean
+  /** The owner wrote this text (the editor), not a process (relinking, a restore). Changing a note a
+   *  model wrote marks it edited and keeps the model's version. */
+  edited?: boolean
   status?: NoteStatus
 }
 
@@ -63,8 +67,10 @@ export async function saveNote(userId: string, note: NoteInput, { describe = tru
   const now = new Date()
 
   if (existing) {
+    const editsModelText = note.edited && existing.body !== body && existing.generatedBy !== HUMAN_AUTHOR
+    if (editsModelText) recordRevision(id, existing.filename, existing.body ?? '', HUMAN_AUTHOR)
     await db.update(uploadedFiles)
-      .set({ filename: title, body, size, updatedAt: now, ...trustUpdate(existing, note, now) })
+      .set({ filename: title, body, size, updatedAt: now, ...trustUpdate(existing, note, now), ...(editsModelText && { editedAt: now }) })
       .where(eq(uploadedFiles.id, id))
   } else {
     await db.insert(uploadedFiles).values({

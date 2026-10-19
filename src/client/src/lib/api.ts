@@ -959,6 +959,8 @@ export interface Resource {
   generatedBy: string | null
   /** When the owner marked the note reviewed. */
   verifiedAt: number | null
+  /** When the owner last changed the text of a note a model wrote; null when never. Not a review. */
+  editedAt: number | null
   status: NoteStatus | null
   createdAt: number
   updatedAt: number | null

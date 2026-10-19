@@ -17,6 +17,7 @@ import {
 import { useLang, useT } from '../lib/i18n.tsx'
 import { errorMessage } from '../lib/errors.ts'
 import type { TranslationKey } from '@shared/i18n/index.ts'
+import { HUMAN_AUTHOR } from '@shared/note-trust.ts'
 import { GuideLink } from './GuideView.tsx'
 import { useConfirm } from './confirm.tsx'
 import type { TopicId } from '@shared/guide/index.ts'
@@ -226,6 +227,7 @@ export function ResourceDetail({ id, onBack, onChanged, onOpen, onOpenChat, onTa
           initialTitle={detail.filename}
           initialBody={detail.body ?? ''}
           initialTags={detail.tags}
+          unreviewed={detail.kind === 'note' && detail.generatedBy !== HUMAN_AUTHOR && detail.verifiedAt === null}
           onClose={() => setEditing(false)}
           onSaved={() => { setEditing(false); changed() }}
         />

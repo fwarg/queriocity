@@ -5,7 +5,7 @@ import { footnoteCitations } from '../../../shared/note-citations.ts'
 
 const paths = new Map([['paper a', 'Resources/Paper A.md'], ['my note', 'Notes/My note.md']])
 const note = (extra: Partial<OkfResource> = {}): OkfResource => ({
-  kind: 'note', title: 'T', summary: 'One line.', origin: null, generatedBy: 'GLM', verifiedAt: null, status: null, createdAt: 1_760_000_000, ...extra,
+  kind: 'note', title: 'T', summary: 'One line.', origin: null, generatedBy: 'GLM', verifiedAt: null, editedAt: null, status: null, createdAt: 1_760_000_000, updatedAt: null, revisedAt: null, ...extra,
 })
 
 describe('OKF export', () => {
@@ -30,6 +30,11 @@ describe('OKF export', () => {
     expect(f.generated).toEqual({ by: 'queriocity/GLM', at: '2025-10-09T08:53:20Z' })
     expect(f.verified).toEqual({ by: 'human:fredrik', at: '2025-10-09T08:55:00Z' })
     expect(f.status).toBe('draft')
+    expect(f.edited).toBeUndefined()
+    // `generated.at` is the last change to the text: a kept version for a model's note, the last save for the owner's.
+    expect(okfFields(note({ revisedAt: 1_760_000_200, updatedAt: 1_760_000_300 }), '', 'fredrik', paths).generated).toEqual({ by: 'queriocity/GLM', at: '2025-10-09T08:56:40Z' })
+    expect(okfFields(note({ generatedBy: 'human', updatedAt: 1_760_000_300 }), '', 'fredrik', paths).generated).toEqual({ by: 'human:fredrik', at: '2025-10-09T08:58:20Z' })
+    expect(okfFields(note({ editedAt: 1_760_000_050 }), '', 'fredrik', paths).edited).toEqual({ by: 'human:fredrik', at: '2025-10-09T08:54:10Z' })
   })
 
   test('the user\'s own note is a human actor; an unknown author and a file have no generated', () => {

@@ -16,7 +16,7 @@ import type { TurnContext } from './context.ts'
 const { sqlite, EMBED_DIMS } = await import('../db.ts')
 const { joinChunks, documentParts, partOfChunk, outlineOf } = await import('../files/collection-parts.ts')
 const { parseChoice, chooseMode } = await import('./collection-mode.ts')
-const { compactReads } = await import('./collection-agent.ts')
+const { compactReads, exploreSteps, MAX_EXPLORE_STEPS } = await import('./collection-agent.ts')
 const { searchSpread, readsBlock, firstLook } = await import('./collection-evidence.ts')
 const { runTurn, createSink } = await import('./index.ts')
 const { savedNotesBlock } = await import('./collection-notes.ts')
@@ -36,6 +36,9 @@ function serve(script: ScriptedStep[]) {
 }
 
 beforeAll(() => {
+  // A saved note's summary would take a scripted reply from the fake model; other files set this
+  // too, so the scripts held only when the whole suite ran.
+  sqlite.run("INSERT OR REPLACE INTO app_settings(key, value) VALUES ('resource_summary', 'false')")
   sqlite.run('INSERT OR IGNORE INTO users(id, email, created_at, updated_at) VALUES (?,?,?,?)', [USER, `${USER}@explore.test`, 0, 0])
   sqlite.run('INSERT OR IGNORE INTO spaces(id, name, user_id, kind, created_at, updated_at) VALUES (?,?,?,?,?,?)', [COLL, 'Papers', USER, 'collection', 0, 0])
 })
@@ -421,6 +424,42 @@ describe('explore turn', () => {
     expect(answer).toContain('GSN patterns throughout')
     expect(answer).toContain('A second stop to write')
     sqlite.run('DELETE FROM uploaded_files WHERE id = ?', [result.savedNoteIds![0]])
+  })
+
+  test('saving notes, the step limit grows with the collection, up to the ceiling', () => {
+    sqlite.run('DELETE FROM space_files WHERE space_id = ?', [COLL])
+    const doc = (id: string) => ({ label: 'C1', fileId: id, filename: 'x', summary: null })
+    const seven = doc(seedDoc('seven.txt', Array.from({ length: 19 }, (_, i) => `chunk ${i}`)))
+    expect(exploreSteps(20, [seven], false)).toBe(20)
+    // 7 parts + 2 for the document + 10 to save = 19, under twice the setting.
+    expect(exploreSteps(20, [seven], true)).toBe(40)
+    expect(exploreSteps(5, [seven], true)).toBe(19)
+    expect(exploreSteps(5, Array(20).fill(seven), true)).toBe(MAX_EXPLORE_STEPS)
+  })
+
+  test('saving notes, a run stopped at the step limit gets a saving pass that keeps the notes saved', async () => {
+    sqlite.run('DELETE FROM space_files WHERE space_id = ?', [COLL])
+    seedDoc('gsn.txt', ['This paper argues with GSN patterns.'])
+    sqlite.run("INSERT OR REPLACE INTO app_settings(key, value) VALUES ('collection_explore_max_steps', '3')")
+    try {
+      // 1 part + 2 + 10 = 13 steps: a read, its note, one save, then listing until it is stopped.
+      const f = serve([
+        call('read_part', { doc: 'C1', part: 1 }), call('note', { doc: 'C1', part: 1, finding: 'GSN patterns' }),
+        call('save_note', { title: 'GSN', body: 'Uses GSN [C1].' }),
+        ...Array.from({ length: 10 }, () => call('list_documents', {})),
+        call('save_note', { title: 'Argument patterns', body: 'Patterns [C1].' }), { text: ['Saved.'] },
+        { text: ['Answer.'] },
+      ])
+      const result = await runTurn({ ...ctxFor(fakeTarget(f.baseURL)), exploreNotes: true }, createSink(captureSSE().stream as never))
+      expect(JSON.stringify(f.requests[0])).not.toContain('## A first look')
+      const pass = JSON.stringify(f.requests.find(r => JSON.stringify(r).includes('You keep findings')))
+      expect(pass).toContain('## Notes already saved')
+      expect(pass).toContain('- GSN')
+      expect(result.savedNoteIds).toHaveLength(2)
+      for (const id of result.savedNoteIds!) sqlite.run('DELETE FROM uploaded_files WHERE id = ?', [id])
+    } finally {
+      sqlite.run("DELETE FROM app_settings WHERE key = 'collection_explore_max_steps'")
+    }
   })
 
   test('findings a model ends exploring with, instead of "done", reach the answer', async () => {

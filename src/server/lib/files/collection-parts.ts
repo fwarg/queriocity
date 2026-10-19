@@ -31,6 +31,12 @@ export interface DocPart {
 /** The part a chunk falls in; chunk numbers are the 0-based suffixes of `file_chunk_meta.chunk_id`. */
 export const partOfChunk = (chunkNumber: number) => Math.floor(chunkNumber / PART_CHUNKS) + 1
 
+/** How many parts a document has, without reading their text. */
+export function partCount(fileId: string): number {
+  const { n } = sqlite.prepare('SELECT COUNT(*) AS n FROM file_chunk_meta WHERE file_id = ?').get(fileId) as { n: number }
+  return Math.ceil(n / PART_CHUNKS)
+}
+
 /** A document's parts, in order. */
 export function documentParts(fileId: string): DocPart[] {
   const chunks = (sqlite.prepare(`

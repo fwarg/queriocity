@@ -53,25 +53,31 @@ export function saveNoteTool(ctx: TurnContext, sink: TurnSink, model: ModelTarge
 
 const SAVE_SYSTEM = `You keep findings from a collection of documents as notes in the user's library. Below is what was read and noted while exploring the documents for the user's message. Call save_note once for each concept worth keeping, in markdown. ${NOTE_STYLE} ${LINK_INSTRUCTION} You may call it several times at once. Save only what the material below supports.`
 const SAVE_WEB_LINE = ` The web results below may explain a concept; cite one by its number ([3]), and every note still cites at least one document.`
+/** For a pass after exploring saved some notes and then ran out of steps. */
+const alreadySavedBlock = (saved: SavedNote[]) => saved.length
+  ? `## Notes already saved\nExploring ran out of steps after saving these. Save only concepts they do not cover, and never under these titles: that would replace them.\n${saved.map(s => `- ${s.title}`).join('\n')}`
+  : ''
 /** Steps for the saving pass: enough to save in more than one go. */
 const SAVE_STEPS = 4
 
-/** A pass that only saves, for when exploring ended with saving on and nothing saved: the model ran
- *  out of steps, or answered instead of calling a tool. Its findings are saved from what it read and
- *  noted. A failure leaves the answer to say that nothing was saved. */
+/** A pass that only saves, for when exploring ended with saving on and nothing saved — the model
+ *  answered instead of calling a tool — or at the step limit, with what was read last noted but not
+ *  saved. Its findings are saved from what it read and noted, besides the notes already saved. A
+ *  failure leaves the answer to report what was saved. */
 export async function saveFindings(ctx: TurnContext, sink: TurnSink, model: ModelTarget, docs: Doc[], saved: SavedNote[], material: string, web?: WebSearching) {
   if (!material) return
+  const before = saved.length
   const documents = '## The documents\n' + docs.map(d => `- [${d.label}] ${d.filename}`).join('\n')
   try {
     await generateText({
       model: languageModel(model),
-      system: [`${SAVE_SYSTEM}${web?.results.length ? SAVE_WEB_LINE : ''}`, documents, asDocumentReferences(material), webBlock(web)].filter(Boolean).join('\n\n'),
+      system: [`${SAVE_SYSTEM}${web?.results.length ? SAVE_WEB_LINE : ''}`, documents, alreadySavedBlock(saved), asDocumentReferences(material), webBlock(web)].filter(Boolean).join('\n\n'),
       messages: [{ role: 'user', content: userQueryOf(ctx.msgs) }],
       tools: { save_note: saveNoteTool(ctx, sink, model, docs, saved, web) },
       stopWhen: stepCountIs(SAVE_STEPS),
       abortSignal: ctx.abortSignal,
     })
-    console.log(`  [explore] saving pass: ${saved.length} saved`)
+    console.log(`  [explore] saving pass: ${saved.length - before} saved`)
   } catch (e) {
     if (ctx.abortSignal.aborted) throw e
     console.error('  [explore] saving pass failed:', e)

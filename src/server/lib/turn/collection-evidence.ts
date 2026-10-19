@@ -83,12 +83,15 @@ export async function relevantHits(query: string, hits: Hit[], floor: number | u
 
 /** Each document's passages nearest the message, found by the server before the model's first step,
  *  so every document is looked at once whatever the model then decides. A document with nothing above
- *  the floor is said to have nothing close, so the model can rule it out without searching it. */
-export async function firstLook(task: string, docs: Doc[], gathered: Gathered): Promise<string> {
+ *  the floor is said to have nothing close, so the model can rule it out without searching it.
+ *  `search: false` skips that, for a task that covers every document whatever its wording. */
+export async function firstLook(task: string, docs: Doc[], gathered: Gathered, { search = true } = {}): Promise<string> {
   try {
     gathered.task = task
     gathered.query = await embedText(task)
     gathered.floor = await relevanceFloor()
+    // Without the search, only what ranks the parts read later is set.
+    if (!search) return ''
     const { kept, best } = await relevantHits(task, searchSpread(docs, gathered.query, gathered.locked), gathered.floor)
     logFirstLook(docs, kept, best)
     // Nothing kept says more about how the message is worded than about the documents: a model told

@@ -15,7 +15,8 @@ import { linksOf } from '../lib/files/links.ts'
 import { exportVault } from '../lib/files/obsidian-export.ts'
 import { acceptLink, dismissLink, suggestLinks } from '../lib/files/link-suggest.ts'
 import { proposeSplit } from '../lib/files/note-split.ts'
-import { noteRevisions, notesSavedFrom, restoreRevision } from '../lib/files/agent-notes.ts'
+import { notesSavedFrom, restoreRevision } from '../lib/files/agent-notes.ts'
+import { noteRevisions } from '../lib/files/note-revisions.ts'
 import { collectResourceText } from '../lib/files/resource-context.ts'
 import { storedDigests } from '../lib/files/collection-digests.ts'
 import { confidentialSql, readsConfidential } from '../lib/files/confidential.ts'
@@ -116,6 +117,7 @@ filesRouter.get('/', async (c) => {
     origin: uploadedFiles.origin,
     generatedBy: uploadedFiles.generatedBy,
     verifiedAt: uploadedFiles.verifiedAt,
+    editedAt: uploadedFiles.editedAt,
     status: uploadedFiles.status,
     // Confidential by its own flag or a confidential collection's: what the list marks.
     confidential: sql<number>`CASE WHEN ${sql.raw(confidentialSql('uploaded_files.id'))} THEN 1 ELSE 0 END`,
@@ -154,6 +156,7 @@ filesRouter.get('/', async (c) => {
     createdAt: epochSeconds(f.createdAt),
     updatedAt: epochSeconds(f.updatedAt),
     verifiedAt: epochSeconds(f.verifiedAt),
+    editedAt: epochSeconds(f.editedAt),
   })))
 })
 
@@ -221,6 +224,8 @@ filesRouter.patch('/notes/:id', zValidator('json', noteBody.partial().extend({ a
       author: patch.author,
       reviewed: patch.reviewed,
       status: patch.status,
+      // This route is the editor and the trust actions: a changed text is the owner's edit.
+      edited: true,
     })
     return c.json({ ok: true })
   } catch (e) {
@@ -498,6 +503,7 @@ filesRouter.get('/:id', async (c) => {
     origin: resource.origin,
     generatedBy: resource.generatedBy,
     verifiedAt: epochSeconds(resource.verifiedAt),
+    editedAt: epochSeconds(resource.editedAt),
     status: resource.status,
     createdAt: epochSeconds(resource.createdAt),
     updatedAt: epochSeconds(resource.updatedAt),

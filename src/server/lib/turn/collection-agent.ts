@@ -7,7 +7,7 @@ import { userMemoryBlockIfEnabled, joinMemoryBlocks } from '../memory.ts'
 import { splitAttachments } from '../../../shared/context.ts'
 import { asDocumentReferences } from '../../../shared/citations.ts'
 import { scopedFiles, type DocumentScope } from '../files/collection-coverage.ts'
-import { documentParts, outlineOf } from '../files/collection-parts.ts'
+import { documentParts, outlineOf, partCount } from '../files/collection-parts.ts'
 import {
   firstLook, searchSpread, relevantHits, seeHit, formatHit, seenBlock, readsBlock, evidenceBlock, formatNote, READ_MAX_CHARS, READ_MAX_SHARE,
   type Doc, type Note, type Gathered,
@@ -27,6 +27,8 @@ import { userQueryOf, withInstructions, withKeepalive, documentSet, type TurnCon
  *  streamed call over the notes. An exploration that ends early is answered from what it noted. */
 
 export const DEFAULT_EXPLORE_MAX_STEPS = '20'
+/** The admin setting's ceiling, and the most a collection's size can raise the limit to. */
+export const MAX_EXPLORE_STEPS = 100
 /** Read part texts kept in full; older ones are replaced, their content being in the notes. */
 const PARTS_KEPT = 2
 const EXPLORE_SYSTEM = `You explore a collection of documents to answer the user's message, which may come with an attached document (for instance their own draft).
@@ -59,13 +61,14 @@ async function exploreAndAnswer(ctx: TurnContext, sink: TurnSink): Promise<TurnR
   const fileSources = docs.map(d => ({ title: `[${d.label}] ${d.filename}`, url: `file:${d.fileId}`, label: d.label }))
   if (fileSources.length) await sink.emit({ type: 'file_sources', sources: fileSources })
   const gathered: Gathered = { notes: [], seen: new Map(), reads: new Map(), queries: [], locked: ctx.locked }
-  // Saving notes means writing as well as reading: twice the steps.
-  const maxSteps = Number(await getAppSetting('collection_explore_max_steps', DEFAULT_EXPLORE_MAX_STEPS)) * (ctx.exploreNotes ? 2 : 1)
-  const overview = await firstLook(splitAttachments(userQueryOf(ctx.msgs)).text, docs, gathered)
+  const maxSteps = exploreSteps(Number(await getAppSetting('collection_explore_max_steps', DEFAULT_EXPLORE_MAX_STEPS)), docs, ctx.exploreNotes === true)
+  // Saving notes covers every document, so nothing is ruled out by closeness to the message.
+  const overview = await firstLook(splitAttachments(userQueryOf(ctx.msgs)).text, docs, gathered, { search: !ctx.exploreNotes })
   const web = await startWeb(ctx)
   const saved: SavedNote[] | undefined = ctx.exploreNotes ? [] : undefined
   const { steps, endedEarly } = await explore(ctx, sink, model, docs, gathered, overview, maxSteps, web, saved)
-  if (saved && !saved.length) await saveFindings(ctx, sink, model, docs, saved, await findings(gathered, model), web)
+  // Also after the step limit: what was read last was noted but not yet saved.
+  if (saved && (!saved.length || endedEarly)) await saveFindings(ctx, sink, model, docs, saved, await findings(gathered, model), web)
   const { notes } = gathered
   await sink.emit({ type: 'exploration', steps, notes: notes.length, endedEarly })
   if (web?.results.length) await sink.emit({ type: 'sources', sources: web.results })
@@ -74,6 +77,16 @@ async function exploreAndAnswer(ctx: TurnContext, sink: TurnSink): Promise<TurnR
   console.log(`  [explore] ${steps} steps, ${notes.length} notes, ${gathered.seen.size} passages seen${web ? `, ${web.results.length} web results` : ''}${saved ? `, ${saved.length} saved to the library` : ''}${endedEarly ? ', ended early' : ''}, ${Date.now() - t0}ms, ${content.length} chars`)
   return { content, sources: (web?.results ?? []).map(toStoredSource), fileSources, cacheable: false, answeredBy: model, savedNoteIds: saved?.map(s => s.id) }
 }
+
+/** The step limit. Saving notes means writing as well as reading: twice the setting, and at least
+ *  a step per part plus two per document (outline, a last note) and room to save, up to the ceiling. */
+export function exploreSteps(setting: number, docs: Doc[], savingNotes: boolean): number {
+  if (!savingNotes) return setting
+  const parts = docs.reduce((n, d) => n + partCount(d.fileId), 0)
+  return Math.max(setting * 2, Math.min(MAX_EXPLORE_STEPS, parts + 2 * docs.length + SAVING_ROOM))
+}
+/** Steps for saving, beyond the reading. */
+const SAVING_ROOM = 10
 
 /** The documents in scope, labelled C1… by filename, without their text. */
 export function collectionIndex(scope: string[] | DocumentScope, includeConfidential: boolean): Doc[] {

@@ -15,8 +15,11 @@ export interface OkfResource {
   origin: string | null
   generatedBy: string | null
   verifiedAt: number | null
+  editedAt: number | null
   status: string | null
   createdAt: number
+  updatedAt: number | null
+  revisedAt: number | null
 }
 
 /** Where each title's file sits, by lowercased title, for links and library-document sources. */
@@ -33,6 +36,15 @@ function actor(generatedBy: string, owner: string): string {
   return generatedBy === HUMAN_AUTHOR ? `human:${owner}` : `queriocity/${generatedBy}`
 }
 
+/** OKF's `generated.at`, "the content's last meaningful change" (§5.2). A model's note keeps a
+ *  version whenever its text is replaced — a reworked draft, the owner's edit, a restore — so the
+ *  newest one dates it, and tag or review changes do not. The owner's own notes keep no versions:
+ *  their last save stands in, a retag or rename included. */
+function lastChange(r: OkfResource): number {
+  if (r.generatedBy === HUMAN_AUTHOR) return r.updatedAt ?? r.createdAt
+  return Math.max(r.createdAt, r.revisedAt ?? 0)
+}
+
 /** OKF's keys for one resource, ready to merge into the frontmatter. `owner` names the user in actors. */
 export function okfFields(r: OkfResource, body: string, owner: string, paths: PathByTitle): Record<string, unknown> {
   return {
@@ -41,8 +53,11 @@ export function okfFields(r: OkfResource, body: string, owner: string, paths: Pa
     description: r.summary ?? undefined,
     resource: isWebAddress(r.origin) ? r.origin : undefined,
     sources: r.kind === 'note' ? noteSourceEntries(body, paths) : undefined,
-    generated: r.kind === 'note' && r.generatedBy ? { by: actor(r.generatedBy, owner), at: isoTime(r.createdAt) } : undefined,
+    generated: r.kind === 'note' && r.generatedBy ? { by: actor(r.generatedBy, owner), at: isoTime(lastChange(r)) } : undefined,
     verified: r.verifiedAt ? { by: `human:${owner}`, at: isoTime(r.verifiedAt) } : undefined,
+    // An extension key (OKF §4.1 lets producers add any; consumers keep or ignore it): `generated`
+    // holds one actor, so the owner's later edit of a model's note is recorded beside it.
+    edited: r.editedAt ? { by: `human:${owner}`, at: isoTime(r.editedAt) } : undefined,
     status: r.status ?? undefined,
   }
 }

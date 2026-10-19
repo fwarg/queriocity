@@ -1,15 +1,13 @@
-import { randomUUID } from 'crypto'
 import { eq } from 'drizzle-orm'
 import { db, sqlite, uploadedFiles } from '../db.ts'
 import { saveNote } from './notes.ts'
+import { noteRevisions, recordRevision } from './note-revisions.ts'
 import { HUMAN_AUTHOR } from '../../../shared/note-trust.ts'
 import { wikilinkFor } from '../../../shared/wikilinks.ts'
 
 /** Notes an agent writes: always marked as the model's and a draft, always citing the documents
  *  they came from, and never written over anything the user wrote or reviewed. An agent may rework
  *  its own unreviewed drafts; the version it replaces is kept, so the change can be undone. */
-
-const REVISIONS_KEPT = 10
 
 export interface AgentNoteInput {
   title: string
@@ -133,22 +131,6 @@ export function linkNotesToAnswer(userId: string, noteIds: string[], sessionId: 
   for (const id of noteIds) {
     sqlite.run('UPDATE uploaded_files SET origin_session_id = ?, origin_message_id = ? WHERE id = ? AND user_id = ?', [sessionId, messageId, id, userId])
   }
-}
-
-/** Keeps a version of a note before it is replaced; `actor` is a model label or `human`. */
-export function recordRevision(noteId: string, title: string, body: string, actor: string) {
-  sqlite.run('INSERT INTO note_revisions (id, note_id, title, body, actor, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-    [randomUUID(), noteId, title, body, actor, Math.floor(Date.now() / 1000)])
-  sqlite.run(`DELETE FROM note_revisions WHERE note_id = ? AND id NOT IN (
-    SELECT id FROM note_revisions WHERE note_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?)`, [noteId, noteId, REVISIONS_KEPT])
-}
-
-export interface Revision { id: string; title: string; body: string; actor: string; createdAt: number }
-
-/** A note's earlier versions, newest first. The caller checks ownership of the note. */
-export function noteRevisions(noteId: string): Revision[] {
-  return sqlite.query(`SELECT id, title, body, actor, created_at AS createdAt FROM note_revisions
-    WHERE note_id = ? ORDER BY created_at DESC, rowid DESC`).all(noteId) as Revision[]
 }
 
 /** Puts an earlier version back, keeping the current one as a version in turn. Trust is left as it

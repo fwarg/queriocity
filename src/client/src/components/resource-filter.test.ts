@@ -20,6 +20,7 @@ const resource = (partial: Partial<Resource>): Resource => ({
   origin: null,
   generatedBy: null,
   verifiedAt: null,
+  editedAt: null,
   status: null,
   createdAt: 0,
   updatedAt: null,

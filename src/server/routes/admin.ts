@@ -25,7 +25,7 @@ import { loadSearchPolicy, saveSearchPolicy, resetSearchPolicy, hasStoredSearchP
 import { telemetrySnapshot } from '../lib/search/telemetry.ts'
 import { monthlyUsage } from '../lib/search/usage.ts'
 import { DEFAULT_COLLECTION_FULL_TEXT_TOKENS, DEFAULT_COLLECTION_FULL_TEXT_TOKENS_CLOUD } from '../lib/turn/collection.ts'
-import { DEFAULT_EXPLORE_MAX_STEPS } from '../lib/turn/collection-agent.ts'
+import { DEFAULT_EXPLORE_MAX_STEPS, MAX_EXPLORE_STEPS } from '../lib/turn/collection-agent.ts'
 
 type ProbeResult = { ok: boolean; ms: number; info: string }
 
@@ -115,7 +115,7 @@ adminRouter.patch('/settings', zValidator('json', z.object({
   notesRagBudget: z.number().int().min(0).max(10000).optional(),
   collectionFullTextTokens: z.number().int().min(0).max(1_000_000).optional(),
   collectionFullTextTokensCloud: z.number().int().min(0).max(1_000_000).optional(),
-  collectionExploreMaxSteps: z.number().int().min(3).max(100).optional(),
+  collectionExploreMaxSteps: z.number().int().min(3).max(MAX_EXPLORE_STEPS).optional(),
   collectionExploreMinRelevance: z.number().min(0).max(1).optional(),
   researchMaxTokens: z.number().int().min(1000).max(200_000).optional(),
   topicMinSimilarity: z.number().min(0).max(1).optional(),

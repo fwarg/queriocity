@@ -13,7 +13,8 @@ const { eq } = await import('drizzle-orm')
 const { saveNote, defaultModelLabel } = await import('./notes.ts')
 const { trustByNote, trustInstruction } = await import('./note-trust.ts')
 const { UNKNOWN_MODEL } = await import('../../../shared/note-trust.ts')
-const { saveAgentNote, noteRevisions, restoreRevision, linkNotesToAnswer } = await import('./agent-notes.ts')
+const { saveAgentNote, restoreRevision, linkNotesToAnswer } = await import('./agent-notes.ts')
+const { noteRevisions } = await import('./note-revisions.ts')
 
 const ME = 'trust-user'
 let server: ReturnType<typeof startFakeEmbeddings>
@@ -90,7 +91,7 @@ describe('changing trust', () => {
   test('reviewing a draft makes it current, and the mark can be cleared', async () => {
     const id = await saveNote(ME, { title: 'D', body: 'Text.', author: 'model', status: 'draft' })
     await saveNote(ME, { id, title: 'D', body: 'Text.', reviewed: true })
-    expect(trustOf(id)).toEqual({ trust: 'reviewed', status: 'stable' })
+    expect(trustOf(id)).toEqual({ trust: 'reviewed', status: 'stable', edited: false })
     await saveNote(ME, { id, title: 'D', body: 'Text.', reviewed: false })
     expect(trustOf(id).trust).toBe('unreviewed')
   })
@@ -105,6 +106,37 @@ describe('trustInstruction', () => {
     expect(line).toContain('[N2]')
     expect(line).not.toContain('[N1]')
     expect(trustInstruction(sources.slice(0, 1))).toBe('')
+  })
+
+  test('an edited, unreviewed note is named apart from untouched drafts', async () => {
+    const draft = await saveNote(ME, { title: 'Draft', body: 'Text.', author: 'model' })
+    const edited = await saveNote(ME, { title: 'Edited', body: 'Text.', author: 'model' })
+    await saveNote(ME, { id: edited, title: 'Edited', body: 'Better text.', edited: true })
+    const lines = trustInstruction([{ url: `file:${draft}`, label: 'N1' }, { url: `file:${edited}`, label: 'N2' }]).split('\n')
+    expect(lines).toHaveLength(2)
+    expect(lines[0]).toStartWith('[N1] was written by a model')
+    expect(lines[1]).toStartWith('[N2] was written by a model or by an unknown author and edited, but not reviewed')
+  })
+})
+
+describe('edits by the owner', () => {
+  test('changing a model\'s text marks it edited and keeps the model\'s version; it is not a review', async () => {
+    const id = await saveNote(ME, { title: 'M', body: 'Model text.', author: 'model', model: 'GLM' })
+    await saveNote(ME, { id, title: 'M', body: 'Model text.', edited: true, status: 'stable' })
+    expect(trustOf(id).edited).toBe(false)
+    await saveNote(ME, { id, title: 'M', body: 'My text.', edited: true })
+    expect(trustOf(id)).toEqual({ trust: 'unreviewed', status: 'stable', edited: true })
+    expect(noteRevisions(id).map(r => [r.body, r.actor])).toEqual([['Model text.', 'human']])
+    await saveNote(ME, { id, title: 'M', body: 'My text, checked.', edited: true, reviewed: true })
+    expect(trustOf(id).trust).toBe('reviewed')
+  })
+
+  test('the owner\'s own note, and a change by a process, are not marked', async () => {
+    const mine = await saveNote(ME, { title: 'Own', body: 'Text.' })
+    await saveNote(ME, { id: mine, title: 'Own', body: 'New text.', edited: true })
+    const model = await saveNote(ME, { title: 'Relinked', body: 'Text.', author: 'model' })
+    await saveNote(ME, { id: model, title: 'Relinked', body: 'Text, relinked.' })
+    expect([trustOf(mine).edited, trustOf(model).edited, noteRevisions(mine).length]).toEqual([false, false, 0])
   })
 })
 
