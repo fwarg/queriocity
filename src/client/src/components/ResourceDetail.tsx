@@ -5,7 +5,7 @@ import { NoteEditor } from './NoteEditor.tsx'
 import { NoteMarkdown } from './NoteMarkdown.tsx'
 import { TagEditor } from './TagEditor.tsx'
 import { LocalGraph } from './LocalGraph.tsx'
-import { RelatedResources } from './RelatedResources.tsx'
+import { RelatedResources, useRelated, withSharedTags } from './RelatedResources.tsx'
 import { LinkSuggestions } from './LinkSuggestions.tsx'
 import { SplitNotesDialog } from './SplitNotesDialog.tsx'
 import { NoteTrustSection } from './NoteTrust.tsx'
@@ -66,6 +66,7 @@ export function ResourceDetail({ id, onBack, onChanged, onOpen, onOpenChat, onTa
   }, [id, t])
 
   useEffect(() => { load() }, [load])
+  const related = useRelated(detail)
 
   if (loadError) return <Panel onBack={onBack}><p className="text-sm text-red-400">{loadError}</p></Panel>
   if (!detail) return <Panel onBack={onBack}><p className="text-sm text-gray-500">{t('common.loading')}</p></Panel>
@@ -145,7 +146,7 @@ export function ResourceDetail({ id, onBack, onChanged, onOpen, onOpenChat, onTa
       <Section title={t('tags.title')}>
         <TagEditor
           tags={detail.tags}
-          suggestions={detail.suggestedTags}
+          suggestions={withSharedTags(detail.suggestedTags, related?.tags)}
           onChange={async tags => { await setResourceTags(detail.id, tags); changed() }}
         />
       </Section>
@@ -211,7 +212,7 @@ export function ResourceDetail({ id, onBack, onChanged, onOpen, onOpenChat, onTa
         <SpaceTags detail={detail} onChanged={changed} />
       </Section>
 
-      <RelatedResources key={`related:${detail.id}:${detail.updatedAt}:${detail.backlinks.length}`} detail={detail} onOpen={onOpen} onChanged={changed} />
+      {related && <RelatedResources detail={detail} related={related.related} onOpen={onOpen} onChanged={changed} />}
 
       <TransformPanel id={id} sourceTitle={detail.filename} onSaved={onChanged} />
 

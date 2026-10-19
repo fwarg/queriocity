@@ -476,7 +476,11 @@ Notes can link to each other, Zettelkasten-style, and any resource can carry tag
 - **Tags.** Hierarchical, lowercase, `/`-separated (`#ml/rag`), on any resource, set in the detail
   view or the note editor. The small model's topics are offered as **suggested** tags, one tap to
   adopt — they are no longer applied automatically, and your tags are never overwritten when a note
-  is re-summarised. A tag disappears once nothing carries it.
+  is re-summarised. Suggestions prefer the tags you have: a topic naming one of your tags, or its last
+  segment, is offered as that tag (`roses` → `#plants/roses`), as is one close to it in meaning
+  (embedding cosine ≥ 0.8, a guess for short phrases — each match is logged as `[tags] topic …`), and
+  tags that similar resources share join them under **Your tags**; the remaining topics are listed as
+  **New**. Without embeddings, matching falls back to names. A tag disappears once nothing carries it.
 - **Inline tags.** `#tag` or `#tag/sub` written in a note's text is added to its tags on save and
   shown as a tappable tag (opening the library filtered on it). Removing it from the text leaves the
   tag on the note — the tag field is what counts; remove it there. Headings (`# Title`), `#12`,
@@ -502,7 +506,7 @@ Notes can link to each other, Zettelkasten-style, and any resource can carry tag
   scores your own most recent 40 resources pairwise exactly as this box does and marks the pairs
   that would be shown. They are suggestions: **Link** adds `- [[Title]]` under a
   **See also** heading in the note (from a file, **Link from it** adds the link in the similar note
-  instead), and tags that two or more similar resources share can be adopted with a tap. Already
+  instead), and tags that two or more similar resources share are offered in the tag editor. Already
   connected ones say **Linked**.
 
 Tags organise and filter; they deliberately have **no effect on retrieval**, so you can tag freely
@@ -516,7 +520,9 @@ you work (chats, memory, lock), a **collection** is a shelf you attach to a chat
 
 - **Tags** — every tag as a collapsible tree with counts (`3 · 12 incl. sub-tags`: carried directly,
   and by anything under it). Tap a tag to open the library filtered on it; the **⋯** menu renames
-  (sub-tags move along, an existing name merges), deletes, or shows it in the graph. **To organise**
+  (sub-tags move along, an existing name merges), **moves it under** another tag (`#roses` under
+  `#plants` becomes `#plants/roses` — a rename, so the same applies), deletes, or shows it in the
+  graph. **To organise**
   at the bottom opens resources **without tags** and notes **without links**.
 - **Topics** — your notes grouped by what they are about, from the vectors already stored for
   retrieval: no tags or links needed, so it also covers what you haven't organised yet. Notes are
@@ -616,13 +622,13 @@ Click any resource to open it. The detail view shows, top to bottom:
   what makes a library of two hundred documents readable at a glance. Administrators can turn the
   generation off (Admin > System settings); it is best-effort either way, and a resource whose
   summary failed works normally without one.
-- Its **tags**, editable in place, with the small model's topics offered as suggestions.
+- Its **tags**, editable in place, with suggestions: your own tags that fit first, then new ones.
 - For a note, its **text**, rendered with citations, `[[links]]` and `#tags` you can tap.
 - Its **links** — what it links to and what links to it, *Created from* / *Notes made from this* for
   transforms, and for a note **Suggest links**. See [Links and tags](#links-and-tags).
 - **Connections**, the small graph of its explicit neighbourhood.
 - Which **spaces and collections** the resource is in.
-- **Similar content**, with one-tap links and tag hints.
+- **Similar content**, with one-tap links.
 - **Transform** (below).
 - The **indexed excerpts**, folded away by default: what retrieval actually sees, worth opening
   when a PDF or a YouTube transcript has extracted badly. They overlap by design, so text repeats

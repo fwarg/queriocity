@@ -10,7 +10,8 @@ import { ingestFile, extractFileText, isUsableText, ACCEPTED_MIME_TYPES } from '
 import { saveNote, renameResource, addSeeAlso, unlinkDeleted } from '../lib/files/notes.ts'
 import { relatedResources } from '../lib/files/related.ts'
 import { globalGraph, linkCounts, localGraph } from '../lib/files/graph.ts'
-import { addTagToResources, deleteTag, listTags, MAX_TAG_CHARS, renameTag, resourceTagList, setResourceTags, suggestedTags, tagsByResource } from '../lib/files/tags.ts'
+import { addTagToResources, deleteTag, listTags, MAX_TAG_CHARS, renameTag, resourceTagList, setResourceTags, tagsByResource } from '../lib/files/tags.ts'
+import { suggestedTags } from '../lib/files/tag-suggestions.ts'
 import { linksOf } from '../lib/files/links.ts'
 import { exportVault } from '../lib/files/obsidian-export.ts'
 import { acceptLink, dismissLink, suggestLinks } from '../lib/files/link-suggest.ts'
@@ -487,7 +488,7 @@ filesRouter.get('/:id', async (c) => {
   return c.json({
     ...linksOf(userId, resource.id),
     tags,
-    suggestedTags: suggestedTags(parseTopics(resource.topics), tags),
+    suggestedTags: await suggestedTags(userId, parseTopics(resource.topics), tags),
     originChat: originChat ? { ...originChat, messageId: resource.originMessageId } : null,
     derivedFrom: source ?? null,
     derived,

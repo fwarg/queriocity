@@ -77,6 +77,12 @@ function dot(a: ArrayLike<number>, b: ArrayLike<number>): number {
   return s
 }
 
+/** Cosine similarity of two vectors of any length. */
+export function cosineSimilarity(a: ArrayLike<number>, b: ArrayLike<number>): number {
+  const norms = Math.sqrt(dot(a, a)) * Math.sqrt(dot(b, b))
+  return norms ? dot(a, b) / norms : 0
+}
+
 /** The normalised mean of some vectors: what a group of notes is about, as one vector. */
 export function centroid(vectors: ArrayLike<number>[]): number[] {
   const mean = new Array<number>(vectors[0]?.length ?? 0).fill(0)

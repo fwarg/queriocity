@@ -5,17 +5,20 @@ import { buildTagTree, type TagTreeNode } from '../lib/tag-tree.ts'
 import { useT } from '../lib/i18n.tsx'
 import { errorMessage } from '../lib/errors.ts'
 import { useConfirm } from './confirm.tsx'
+import { isUnder, normaliseTag } from '@shared/tags.ts'
 import { EmptyState } from './ui.tsx'
 
 interface Actions {
   onOpenTag: (path: string) => void
   onShowInGraph: (path: string) => void
   onRename: (path: string, to: string) => Promise<void>
+  onMove: (node: TagTreeNode, parent: string) => Promise<void>
   onDelete: (path: string) => Promise<void>
 }
 
 /** Every tag as a collapsible tree with counts — the overview the library's one-level filter can't
- *  give. Tapping a tag opens its resources; the row menu renames, deletes or shows it in the graph. */
+ *  give. Tapping a tag opens its resources; the row menu renames, moves under another tag, deletes or
+ *  shows it in the graph. */
 export function TagTree({ resources, onOpenTag, onShowInGraph, onShow, onTagsChanged }: {
   resources: Resource[]
   onOpenTag: (path: string) => void
@@ -27,6 +30,7 @@ export function TagTree({ resources, onOpenTag, onShowInGraph, onShow, onTagsCha
   const confirm = useConfirm()
   const [error, setError] = useState('')
   const tree = useMemo(() => buildTagTree(resources), [resources])
+  const paths = useMemo(() => descendants(tree).map(n => n.path), [tree])
   const untagged = resources.filter(r => r.tags.length === 0).length
   const unlinked = resources.filter(r => r.kind === 'note' && r.linkCount === 0).length
 
@@ -36,6 +40,15 @@ export function TagTree({ resources, onOpenTag, onShowInGraph, onShow, onTagsCha
     async onRename(from, to) {
       if (!to.trim() || to.trim() === from) return
       try { await renameTag(from, to); setError(''); onTagsChanged() } catch (err) { setError(errorMessage(t, err, t('tags.renameFailed'))) }
+    },
+    /** Moving is renaming to `parent/name`, so sub-tags follow and an existing target merges. */
+    async onMove(node, parent) {
+      const to = normaliseTag(parent) ? `${normaliseTag(parent)}/${node.name}` : node.name
+      if (to === node.path) return
+      if (isUnder(to, node.path)) { setError(t('tags.moveIntoItself')); return }
+      const subTags = descendants(node.children).length
+      const message = t('tags.moveConfirm', { tag: node.path, to, count: node.total, subTags })
+      if (await confirm({ message, confirmLabel: t('tags.move') })) await actions.onRename(node.path, to)
     },
     async onDelete(path) {
       if (!await confirm({ message: t('tags.deleteConfirm', { tag: path }), confirmLabel: t('tags.delete'), danger: true })) return
@@ -51,6 +64,10 @@ export function TagTree({ resources, onOpenTag, onShowInGraph, onShow, onTagsCha
           {tree.map(n => <TagRow key={n.path} node={n} depth={0} actions={actions} />)}
         </ul>
       )}
+      <datalist id={PATHS_LIST}>{paths.map(p => <option key={p} value={p} />)}</datalist>
+      {tree.length > 0 && (
+        <p className="text-xs text-gray-500">{t('tags.reorganiseHint')}</p>
+      )}
       {error && <p className="text-xs text-red-400">{error}</p>}
       <div className="flex flex-col gap-1 border-t border-gray-800 pt-3">
         <h3 className="text-xs font-medium uppercase tracking-wide text-gray-500">{t('explore.toOrganise')}</h3>
@@ -65,14 +82,25 @@ export function TagTree({ resources, onOpenTag, onShowInGraph, onShow, onTagsCha
   )
 }
 
+const PATHS_LIST = 'tag-tree-paths'
+
+const descendants = (nodes: TagTreeNode[]): TagTreeNode[] => nodes.flatMap(n => [n, ...descendants(n.children)])
+
 /** One tag; its children show when expanded. The top level starts open. */
 function TagRow({ node, depth, actions }: { node: TagTreeNode; depth: number; actions: Actions }) {
   const t = useT()
   const [open, setOpen] = useState(depth === 0)
   const [menu, setMenu] = useState(false)
-  const [renaming, setRenaming] = useState(false)
+  const [editing, setEditing] = useState<'rename' | 'move' | null>(null)
 
-  const rename = async (to: string) => { setRenaming(false); setMenu(false); await actions.onRename(node.path, to) }
+  const submit = async (value: string) => {
+    const mode = editing
+    setEditing(null)
+    setMenu(false)
+    if (mode === 'rename') await actions.onRename(node.path, value)
+    if (mode === 'move') await actions.onMove(node, value)
+  }
+  const prompt = editing === 'move' ? t('tags.moveUnderPrompt', { tag: node.path }) : t('tags.renameTo', { tag: node.path })
 
   return (
     <li>
@@ -82,17 +110,18 @@ function TagRow({ node, depth, actions }: { node: TagTreeNode; depth: number; ac
             {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           </button>
         ) : <span className="w-[14px] mx-1" />}
-        {renaming ? (
+        {editing ? (
           <input
             autoFocus
-            defaultValue={node.path}
-            aria-label={t('tags.renameTo', { tag: node.path })}
-            placeholder={t('tags.renameTo', { tag: node.path })}
+            defaultValue={editing === 'rename' ? node.path : parentOf(node.path)}
+            list={editing === 'move' ? PATHS_LIST : undefined}
+            aria-label={prompt}
+            placeholder={prompt}
             autoCapitalize="none"
-            onBlur={e => rename(e.target.value)}
+            onBlur={e => submit(e.target.value)}
             onKeyDown={e => {
-              if (e.key === 'Enter') rename(e.currentTarget.value)
-              if (e.key === 'Escape') setRenaming(false)
+              if (e.key === 'Enter') submit(e.currentTarget.value)
+              if (e.key === 'Escape') setEditing(null)
             }}
             className="flex-1 text-sm bg-gray-800 border border-emerald-700 rounded px-2 py-1 text-gray-100 focus:outline-none"
           />
@@ -108,10 +137,11 @@ function TagRow({ node, depth, actions }: { node: TagTreeNode; depth: number; ac
           <MoreHorizontal size={14} />
         </button>
       </div>
-      {menu && !renaming && (
+      {menu && !editing && (
         <div className="flex flex-wrap gap-3 pb-2 text-xs" style={{ paddingLeft: depth * 16 + 28 }}>
           <button onClick={() => { setMenu(false); actions.onShowInGraph(node.path) }} className="py-1 text-gray-400 hover:text-gray-200 underline">{t('explore.showInGraph')}</button>
-          <button onClick={() => setRenaming(true)} className="py-1 text-gray-400 hover:text-gray-200 underline">{t('tags.rename')}</button>
+          <button onClick={() => setEditing('rename')} className="py-1 text-gray-400 hover:text-gray-200 underline">{t('tags.rename')}</button>
+          <button onClick={() => setEditing('move')} className="py-1 text-gray-400 hover:text-gray-200 underline">{t('tags.moveUnder')}</button>
           <button onClick={() => { setMenu(false); actions.onDelete(node.path) }} className="py-1 text-gray-400 hover:text-red-300 underline">{t('tags.delete')}</button>
         </div>
       )}
@@ -121,3 +151,6 @@ function TagRow({ node, depth, actions }: { node: TagTreeNode; depth: number; ac
     </li>
   )
 }
+
+/** `plants/roses` → `plants`; '' at the top level. */
+const parentOf = (path: string) => path.split('/').slice(0, -1).join('/')

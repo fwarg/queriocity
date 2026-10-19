@@ -422,7 +422,8 @@ export const sv: Catalog = {
   'tags.title': 'Taggar',
   'tags.addPlaceholder': 'Lägg till tagg, t.ex. ml/rag',
   'tags.add': 'Lägg till',
-  'tags.suggested': 'Förslag',
+  'tags.suggestedExisting': 'Dina taggar',
+  'tags.suggestedNew': 'Nya',
   'tags.remove': 'Ta bort taggen {tag}',
   'tags.none': 'Inga taggar ännu.',
   'tags.saveFailed': 'Kunde inte spara taggarna',
@@ -431,6 +432,15 @@ export const sv: Catalog = {
   'tags.renameTo': 'Nytt namn för #{tag} — undertaggar följer med',
   'tags.renameFailed': 'Kunde inte byta namn på taggen',
   'tags.delete': 'Ta bort',
+  'tags.moveUnder': 'Flytta under…',
+  'tags.moveUnderPrompt': 'Överordnad tagg för #{tag} — tomt för översta nivån',
+  'tags.move': 'Flytta',
+  'tags.moveConfirm': {
+    one: 'Flytta #{tag} ({count} resurs, {subTags} undertaggar) till #{to}? Undertaggar följer med; finns #{to} redan slås de ihop.',
+    other: 'Flytta #{tag} ({count} resurser, {subTags} undertaggar) till #{to}? Undertaggar följer med; finns #{to} redan slås de ihop.',
+  },
+  'tags.moveIntoItself': 'En tagg kan inte flyttas under sig själv',
+  'tags.reorganiseHint': 'Omorganisera med ⋯ → Flytta under… (t.ex. #rosor under #växter blir #växter/rosor).',
   'tags.deleteConfirm': 'Ta bort #{tag} och dess undertaggar från alla resurser? Själva resurserna behålls.',
   'links.title': 'Länkar',
   'links.to': 'Länkar till',
@@ -455,7 +465,6 @@ export const sv: Catalog = {
   'related.link': 'Länka',
   'related.linkFrom': 'Länka därifrån',
   'related.linked': 'Länkad',
-  'related.tagHint': 'Liknande resurser är taggade',
   'related.failed': 'Kunde inte lägga till länken',
 
   // --- Resursdetaljer ---

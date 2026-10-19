@@ -12,7 +12,8 @@ import { envOverride } from '../test-support/env-override.ts'
 const { db, sqlite, users, uploadedFiles, chatSessions, setAppSetting, EMBED_DIMS } = await import('../db.ts')
 const { eq } = await import('drizzle-orm')
 const { saveNote, renameResource, unlinkDeleted } = await import('./notes.ts')
-const { normaliseTag, setResourceTags, listTags, renameTag, deleteTag, resourceTagList, suggestedTags } = await import('./tags.ts')
+const { normaliseTag, setResourceTags, listTags, renameTag, deleteTag, resourceTagList } = await import('./tags.ts')
+const { suggestedTags } = await import('./tag-suggestions.ts')
 const { parseWikilinks, linksOf } = await import('./links.ts')
 
 const ME = 'zk-user'
@@ -90,8 +91,30 @@ describe('tags', () => {
     expect(resourceTagList(id)).toEqual(['keep'])
   })
 
-  test('suggestions are the topics, normalised, minus tags already carried', () => {
-    expect(suggestedTags(['Machine Learning', 'RAG', 'rag'], ['rag'])).toEqual(['machine-learning'])
+  test('suggestions are the topics, normalised, minus tags already carried', async () => {
+    expect(await suggestedTags(ME, ['Machine Learning', 'RAG', 'rag'], ['rag'])).toEqual([{ path: 'machine-learning', existing: false }])
+  })
+
+  test('a topic naming an existing tag, or its last segment, is offered as that tag first', async () => {
+    await note(ME, 'A', 'x', { tags: ['plants/roses', 'ml'] })
+    const id = await note(ME, 'B', 'y')
+    expect(await suggestedTags(ME, ['Tulips', 'Roses', 'ML'], resourceTagList(id))).toEqual([
+      { path: 'plants/roses', existing: true }, { path: 'ml', existing: true }, { path: 'tulips', existing: false },
+    ])
+  })
+
+  test('a topic close in meaning to a tag becomes that tag; parents of carried tags are not offered', async () => {
+    await note(ME, 'A', 'x', { tags: ['gardening/roses'] })
+    // Bag-of-words fake embeddings: the same words in another order are identical.
+    expect(await suggestedTags(ME, ['Roses gardening', 'gardening'], ['gardening/roses/pruning'])).toEqual([])
+    expect(await suggestedTags(ME, ['Roses gardening'], [])).toEqual([{ path: 'gardening/roses', existing: true }])
+  })
+
+  test('without embeddings, matching falls back to names', async () => {
+    await note(ME, 'A', 'x', { tags: ['plants/roses'] })
+    expect(await server.whileFailing(() => suggestedTags(ME, ['Roses', 'Rose garden care'], []))).toEqual([
+      { path: 'plants/roses', existing: true }, { path: 'rose-garden-care', existing: false },
+    ])
   })
 })
 

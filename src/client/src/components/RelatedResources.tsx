@@ -1,23 +1,41 @@
 import { useEffect, useState } from 'react'
-import { Plus } from 'lucide-react'
 import { ResourceTypeIcon } from './ResourceFilters.tsx'
-import { addSeeAlso, fetchRelated, setResourceTags, type RelatedResource, type ResourceDetail } from '../lib/api.ts'
+import { addSeeAlso, fetchRelated, type RelatedResource, type ResourceDetail, type TagSuggestion } from '../lib/api.ts'
 import { useT } from '../lib/i18n.tsx'
 import { errorMessage } from '../lib/errors.ts'
 
+type Related = Awaited<ReturnType<typeof fetchRelated>>
+
+/** Resources similar to this one and the tags several of them share; null while loading. Fetched
+ *  again when the resource changes or gains a link. */
+export function useRelated(detail: ResourceDetail | null): Related | null {
+  const id = detail?.id
+  const key = detail && `${detail.id}:${detail.updatedAt}:${detail.backlinks.length}`
+  const [loaded, setLoaded] = useState<{ key: string; data: Related } | null>(null)
+  useEffect(() => {
+    if (!id || !key) return
+    fetchRelated(id).then(data => setLoaded({ key, data })).catch(() => setLoaded({ key, data: { related: [], tags: [] } }))
+  }, [id, key])
+  return loaded && loaded.key === key ? loaded.data : null
+}
+
+/** The topics' suggestions with the tags similar resources share: the user's own tags first. */
+export function withSharedTags(suggestions: TagSuggestion[], shared: Related['tags'] = []): TagSuggestion[] {
+  const all = [...suggestions.filter(s => s.existing), ...shared.map(({ path }) => ({ path, existing: true })), ...suggestions.filter(s => !s.existing)]
+  return all.filter((s, i) => all.findIndex(o => o.path === s.path) === i)
+}
+
 /** Resources close in content to this one — connections not yet made. Each can be linked with one
- *  tap (a "See also" line in the note), and tags several of them share can be adopted. Nothing
+ *  tap (a "See also" line in the note); the tags they share are offered in the tag editor. Nothing
  *  changes until the user taps. */
-export function RelatedResources({ detail, onOpen, onChanged }: {
+export function RelatedResources({ detail, related, onOpen, onChanged }: {
   detail: ResourceDetail
+  related: RelatedResource[]
   onOpen: (id: string) => void
   onChanged: () => void
 }) {
   const t = useT()
-  const [data, setData] = useState<Awaited<ReturnType<typeof fetchRelated>> | null>(null)
   const [error, setError] = useState('')
-
-  useEffect(() => { fetchRelated(detail.id).then(setData).catch(() => setData({ related: [], tags: [] })) }, [detail.id])
 
   async function act(action: Promise<unknown>) {
     setError('')
@@ -32,16 +50,13 @@ export function RelatedResources({ detail, onOpen, onChanged }: {
     return null
   }
 
-  if (!data) return null
-  // Adopted hints drop out at once; the list itself is refetched only when the resource changes.
-  const tagHints = data.tags.filter(({ path }) => !detail.tags.includes(path))
   return (
     <div className="flex flex-col gap-1.5">
       <h3 className="text-xs font-medium uppercase tracking-wide text-gray-500">{t('related.title')}</h3>
       <p className="text-xs text-gray-500">{t('related.intro')}</p>
-      {data.related.length === 0 && <p className="text-sm text-gray-500">{t('related.none')}</p>}
+      {related.length === 0 && <p className="text-sm text-gray-500">{t('related.none')}</p>}
       <div className="flex flex-col gap-1">
-        {data.related.map(r => {
+        {related.map(r => {
           const link = linkAction(r)
           return (
             <div key={r.id} className="flex items-center gap-2 min-w-0">
@@ -59,20 +74,6 @@ export function RelatedResources({ detail, onOpen, onChanged }: {
           )
         })}
       </div>
-      {tagHints.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5 mt-1">
-          <span className="text-xs text-gray-500">{t('related.tagHint')}:</span>
-          {tagHints.map(({ path, count }) => (
-            <button
-              key={path}
-              onClick={() => act(setResourceTags(detail.id, [...detail.tags, path]))}
-              className="flex items-center gap-1 px-2 py-1 rounded-full text-xs text-gray-300 border border-dashed border-gray-600 hover:text-emerald-300 hover:border-emerald-700"
-            >
-              <Plus size={11} />#{path} <span className="text-gray-500">{count}</span>
-            </button>
-          ))}
-        </div>
-      )}
       {error && <p className="text-xs text-red-400">{error}</p>}
     </div>
   )

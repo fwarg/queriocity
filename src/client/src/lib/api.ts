@@ -983,8 +983,8 @@ export interface ResourceDetail extends Resource {
   derived: ResourceRef[]
   /** The model's notes that cite this resource, newest first: notes have been saved from it. */
   notesSaved: Array<ResourceRef & { generatedBy: string | null; createdAt: number }>
-  /** Topics not yet adopted as tags, normalised — offered as one-tap suggestions. */
-  suggestedTags: string[]
+  /** Topics not yet adopted as tags, mapped onto the user's own tags where one fits; those first. */
+  suggestedTags: TagSuggestion[]
   /** This note's `[[links]]` in order; `target` is null while no resource carries the title. */
   links: Array<{ title: string; target: ResourceRef | null }>
   /** Notes linking here. */
@@ -1094,6 +1094,9 @@ export async function setResourceTags(id: string, tags: string[]): Promise<strin
   if (!res.ok) throw await apiError(res, 'Could not save tags')
   return (await res.json()).tags
 }
+
+/** A tag offered to a resource: one the user already has, or a new one from its topics. */
+export interface TagSuggestion { path: string; existing: boolean }
 
 export interface RelatedResource extends ResourceRef {
   /** Already linked either way, or one made from the other. */

@@ -426,7 +426,8 @@ export const en = {
   'tags.title': 'Tags',
   'tags.addPlaceholder': 'Add a tag, e.g. ml/rag',
   'tags.add': 'Add',
-  'tags.suggested': 'Suggested',
+  'tags.suggestedExisting': 'Your tags',
+  'tags.suggestedNew': 'New',
   'tags.remove': 'Remove tag {tag}',
   'tags.none': 'No tags yet.',
   'tags.saveFailed': 'Could not save the tags',
@@ -435,6 +436,15 @@ export const en = {
   'tags.renameTo': 'New name for #{tag} — sub-tags move with it',
   'tags.renameFailed': 'Could not rename the tag',
   'tags.delete': 'Delete',
+  'tags.moveUnder': 'Move under…',
+  'tags.moveUnderPrompt': 'Parent tag for #{tag} — empty for the top level',
+  'tags.move': 'Move',
+  'tags.moveConfirm': {
+    one: 'Move #{tag} ({count} resource, {subTags} sub-tags) to #{to}? Sub-tags follow; if #{to} already exists, the two merge.',
+    other: 'Move #{tag} ({count} resources, {subTags} sub-tags) to #{to}? Sub-tags follow; if #{to} already exists, the two merge.',
+  },
+  'tags.moveIntoItself': 'A tag cannot be moved under itself',
+  'tags.reorganiseHint': 'To reorganise, use ⋯ → Move under… (e.g. #roses under #plants becomes #plants/roses).',
   'tags.deleteConfirm': 'Remove #{tag} and its sub-tags from every resource? The resources themselves are kept.',
   'links.title': 'Links',
   'links.to': 'Links to',
@@ -459,7 +469,6 @@ export const en = {
   'related.link': 'Link',
   'related.linkFrom': 'Link from it',
   'related.linked': 'Linked',
-  'related.tagHint': 'Similar resources are tagged',
   'related.failed': 'Could not add the link',
 
   // --- Resource detail ---
