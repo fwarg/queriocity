@@ -19,19 +19,22 @@ const EXAMPLES_SHARE = 0.3
 
 interface Row { id: string; title: string; kind: string; body: string | null }
 
-/** The recipe's text, with only the user's own resources and instructions only from notes, each cut
- *  to its share of `charBudget`. A long example keeps its opening: that is where its form shows. */
+/** The recipe's text: its typed instructions and instruction notes, then examples — of resources
+ *  only the user's own, and instructions only from notes — each cut to its share of `charBudget`.
+ *  A long example keeps its opening: that is where its form shows. */
 export function recipePrompt(userId: string, recipe: ActiveRecipe, charBudget: number): RecipePrompt {
   const notes = owned(userId, recipe.instructionNoteIds).filter(r => r.kind === 'note' && r.body?.trim())
   const examples = owned(userId, recipe.exampleFileIds)
     .map(r => ({ title: r.title, text: r.kind === 'note' ? r.body ?? '' : joinChunks(documentParts(r.id).map(p => p.text)) }))
     .filter(e => e.text.trim())
-  const noteRoom = Math.floor(charBudget * INSTRUCTIONS_SHARE / Math.max(1, notes.length))
+  const typed = recipe.instructionText?.trim() ?? ''
+  const noteRoom = Math.floor(charBudget * INSTRUCTIONS_SHARE / Math.max(1, notes.length + (typed ? 1 : 0)))
   const exampleRoom = Math.floor(charBudget * EXAMPLES_SHARE / Math.max(1, examples.length))
   return {
-    instructions: notes.length ? [
+    instructions: notes.length || typed ? [
       `## Recipe "${recipe.name}": instructions the user chose for this chat`,
       'Follow them. Where they conflict with the user\'s standing preferences or the space\'s memory, these win.',
+      ...typed ? [cut(typed, noteRoom)] : [],
       ...notes.map(n => `### ${n.title}\n${cut(n.body!.trim(), noteRoom)}`),
     ].join('\n\n') : '',
     examples: examples.length ? [

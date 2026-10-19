@@ -238,6 +238,7 @@ export const customTemplates = sqliteTable('custom_templates', {
   suggestedMode: text('suggested_mode').notNull().default('balanced'),
   /** A recipe's parts (lib/recipes.ts), JSON; null on a plain template. */
   instructionNoteIds: text('instruction_note_ids'),
+  instructionText: text('instruction_text'),
   exampleFileIds: text('example_file_ids'),
   settings: text('settings'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
@@ -564,6 +565,7 @@ function initSchema() {
     prompt_text    TEXT NOT NULL,
     suggested_mode TEXT NOT NULL DEFAULT 'balanced',
     instruction_note_ids TEXT,
+    instruction_text TEXT,
     example_file_ids TEXT,
     settings       TEXT,
     created_at     INTEGER NOT NULL,
@@ -653,6 +655,7 @@ function initSchema() {
   try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN verified_at INTEGER') } catch {}
   try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN status TEXT') } catch {}
   try { sqlite.run('ALTER TABLE custom_templates ADD COLUMN instruction_note_ids TEXT') } catch {}
+  try { sqlite.run('ALTER TABLE custom_templates ADD COLUMN instruction_text TEXT') } catch {}
   try { sqlite.run('ALTER TABLE custom_templates ADD COLUMN example_file_ids TEXT') } catch {}
   try { sqlite.run('ALTER TABLE custom_templates ADD COLUMN settings TEXT') } catch {}
   sqlite.run(`CREATE TABLE IF NOT EXISTS tags (

@@ -5,11 +5,13 @@ import { useT } from '../lib/i18n.tsx'
 import { LinkPicker } from './LinkPicker.tsx'
 import { COLLECTION_MODE_LABEL_KEYS } from './ChatInput.tsx'
 import { COLLECTION_MODES } from '@shared/context.ts'
-import { MAX_EXAMPLES, MAX_INSTRUCTION_NOTES, type RecipeSettings } from '@shared/recipes.ts'
+import { MAX_EXAMPLES, MAX_INSTRUCTION_NOTES, MAX_INSTRUCTION_TEXT, type RecipeSettings } from '@shared/recipes.ts'
 
 export interface Picked { id: string; title: string }
 
 export interface RecipeDraft {
+  /** Rules typed into the recipe; notes hold longer or shared guides. */
+  instructionText: string
   instructions: Picked[]
   examples: Picked[]
   settings: RecipeSettings
@@ -45,19 +47,32 @@ export function RecipeParts({ draft, onChange }: { draft: RecipeDraft; onChange:
         <p className="text-xs text-gray-400 font-medium">{t('recipe.section')}</p>
         <p className="text-xs text-gray-500">{t('recipe.sectionDesc')}</p>
       </div>
-      <PickedList
-        label={t('recipe.instructions')} hint={t('recipe.instructionsDesc')} items={draft.instructions}
-        onRemove={id => set({ instructions: draft.instructions.filter(p => p.id !== id) })}
-        onAdd={draft.instructions.length < MAX_INSTRUCTION_NOTES ? () => setPicking('instructions') : undefined}
-      />
+      <div className="grid gap-4 md:grid-cols-3">
+      <div className="flex flex-col gap-1.5">
+        <PickedList
+          label={t('recipe.instructions')} hint={t('recipe.instructionsDesc')} items={draft.instructions}
+          onRemove={id => set({ instructions: draft.instructions.filter(p => p.id !== id) })}
+          onAdd={draft.instructions.length < MAX_INSTRUCTION_NOTES ? () => setPicking('instructions') : undefined}
+        />
+        <textarea
+          value={draft.instructionText}
+          onChange={e => set({ instructionText: e.target.value })}
+          maxLength={MAX_INSTRUCTION_TEXT}
+          rows={3}
+          aria-label={t('recipe.instructionText')}
+          placeholder={t('recipe.instructionTextPlaceholder')}
+          className="w-full rounded bg-gray-800 border border-gray-700 px-2 py-1.5 text-xs text-gray-100 focus:outline-none focus:border-blue-500 resize-y"
+        />
+      </div>
       <PickedList
         label={t('recipe.examples')} hint={t('recipe.examplesDesc')} items={draft.examples}
         onRemove={id => set({ examples: draft.examples.filter(p => p.id !== id) })}
         onAdd={draft.examples.length < MAX_EXAMPLES ? () => setPicking('examples') : undefined}
       />
       {collections.length > 0 && (
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-1">
           <p className="text-xs text-gray-400">{t('recipe.collections')}</p>
+          <p className="text-xs text-gray-500">{t('recipe.collectionsDesc')}</p>
           <div className="flex flex-wrap gap-1">
             {collections.map(c => (
               <button key={c.id} type="button" onClick={() => toggleCollection(c.id)}
@@ -83,6 +98,7 @@ export function RecipeParts({ draft, onChange }: { draft: RecipeDraft; onChange:
           )}
         </div>
       )}
+      </div>
       {picking && (
         <LinkPicker
           notesOnly={picking === 'instructions'}

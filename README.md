@@ -871,11 +871,14 @@ Templates are stored per user in the database and persist across sessions.
 
 **Recipes.** The Studio's *Recipe (optional)* section turns a template into a recipe — the app's take on agent "skills", without scripts:
 
+- **Instructions typed in the recipe:** short rules ("British spelling, at most two pages"), up to 4000 characters. Your own words, so there is nothing to review; they come before the notes.
 - **Instruction notes** (up to 3): a style guide or a procedure. They go into the system prompt as instructions, ahead of *About you* and space memory where they conflict. A note acts as an instruction **only** through a recipe you picked — a note retrieval returns stays data, so a bad or injected note cannot steer answers.
 - **Examples** (up to 2): resources whose *form* to imitate — structure, tone, length, citation habits — never their facts. Each gets a share of the answering model's room; a long one is cut to its opening, where its form shows. In thorough mode only the writer sees them, not the researcher.
 - **Collections to read**, with a read mode and, for Explore, *Also search the web*.
 
 Picking a recipe fills the message box like any template, applies its settings, and puts a **Recipe: name** chip above the message box. Every message of that chat carries the recipe until you remove the chip; a new or other chat starts without it. Notes are referenced by id, so editing the style note changes the next answer. An instruction note you haven't reviewed (see *Authorship and review*) shows a warning beside the chip, without blocking. A confidential note or example locks the chat, as attaching it would. **▶ Run** in the Studio tries the whole recipe before it is saved; recipe cards in the picker carry a *recipe* badge.
+
+**A recipe in a collection's style.** On a collection's page, **Create recipe** opens a new chat that reads every document (Whole collection) with a prompt asking for their shared style as a guide: structure, length, tone, terminology, how sources are cited. Check and send it, then save the answer as a note — it is offered the title *Style: collection* and marked model-written. Review it, then on the note's page choose **New recipe with this note**: a new template opens with the note as its instructions. Add one or two of the documents as examples, write the prompt (e.g. `Write a report on {{topic}}.`), and save. The button is on every note, so a style guide you wrote yourself, or a procedure saved from any chat, works the same way.
 
 ---
 

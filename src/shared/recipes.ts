@@ -6,6 +6,8 @@ import type { CollectionMode } from './context.ts'
 
 export const MAX_INSTRUCTION_NOTES = 3
 export const MAX_EXAMPLES = 2
+/** Instructions typed into the recipe itself: short rules, not a guide (that is a note). */
+export const MAX_INSTRUCTION_TEXT = 4000
 
 /** Chat-input settings a recipe applies when picked; each is left as it is when absent. */
 export interface RecipeSettings {
@@ -17,9 +19,11 @@ export interface RecipeSettings {
 /** What a chat request carries while a recipe's chip is in the input. */
 export interface ActiveRecipe {
   name: string
+  /** Typed in the recipe, so the user's own words: unlike a note, nothing to review. */
+  instructionText?: string
   instructionNoteIds: string[]
   exampleFileIds: string[]
 }
 
-export const isRecipe = (r: { instructionNoteIds: string[]; exampleFileIds: string[] }) =>
-  r.instructionNoteIds.length > 0 || r.exampleFileIds.length > 0
+export const isRecipe = (r: { instructionText?: string; instructionNoteIds: string[]; exampleFileIds: string[] }) =>
+  !!r.instructionText?.trim() || r.instructionNoteIds.length > 0 || r.exampleFileIds.length > 0

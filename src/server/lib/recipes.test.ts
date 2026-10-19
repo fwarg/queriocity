@@ -48,6 +48,15 @@ describe('recipePrompt', () => {
     expect(out.examples).not.toContain('Theirs')
   })
 
+  test('typed instructions come first, before the notes, and alone still make instructions', async () => {
+    const style = await saveNote(ME, { title: 'Style: memos', body: 'One page.' })
+    const both = recipePrompt(ME, { name: 'Memo', instructionText: 'No bullet lists.', instructionNoteIds: [style], exampleFileIds: [] }, 100_000)
+    expect(both.instructions.indexOf('No bullet lists.')).toBeLessThan(both.instructions.indexOf('### Style: memos'))
+    const typed = recipePrompt(ME, { name: 'Memo', instructionText: '  No bullet lists. ', instructionNoteIds: [], exampleFileIds: [] }, 100_000)
+    expect(typed.instructions).toContain('## Recipe "Memo"')
+    expect(typed.instructions.endsWith('No bullet lists.')).toBe(true)
+  })
+
   test('nothing to say without parts, and a long example keeps its opening', async () => {
     expect(recipePrompt(ME, { name: 'Empty', instructionNoteIds: [], exampleFileIds: [] }, 10_000)).toEqual({ instructions: '', examples: '' })
     const long = await saveNote(ME, { title: 'Long', body: `Opening paragraph.\n\n${'Filler text. '.repeat(500)}\n\nClosing paragraph.` })

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { BookOpen, RotateCcw, Lock, ShieldCheck, Trash2, X } from 'lucide-react'
 import { MessageList, ImageCaptionContext } from './components/MessageList.tsx'
+import { PromptStudio } from './components/PromptStudio.tsx'
 import { ContextMeter } from './components/ContextIndicators.tsx'
 import { ProgressLog, Elapsed } from './components/ProgressLog.tsx'
 import { ApprovalPrompt } from './components/ApprovalPrompt.tsx'
@@ -110,6 +111,8 @@ export default function App() {
   const [recipe, setRecipe] = useState<CustomTemplate | null>(null)
   // One resource read as Explore's document, e.g. to save notes from it; per chat, like the picks.
   const [scopedDocument, setScopedDocument] = useState<{ id: string; title: string } | null>(null)
+  /** A note to instruct a new recipe: the template dialog is open with it. */
+  const [recipeSeed, setRecipeSeed] = useState<{ id: string; title: string } | null>(null)
   // Text put into the message box from outside it (Compile into notes); `n` makes a repeat count.
   const [inputSeed, setInputSeed] = useState<{ text: string; n: number }>()
 
@@ -509,12 +512,13 @@ export default function App() {
 
   /** A new chat that reads every document in the collection; its answer can be saved as a note there.
    *  A confidential collection locks that chat, so it is asked first. */
-  async function analyzeCollection(collectionId: string) {
+  async function analyzeCollection(collectionId: string): Promise<boolean> {
     const collection = spaces.find(sp => sp.id === collectionId)
-    if (collection?.offline && !await confirm({ message: t('chat.lockConfirmNew', { name: collection.name }), confirmLabel: t('chat.lockConfirmAction') })) return
+    if (collection?.offline && !await confirm({ message: t('chat.lockConfirmNew', { name: collection.name }), confirmLabel: t('chat.lockConfirmAction') })) return false
     newChat()
     setSelectedCollections([collectionId])
     setCollectionMode('whole')
+    return true
   }
 
   /** A new chat in the space that reads every resource tagged to it; the space's lock covers it. */
@@ -537,6 +541,13 @@ export default function App() {
     // Web off to start: the notes come from the documents; the user turns it on for a niche collection.
     setExploreWeb(false)
     setInputSeed({ text: t('collection.compilePrompt'), n: Date.now() })
+  }
+
+  /** A new chat that reads every document and describes their style; its answer, saved with the
+   *  recipe action, becomes a new recipe's instructions. */
+  async function createRecipeFromCollection(collectionId: string) {
+    if (!await analyzeCollection(collectionId)) return
+    setInputSeed({ text: t('collection.stylePrompt'), n: Date.now() })
   }
 
   /** A new chat that explores one document and saves notes from it; a confidential one locks the
@@ -860,6 +871,13 @@ export default function App() {
 
   return (
     <>
+    {recipeSeed && (
+      <PromptStudio
+        seed={{ name: recipeSeed.title, instructions: [recipeSeed] }}
+        onSave={() => setRecipeSeed(null)}
+        onClose={() => setRecipeSeed(null)}
+      />
+    )}
     <div className="flex h-screen">
       {currentUser?.mustChangePassword && !showSettings && (
         <div className="fixed top-0 inset-x-0 z-50 bg-amber-900/90 text-amber-100 text-sm px-4 py-2 flex items-center justify-center gap-3">
@@ -1119,6 +1137,13 @@ export default function App() {
                       className={PRIMARY_BTN}
                     >
                       {t('collection.analyze')}
+                    </button>
+                    <button
+                      onClick={() => createRecipeFromCollection(currentSpaceId!)}
+                      title={t('collection.recipeTitle')}
+                      className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-sm font-medium whitespace-nowrap"
+                    >
+                      {t('collection.recipe')}
                     </button>
                     <button
                       onClick={() => compileIntoNotes(currentSpaceId!, true)}
@@ -1520,7 +1545,7 @@ export default function App() {
             />
           )
         ) : view === 'files' ? (
-          <ResourcesView resources={files} onChanged={reloadFiles} openId={openResourceId} onOpenIdChange={setOpenResourceId} onOpenChat={openChatAt} onSaveNotes={saveNotesFromDocument} initialFilter={resourceSeed ?? undefined} />
+          <ResourcesView resources={files} onChanged={reloadFiles} openId={openResourceId} onOpenIdChange={setOpenResourceId} onOpenChat={openChatAt} onSaveNotes={saveNotesFromDocument} onNewRecipe={setRecipeSeed} initialFilter={resourceSeed ?? undefined} />
         ) : view === 'explore' ? (
           <ExploreView
             resources={files}
@@ -1735,6 +1760,7 @@ export default function App() {
                   onDeleteTurn={busy ? undefined : deleteTurn}
                   focusMessageId={focusMessageId}
                   onNotesChanged={reloadFiles}
+                  styleNoteTitle={selectedCollections.length ? t('recipe.styleNoteTitle', { name: selectedCollections.map(id => spaces.find(sp => sp.id === id)?.name).filter(Boolean).join(', ') }) : undefined}
                 />
               </ImageCaptionContext.Provider>
             )}

@@ -1304,20 +1304,21 @@ export interface CustomTemplate {
   promptText: string
   suggestedMode: 'flash' | 'balanced' | 'thorough' | 'image'
   /** A recipe's parts (shared/recipes.ts); empty on a plain template. */
+  instructionText: string
   instructions: Array<{ id: string; title: string; trust: NoteTrust }>
   examples: Array<{ id: string; title: string }>
   settings: RecipeSettings
   createdAt: number
 }
 
-export type CustomTemplateInput = Pick<CustomTemplate, 'name' | 'description' | 'promptText' | 'suggestedMode' | 'settings'> & {
+export type CustomTemplateInput = Pick<CustomTemplate, 'name' | 'description' | 'promptText' | 'suggestedMode' | 'settings' | 'instructionText'> & {
   instructionNoteIds: string[]
   exampleFileIds: string[]
 }
 
 /** What a chat request carries for a recipe's chip. */
 export const activeRecipe = (t: CustomTemplate): ActiveRecipe =>
-  ({ name: t.name, instructionNoteIds: t.instructions.map(n => n.id), exampleFileIds: t.examples.map(e => e.id) })
+  ({ name: t.name, ...(t.instructionText?.trim() && { instructionText: t.instructionText }), instructionNoteIds: t.instructions.map(n => n.id), exampleFileIds: t.examples.map(e => e.id) })
 
 export async function fetchCustomTemplates(): Promise<CustomTemplate[]> {
   const res = await fetch(`${BASE}/templates`)

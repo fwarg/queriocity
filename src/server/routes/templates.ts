@@ -7,7 +7,7 @@ import { randomUUID } from 'crypto'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { trustByNote } from '../lib/files/note-trust.ts'
 import { COLLECTION_MODES } from '../../shared/context.ts'
-import { MAX_EXAMPLES, MAX_INSTRUCTION_NOTES, type RecipeSettings } from '../../shared/recipes.ts'
+import { MAX_EXAMPLES, MAX_INSTRUCTION_NOTES, MAX_INSTRUCTION_TEXT, type RecipeSettings } from '../../shared/recipes.ts'
 
 export const templatesRouter = new Hono<AppEnv>()
 templatesRouter.use('*', authMiddleware)
@@ -33,6 +33,7 @@ function templateJson(userId: string, r: TemplateRow) {
     description: r.description ?? undefined,
     promptText: r.promptText,
     suggestedMode: r.suggestedMode,
+    instructionText: r.instructionText ?? '',
     instructions: notes.map(n => ({ ...n, trust: trust.get(n.id)?.trust ?? 'unknown' })),
     examples: titled(userId, ids(r.exampleFileIds)),
     settings: r.settings ? JSON.parse(r.settings) as RecipeSettings : {},
@@ -53,6 +54,7 @@ function titled(userId: string, fileIds: string[]): Array<{ id: string; title: s
 /** A recipe's parts as stored; null for a plain template's. */
 function recipeColumns(body: Partial<z.infer<typeof templateBody>>) {
   return {
+    ...(body.instructionText !== undefined && { instructionText: body.instructionText.trim() || null }),
     ...(body.instructionNoteIds && { instructionNoteIds: body.instructionNoteIds.length ? JSON.stringify(body.instructionNoteIds) : null }),
     ...(body.exampleFileIds && { exampleFileIds: body.exampleFileIds.length ? JSON.stringify(body.exampleFileIds) : null }),
     ...(body.settings && { settings: Object.keys(body.settings).length ? JSON.stringify(body.settings) : null }),
@@ -64,6 +66,7 @@ const templateBody = z.object({
   promptText: z.string().min(1).max(10000),
   suggestedMode: z.enum(['flash', 'balanced', 'thorough', 'image']).default('balanced'),
   description: z.string().max(200).optional(),
+  instructionText: z.string().max(MAX_INSTRUCTION_TEXT).optional(),
   instructionNoteIds: z.array(z.string()).max(MAX_INSTRUCTION_NOTES).optional(),
   exampleFileIds: z.array(z.string()).max(MAX_EXAMPLES).optional(),
   settings: z.object({

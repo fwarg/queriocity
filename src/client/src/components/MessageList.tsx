@@ -62,6 +62,9 @@ interface Props {
   focusMessageId?: string | null
   /** Absent while a run is streaming: deleting then would race the turn being stored. */
   onDeleteTurn?: (index: number) => void
+  /** The title offered for a note saved from the answer to *Create recipe*'s style prompt, e.g.
+   *  "Style: Annual reports"; other answers offer their question. */
+  styleNoteTitle?: string
 }
 
 /** Normalize SVG blocks: unwrap any existing ```svg fences, then rewrap consistently. */
@@ -469,7 +472,9 @@ function noteTitleFor(messages: Message[], index: number): string | undefined {
 const unpinnedIn = (messages: Message[], from: number, to: number) =>
   messages.slice(from, to).filter(m => !m.pinned).length
 
-export const MessageList = memo(function MessageList({ messages, streaming, streamingThinking, collapseFirstQuestion, searchQuery, searchMatchIndices, searchActiveIndex, onOpenResource, sessionId, context, onTogglePin, onDeleteTurn, focusMessageId, onNotesChanged }: Props) {
+export const MessageList = memo(function MessageList({ messages, streaming, streamingThinking, collapseFirstQuestion, searchQuery, searchMatchIndices, searchActiveIndex, onOpenResource, sessionId, context, onTogglePin, onDeleteTurn, focusMessageId, onNotesChanged, styleNoteTitle }: Props) {
+  const t = useT()
+  const stylePrompt = t('collection.stylePrompt')
   const msgRefs = useRef<Map<number, HTMLDivElement>>(new Map())
   const matchSet = useMemo(() => new Set(searchMatchIndices ?? []), [searchMatchIndices])
 
@@ -512,7 +517,7 @@ export const MessageList = memo(function MessageList({ messages, streaming, stre
             isMatch={matchSet.has(i)}
             isActive={i === searchActiveIndex}
             searchQuery={searchQuery}
-            noteTitle={noteTitleFor(messages, i)}
+            noteTitle={styleNoteTitle && messages[i - 1]?.content.trim() === stylePrompt ? styleNoteTitle : noteTitleFor(messages, i)}
             onOpenResource={onOpenResource}
             sessionId={sessionId}
             onTogglePin={onTogglePin ? () => onTogglePin(i) : undefined}

@@ -51,6 +51,8 @@ interface Props {
   /** Open the chat a note was saved from. */
   onOpenChat: (id: string, title: string, messageId?: string) => void
   onSaveNotes?: (resource: { id: string; filename: string; confidential: boolean }) => void
+  /** Starts a new recipe with a note as its instructions. */
+  onNewRecipe?: (note: { id: string; title: string }) => void
   /** Filter to start from, when another view (Explore) opens the library on a tag. */
   initialFilter?: Partial<ResourceFilter>
 }
@@ -59,7 +61,7 @@ interface Props {
  *
  *  Lives here rather than inline in App.tsx because it now owns a detail panel and two editors;
  *  the list state stays with the parent, which needs the same resources for space tagging. */
-export function ResourcesView({ resources, onChanged, openId, onOpenIdChange, onOpenChat, onSaveNotes, initialFilter }: Props) {
+export function ResourcesView({ resources, onChanged, openId, onOpenIdChange, onOpenChat, onSaveNotes, onNewRecipe, initialFilter }: Props) {
   const t = useT()
   const confirm = useConfirm()
   const { lang } = useLang()
@@ -78,7 +80,7 @@ export function ResourcesView({ resources, onChanged, openId, onOpenIdChange, on
   const shown = resources.filter(r => matchesFilter(r, filter))
 
   if (openId) {
-    return <ResourceDetail id={openId} onBack={() => onOpenIdChange(null)} onChanged={onChanged} onOpen={onOpenIdChange} onOpenChat={onOpenChat} onSaveNotes={onSaveNotes} onTag={tag => { setFilter({ ...EMPTY_FILTER, tag }); onOpenIdChange(null) }} />
+    return <ResourceDetail id={openId} onBack={() => onOpenIdChange(null)} onChanged={onChanged} onOpen={onOpenIdChange} onOpenChat={onOpenChat} onSaveNotes={onSaveNotes} onNewRecipe={onNewRecipe} onTag={tag => { setFilter({ ...EMPTY_FILTER, tag }); onOpenIdChange(null) }} />
   }
 
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {

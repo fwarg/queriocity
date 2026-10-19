@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { ArrowLeft, ChevronRight, ExternalLink, Eye, EyeOff, MessageSquare, NotebookPen, Plus, Scissors, X } from 'lucide-react'
+import { ArrowLeft, ChevronRight, ExternalLink, Eye, EyeOff, MessageSquare, NotebookPen, Plus, Scissors, ScrollText, X } from 'lucide-react'
 import { ResourceTypeIcon } from './ResourceFilters.tsx'
 import { NoteEditor } from './NoteEditor.tsx'
 import { NoteMarkdown } from './NoteMarkdown.tsx'
@@ -42,11 +42,12 @@ interface Props {
   onTag?: (tag: string) => void
   /** Open a chat that explores this document and saves notes from it. */
   onSaveNotes?: (resource: { id: string; filename: string; confidential: boolean }) => void
+  onNewRecipe?: (note: { id: string; title: string }) => void
 }
 
 /** What a stored resource actually contains: its summary, the spaces it feeds, and the excerpts
  *  retrieval works from. Notes are editable here; every resource can be transformed into one. */
-export function ResourceDetail({ id, onBack, onChanged, onOpen, onOpenChat, onTag, onSaveNotes }: Props) {
+export function ResourceDetail({ id, onBack, onChanged, onOpen, onOpenChat, onTag, onSaveNotes, onNewRecipe }: Props) {
   const t = useT()
   const { lang } = useLang()
   const [detail, setDetail] = useState<Detail | null>(null)
@@ -151,11 +152,19 @@ export function ResourceDetail({ id, onBack, onChanged, onOpen, onOpenChat, onTa
       {isNote && detail.body && (
         <Section title={t('note.body')}>
           <NoteMarkdown body={detail.body} onWikilink={followLink} onTag={onTag} />
-          {detail.body.length >= SPLIT_MIN_CHARS && (
-            <button onClick={() => setSplitting(true)} className="self-start flex items-center gap-1.5 px-2 py-1.5 rounded text-sm text-gray-300 border border-gray-700 hover:border-gray-500">
-              <Scissors size={13} className="text-amber-300" /> {t('split.fromNote')}
-            </button>
-          )}
+          <div className="flex flex-wrap gap-2">
+            {detail.body.length >= SPLIT_MIN_CHARS && (
+              <button onClick={() => setSplitting(true)} className="flex items-center gap-1.5 px-2 py-1.5 rounded text-sm text-gray-300 border border-gray-700 hover:border-gray-500">
+                <Scissors size={13} className="text-amber-300" /> {t('split.fromNote')}
+              </button>
+            )}
+            {onNewRecipe && (
+              <button onClick={() => onNewRecipe({ id: detail.id, title: detail.filename })} title={t('recipe.fromNoteTitle')}
+                className="flex items-center gap-1.5 px-2 py-1.5 rounded text-sm text-gray-300 border border-gray-700 hover:border-gray-500">
+                <ScrollText size={13} className="text-amber-300" /> {t('recipe.fromNote')}
+              </button>
+            )}
+          </div>
         </Section>
       )}
       {splitting && detail.body && (

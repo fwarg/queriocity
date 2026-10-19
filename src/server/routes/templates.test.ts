@@ -47,9 +47,10 @@ describe('recipes', () => {
     const theirs = await saveNote(STRANGER, { title: 'Theirs', body: 'Text.' })
     const created = await call('', { method: 'POST', body: {
       name: 'House style', promptText: 'Write about {{topic}}.', suggestedMode: 'thorough',
-      instructionNoteIds: [style, theirs], exampleFileIds: [example],
+      instructionText: '  No bullet lists.  ', instructionNoteIds: [style, theirs], exampleFileIds: [example],
       settings: { collectionMode: 'whole' },
     } })
+    expect(created.instructionText).toBe('No bullet lists.')
     expect(created.instructions).toEqual([{ id: style, title: 'Style', trust: 'unreviewed' }])
     expect(created.examples).toEqual([{ id: example, title: 'Report 2024' }])
     expect(created.settings).toEqual({ collectionMode: 'whole' })
@@ -58,11 +59,13 @@ describe('recipes', () => {
     sqlite.run('DELETE FROM uploaded_files WHERE id = ?', [example])
     const updated = await call(`/${created.id}`, { method: 'PATCH', body: { instructionNoteIds: [] } })
     expect([updated.instructions, updated.examples, updated.settings, updated.name]).toEqual([[], [], { collectionMode: 'whole' }, 'House style'])
+    expect(updated.instructionText).toBe('No bullet lists.')
+    expect((await call(`/${created.id}`, { method: 'PATCH', body: { instructionText: '' } })).instructionText).toBe('')
     expect((await call('', { as: STRANGER })).length).toBe(0)
   })
 
   test('a plain template has no parts', async () => {
     const plain = await call('', { method: 'POST', body: { name: 'Plain', promptText: 'Explain {{x}}.' } })
-    expect([plain.instructions, plain.examples, plain.settings]).toEqual([[], [], {}])
+    expect([plain.instructionText, plain.instructions, plain.examples, plain.settings]).toEqual(['', [], [], {}])
   })
 })

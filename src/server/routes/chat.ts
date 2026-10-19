@@ -20,7 +20,7 @@ import { initialChatTitle, refineChatTitle, type InitialTitle } from '../lib/cha
 import { readsConfidential, trackLeftOut, parseLockedBy } from '../lib/files/confidential.ts'
 import { confidentialInScope } from '../lib/files/collection-coverage.ts'
 import { hasAttachment, COLLECTION_MODES, type ContextReport } from '../../shared/context.ts'
-import { MAX_EXAMPLES, MAX_INSTRUCTION_NOTES } from '../../shared/recipes.ts'
+import { MAX_EXAMPLES, MAX_INSTRUCTION_NOTES, MAX_INSTRUCTION_TEXT } from '../../shared/recipes.ts'
 import { recipePrompt } from '../lib/recipes.ts'
 import { contextCharBudget } from '../lib/trim-messages.ts'
 import { indexContents, deindexContent } from '../lib/chat-indexer.ts'
@@ -73,6 +73,7 @@ const chatSchema = z.object({
   /** The recipe whose chip is in the chat input (lib/recipes.ts); its resources lock the turn like attachments. */
   recipe: z.object({
     name: z.string().min(1).max(100),
+    instructionText: z.string().max(MAX_INSTRUCTION_TEXT).optional(),
     instructionNoteIds: z.array(z.string()).max(MAX_INSTRUCTION_NOTES),
     exampleFileIds: z.array(z.string()).max(MAX_EXAMPLES),
   }).optional(),
