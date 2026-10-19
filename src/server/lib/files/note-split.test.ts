@@ -82,3 +82,16 @@ describe('hint', () => {
     expect(JSON.stringify(model.requests[0])).toContain('one note per bee type')
   })
 })
+
+describe('the instructions', () => {
+  test('ask for notes on concepts and claims, never section summaries, and nothing added', async () => {
+    model.stop()
+    model = startFakeOpenAI([{ text: ['=== One\nBees pollinate orchards [1].\n=== Two\nWild bees [2].'] }])
+    process.env.CHAT_BASE_URL = model.baseURL
+    await proposeSplit('Bees', BODY)
+    const system = JSON.stringify(model.requests[0])
+    expect(system).toContain('one concept, method or claim')
+    expect(system).toContain('Never write \\"the study\\"')
+    expect(system).toContain('do not add facts or explanations of your own')
+  })
+})

@@ -419,7 +419,10 @@ Three ways to make one:
   wherever the list already held the URL.
 - **Transform a resource.** See below.
 - **Split a long one.** The scissors beside a long answer (or **Split into notes** on a long note)
-  has the chat model propose it as several short notes, one idea each, keeping the citation markers;
+  has the chat model propose it as several short notes, one idea each, keeping the citation markers.
+  Each is titled by the concept or claim it holds, not the section it came from, and never says "the
+  study"; the wording is kept and nothing is added (unlike Explore's *Save notes*, which explains
+  concepts in general terms too);
   each part gets only the sources it cites. Each part comes with 1–3 proposed tags, preferring tags you already
 use, editable in place. Untick parts you don't want, edit titles and text (✎, with
 a preview), **merge** a part with the next one, or describe how you want it split ("fewer notes",

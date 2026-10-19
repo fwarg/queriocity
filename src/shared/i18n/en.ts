@@ -958,6 +958,7 @@ export const en = {
   'log.readPart': 'Reading {part}',
   'log.note': { one: '{count} note', other: '{count} notes' },
   'log.readNotes': { one: 'Reading the note', other: 'Reading the {count} notes' },
+  'log.readFound': 'Reading what was found',
   'log.savedNote': { one: 'Saved {count} note to the library', other: 'Saved {count} notes to the library' },
   'log.imageEdit': 'Editing image',
   'log.researched': 'Researched',

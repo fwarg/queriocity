@@ -954,6 +954,7 @@ export const sv: Catalog = {
   'log.readPart': 'Läser {part}',
   'log.note': { one: '{count} anteckning', other: '{count} anteckningar' },
   'log.readNotes': { one: 'Läser anteckningen', other: 'Läser de {count} anteckningarna' },
+  'log.readFound': 'Läser det som hittats',
   'log.savedNote': { one: 'Sparade {count} anteckning i biblioteket', other: 'Sparade {count} anteckningar i biblioteket' },
   'log.imageEdit': 'Redigerar bild',
   'log.researched': 'Efterforskade',
