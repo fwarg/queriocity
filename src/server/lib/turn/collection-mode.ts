@@ -30,7 +30,7 @@ export async function collectionModeFor(ctx: TurnContext, sink: TurnSink): Promi
   // Read as excerpts (the space's usual search) when there is nothing else to read: Whole and Explore
   // with no documents have nothing to do, and Auto in a space with nothing picked would cost a call
   // on every message.
-  if (asked === 'auto' && !ctx.collections.length) return 'excerpts'
+  if (asked === 'auto' && !ctx.collections.length && !ctx.documentIds?.length) return 'excerpts'
   if (asked !== 'excerpts' && !collectionIndex(documentSet(ctx), ctx.locked).length) return 'excerpts'
   if (asked !== 'auto') return asked
   await sink.emit({ type: 'status', text: 'Choosing how to read the collection…' })

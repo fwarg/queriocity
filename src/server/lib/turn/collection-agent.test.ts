@@ -20,6 +20,7 @@ const { compactReads } = await import('./collection-agent.ts')
 const { searchSpread, readsBlock, firstLook } = await import('./collection-evidence.ts')
 const { runTurn, createSink } = await import('./index.ts')
 const { savedNotesBlock } = await import('./collection-notes.ts')
+const { notesSavedFrom } = await import('../files/agent-notes.ts')
 
 const USER = 'explore-user'
 const COLL = 'explore-coll'
@@ -368,11 +369,28 @@ describe('explore turn', () => {
     expect(result.savedNoteIds).toHaveLength(1)
     sqlite.run('DELETE FROM uploaded_files WHERE id = ?', [result.savedNoteIds![0]])
 
-    // Nothing read, nothing to save: no saving pass, and the answer may not claim a save.
-    const none = serve([{ text: ['done'] }, { text: ['Answer.'] }])
+    // Nothing read, nothing to save even when told what is unread: no saving pass, and the answer may not claim a save.
+    const none = serve([{ text: ['done'] }, { text: ['done'] }, { text: ['Answer.'] }])
     await runTurn({ ...ctxFor(fakeTarget(none.baseURL)), exploreNotes: true }, createSink(captureSSE().stream as never))
     expect(none.requests.some(r => JSON.stringify(r).includes('You keep findings'))).toBe(false)
     expect(JSON.stringify(none.requests.at(-1))).toContain('## No notes were saved')
+  })
+
+  test('explores one document outside any collection, and its saved notes mark it', async () => {
+    sqlite.run('DELETE FROM space_files WHERE space_id = ?', [COLL])
+    const doc = seedDoc('ks.txt', ['The KS test compares two distributions.'])
+    sqlite.run('DELETE FROM space_files WHERE file_id = ?', [doc])
+    const f = serve([
+      call('read_part', { doc: 'C1', part: 1 }), call('note', { doc: 'C1', part: 1, finding: 'KS test' }),
+      call('save_note', { title: 'Kolmogorov–Smirnov test', body: 'Compares two distributions [C1].' }),
+      { text: ['done'] }, { text: ['Saved a note.'] },
+    ])
+    const result = await runTurn({ ...ctxFor(fakeTarget(f.baseURL)), collections: [], documentIds: [doc], exploreNotes: true }, createSink(captureSSE().stream as never))
+    // Saved only because [C1] named the document: it was in scope with no collection picked.
+    const [note] = result.savedNoteIds ?? []
+    expect(notesSavedFrom(doc).map(n => n.id)).toEqual([note])
+    sqlite.run('DELETE FROM uploaded_files WHERE id = ?', [note])
+    expect(notesSavedFrom(doc)).toEqual([])
   })
 
   test('the answer is told which documents no saved note cites', () => {
@@ -383,18 +401,20 @@ describe('explore turn', () => {
     expect(savedNotesBlock(undefined, docs)).toBe('')
   })
 
-  test('saving notes, a model that stops to write is told once to continue', async () => {
+  test('saving notes, a model that stops with documents unread is told once which', async () => {
     sqlite.run('DELETE FROM space_files WHERE space_id = ?', [COLL])
     seedDoc('gsn.txt', ['This paper argues with GSN patterns.'])
+    seedDoc('qrn.txt', ['Risk norms for automated driving.'])
     const f = serve([
       call('read_part', { doc: 'C1', part: 1 }), { text: ['The paper argues its safety case with GSN patterns throughout.'] },
-      call('note', { doc: 'C1', part: 1, finding: 'uses GSN' }), call('save_note', { title: 'GSN', body: 'Uses GSN [C1].' }),
+      call('read_part', { doc: 'C2', part: 1 }), call('note', { doc: 'C2', part: 1, finding: 'risk norms' }),
+      call('save_note', { title: 'GSN', body: 'Uses GSN [C1].' }),
       { text: ['A second stop to write is taken as the end.'] },
       { text: ['Saved a note.'] },
     ])
     const result = await runTurn({ ...ctxFor(fakeTarget(f.baseURL)), exploreNotes: true }, createSink(captureSSE().stream as never))
-    // The three steps after the nudge carry it; the answer does not.
-    expect(f.requests.filter(r => JSON.stringify(r).includes('Continue exploring')).length).toBe(3)
+    // The four steps after the nudge carry it; the answer does not.
+    expect(f.requests.filter(r => JSON.stringify(r).includes('You have not read any part of C2 yet')).length).toBe(4)
     expect(f.requests.some(r => JSON.stringify(r).includes('You keep findings'))).toBe(false)
     expect(result.savedNoteIds).toHaveLength(1)
     const answer = JSON.stringify(f.requests.at(-1))
@@ -409,7 +429,7 @@ describe('explore turn', () => {
     const f = serve([call('read_part', { doc: 'C1', part: 1 }), { text: ['The paper argues its safety case with GSN patterns throughout.'] }, { text: ['Answer.'] }])
     await runTurn(ctxFor(fakeTarget(f.baseURL)), createSink(captureSSE().stream as never))
     expect(JSON.stringify(f.requests.at(-1))).toContain('What the explorer wrote when it stopped')
-    expect(JSON.stringify(f.requests)).not.toContain('Continue exploring')
+    expect(JSON.stringify(f.requests)).not.toContain('You have not read any part')
     const done = serve([{ text: ['done'] }, { text: ['Answer.'] }])
     await runTurn(ctxFor(fakeTarget(done.baseURL)), createSink(captureSSE().stream as never))
     expect(JSON.stringify(done.requests.at(-1))).not.toContain('What the explorer wrote')

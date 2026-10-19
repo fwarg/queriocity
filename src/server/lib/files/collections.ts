@@ -1,5 +1,5 @@
 import { and, eq, inArray } from 'drizzle-orm'
-import { db, spaces } from '../db.ts'
+import { db, spaces, uploadedFiles } from '../db.ts'
 import { ragTopK } from '../rag-settings.ts'
 import { searchSpaceFiles, type ChunkResult } from './uploads-search.ts'
 
@@ -21,6 +21,14 @@ export async function ownedCollectionIds(ids: string[], userId: string): Promise
     eq(spaces.kind, 'collection'),
     inArray(spaces.id, ids),
   ))
+  const owned = new Set(rows.map(r => r.id))
+  return ids.filter(id => owned.has(id))
+}
+
+/** The resources among these ids that this user owns, in the order given; filtering, as above. */
+export async function ownedResourceIds(ids: string[], userId: string): Promise<string[]> {
+  if (!ids.length) return []
+  const rows = await db.select({ id: uploadedFiles.id }).from(uploadedFiles).where(and(eq(uploadedFiles.userId, userId), inArray(uploadedFiles.id, ids)))
   const owned = new Set(rows.map(r => r.id))
   return ids.filter(id => owned.has(id))
 }

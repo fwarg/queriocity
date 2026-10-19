@@ -691,6 +691,13 @@ function initSchema() {
     created_at INTEGER NOT NULL
   )`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_note_revisions_note ON note_revisions(note_id, created_at)`)
+  // The documents an agent's note cites: what marks a document as having had notes saved from it.
+  sqlite.run(`CREATE TABLE IF NOT EXISTS agent_note_documents (
+    note_id TEXT NOT NULL REFERENCES uploaded_files(id) ON DELETE CASCADE,
+    file_id TEXT NOT NULL REFERENCES uploaded_files(id) ON DELETE CASCADE,
+    PRIMARY KEY (note_id, file_id)
+  )`)
+  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_agent_note_documents_file ON agent_note_documents(file_id)`)
   // Suggested links the user turned down, so the same pair is not proposed again.
   sqlite.run(`CREATE TABLE IF NOT EXISTS link_dismissals (
     src_id TEXT NOT NULL REFERENCES uploaded_files(id) ON DELETE CASCADE,

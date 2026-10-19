@@ -16,7 +16,7 @@ import { trimMessages, meterBudgetChars, CONTEXT_RESERVE_FRACTION } from '../tri
 import { thinkingFor, spaceMemoryOnly } from './prepare.ts'
 import { AnswerStream } from './stream-answer.ts'
 import { startWeb, webSearchTool, webBlock, EXPLORE_WEB_INSTRUCTION, type WebSearching } from './collection-web.ts'
-import { saveNoteTool, savedNotesBlock, saveFindings, EXPLORE_NOTES_INSTRUCTION, type SavedNote } from './collection-notes.ts'
+import { saveNoteTool, savedNotesBlock, saveFindings, EXPLORE_NOTES_INSTRUCTION, NOTES_WEB_INSTRUCTION, type SavedNote } from './collection-notes.ts'
 import { toStoredSource } from './research.ts'
 import { userQueryOf, withInstructions, withKeepalive, documentSet, type TurnContext, type TurnResult, type TurnSink } from './context.ts'
 
@@ -44,8 +44,8 @@ const partNumber = z.coerce.number().int().min(1)
 
 /** Shorter closing text is a sign-off ("done"), not findings. */
 const CLOSING_MIN_CHARS = 40
-/** Sent once when, saving notes, the model stops to write before the step limit (explore). */
-const CONTINUE_NUDGE = `Continue exploring: call note for each part you have read, then outline and read the documents you have not covered yet, saving notes as you go. Reply with text only when you are done.`
+/** Sent once when, saving notes, the model stops before the step limit with documents unread (explore). */
+const continueNudge = (unread: string[]) => `You have not read any part of ${unread.join(', ')} yet. If the message calls for them, continue exploring: call note for each part you have read, then outline and read those documents, saving notes as you go. Otherwise reply "done".`
 const NOTE_NOW = `\n\nYou have just read: call note now, once for each part you just read, with what in it bears on the message and a short quote. If nothing in a part does, note that. Do not reply with text yet — that ends the exploration.`
 
 export function runCollectionAgent(ctx: TurnContext, sink: TurnSink): Promise<TurnResult> {
@@ -65,7 +65,7 @@ async function exploreAndAnswer(ctx: TurnContext, sink: TurnSink): Promise<TurnR
   const web = await startWeb(ctx)
   const saved: SavedNote[] | undefined = ctx.exploreNotes ? [] : undefined
   const { steps, endedEarly } = await explore(ctx, sink, model, docs, gathered, overview, maxSteps, web, saved)
-  if (saved && !saved.length) await saveFindings(ctx, sink, model, docs, saved, await findings(gathered, model))
+  if (saved && !saved.length) await saveFindings(ctx, sink, model, docs, saved, await findings(gathered, model), web)
   const { notes } = gathered
   await sink.emit({ type: 'exploration', steps, notes: notes.length, endedEarly })
   if (web?.results.length) await sink.emit({ type: 'sources', sources: web.results })
@@ -83,11 +83,11 @@ export function collectionIndex(scope: string[] | DocumentScope, includeConfiden
 /** The tool loop. Ends when the model stops calling tools, at `maxSteps`, or on an error — the last
  *  two count as ending early, and the answer is then written from whatever was gathered. */
 async function explore(ctx: TurnContext, sink: TurnSink, model: ModelTarget, docs: Doc[], gathered: Gathered, overview: string, maxSteps: number, web?: WebSearching, saved?: SavedNote[]) {
-  const system = EXPLORE_SYSTEM + (web ? EXPLORE_WEB_INSTRUCTION : '') + (saved ? EXPLORE_NOTES_INSTRUCTION : '') + overview
+  const system = EXPLORE_SYSTEM + (web ? EXPLORE_WEB_INSTRUCTION : '') + (saved ? EXPLORE_NOTES_INSTRUCTION : '') + (saved && web ? NOTES_WEB_INSTRUCTION : '') + overview
   const tools: ToolSet = {
     ...exploreTools(ctx, sink, docs, gathered),
     ...(web && { web_search: webSearchTool(ctx, sink, web, gathered) }),
-    ...(saved && { save_note: saveNoteTool(ctx, sink, model, docs, saved) }),
+    ...(saved && { save_note: saveNoteTool(ctx, sink, model, docs, saved, web) }),
   }
   const history = trimMessages(ctx.msgs, Math.floor(model.contextTokens * CONTEXT_RESERVE_FRACTION), system, ctx.pinned)
   let step = 0
@@ -119,11 +119,12 @@ async function explore(ctx: TurnContext, sink: TurnSink, model: ModelTarget, doc
     let result = await run(history.messages, maxSteps)
     let steps = result.steps.length
     const closings = [result.text.trim()]
-    // Saving notes, a model that stops to write rather than "done" leaves documents unread — seen
-    // with DeepSeek at the note step. Told once to go on; a second stop is taken as its answer.
-    if (saved && closings[0].length > CLOSING_MIN_CHARS && steps < maxSteps) {
-      console.log('  [explore] stopped to write; told to continue')
-      result = await run([...history.messages, ...result.response.messages, { role: 'user', content: CONTINUE_NUDGE }], maxSteps - steps)
+    // Saving notes, a model may stop with documents unread — DeepSeek did, at the note step, with
+    // text or with "done". Told once which are unread; a second stop is taken as its answer.
+    const unread = docs.filter(d => ![...gathered.reads.values()].some(r => r.doc.label === d.label)).map(d => d.label)
+    if (saved && unread.length && steps < maxSteps && !result.steps.at(-1)?.toolCalls.length) {
+      console.log(`  [explore] stopped with ${unread.join(', ')} unread; told to continue`)
+      result = await run([...history.messages, ...result.response.messages, { role: 'user', content: continueNudge(unread) }], maxSteps - steps)
       steps += result.steps.length
       closings.push(result.text.trim())
     }

@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, type FormEvent, type KeyboardEvent } from 'react'
-import { Send, Paperclip, X, Square, LayoutGrid, ChevronDown, ChevronUp, NotebookPen, Library, EyeOff, BookMarked } from 'lucide-react'
+import { Send, Paperclip, X, Square, LayoutGrid, ChevronDown, ChevronUp, NotebookPen, Library, EyeOff, BookMarked, FileText } from 'lucide-react'
 import { AI_SYSTEM_NOTICE_SHORT } from '../lib/ai-notice.ts'
 import { extractFileForContext, uploadFile, tagFileToSpace, fetchFiles, fetchNoteText, fetchSuggestions, type Resource, type CustomTemplate } from '../lib/api.ts'
 import { Modal } from './Modal.tsx'
@@ -48,6 +48,9 @@ interface Props {
   onExploreWebChange?: (on: boolean) => void
   /** Explore may save notes to the library, marked as the model's drafts; offered while Explore is chosen. */
   exploreNotes?: boolean
+  /** One resource read as Explore's document, beside any collections; removable like a pick. */
+  scopedDocument?: { id: string; title: string } | null
+  onScopedDocumentChange?: (doc: null) => void
   onExploreNotesChange?: (on: boolean) => void
   /** Text to put in the message box, from outside it; a new `n` puts it in again. */
   seed?: { text: string; n: number }
@@ -112,7 +115,7 @@ const CATEGORY_LABEL_KEYS: Record<SearchCategory, TranslationKey> = {
   tech: 'category.tech',
 }
 
-export function ChatInput({ models = [], modelId = '', defaultModel, onModelChange, onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, collections, selectedCollections, onCollectionsChange, collectionMode = 'auto', onCollectionModeChange, spaceResources = 0, exploreWeb = false, onExploreWebChange, exploreNotes = false, onExploreNotesChange, seed, recipe, onRecipeChange, notesAvailable = false, notesFirst = false, onNotesFirstChange, suggestionsEnabled, lockedSpace = false, chatLocked = false, hasHistory = false, related = [], onRelatedSelect, spaceId, onAddedToLibrary }: Props) {
+export function ChatInput({ models = [], modelId = '', defaultModel, onModelChange, onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, collections, selectedCollections, onCollectionsChange, collectionMode = 'auto', onCollectionModeChange, spaceResources = 0, exploreWeb = false, onExploreWebChange, exploreNotes = false, onExploreNotesChange, seed, recipe, onRecipeChange, scopedDocument = null, onScopedDocumentChange, notesAvailable = false, notesFirst = false, onNotesFirstChange, suggestionsEnabled, lockedSpace = false, chatLocked = false, hasHistory = false, related = [], onRelatedSelect, spaceId, onAddedToLibrary }: Props) {
   const t = useT()
   const confirm = useConfirm()
   const [value, setValue] = useState('')
@@ -165,8 +168,9 @@ export function ChatInput({ models = [], modelId = '', defaultModel, onModelChan
   // whichever groups apply — the trigger names what is currently in force.
   const categoriesAvailable = !lockedSpace && (focusMode === 'balanced' || focusMode === 'thorough')
   const notesOffered = notesAvailable && focusMode !== 'image' && !!onNotesFirstChange
-  const spaceReadable = spaceResources > 0 && focusMode !== 'image'
-  const readMode = shownReadMode(collectionMode, selectedCollections.length > 0)
+  // A scoped document is read like a space's resources: the read mode applies with no collection picked.
+  const spaceReadable = (spaceResources > 0 || !!scopedDocument) && focusMode !== 'image'
+  const readMode = shownReadMode(collectionMode, selectedCollections.length > 0 || !!scopedDocument)
   const sourcesPicker = categoriesAvailable || collections.length > 0 || notesOffered || spaceReadable
   const sourcesActive = searchCategories.length > 0 || selectedCollections.length > 0 || (notesOffered && notesFirst)
   const pickedNames = [
@@ -478,6 +482,7 @@ export function ChatInput({ models = [], modelId = '', defaultModel, onModelChan
         </div>
       )}
       {recipe && <RecipeChip recipe={recipe} onRemove={() => onRecipeChange?.(null)} />}
+      {scopedDocument && <DocumentChip title={scopedDocument.title} onRemove={() => onScopedDocumentChange?.(null)} />}
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {attachments.map((att, i) => (
@@ -636,6 +641,20 @@ function RecipeChip({ recipe, onRemove }: { recipe: CustomTemplate; onRemove: ()
         <button type="button" onClick={onRemove} aria-label={t('recipe.chipRemove')} className="shrink-0 text-teal-300 hover:text-white ml-0.5"><X size={12} /></button>
       </span>
       {unreviewed && <span className="text-amber-300">{t('recipe.unreviewed')}</span>}
+    </div>
+  )
+}
+
+/** The one document this chat reads, from "Save notes from this document". */
+function DocumentChip({ title, onRemove }: { title: string; onRemove: () => void }) {
+  const t = useT()
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 text-xs">
+      <span className="inline-flex items-center gap-1 max-w-full px-2 py-1 rounded bg-emerald-900 text-emerald-100">
+        <FileText size={12} className="shrink-0" />
+        <span className="truncate">{t('chat.documentChip', { name: title })}</span>
+        <button type="button" onClick={onRemove} aria-label={t('chat.documentRemove')} className="shrink-0 text-emerald-300 hover:text-white ml-0.5"><X size={12} /></button>
+      </span>
     </div>
   )
 }

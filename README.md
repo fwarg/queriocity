@@ -1247,17 +1247,24 @@ choice resets on a new chat. A model that
 handles many tool calls reliably works best; on a small local model, prefer *Whole collection*.
 
 **Saving notes is opt-in too.** Ticking *Save notes* beside the Explore chip gives the agent a
-`save_note` tool: it keeps findings as notes in your library, one idea per note, and every note must
+`save_note` tool: it keeps findings as notes in your library, one concept per note — explained so the
+note is useful without the documents, then how the documents use it — and every note must
 cite the documents it draws on (`[C1]`, listed under *Sources* with the documents' titles). A note it
 saves is marked as written by the model, unreviewed, and a draft. It may rework its own unreviewed
 drafts, keeping the old text as an [earlier version](#notes), but never a note you wrote or reviewed: a
 note of that title is left alone and the draft is saved beside it as *Title (draft)*, linking to it. In a
-locked chat the notes are confidential. The step limit doubles while saving notes, and the answer lists
-the notes saved. If exploring ends with nothing saved — the model ran out of steps, or answered instead
+locked chat the notes are confidential. With web search on too, the agent may look up a concept it
+cannot explain confidently; a web result it cites is listed under *Sources* beside the documents, and
+a note must still cite a document. The step limit doubles while saving notes. If exploring stops
+with a document unread, the agent is told once which, and may go on. The answer reports the notes
+saved — one line each, and which documents no note cites — rather than writing them out again. If exploring ends with nothing saved — the model ran out of steps, or answered instead
 of calling a tool — one more pass, offered only `save_note`, saves the findings from what was read and
 noted; if still nothing is saved, the answer says so rather than claiming otherwise. **Compile into notes**, on a collection's page (or a space's), opens a new chat set up
-for this — Explore with *Save notes* on, and a prompt to go through every document and save its main
-ideas — for you to check and send.
+for this — Explore with *Save notes* on, web search off, and a prompt to go through every document and save its
+main concepts — for you to check and send. **Save notes from this document**, on a document's page, does the same for that one
+document, read with no collection picked — fewer documents to share the steps. The page then lists
+the notes saved from it (any agent note citing it, from either action), so it is not redone by
+mistake: running it again asks first, and deleting those notes clears the list.
 
 *Summarize resources* is offered in spaces only: it saves a memory, which only a space's chats read.
 In a collection, use *Analyze in chat*, whose per-document reading is cached and reused.

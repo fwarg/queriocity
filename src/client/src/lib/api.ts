@@ -242,6 +242,7 @@ export async function* streamChat(
   exploreWeb?: boolean,
   exploreNotes?: boolean,
   recipe?: ActiveRecipe,
+  documentIds?: string[],
 ): AsyncGenerator<{ type: string; [k: string]: unknown }> {
   const res = await fetch(`${BASE}/chat`, {
     method: 'POST',
@@ -266,7 +267,8 @@ export async function* streamChat(
       ...(notesFirst ? { notesFirst: true } : {}),
       ...(modelId ? { modelId } : {}),
       // A space chat reads its own resources in the chosen mode too, with no collection picked.
-      ...(collectionMode && (collectionIds?.length || spaceId) ? { collectionMode } : {}),
+      ...(collectionMode && (collectionIds?.length || documentIds?.length || spaceId) ? { collectionMode } : {}),
+      ...(documentIds?.length ? { documentIds } : {}),
       ...(attachedFileIds?.length ? { attachedFileIds } : {}),
       ...(exploreWeb ? { exploreWeb: true } : {}),
       ...(exploreNotes ? { exploreNotes: true } : {}),
@@ -966,6 +968,8 @@ export interface ResourceDetail extends Resource {
   /** The resource a transform produced this note from, if any, and the notes produced from it. */
   derivedFrom: ResourceRef | null
   derived: ResourceRef[]
+  /** The model's notes that cite this resource, newest first: notes have been saved from it. */
+  notesSaved: Array<ResourceRef & { generatedBy: string | null; createdAt: number }>
   /** Topics not yet adopted as tags, normalised — offered as one-tap suggestions. */
   suggestedTags: string[]
   /** This note's `[[links]]` in order; `target` is null while no resource carries the title. */

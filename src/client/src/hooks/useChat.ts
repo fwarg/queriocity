@@ -26,6 +26,8 @@ interface UseChatOptions {
   exploreNotes?: boolean
   /** The recipe whose chip is in the input; every message carries it. */
   recipe?: ActiveRecipe
+  /** One resource read as Explore's or Whole's document, beside any collections. */
+  documentIds?: string[]
   includeMemoryIds?: string[]
   spaceId?: string
   /** User setting; when false no related-questions call is made at all. */
@@ -99,9 +101,9 @@ export function useChat(options: UseChatOptions) {
     setBusy(true)
     setAnswerTime('')
     const chatRun = new ChatRun({ t, setStreaming, setStreamingThinking, setStatus, setSteps, setAnswerTime, setApproval, setContext, rafRef, liveSessionRef, onSessionCreated }, text, focusMode)
-    const { searchCategories, includeFileIds, includeMemoryIds, collectionIds, spaceId, notesFirst, collectionMode, exploreWeb, exploreNotes, recipe } = options
+    const { searchCategories, includeFileIds, includeMemoryIds, collectionIds, spaceId, notesFirst, collectionMode, exploreWeb, exploreNotes, recipe, documentIds } = options
     try {
-      for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId, undefined, searchCategories, includeFileIds, includeMemoryIds, collectionIds, regenerating, notesFirst, modelId, collectionMode, attachedFileIds, exploreWeb, exploreNotes, recipe)) {
+      for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId, undefined, searchCategories, includeFileIds, includeMemoryIds, collectionIds, regenerating, notesFirst, modelId, collectionMode, attachedFileIds, exploreWeb, exploreNotes, recipe, documentIds)) {
         chatRun.handle(chunk)
       }
     } catch (err: unknown) {

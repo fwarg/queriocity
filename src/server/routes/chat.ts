@@ -15,7 +15,7 @@ import { getFlashModel } from '../lib/llm.ts'
 import { resolveTurnModels, modelChoices, answerModelOf, attachAnswer, pickedModelOf, type ResolvedModels } from '../lib/cloud-models.ts'
 import type { AnswerModel } from '../../shared/llm-catalogue.ts'
 import { extractMemoriesPostHoc, toMemorySources } from '../lib/memory.ts'
-import { ownedCollectionIds } from '../lib/files/collections.ts'
+import { ownedCollectionIds, ownedResourceIds } from '../lib/files/collections.ts'
 import { readsConfidential, trackLeftOut, parseLockedBy } from '../lib/files/confidential.ts'
 import { confidentialInScope } from '../lib/files/collection-coverage.ts'
 import { hasAttachment, COLLECTION_MODES, type ContextReport } from '../../shared/context.ts'
@@ -54,6 +54,8 @@ const chatSchema = z.object({
   includeMemoryIds: z.array(z.string()).optional(),
   /** Collections picked for this request only — they apply with or without a space. */
   collectionIds: z.array(z.string()).max(20).optional(),
+  /** Resources read as Whole or Explore's documents, e.g. one document to save notes from. */
+  documentIds: z.array(z.string()).max(20).optional(),
   ephemeral: z.boolean().optional(),
   /** Re-answering the last question: replaces the previous answer instead of appending. */
   regenerate: z.boolean().optional(),
@@ -208,7 +210,7 @@ chatRouter.post('/:sessionId/approve', zValidator('json', z.object({
 
 chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', chatSchema), async (c) => {
   const userId = c.get('userId') as string
-  const { sessionId, spaceId, messages: requestMsgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, collectionIds, ephemeral, regenerate, notesFirst, modelId, collectionMode = 'auto', attachedFileIds, exploreWeb, exploreNotes, recipe } = c.req.valid('json')
+  const { sessionId, spaceId, messages: requestMsgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, collectionIds, ephemeral, regenerate, notesFirst, modelId, collectionMode = 'auto', attachedFileIds, exploreWeb, exploreNotes, recipe, documentIds: requestedDocumentIds } = c.req.valid('json')
   const sid = sessionId ?? randomUUID()
   const msgs = requestMsgs.map(({ role, content }) => ({ role, content }))
 
@@ -221,8 +223,9 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   // a collection deleted in another tab should let the turn proceed without it rather than fail it.
   // Sorted so the cache key does not depend on the order the client happened to send.
   const collections = (await ownedCollectionIds(collectionIds ?? [], userId)).sort()
+  const documentIds = (await ownedResourceIds(requestedDocumentIds ?? [], userId)).sort()
 
-  const { locked, spaceLocked, lockedBy } = await turnLock(sessionId, spaceId, { collectionIds: collections, fileIds: [...includeFileIds ?? [], ...attachedFileIds ?? [], ...recipe?.instructionNoteIds ?? [], ...recipe?.exampleFileIds ?? []] })
+  const { locked, spaceLocked, lockedBy } = await turnLock(sessionId, spaceId, { collectionIds: collections, fileIds: [...includeFileIds ?? [], ...attachedFileIds ?? [], ...documentIds, ...recipe?.instructionNoteIds ?? [], ...recipe?.exampleFileIds ?? []] })
   if (locked && focusMode === 'image') {
     return c.json({ error: 'Image generation is unavailable in a locked chat — it would send the prompt to the diffusion server.' }, 409)
   }
@@ -251,8 +254,9 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     [...(includeFileIds ?? [])].sort().join(','),
     [...(includeMemoryIds ?? [])].sort().join(','),
     collections.join(','),
+    documentIds.join(','),
     // Whole-collection and explored answers are never stored, but must not be served an excerpt answer either.
-    collections.length || (spaceId && (collectionMode === 'whole' || collectionMode === 'explore')) ? collectionMode : '',
+    collections.length || documentIds.length || (spaceId && (collectionMode === 'whole' || collectionMode === 'explore')) ? collectionMode : '',
     customPrompt ?? '',
     recipeText ? recipeText.instructions + recipeText.examples : '',
     [...(searchCategories ?? [])].sort().join(','),
@@ -280,7 +284,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   if (cached) return streamRun(c, run, out => replayCached(out, cached, { ...tail, model: answerModelOf(resolved, focusMode) }, resolved))
 
   const ctx: TurnContext = {
-    userId, sid, msgs, focusMode, spaceId, locked, spaceWrites, settings, customPrompt, recipe: recipeText, collections, collectionMode, exploreWeb: exploreWeb === true && !locked, exploreNotes: exploreNotes === true,
+    userId, sid, msgs, focusMode, spaceId, locked, spaceWrites, settings, customPrompt, recipe: recipeText, collections, documentIds, collectionMode, exploreWeb: exploreWeb === true && !locked, exploreNotes: exploreNotes === true,
     // Pins travel as indices, so the messages handed to the model carry nothing but role and content.
     pinned: new Set(requestMsgs.flatMap((m, i) => m.pinned ? [i] : [])),
     models: resolved.models,
@@ -295,8 +299,8 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     // An unlocked turn leaves confidential resources out — of the picked collections, and of every
     // search it runs; the footer says how many.
     // Whole and Explore asked for in a space read the space's resources too (turn/context.ts documentSet).
-    const readsSpace = !!spaceId && (collectionMode === 'whole' || collectionMode === 'explore')
-    const leftOut = new Set<string>(locked ? [] : confidentialInScope(readsSpace ? documentSet(ctx) : collections))
+    const readsDocuments = (!!spaceId || documentIds.length > 0) && (collectionMode === 'whole' || collectionMode === 'explore')
+    const leftOut = new Set<string>(locked ? [] : confidentialInScope(readsDocuments ? documentSet(ctx) : collections))
     const result = await trackLeftOut(leftOut, () => runTurn(ctx, sink))
     if (leftOut.size) await sink.emit({ type: 'confidential_excluded', count: leftOut.size })
     const aborted = ctx.abortSignal.aborted

@@ -123,6 +123,17 @@ describe('agent notes', () => {
     expect([note.generatedBy, note.status, trustOf(out.id).trust]).toEqual(['GLM', 'draft', 'unreviewed'])
   })
 
+  test('cites web results beside the documents, renumbered; a web result alone is not enough', async () => {
+    const web = [{ title: 'KS test', url: 'https://a.example/ks' }, { title: 'FDR [overview]', url: 'https://b.example/fdr' }]
+    expect((await agent('Web only', 'Explained [2].', { web })).kind).toBe('refused')
+    const out = await agent('FDR correction', 'Controls the false discovery rate [2], used in [C1]; see also [2] and [7].', { web })
+    if (out.kind !== 'created') throw new Error(out.kind)
+    const { body } = await row(out.id)
+    expect(body).toContain('false discovery rate [1], used in [C1]; see also [1] and [7].')
+    expect(body).toContain('- **[C1]** Paper one\n- **[1]** [FDR overview](https://b.example/fdr)')
+    expect(body).not.toContain('a.example')
+  })
+
   test('reworks its own unreviewed draft and keeps the old version, which can be restored', async () => {
     const first = await agent('Idea', 'First take [C1].')
     const second = await agent('idea', 'Second take [C1].')

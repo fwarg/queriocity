@@ -15,7 +15,7 @@ import { linksOf } from '../lib/files/links.ts'
 import { exportVault } from '../lib/files/obsidian-export.ts'
 import { acceptLink, dismissLink, suggestLinks } from '../lib/files/link-suggest.ts'
 import { proposeSplit } from '../lib/files/note-split.ts'
-import { noteRevisions, restoreRevision } from '../lib/files/agent-notes.ts'
+import { noteRevisions, notesSavedFrom, restoreRevision } from '../lib/files/agent-notes.ts'
 import { collectResourceText } from '../lib/files/resource-context.ts'
 import { storedDigests } from '../lib/files/collection-digests.ts'
 import { confidentialSql, readsConfidential } from '../lib/files/confidential.ts'
@@ -486,6 +486,7 @@ filesRouter.get('/:id', async (c) => {
     originChat: originChat ? { ...originChat, messageId: resource.originMessageId } : null,
     derivedFrom: source ?? null,
     derived,
+    notesSaved: notesSavedFrom(resource.id),
     id: resource.id,
     filename: resource.filename,
     mimeType: resource.mimeType,

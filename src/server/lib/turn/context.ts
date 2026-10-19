@@ -42,6 +42,8 @@ export interface TurnContext {
   /** Explore may save notes to the library (turn/collection-notes.ts). */
   exploreNotes?: boolean
   includeFileIds?: string[]
+  /** Resources read as the documents of Whole or Explore, beside any collections; owner-checked. */
+  documentIds?: string[]
   includeMemoryIds?: string[]
   notesFirst?: boolean
   searchCategory?: string
@@ -124,6 +126,9 @@ export const userQueryOf = (msgs: Array<{ role: string; content: string }>) =>
 /** What Whole collection and Explore read: the picked collections and, in a space chat, the space's
  *  own resources — only those pinned, when any are, as the space's search does. Spaces and
  *  collections tag resources alike, so one id list covers both. */
-export const documentSet = (ctx: Pick<TurnContext, 'spaceId' | 'collections' | 'includeFileIds'>): DocumentScope => ctx.spaceId
-  ? { ids: [...new Set([ctx.spaceId, ...ctx.collections])], ...(ctx.includeFileIds?.length && { pinned: { spaceId: ctx.spaceId, fileIds: ctx.includeFileIds } }) }
-  : { ids: ctx.collections }
+export const documentSet = (ctx: Pick<TurnContext, 'spaceId' | 'collections' | 'includeFileIds' | 'documentIds'>): DocumentScope => ({
+  ...(ctx.spaceId
+    ? { ids: [...new Set([ctx.spaceId, ...ctx.collections])], ...(ctx.includeFileIds?.length && { pinned: { spaceId: ctx.spaceId, fileIds: ctx.includeFileIds } }) }
+    : { ids: ctx.collections }),
+  ...(ctx.documentIds?.length && { files: ctx.documentIds }),
+})

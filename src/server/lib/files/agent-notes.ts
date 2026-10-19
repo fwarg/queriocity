@@ -18,6 +18,10 @@ export interface AgentNoteInput {
   model: string
   /** Cited labels (`C1`) to document titles; a note must cite at least one. */
   documents: Map<string, string>
+  /** Cited labels to resource ids, recorded as the documents the note was saved from. */
+  documentIds?: Map<string, string>
+  /** Web results the run numbered [1]…, citable beside the documents (never instead of them). */
+  web?: Array<{ title: string; url: string }>
   /** The heading over the sources list, in the user's language. */
   sourcesHeading: string
   /** Written from confidential material: the note is confidential too. */
@@ -37,8 +41,9 @@ export async function saveAgentNote(userId: string, input: AgentNoteInput): Prom
   const cited = [...new Set([...input.body.matchAll(/\[(C\d+)\]/g)].map(m => m[1]))].filter(l => input.documents.has(l))
   if (!title || !input.body.trim()) return { kind: 'refused', reason: 'A note needs a title and some text.' }
   if (!cited.length) return { kind: 'refused', reason: 'A note must cite the documents it comes from, by label (e.g. [C1]).' }
-  const sources = cited.sort(byLabel).map(l => `- **[${l}]** ${input.documents.get(l)}`).join('\n')
-  const body = `${input.body.trim()}\n\n---\n\n## ${input.sourcesHeading}\n\n${sources}`
+  const web = citedWeb(input.body.trim(), input.web ?? [])
+  const sources = [...cited.sort(byLabel).map(l => `- **[${l}]** ${input.documents.get(l)}`), ...web.sources].join('\n')
+  const body = `${web.body}\n\n---\n\n## ${input.sourcesHeading}\n\n${sources}`
 
   const existing = byTitle(userId, title)
   // Beside a note the user owns, the draft saved there last time is the one to rework.
@@ -48,6 +53,7 @@ export async function saveAgentNote(userId: string, input: AgentNoteInput): Prom
     const kept = draft === existing ? title : draft.title
     await saveNote(userId, { id: draft.id, title: kept, body: draft === existing ? body : withSeeAlso(body, existing!.title) })
     markConfidential(draft.id, input.confidential)
+    recordDocuments(draft.id, cited, input.documentIds)
     return { kind: 'updated', id: draft.id, title: kept }
   }
   const named = existing ? freeTitle(userId, draftTitle(title)) : title
@@ -57,7 +63,27 @@ export async function saveAgentNote(userId: string, input: AgentNoteInput): Prom
     author: 'model', model: input.model, status: 'draft',
   })
   markConfidential(id, input.confidential)
+  recordDocuments(id, cited, input.documentIds)
   return existing ? { kind: 'alongside', id, title: named, existing: existing.title } : { kind: 'created', id, title: named }
+}
+
+/** Replaces the documents recorded for a note with those it now cites. */
+function recordDocuments(noteId: string, cited: string[], ids: Map<string, string> | undefined) {
+  if (!ids) return
+  sqlite.run('DELETE FROM agent_note_documents WHERE note_id = ?', [noteId])
+  for (const label of cited) {
+    const fileId = ids.get(label)
+    if (fileId) sqlite.run('INSERT OR IGNORE INTO agent_note_documents (note_id, file_id) VALUES (?, ?)', [noteId, fileId])
+  }
+}
+
+/** The model's notes saved from a document, newest first: its mark that notes were saved. */
+export function notesSavedFrom(fileId: string): Array<{ id: string; filename: string; kind: string; origin: string | null; generatedBy: string | null; createdAt: number }> {
+  return sqlite.query(`
+    SELECT f.id, f.filename, f.kind, f.origin, f.generated_by AS generatedBy, f.created_at AS createdAt
+    FROM agent_note_documents d JOIN uploaded_files f ON f.id = d.note_id
+    WHERE d.file_id = ? ORDER BY f.created_at DESC, f.filename
+  `).all(fileId) as Array<{ id: string; filename: string; kind: string; origin: string | null; generatedBy: string | null; createdAt: number }>
 }
 
 const byTitle = (userId: string, title: string) => sqlite.query(`
@@ -70,6 +96,23 @@ const withSeeAlso = (body: string, title: string) => `${body}\n\nSee also: ${wik
 
 /** A model's note the user has not reviewed: the only kind an agent may rewrite. */
 const isOwnDraft = (n: Existing) => n.kind === 'note' && !!n.generatedBy && n.generatedBy !== HUMAN_AUTHOR && n.verifiedAt === null
+
+/** A bare `[3]`, as note-citations.ts reads one: not a wikilink, source label, or link. */
+const WEB_MARKER = /(?<![[\\*])\[(\d+)\](?![\](:])/g
+
+/** The web results a note cites, renumbered [1]… in order of first citation, as a note saved from
+ *  an answer numbers them. A number naming no result is left as written. */
+function citedWeb(body: string, web: Array<{ title: string; url: string }>): { body: string; sources: string[] } {
+  const order: number[] = []
+  const renumbered = body.replace(WEB_MARKER, (marker, n: string) => {
+    const i = Number(n) - 1
+    if (!web[i]) return marker
+    if (!order.includes(i)) order.push(i)
+    return `[${order.indexOf(i) + 1}]`
+  })
+  const sources = order.map((i, k) => `- **[${k + 1}]** [${web[i].title.replace(/[[\]]/g, '')}](${web[i].url})`)
+  return { body: renumbered, sources }
+}
 
 const byLabel = (a: string, b: string) => Number(a.slice(1)) - Number(b.slice(1))
 

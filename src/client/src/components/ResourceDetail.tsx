@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { ArrowLeft, ChevronRight, ExternalLink, Eye, EyeOff, MessageSquare, Plus, Scissors, X } from 'lucide-react'
+import { ArrowLeft, ChevronRight, ExternalLink, Eye, EyeOff, MessageSquare, NotebookPen, Plus, Scissors, X } from 'lucide-react'
 import { ResourceTypeIcon } from './ResourceFilters.tsx'
 import { NoteEditor } from './NoteEditor.tsx'
 import { NoteMarkdown } from './NoteMarkdown.tsx'
@@ -18,6 +18,7 @@ import { useLang, useT } from '../lib/i18n.tsx'
 import { errorMessage } from '../lib/errors.ts'
 import type { TranslationKey } from '@shared/i18n/index.ts'
 import { GuideLink } from './GuideView.tsx'
+import { useConfirm } from './confirm.tsx'
 import type { TopicId } from '@shared/guide/index.ts'
 
 const OPERATIONS: TransformOperation[] = ['summarize', 'keypoints', 'questions', 'outline']
@@ -39,11 +40,13 @@ interface Props {
   onOpenChat: (id: string, title: string, messageId?: string) => void
   /** An inline `#tag` in the note was tapped: show the library filtered on it. */
   onTag?: (tag: string) => void
+  /** Open a chat that explores this document and saves notes from it. */
+  onSaveNotes?: (resource: { id: string; filename: string; confidential: boolean }) => void
 }
 
 /** What a stored resource actually contains: its summary, the spaces it feeds, and the excerpts
  *  retrieval works from. Notes are editable here; every resource can be transformed into one. */
-export function ResourceDetail({ id, onBack, onChanged, onOpen, onOpenChat, onTag }: Props) {
+export function ResourceDetail({ id, onBack, onChanged, onOpen, onOpenChat, onTag, onSaveNotes }: Props) {
   const t = useT()
   const { lang } = useLang()
   const [detail, setDetail] = useState<Detail | null>(null)
@@ -183,6 +186,8 @@ export function ResourceDetail({ id, onBack, onChanged, onOpen, onOpenChat, onTa
           </div>
         </Section>
       )}
+
+      {!isNote && detail.chunks.length > 0 && onSaveNotes && <SavedNotesSection detail={detail} onOpen={onOpen} onSaveNotes={onSaveNotes} />}
 
       {/* Keyed on what can change the neighbourhood, so a new link redraws it. */}
       <LocalGraph
@@ -617,6 +622,35 @@ function TransformPanel({ id, sourceTitle, onSaved }: { id: string; sourceTitle:
           onSaved={() => { setSaving(false); setResult(null); onSaved() }}
         />
       )}
+    </Section>
+  )
+}
+
+/** The notes saved from this document, which mark it as done, and the way to save them (again). A
+ *  second run asks first, so it is not repeated by mistake; deleting the notes clears the mark. */
+function SavedNotesSection({ detail, onOpen, onSaveNotes }: { detail: Detail; onOpen: (id: string) => void; onSaveNotes: NonNullable<Props['onSaveNotes']> }) {
+  const t = useT()
+  const { lang } = useLang()
+  const confirm = useConfirm()
+  const saved = detail.notesSaved
+  const latest = saved[0]
+  async function start() {
+    if (saved.length && !await confirm({ message: t('resource.saveNotesAgain', { count: saved.length }), confirmLabel: t('resource.saveNotesAgainAction') })) return
+    onSaveNotes({ id: detail.id, filename: detail.filename, confidential: detail.confidentialOwn || detail.confidentialVia.length > 0 })
+  }
+  return (
+    <Section title={t('resource.notesSaved')}>
+      {latest && (
+        <>
+          <p className="text-xs text-gray-500">{t('resource.notesSavedBy', { count: saved.length, model: latest.generatedBy ?? '', date: new Date(latest.createdAt * 1000).toLocaleDateString(lang) })}</p>
+          <div className="flex flex-wrap gap-1.5">
+            {saved.map(note => <ResourceChip key={note.id} resource={note} onOpen={onOpen} />)}
+          </div>
+        </>
+      )}
+      <button onClick={start} title={t('resource.saveNotesTitle')} className="self-start flex items-center gap-1.5 px-2 py-1.5 rounded text-sm text-gray-300 border border-gray-700 hover:border-gray-500">
+        <NotebookPen size={13} className="text-emerald-400" /> {t(saved.length ? 'resource.saveNotesAgainAction' : 'resource.saveNotes')}
+      </button>
     </Section>
   )
 }

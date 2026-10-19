@@ -108,6 +108,8 @@ export default function App() {
   // The recipe whose chip is in the input: it applies to every message of this chat until removed,
   // and a new or other chat starts without it.
   const [recipe, setRecipe] = useState<CustomTemplate | null>(null)
+  // One resource read as Explore's document, e.g. to save notes from it; per chat, like the picks.
+  const [scopedDocument, setScopedDocument] = useState<{ id: string; title: string } | null>(null)
   // Text put into the message box from outside it (Compile into notes); `n` makes a repeat count.
   const [inputSeed, setInputSeed] = useState<{ text: string; n: number }>()
 
@@ -248,6 +250,7 @@ export default function App() {
     exploreWeb: collectionMode === 'explore' && exploreWeb,
     exploreNotes: collectionMode === 'explore' && exploreNotes,
     recipe: recipe ? activeRecipe(recipe) : undefined,
+    documentIds: scopedDocument ? [scopedDocument.id] : undefined,
     includeMemoryIds: pinnedMemoryIds.length ? pinnedMemoryIds : undefined,
     spaceId: activeSpaceId ?? undefined,
     followUpSuggestions: currentUser?.settings?.followUpSuggestions !== false,
@@ -464,6 +467,7 @@ export default function App() {
     setExploreWeb(false)
     setExploreNotes(false)
     setRecipe(null)
+    setScopedDocument(null)
   }
 
   function loadSession(id: string, title: string, addToHistory = true, fromMonitor = false) {
@@ -526,7 +530,20 @@ export default function App() {
     } else newChat(id)
     setCollectionMode('explore')
     setExploreNotes(true)
+    // Web off to start: the notes come from the documents; the user turns it on for a niche collection.
+    setExploreWeb(false)
     setInputSeed({ text: t('collection.compilePrompt'), n: Date.now() })
+  }
+
+  /** A new chat that explores one document and saves notes from it; a confidential one locks the
+   *  chat, so it is asked first. */
+  async function saveNotesFromDocument(resource: { id: string; filename: string; confidential: boolean }) {
+    if (resource.confidential && !await confirm({ message: t('chat.lockConfirmNew', { name: resource.filename }), confirmLabel: t('chat.lockConfirmAction') })) return
+    newChat()
+    setScopedDocument({ id: resource.id, title: resource.filename })
+    setCollectionMode('explore')
+    setExploreNotes(true)
+    setInputSeed({ text: t('collection.compileDocumentPrompt'), n: Date.now() })
   }
 
   /** Provenance front-matter for exported chats — EU AI Act Art 50(2).
@@ -1499,7 +1516,7 @@ export default function App() {
             />
           )
         ) : view === 'files' ? (
-          <ResourcesView resources={files} onChanged={reloadFiles} openId={openResourceId} onOpenIdChange={setOpenResourceId} onOpenChat={openChatAt} initialFilter={resourceSeed ?? undefined} />
+          <ResourcesView resources={files} onChanged={reloadFiles} openId={openResourceId} onOpenIdChange={setOpenResourceId} onOpenChat={openChatAt} onSaveNotes={saveNotesFromDocument} initialFilter={resourceSeed ?? undefined} />
         ) : view === 'explore' ? (
           <ExploreView
             resources={files}
@@ -1795,6 +1812,8 @@ export default function App() {
               seed={inputSeed}
               recipe={recipe}
               onRecipeChange={setRecipe}
+              scopedDocument={scopedDocument}
+              onScopedDocumentChange={setScopedDocument}
               spaceResources={spaces.find(sp => sp.id === activeSpaceId && sp.kind === 'space')?.resourceCount ?? 0}
               notesAvailable={files.some(f => f.kind === 'note')}
               notesFirst={notesFirst}

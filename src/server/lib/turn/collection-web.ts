@@ -46,7 +46,9 @@ export function webSearchTool(ctx: TurnContext, sink: TurnSink, web: WebSearchin
         noteSeenUrl(web.egress, r.url)
         if (!web.results.some(s => s.url === r.url)) web.results.push(r)
       }
-      return found.map(r => `${r.title} (${r.url}): ${(r.content ?? '').slice(0, SNIPPET_CHARS)}`).join('\n\n')
+      // Numbered as the answer and saved notes number them, so the model can cite one.
+      const number = (url: string) => web.results.findIndex(s => s.url === url) + 1
+      return found.map(r => `[${number(r.url)}] ${r.title} (${r.url}): ${(r.content ?? '').slice(0, SNIPPET_CHARS)}`).join('\n\n')
     },
   })
 }
