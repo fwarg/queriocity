@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
-import { BookOpen, RotateCcw, Lock, ShieldCheck, Trash2, X } from 'lucide-react'
+import { BookOpen, RotateCcw, ShieldCheck, Trash2 } from 'lucide-react'
 import { MessageList, ImageCaptionContext } from './components/MessageList.tsx'
 import { PromptStudio } from './components/PromptStudio.tsx'
 import { ContextMeter } from './components/ContextIndicators.tsx'
@@ -18,21 +18,24 @@ import { ChatRow } from './components/ChatRow.tsx'
 import { useConfirm } from './components/confirm.tsx'
 import { useGuide, useGuideNavigation } from './components/GuideView.tsx'
 import type { GuideTarget } from '@shared/guide/index.ts'
-import { splitGroupedCitations } from '@shared/citations.ts'
 import { EmptyState, ErrorBanner, RowAction } from './components/ui.tsx'
 import { errorMessage } from './lib/errors.ts'
 import { SectionHeader } from './components/SectionHeader.tsx'
 import { SpacesView } from './components/SpacesView.tsx'
 import { SpaceDetail } from './components/SpaceDetail.tsx'
+import { ChatHeader } from './components/ChatHeader.tsx'
+import { ChatSearchBar } from './components/ChatSearchBar.tsx'
+import { ExportMenu } from './components/ExportMenu.tsx'
 import { ResourcesView } from './components/ResourcesView.tsx'
 import {
   fetchHistory, fetchSession, deleteSession, updateSessionTitle, fetchFiles, getMe, hasUsers, logout,
   updateSettings, fetchSpaces, createSpace, promoteCollection, updateSpace, deleteSpace, assignChatToSpace,
   searchHistory, fetchMonitors, activeRecipe,
 } from './lib/api.ts'
-import type { AuthUser, Message, Resource, Space, SpaceKind, CustomTemplate } from './lib/api.ts'
+import type { AuthUser, Resource, Space, SpaceKind, CustomTemplate } from './lib/api.ts'
 import { useChat } from './hooks/useChat.ts'
 import { useModelPicker } from './hooks/useModelPicker.ts'
+import { useChatSearch } from './hooks/useChatSearch.ts'
 import { useLang, useT } from './lib/i18n.tsx'
 import { applyTheme } from './lib/theme.ts'
 import { DEFAULT_THEME } from '@shared/theme.ts'
@@ -55,7 +58,7 @@ export default function App() {
   const t = useT()
   const confirm = useConfirm()
   const openGuide = useGuide()
-  const { lang, setLang } = useLang()
+  const { setLang } = useLang()
   const [authView, setAuthView] = useState<AuthView>('loading')
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null)
   const [inviteToken, setInviteToken] = useState<string | undefined>()
@@ -98,10 +101,6 @@ export default function App() {
   const [spaceError, setSpaceError] = useState<string | null>(null)
   const [monitorCount, setMonitorCount] = useState(0)
   const [isMonitorSession, setIsMonitorSession] = useState(false)
-  const [chatSearchOpen, setChatSearchOpen] = useState(false)
-  const [chatSearchQuery, setChatSearchQuery] = useState('')
-  const [chatSearchCursor, setChatSearchCursor] = useState(0)
-  const chatSearchInputRef = useRef<HTMLInputElement>(null)
   const [currentSpaceId, setCurrentSpaceId] = useState<string | null>(null)
   const [spacePickerOpen, setSpacePickerOpen] = useState<string | null>(null)
   const [pinnedFileIds, setPinnedFileIds] = useState<string[]>([])
@@ -132,7 +131,6 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [showAdmin, setShowAdmin] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [exportOpen, setExportOpen] = useState(false)
   const [chatSort, setChatSort] = useState<'updated' | 'created'>('updated')
   const [chatSearch, setChatSearch] = useState('')
   const [chatSearchResults, setChatSearchResults] = useState<Session[] | null>(null)
@@ -153,8 +151,6 @@ export default function App() {
   const chatOffsetRef = useRef(0)
   const sentinelRef = useRef<HTMLDivElement>(null)
   const sidebarSentinelRef = useRef<HTMLDivElement>(null)
-  const [editingTitle, setEditingTitle] = useState(false)
-  const [titleDraft, setTitleDraft] = useState('')
 
   const activeSpaceId = sessionId
     ? sessions.find(s => s.id === sessionId)?.spaceId ?? null
@@ -353,32 +349,7 @@ export default function App() {
     // is pushed off the bottom of a long conversation exactly when it is worth reading.
   }, [messages, streaming, steps])
 
-  const chatMatchIndices = useMemo(() => {
-    if (!chatSearchOpen || !chatSearchQuery.trim()) return []
-    const q = chatSearchQuery.toLowerCase()
-    return messages.reduce<number[]>((acc, msg, i) => {
-      if (msg.content.toLowerCase().includes(q)) acc.push(i)
-      return acc
-    }, [])
-  }, [messages, chatSearchQuery, chatSearchOpen])
-
-  // Reset cursor when query or session changes
-  useEffect(() => { setChatSearchCursor(0) }, [chatSearchQuery, sessionId])
-
-  // Close search when switching sessions
-  useEffect(() => { setChatSearchOpen(false); setChatSearchQuery('') }, [sessionId])
-
-  useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'f' && view === 'chat' && messages.length > 0) {
-        e.preventDefault()
-        setChatSearchOpen(true)
-        setTimeout(() => chatSearchInputRef.current?.focus(), 0)
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [view, messages.length])
+  const findInChat = useChatSearch({ messages, sessionId, shortcutEnabled: view === 'chat' && messages.length > 0 })
 
   function handleAuthSuccess(user: AuthUser) {
     setCurrentUser(user)
@@ -416,7 +387,6 @@ export default function App() {
     setFocusMessageId(null)
     clearCollectionPicks()
     setSessionId(id)
-    setEditingTitle(false)
     setIsMonitorSession(fromMonitor)
     reset()
     setView('chat')
@@ -438,7 +408,6 @@ export default function App() {
   function newChat(inSpaceId?: string) {
     clearCollectionPicks()
     setSessionId(undefined)
-    setEditingTitle(false)
     setIsMonitorSession(false)
     reset()
     setCurrentSpaceId(inSpaceId ?? null)
@@ -496,99 +465,11 @@ export default function App() {
     setInputSeed({ text: t('collection.compileDocumentPrompt'), n: Date.now() })
   }
 
-  /** Provenance front-matter for exported chats — EU AI Act Art 50(2).
-   *
-   *  Front-matter rather than an embedded watermark: no interoperable machine-readable marking
-   *  exists for plain text, and Queriocity does not control the model, so it cannot apply one at
-   *  generation time. This records the fact where a parser can find it. */
-  const EXPORT_FRONT_MATTER = [
-    '---',
-    'generator: Queriocity',
-    'ai_generated: true',
-    'digital_source_type: http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia',
-    'note: Assistant turns were generated by an AI language model and may contain errors.',
-    '---',
-    '',
-  ].join('\n')
-
-  function buildSessionMarkdown(msgs: Message[], title: string, scope: 'full' | 'last'): string {
-    const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
-    const header = `${EXPORT_FRONT_MATTER}# ${title}\n_Exported: ${date}_\n\n`
-    const subset = scope === 'last' ? msgs.filter(m => m.role === 'assistant').slice(-1) : msgs
-    const body = subset.map((m, msgIdx) => {
-      // Says which answers left the server, so a shared export does not pass a cloud answer off as local.
-      const model = m.model
-      const sentTo = model?.kind === 'cloud' ? `, cloud — sent to ${model.provider}${model.via ? ` via ${model.via}` : ''}` : ''
-      const name = model?.kind === 'default' ? `default (${model.label})` : model?.label
-      const via = model ? ` _(model: ${name}${sentTo})_` : ''
-      const label = m.role === 'user' ? '**User**' : `**Assistant**${via}`
-      let content = m.role === 'assistant' ? splitGroupedCitations(m.content) : m.content
-      if (m.role === 'assistant' && m.sources?.length) {
-        content = content.replace(/\[(\d+)\]/g, (_, n) => `[\\[${n}\\]](#ref-${msgIdx}-${n})`)
-      }
-      let block = `${label}\n\n${content}`
-      if (m.sources?.length) {
-        block += '\n\n**Sources**\n' + m.sources.map((s, i) => `${i + 1}. <a id="ref-${msgIdx}-${i + 1}"></a>[${s.title}](${s.url})`).join('\n')
-      }
-      return block
-    }).join('\n\n---\n\n')
-    return header + body
-  }
-
-  function handleTitleSave() {
-    const trimmed = titleDraft.trim()
-    if (!trimmed || !sessionId) { setEditingTitle(false); return }
-    setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, title: trimmed } : s))
-    setSpaceChats(prev => prev?.map(s => s.id === sessionId ? { ...s, title: trimmed } : s) ?? prev)
-    setEditingTitle(false)
-    updateSessionTitle(sessionId, trimmed).catch(err => setStatus(errorMessage(t, err, t('chat.renameFailed'))))
-  }
-
-  function handleExport(scope: 'full' | 'last') {
-    const title = sessions.find(s => s.id === sessionId)?.title ?? 'chat'
-    const content = buildSessionMarkdown(messages, title, scope)
-    const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50)
-    const filename = scope === 'last' ? `${slug}-last-answer.md` : `${slug}.md`
-    const blob = new Blob([content], { type: 'text/markdown' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    a.click()
-    URL.revokeObjectURL(url)
-    setExportOpen(false)
-  }
-
-  /** Print the chat by cloning the message list into a detached container — see index.css.
-   *  Printing in place would capture only what the scroll container currently shows. */
-  function handlePrint() {
-    setExportOpen(false)
-    const region = document.querySelector('[data-print-region]')
-    if (!region) return
-    document.getElementById('print-root')?.remove()
-
-    const holder = document.createElement('div')
-    holder.id = 'print-root'
-    const heading = document.createElement('h1')
-    heading.textContent = sessions.find(s => s.id === sessionId)?.title ?? t('chat.untitled')
-    const date = document.createElement('div')
-    date.className = 'print-date'
-    date.textContent = new Date().toLocaleDateString(lang, { year: 'numeric', month: 'long', day: 'numeric' })
-    // Visible AI disclosure on paper, where none of the on-screen cues survive.
-    const notice = document.createElement('div')
-    notice.className = 'print-ai-notice'
-    notice.textContent = t('notice.printExport')
-    holder.append(heading, date, region.cloneNode(true), notice)
-    document.body.append(holder)
-    document.body.classList.add('printing')
-
-    const cleanup = () => {
-      holder.remove()
-      document.body.classList.remove('printing')
-      window.removeEventListener('afterprint', cleanup)
-    }
-    window.addEventListener('afterprint', cleanup)
-    window.print()
+  function handleRenameChat(title: string) {
+    if (!sessionId) return
+    setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, title } : s))
+    setSpaceChats(prev => prev?.map(s => s.id === sessionId ? { ...s, title } : s) ?? prev)
+    updateSessionTitle(sessionId, title).catch(err => setStatus(errorMessage(t, err, t('chat.renameFailed'))))
   }
 
   /** `e` only from the sidebar row, whose own click opens the chat. RowAction stops it itself. */
@@ -1039,133 +920,28 @@ export default function App() {
         ) : (
           <>
             {sessionId && (() => {
-              const title = sessions.find(s => s.id === sessionId)?.title ?? ''
+              const spaceId = activeSession?.spaceId ?? null
+              const pickerId = `heading-${sessionId}`
               return (
-                <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-800 min-h-[2.5rem]">
-                  {editingTitle ? (
-                    <input
-                      autoFocus
-                      value={titleDraft}
-                      onChange={e => setTitleDraft(e.target.value)}
-                      onBlur={handleTitleSave}
-                      onKeyDown={e => { if (e.key === 'Enter') handleTitleSave(); if (e.key === 'Escape') setEditingTitle(false) }}
-                      className="flex-1 bg-gray-800 border border-gray-600 rounded px-2 py-0.5 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
-                    />
-                  ) : (
-                    <>
-                      <span className="flex-1 text-sm text-gray-400 truncate">{title}</span>
-                      {spaces.length > 0 && sessionId && (() => {
-                        const session = sessions.find(s => s.id === sessionId)
-                        const spaceName = session?.spaceId ? spaces.find(sp => sp.id === session.spaceId)?.name : null
-                        const pickerId = `heading-${sessionId}`
-                        return (
-                          <div className="relative shrink-0 flex items-center gap-1">
-                            {spaceName && session?.spaceId && (
-                              <button
-                                onClick={() => { setCurrentSpaceId(session.spaceId!); setView('spaces') }}
-                                className="text-xs px-2 py-0.5 rounded text-indigo-400 bg-indigo-900/40 hover:bg-indigo-800/60"
-                                title={t('space.goTo', { name: spaceName })}
-                              >
-                                {spaceName} ↗
-                              </button>
-                            )}
-                            <button
-                              onClick={() => setSpacePickerOpen(prev => prev === pickerId ? null : pickerId)}
-                              className="text-xs px-1.5 py-0.5 rounded text-gray-600 hover:text-gray-400"
-                              title={t('space.assignTo')}
-                            >
-                              ⊡
-                            </button>
-                            {spacePickerOpen === pickerId && (
-                              <div className="absolute right-0 top-full mt-1 z-10 bg-gray-800 border border-gray-700 rounded shadow-lg min-w-36 py-1">
-                                {chatSpaces.map(sp => {
-                                  const blocked = spaceIsLocked(session?.spaceId) && !sp.offline
-                                  return (
-                                    <button
-                                      key={sp.id}
-                                      disabled={blocked}
-                                      onClick={() => { handleAssignToSpace(sessionId, sp.id); setSpacePickerOpen(null) }}
-                                      title={blocked ? t('space.moveBlocked') : undefined}
-                                      className={`w-full text-left px-3 py-1.5 text-xs ${blocked ? 'text-gray-600 cursor-not-allowed' : 'hover:bg-gray-700'} ${session?.spaceId === sp.id ? 'text-indigo-400' : blocked ? '' : 'text-gray-300'}`}
-                                    >
-                                      {sp.offline && <Lock size={10} className="inline mr-1 -mt-0.5" />}
-                                      {sp.name}
-                                    </button>
-                                  )
-                                })}
-                                {session?.spaceId && !spaceIsLocked(session?.spaceId) && (
-                                  <button
-                                    onClick={() => { handleAssignToSpace(sessionId, null); setSpacePickerOpen(null) }}
-                                    className="w-full text-left px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-700 hover:text-red-400 border-t border-gray-700 mt-1 pt-1"
-                                  >
-                                    {t('space.removeFrom')}
-                                  </button>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        )
-                      })()}
-                      <button
-                        onClick={() => { setTitleDraft(title); setEditingTitle(true) }}
-                        className="text-xs text-gray-600 hover:text-gray-400 shrink-0"
-                        aria-label={t('chat.editTitle')}
-                      >
-                        ✎
-                      </button>
-                      <button
-                        onClick={() => { setChatSearchOpen(o => !o); if (!chatSearchOpen) setTimeout(() => chatSearchInputRef.current?.focus(), 0) }}
-                        className={`text-xs shrink-0 ${chatSearchOpen ? 'text-blue-400' : 'text-gray-600 hover:text-gray-400'}`}
-                        aria-label={t('chat.searchIn')}
-                        title={t('chat.searchInTitle')}
-                      >
-                        🔍
-                      </button>
-                    </>
-                  )}
-                </div>
+                <ChatHeader
+                  key={sessionId}
+                  title={sessions.find(s => s.id === sessionId)?.title ?? ''}
+                  spaceId={spaceId}
+                  spaceName={spaceId ? spaces.find(sp => sp.id === spaceId)?.name ?? null : null}
+                  canAssign={spaces.length > 0}
+                  chatSpaces={chatSpaces}
+                  locked={spaceIsLocked(spaceId)}
+                  pickerOpen={spacePickerOpen === pickerId}
+                  onTogglePicker={() => setSpacePickerOpen(prev => prev === pickerId ? null : pickerId)}
+                  onGoToSpace={id => { setCurrentSpaceId(id); setView('spaces') }}
+                  onAssign={id => handleAssignToSpace(sessionId, id)}
+                  onRename={handleRenameChat}
+                  searchOpen={findInChat.open}
+                  onToggleSearch={findInChat.toggle}
+                />
               )
             })()}
-            {chatSearchOpen && messages.length > 0 && (
-              <div className="flex items-center gap-2 px-3 py-1.5 border-b border-gray-800 bg-gray-900">
-                <button
-                  onClick={() => { const prev = (chatSearchCursor - 1 + chatMatchIndices.length) % Math.max(chatMatchIndices.length, 1); setChatSearchCursor(prev) }}
-                  disabled={chatMatchIndices.length === 0}
-                  className="text-gray-500 hover:text-gray-300 disabled:opacity-30 text-xs px-1"
-                  title={t('chat.prevMatch')}
-                >▲</button>
-                <button
-                  onClick={() => { setChatSearchCursor((chatSearchCursor + 1) % Math.max(chatMatchIndices.length, 1)) }}
-                  disabled={chatMatchIndices.length === 0}
-                  className="text-gray-500 hover:text-gray-300 disabled:opacity-30 text-xs px-1"
-                  title={t('chat.nextMatch')}
-                >▼</button>
-                <input
-                  ref={chatSearchInputRef}
-                  value={chatSearchQuery}
-                  onChange={e => setChatSearchQuery(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault()
-                      if (e.shiftKey) setChatSearchCursor(c => (c - 1 + Math.max(chatMatchIndices.length, 1)) % Math.max(chatMatchIndices.length, 1))
-                      else setChatSearchCursor(c => (c + 1) % Math.max(chatMatchIndices.length, 1))
-                    } else if (e.key === 'Escape') { setChatSearchOpen(false); setChatSearchQuery('') }
-                  }}
-                  placeholder={t('chat.searchInPlaceholder')}
-                  className="flex-1 bg-transparent text-sm text-gray-100 placeholder-gray-600 focus:outline-none min-w-0"
-                />
-                <span className="text-xs text-gray-600 shrink-0 tabular-nums">
-                  {chatMatchIndices.length === 0
-                    ? (chatSearchQuery.trim() ? t('chat.noMatches') : '')
-                    : t('chat.matchPosition', { index: chatSearchCursor + 1, total: chatMatchIndices.length })}
-                </span>
-                <button
-                  onClick={() => { setChatSearchOpen(false); setChatSearchQuery('') }}
-                  className="text-gray-600 hover:text-gray-400 px-1"
-                  title={t('chat.closeSearch')}
-                ><X size={14} /></button>
-              </div>
-            )}
+            {findInChat.open && messages.length > 0 && <ChatSearchBar search={findInChat} />}
             {/* Persistent while the chat is in a locked space. The whole value of the mode is
                 knowing it is on, so this stays visible for the entire conversation rather than
                 appearing only where the lock was set. */}
@@ -1224,9 +1000,9 @@ export default function App() {
                   streaming={streaming}
                   streamingThinking={streamingThinking}
                   collapseFirstQuestion={isMonitorSession}
-                  searchQuery={chatSearchOpen ? chatSearchQuery : ''}
-                  searchActiveIndex={chatSearchOpen && chatMatchIndices.length > 0 ? chatMatchIndices[chatSearchCursor] : -1}
-                  searchMatchIndices={chatSearchOpen ? chatMatchIndices : []}
+                  searchQuery={findInChat.open ? findInChat.query : ''}
+                  searchActiveIndex={findInChat.activeIndex}
+                  searchMatchIndices={findInChat.open ? findInChat.matches : []}
                   onOpenResource={openResource}
                   sessionId={sessionId}
                   context={context}
@@ -1266,28 +1042,7 @@ export default function App() {
             )}
             {sessionId && messages.length > 0 && !busy && (
               <div className="px-4 py-1 relative flex items-center">
-                <div className="relative">
-                  <button
-                    onClick={() => setExportOpen(o => !o)}
-                    onBlur={e => { if (!e.currentTarget.parentElement?.contains(e.relatedTarget)) setExportOpen(false) }}
-                    className="text-xs text-gray-600 hover:text-gray-400 flex items-center gap-0.5"
-                  >
-                    {t('export.menu')} ▾
-                  </button>
-                  {exportOpen && (
-                    <div className="absolute bottom-full mb-1 left-0 bg-gray-800 border border-gray-700 rounded shadow-lg z-10 py-1 min-w-max">
-                      <button onMouseDown={() => handleExport('full')} className="block w-full text-left px-4 py-2 text-xs text-gray-300 hover:bg-gray-700">
-                        {t('export.fullChat')}
-                      </button>
-                      <button onMouseDown={() => handleExport('last')} className="block w-full text-left px-4 py-2 text-xs text-gray-300 hover:bg-gray-700">
-                        {t('export.lastAnswer')}
-                      </button>
-                      <button onMouseDown={handlePrint} className="block w-full text-left px-4 py-2 text-xs text-gray-300 hover:bg-gray-700 border-t border-gray-700">
-                        {t('export.print')}
-                      </button>
-                    </div>
-                  )}
-                </div>
+                <ExportMenu messages={messages} title={sessions.find(s => s.id === sessionId)?.title} />
                 {context && <div className="ml-auto"><ContextMeter report={meterReport(context)} model={busy ? undefined : modelPicker.meterModel} /></div>}
               </div>
             )}
