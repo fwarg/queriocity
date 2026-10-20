@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { useT } from '../lib/i18n.tsx'
 
 interface ConfirmRequest {
@@ -31,6 +31,9 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
   const [pending, setPending] = useState<{ req: ConfirmRequest; resolve: (ok: boolean) => void } | null>(null)
 
   const ask = useCallback<Ask>(req => new Promise(resolve => setPending({ req, resolve })), [])
+  // A backdrop click cancels only when it also began there: a dialog opened on mousedown — by a field
+  // that submits on blur — would otherwise be cancelled by the mouseup of the very click that opened it.
+  const pressedBackdrop = useRef(false)
 
   const settle = (ok: boolean) => {
     pending?.resolve(ok)
@@ -52,7 +55,11 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
       {/* Rendered after the children, so it sits above a Modal at the same z-index — several of
           these are asked from inside one. */}
       {pending && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => settle(false)}>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onMouseDown={e => { pressedBackdrop.current = e.target === e.currentTarget }}
+          onClick={e => { if (pressedBackdrop.current && e.target === e.currentTarget) settle(false) }}
+        >
           <div
             role="dialog"
             aria-modal="true"
