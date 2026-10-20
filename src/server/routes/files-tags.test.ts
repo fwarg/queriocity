@@ -201,6 +201,17 @@ describe('POST /files/extract', () => {
     expect(await res.json()).toMatchObject({ filename: 'long.txt', content: 'Line of te', truncated: true, totalChars: 70 })
     await setAppSetting('attachment_chars', '20000')
   })
+
+  test('refuses a file whose contents do not match its declared type', async () => {
+    const send = async (file: File) => {
+      const form = new FormData()
+      form.append('file', file)
+      return (await app.request('/files/extract', { method: 'POST', headers: { Cookie: cookies[OWNER] }, body: form })).status
+    }
+    expect(await send(new File(['plain words, not a PDF'], 'fake.pdf', { type: 'application/pdf' }))).toBe(400)
+    expect(await send(new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 0])], 'img.txt', { type: 'text/plain' }))).toBe(400)
+    expect(await send(new File(['%PDF-1.7 garbled'], 'x.png', { type: 'image/png' }))).toBe(400)
+  })
 })
 
 describe('topic routes', () => {

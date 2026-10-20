@@ -98,7 +98,13 @@ async function hostVerdict(host: string): Promise<string | null> {
  *  Resolves DNS so a public hostname pointing at a private address is caught too, and must be
  *  re-run on every redirect hop — a single check on the original URL is bypassed by a 302.
  *  With FETCH_PROXY_URL set the proxy does its own resolution, so the lookup here is a
- *  pre-check rather than a guarantee. Bypassed entirely by FETCH_ALLOW_PRIVATE_HOSTS=true. */
+ *  pre-check rather than a guarantee. Bypassed entirely by FETCH_ALLOW_PRIVATE_HOSTS=true.
+ *
+ *  Accepted risk, DNS rebinding: the fetch resolves the host again after this check (and the
+ *  verdict is cached for HOST_CACHE_TTL_MS), so a hostile DNS server answering public-then-private
+ *  can still reach an internal address. Closing it means connecting to the checked IP, which plain
+ *  fetch can do via a custom dispatcher but Playwright cannot. Run behind FETCH_PROXY_URL with
+ *  egress filtering where that matters. */
 export async function assertFetchableUrl(raw: string): Promise<void> {
   let u: URL
   try { u = new URL(raw) } catch { throw new BlockedUrlError('malformed URL') }

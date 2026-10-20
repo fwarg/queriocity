@@ -1,8 +1,10 @@
 import { generateText } from 'ai'
 import { randomUUID } from 'crypto'
 import { db, spaceMemories, userMemories, chatSessions, messages, spaces, monitorRuns, sqlite, getAppSetting, setAppSetting } from './db.ts'
-import { eq, desc, asc, ne, and, or, gt, isNull } from 'drizzle-orm'
-import { getSmallModel, getChatModel, getThinkingModelOrFallback, SMALL_MODEL_INPUT_CHARS, estimateTokens, tokensToChars } from './llm.ts'
+import { eq, desc, asc, ne, and, or, gt, isNull, sql } from 'drizzle-orm'
+import { getSmallModel, getChatModel, getThinkingModelOrFallback, localTurnModels, modelTarget, SMALL_MODEL_INPUT_CHARS, estimateTokens, tokensToChars } from './llm.ts'
+import { contextCharBudget } from './trim-messages.ts'
+import { semanticChunk } from './chunker.ts'
 import { embedText, embedTexts } from './embeddings.ts'
 import { searchSpaceFiles, searchUploads, spaceHasTaggedFiles, type ChunkResult } from './files/uploads-search.ts'
 import { rerank, rerankEnabled } from './reranker.ts'
@@ -1225,6 +1227,50 @@ Target: approximately ${tokensToChars(targetTokens)} characters total.`,
   return true
 }
 
+const DEEP_EXTRACT_SYSTEM = `Extract long-term valuable facts from this conversation. Include both:
+- User context: preferences, decisions, constraints, recurring interests
+- Research findings: key facts, conclusions, standards, tools, or sources surfaced by the assistant that would be useful to recall in future conversations on this topic
+Write each fact as 1-3 self-contained sentences. Output one fact per line prefixed with "- ". Be specific — capture the actual finding, not just the topic. Skip ephemeral details. If nothing worth keeping: output "NONE".`
+
+/** Facts from every chat in the space, oldest chat first.
+ *
+ *  A chat longer than the chat model's window is read in consecutive pieces: sent whole, it
+ *  overflowed the context and the request failed. Serial, like the other extraction paths — a local
+ *  model server works through one request at a time anyway. */
+async function extractSpaceChatFacts(spaceId: string): Promise<string[]> {
+  const rows = await db.select({ sessionId: messages.sessionId, role: messages.role, content: messages.content })
+    .from(messages)
+    .innerJoin(chatSessions, eq(chatSessions.id, messages.sessionId))
+    .where(eq(chatSessions.spaceId, spaceId))
+    .orderBy(asc(chatSessions.createdAt), asc(chatSessions.id), sql`messages.rowid`)
+  const chats = new Map<string, string[]>()
+  for (const m of rows) {
+    const turns = chats.get(m.sessionId) ?? []
+    turns.push(`${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+    chats.set(m.sessionId, turns)
+  }
+
+  const pieceChars = contextCharBudget(modelTarget('chat').contextTokens)
+  const facts: string[] = []
+  for (const turns of chats.values()) {
+    for (const piece of semanticChunk(turns.join('\n\n'), pieceChars, 0)) {
+      const result = await generateText({ model: getChatModel(), system: DEEP_EXTRACT_SYSTEM, prompt: piece })
+      facts.push(...result.text.split('\n')
+        .map(l => l.replace(/^-\s*/, '').trim())
+        .filter(l => l && l !== 'NONE' && l.length > 5 && l.length < 400))
+    }
+  }
+  return facts
+}
+
+/** The newest lines (the list is oldest-first) whose joined length fits `maxChars`. */
+function newestWithin(lines: string[], maxChars: number): string[] {
+  let used = 0
+  let start = lines.length
+  while (start > 0 && used + lines[start - 1].length + 1 <= maxChars) used += lines[--start].length + 1
+  return lines.slice(start)
+}
+
 /**
  * Deep-dream compaction: re-extracts from source conversations using the thinking model,
  * then synthesises with contradiction resolution and pattern inference.
@@ -1238,31 +1284,7 @@ export async function deepDreamSpace(
   const t0 = performance.now()
 
   // Stage 1: re-extract from source conversations (oldest first for recency ordering in synthesis)
-  const sessions = await db.select()
-    .from(chatSessions)
-    .where(eq(chatSessions.spaceId, spaceId))
-    .orderBy(asc(chatSessions.createdAt))
-
-  const allExtracted: string[] = []
-  for (const session of sessions) {
-    const msgs = await db.select()
-      .from(messages)
-      .where(eq(messages.sessionId, session.id))
-    if (!msgs.length) continue
-    const conversation = msgs.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n\n')
-    const result = await generateText({
-      model: getChatModel(),
-      system: `Extract long-term valuable facts from this conversation. Include both:
-- User context: preferences, decisions, constraints, recurring interests
-- Research findings: key facts, conclusions, standards, tools, or sources surfaced by the assistant that would be useful to recall in future conversations on this topic
-Write each fact as 1-3 self-contained sentences. Output one fact per line prefixed with "- ". Be specific — capture the actual finding, not just the topic. Skip ephemeral details. If nothing worth keeping: output "NONE".`,
-      prompt: conversation,
-    })
-    const facts = result.text.split('\n')
-      .map(l => l.replace(/^-\s*/, '').trim())
-      .filter(l => l && l !== 'NONE' && l.length > 5 && l.length < 400)
-    allExtracted.push(...facts)
-  }
+  const allExtracted = await extractSpaceChatFacts(spaceId)
 
   // Include manual and always-keep memories as seeds (they survive regardless)
   const manualMemories = existing.filter(m => m.source === 'manual' || m.alwaysKeep)
@@ -1274,9 +1296,11 @@ Write each fact as 1-3 self-contained sentences. Output one fact per line prefix
     return false
   }
 
-  // Stage 2: synthesis — resolve contradictions, merge, infer patterns
-  const inputLines = [...extractedLines, ...manualLines].join('\n')
+  // Stage 2: synthesis — resolve contradictions, merge, infer patterns. What does not fit the
+  // thinking model's window (less room for its output) is dropped oldest-first; seeds always stay.
   const targetChars = tokensToChars(targetTokens)
+  const inputBudget = contextCharBudget(localTurnModels().thinking.contextTokens) - targetChars
+  const inputLines = [...newestWithin(extractedLines, inputBudget - manualLines.join('\n').length), ...manualLines].join('\n')
 
   const synthesis = await generateText({
     model: getThinkingModelOrFallback(),

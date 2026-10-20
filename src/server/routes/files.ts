@@ -7,7 +7,7 @@ import { db, sqlite, uploadedFiles, spaceFiles, spaces, customTemplates, chatSes
 import { relatedMinSimilarity, relatedMinRelevance, topicMinSimilarity } from '../lib/rag-settings.ts'
 import { MAX_TOPIC_RESOURCES, nameTopic, noteMap, topicMap } from '../lib/files/topics.ts'
 import { and, eq, sql } from 'drizzle-orm'
-import { ingestFile, extractFileText, isUsableText, ACCEPTED_MIME_TYPES } from '../lib/files/ingest.ts'
+import { ingestFile, extractFileText, isUsableText, contentMatchesType, ACCEPTED_MIME_TYPES, SNIFF_BYTES } from '../lib/files/ingest.ts'
 import { saveNote, renameResource, addSeeAlso, unlinkDeleted } from '../lib/files/notes.ts'
 import { relatedResources } from '../lib/files/related.ts'
 import { globalGraph, linkCounts, localGraph } from '../lib/files/graph.ts'
@@ -48,13 +48,16 @@ const uploadGuard = (label: string) => [
 ] as const
 
 /** The multipart `file` field, or the error response when it is missing, too large or of a type we
- *  cannot ingest. The type is the one the client declared. */
+ *  cannot ingest. The type is the one the client declared, checked against the file's first bytes. */
 async function readUpload(c: Context<AppEnv>): Promise<File | Response> {
   const file = (await c.req.parseBody())['file']
   if (!(file instanceof File)) return c.json({ error: 'No file provided' }, 400)
   if (file.size > MAX_SIZE) return c.json({ error: TOO_LARGE }, 413)
   if (!ACCEPTED_MIME_TYPES.has(file.type.split(';')[0].trim())) {
     return c.json({ error: `Unsupported file type: ${file.type}. Accepted: PDF, plain text, Markdown, CSV, HTML, images.` }, 400)
+  }
+  if (!contentMatchesType(new Uint8Array(await file.slice(0, SNIFF_BYTES).arrayBuffer()), file.type)) {
+    return c.json({ error: `The file's contents do not match its type (${file.type}).` }, 400)
   }
   return file
 }

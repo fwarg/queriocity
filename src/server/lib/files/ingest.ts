@@ -21,6 +21,28 @@ export const ACCEPTED_MIME_TYPES = new Set([
   'image/webp',
 ])
 
+/** Leading bytes each binary type must start with. Text types have no signature; they are only
+ *  checked for NUL bytes, which no text file contains and nearly every binary one does. */
+const SIGNATURES: Record<string, (b: Uint8Array) => boolean> = {
+  'application/pdf': b => ascii(b, 0, 5) === '%PDF-',
+  'image/png': b => b[0] === 0x89 && ascii(b, 1, 4) === 'PNG',
+  'image/jpeg': b => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
+  'image/gif': b => ascii(b, 0, 4) === 'GIF8',
+  'image/webp': b => ascii(b, 0, 4) === 'RIFF' && ascii(b, 8, 12) === 'WEBP',
+}
+const ascii = (b: Uint8Array, from: number, to: number) => String.fromCharCode(...b.subarray(from, to))
+
+/** How many leading bytes `contentMatchesType` needs to see. */
+export const SNIFF_BYTES = 8192
+
+/** Whether the file's first bytes fit its declared type — the declared type comes from the client
+ *  and decides which parser runs, so a mislabelled file would otherwise reach the wrong one. */
+export function contentMatchesType(head: Uint8Array, mimeType: string): boolean {
+  const type = mimeType.split(';')[0].trim()
+  const signature = SIGNATURES[type]
+  return signature ? signature(head) : !head.includes(0)
+}
+
 const CHUNK_CONFIG: Record<string, { size: number; overlap: number }> = {
   image: { size: 1000, overlap: 150 },
   doc:   { size: 2000, overlap: 300 },
