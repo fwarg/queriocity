@@ -28,8 +28,12 @@ let fake: ReturnType<typeof startFakeOpenAI> | null = null
 let restoreEnv: (() => void) | null = null
 afterEach(() => { fake?.stop(); fake = null; restoreEnv?.(); restoreEnv = null })
 
-/** A fake model for every role, the small one included. */
+/** A fake model for every role, the small one included. A second call in one test replaces the first:
+ *  undone first, or its override would be what afterEach restores — leaking SMALL_BASE_URL, pointing
+ *  at a stopped server, into every file that runs later. */
 function serve(script: ScriptedStep[]) {
+  fake?.stop()
+  restoreEnv?.()
   fake = startFakeOpenAI(script)
   restoreEnv = envOverride({ SMALL_BASE_URL: fake.baseURL, SMALL_MODEL: 'small', SMALL_API_KEY: 't' })
   return fake
