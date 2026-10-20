@@ -110,11 +110,13 @@ export function SpaceDetail({
 
   const reloadMemories = () => { fetchSpaceMemories(space.id).then(({ memories }) => setSpaceMemories(memories)).catch(() => {}) }
 
+  // Reported rather than shown as an empty space, which would look like everything had been deleted.
   useEffect(() => {
-    fetchSpaceFiles(space.id).then(setTaggedFiles).catch(() => {})
+    const failed = (err: unknown) => onError(errorMessage(t, err, t('space.loadFailed')))
+    fetchSpaceFiles(space.id).then(setTaggedFiles).catch(failed)
     if (isCollection) return
-    fetchSpaceMemories(space.id).then(({ memories }) => setSpaceMemories(memories)).catch(() => {})
-    fetchChatIndexStatus(space.id).then(setChatIndexStatus).catch(() => {})
+    fetchSpaceMemories(space.id).then(({ memories }) => setSpaceMemories(memories)).catch(failed)
+    fetchChatIndexStatus(space.id).then(setChatIndexStatus).catch(failed)
   }, [space.id, isCollection])
 
   function saveName() {

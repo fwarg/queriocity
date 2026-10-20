@@ -206,7 +206,7 @@ export function MonitorsView({ spaces, isAdmin, timezone, onOpenSession, onCount
   }
 
   useEffect(() => {
-    fetchMonitors().then(setMonitors).catch(() => {})
+    fetchMonitors().then(setMonitors).catch(err => setError(errorMessage(t, err, t('common.loadFailed'))))
   }, [])
 
   useEffect(() => { onCountChange?.(monitors.length) }, [monitors.length, onCountChange])

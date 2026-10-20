@@ -76,7 +76,7 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
   useEffect(() => { studioRef.current = studio }, [studio])
 
   useEffect(() => {
-    fetchCustomTemplates().then(setCustomTemplates).catch(() => {})
+    fetchCustomTemplates().then(setCustomTemplates).catch(err => setError(errorMessage(t, err, t('common.loadFailed'))))
   }, [])
 
   useEffect(() => {

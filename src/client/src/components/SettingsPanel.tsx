@@ -34,7 +34,9 @@ function UserMemoryList() {
     fetchUserMemories().then(r => setMemories(r.memories)).catch(() => {})
   }
 
-  useEffect(() => { fetchUserMemories().then(r => setMemories(r.memories)).catch(() => {}) }, [])
+  useEffect(() => {
+    fetchUserMemories().then(r => setMemories(r.memories)).catch(err => setError(errorMessage(t, err, t('common.loadFailed'))))
+  }, [])
 
   async function runSuggest() {
     setScanning(true)

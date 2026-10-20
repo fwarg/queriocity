@@ -265,6 +265,9 @@ export default function App() {
 
   const PAGE_SIZE = 50
 
+  /** A list the user is looking at could not be fetched: said, rather than shown empty or stale. */
+  const loadFailed = useCallback((err: unknown) => setSpaceError(errorMessage(t, err, t('common.loadFailed'))), [t])
+
   function loadChats(sort: 'updated' | 'created', offset: number, replace: boolean) {
     setChatLoadingMore(true)
     fetchHistory(sort, offset)
@@ -274,7 +277,7 @@ export default function App() {
         chatOffsetRef.current = offset + items.length
         setChatHasMore(items.length === PAGE_SIZE)
       })
-      .catch(() => {})
+      .catch(loadFailed)
       .finally(() => setChatLoadingMore(false))
   }
 
@@ -340,7 +343,7 @@ export default function App() {
     if (!currentSpaceId || activeSpaceIsCollection) return
     fetchHistory(chatSort, 0, currentSpaceId)
       .then(({ items }) => setSpaceChats(items))
-      .catch(() => setSpaceChats([]))
+      .catch(err => { setSpaceChats([]); setSpaceError(errorMessage(t, err, t('space.loadFailed'))) })
   }, [currentSpaceId, activeSpaceIsCollection])
 
   useEffect(() => {
@@ -390,7 +393,9 @@ export default function App() {
     setIsMonitorSession(fromMonitor)
     reset()
     setView('chat')
-    fetchSession(id).then(s => { setMessages(s.messages); setContext(s.context) }).catch(() => {})
+    fetchSession(id)
+      .then(s => { setMessages(s.messages); setContext(s.context) })
+      .catch(err => setSpaceError(errorMessage(t, err, t('chat.loadFailed'))))
     if (addToHistory) {
       setSessions(prev => {
         const existing = prev.find(s => s.id === id)
@@ -603,9 +608,9 @@ export default function App() {
   // Spaces too: their resource counts follow tagging, adding and deleting, and decide whether a space
   // chat offers to read its resources.
   const reloadFiles = useCallback(() => {
-    fetchFiles().then(setFiles).catch(() => {})
-    fetchSpaces().then(setSpaces).catch(() => {})
-  }, [])
+    fetchFiles().then(setFiles).catch(loadFailed)
+    fetchSpaces().then(setSpaces).catch(loadFailed)
+  }, [loadFailed])
   // Refreshed whenever a view that lists the library opens: notes are also created from chat
   // answers, splits and the server side, none of which pass through these views.
   useEffect(() => { if (view === 'files' || view === 'explore') reloadFiles() }, [view, reloadFiles])
