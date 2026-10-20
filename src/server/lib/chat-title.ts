@@ -81,6 +81,7 @@ export function cleanTitle(raw: string): string {
     .trim()
 }
 
+/** Output: the title alone; cleanTitle takes the first line and strips quotes, "Title:" and a final full stop. */
 const TITLE_SYSTEM = `Write a title for a chat, from its first question and the start of its answer. At most 8 words, naming the topic, in the language of the question. No quotes, no final full stop, nothing else.`
 
 /** Replaces a weak title with the small model's, once: the mark is cleared before the call, so a

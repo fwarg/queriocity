@@ -168,6 +168,26 @@ export function isDurableUserFact(fact: string): boolean {
   return !EPISODIC_PATTERNS.some(re => re.test(fact))
 }
 
+/** Deliberately narrower than space extraction (memory/write.ts), which also keeps topical research
+ *  findings: those belong to a space, and only durable traits about the person belong here.
+ *  Output: at most SUGGEST_PER_SESSION traits, one per line prefixed with "- ", or "NONE". */
+const PROFILE_SYSTEM = `You are building a profile of a person from one conversation they had with an assistant.
+
+Report ONLY lasting characteristics of the person: how they want answers written, languages they work in, their role, expertise or employer, tools and platforms they have committed to, and constraints they always apply.
+
+Never report what the conversation was about. A fact about the topic is not a fact about the person, however interesting it is. Examples of what NOT to output, even if the conversation is full of them:
+- "The XR-9000 processor has 16 cores"          (a fact about a product)
+- "The CEO of Acme Corp stepped down in March"  (a fact about the world)
+- "The user asked about the new AI regulation"  (something that happened once, not a trait)
+- "The user is interested in processors"        (inferred from a single conversation; too weak)
+
+Good output looks like:
+- "The user writes in Swedish and English"
+- "The user self-hosts their infrastructure and avoids cloud services"
+- "The user is a software engineer working on developer tooling"
+
+Most conversations contain nothing that qualifies. Answering "NONE" is the expected result, and is strongly preferred over a weak guess. Output at most ${SUGGEST_PER_SESSION} lines, each a full sentence starting with "The user", prefixed with "- ".`
+
 /** Propose user-level facts from the user's own recent chats. Returns candidates only — nothing
  *  is stored. Automatic extraction into a global profile is deliberately not done (a wrong fact
  *  would then apply to every future conversation); this is the reviewed version of it. */
@@ -213,24 +233,7 @@ export async function suggestUserMemories(
     try {
       const result = await generateText({
         model: getSmallModel(),
-        // Deliberately narrower than extractMemoriesPostHoc, which also captures topical research
-        // findings. Those belong to a space; only durable traits about the person belong here.
-        system: `You are building a profile of a person from one conversation they had with an assistant.
-
-Report ONLY lasting characteristics of the person: how they want answers written, languages they work in, their role, expertise or employer, tools and platforms they have committed to, and constraints they always apply.
-
-Never report what the conversation was about. A fact about the topic is not a fact about the person, however interesting it is. Examples of what NOT to output, even if the conversation is full of them:
-- "The XR-9000 processor has 16 cores"          (a fact about a product)
-- "The CEO of Acme Corp stepped down in March"  (a fact about the world)
-- "The user asked about the new AI regulation"  (something that happened once, not a trait)
-- "The user is interested in processors"        (inferred from a single conversation; too weak)
-
-Good output looks like:
-- "The user writes in Swedish and English"
-- "The user self-hosts their infrastructure and avoids cloud services"
-- "The user is a software engineer working on developer tooling"
-
-Most conversations contain nothing that qualifies. Answering "NONE" is the expected result, and is strongly preferred over a weak guess. Output at most ${SUGGEST_PER_SESSION} lines, each a full sentence starting with "The user", prefixed with "- ".`,
+        system: PROFILE_SYSTEM,
         prompt: conversation.slice(0, SUGGEST_CONVERSATION_CHARS),
         maxOutputTokens: 200,
       })

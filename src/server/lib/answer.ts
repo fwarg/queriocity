@@ -7,9 +7,17 @@ import type { SearchResult } from './search/index.ts'
  *  drifted: the executor's synthesis prompt had lost the anti-refusal clauses, and fixes to one
  *  path routinely missed the other. */
 
+/** Flash mode: a short answer from the model's own knowledge, streamed as Markdown; no tools, no sources. */
 export const FLASH_SYSTEM = `Answer in at most 5 sentences using only your training knowledge. Be direct and factual.
 Do not search the web. If you cannot answer confidently, say so briefly.
 Always respond in the same language the user used.`
+
+/** Output: the answer as Markdown with inline [N] citations; the search results and memory are appended
+ *  after this text by the caller. */
+const answerFromResultsSystem = (today: string) => `Today's date is ${today}. Synthesize the search results below into a direct answer with inline [N] citations using the index values shown.
+Do NOT say you lack internet access, and do NOT decline to answer: the results below are what the search returned, and reporting them partially is far more useful than refusing.
+If they only partially cover the question, answer with whatever they do support and close with one short line naming what was missing. Never reply with only a refusal.
+Search results are authoritative ground truth — if they describe a product or release you don't recognise, trust them; your training data has a cutoff.`
 
 // 200 was too tight against FLASH_SYSTEM's "at most 5 sentences" — a dense answer hit the cap
 // mid-sentence with nothing to show for it. Raised to leave headroom for the requested length,
@@ -49,10 +57,7 @@ export function runSynthesisFallback({ model, results, messages, memoryBlock, ab
 
   return streamText({
     model: languageModel(model),
-    system: `Today's date is ${new Date().toISOString().split('T')[0]}. Synthesize the search results below into a direct answer with inline [N] citations using the index values shown.
-Do NOT say you lack internet access, and do NOT decline to answer: the results below are what the search returned, and reporting them partially is far more useful than refusing.
-If they only partially cover the question, answer with whatever they do support and close with one short line naming what was missing. Never reply with only a refusal.
-Search results are authoritative ground truth — if they describe a product or release you don't recognise, trust them; your training data has a cutoff.${resultsBlock}${memoryBlock ? '\n\n' + memoryBlock : ''}`,
+    system: `${answerFromResultsSystem(new Date().toISOString().split('T')[0])}${resultsBlock}${memoryBlock ? '\n\n' + memoryBlock : ''}`,
     messages,
     abortSignal,
     maxOutputTokens: outputCap(model, researchMaxTokens()),

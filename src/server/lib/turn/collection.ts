@@ -9,6 +9,7 @@ import { thinkingFor, spaceMemoryOnly } from './prepare.ts'
 import { AnswerStream } from './stream-answer.ts'
 import { userQueryOf, withInstructions, withKeepalive, documentSet, type TurnContext, type TurnResult, type TurnSink } from './context.ts'
 
+/** Whole-collection mode: every document is in the prompt; Markdown streamed to the user, citing by label. */
 const COLLECTION_SYSTEM = `You work on a collection of documents the user selected, all of which are given below, together with anything the user attaches to their message (for instance a draft of their own).
 Do the task the user asks for, grounded in these documents. Do not invent what they do not say; say so when they do not cover something.
 When you compare or assess, refer to each document by its label and be specific: name the claim, section or result you mean.

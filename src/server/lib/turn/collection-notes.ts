@@ -25,6 +25,7 @@ const LINK_INSTRUCTION = `Link each note to the related notes you save in this r
 /** With web search on: the web may explain a concept, never stand in for what the documents say. */
 export const NOTES_WEB_INSTRUCTION = `\nWhen a note's concept needs explaining and you cannot explain it confidently, you may search the web for it, after reading the documents — never for what the documents themselves say. Cite a web result in a note by its number ([3]); it is listed under the note's sources beside the documents. A note must still cite at least one document.`
 
+/** With notes on while exploring: adds save_note, called as findings come up rather than at the end. */
 export const EXPLORE_NOTES_INSTRUCTION = `\nYou can also keep findings in the user's library with save_note, in markdown. ${NOTE_STYLE} ${LINK_INSTRUCTION} Notes are marked as written by you and unreviewed. Saving under the title of a note you saved earlier replaces it; a note the user wrote is never replaced. Save notes only for what is worth keeping beyond this answer. Save each note as soon as you have read what it draws on — do not keep them all for the end: the exploration has a step limit, and notes not saved by then are lost. When the user asks for notes on every document, cover every document: outline each one and read its main parts, rather than only what bears on one question.`
 
 export function saveNoteTool(ctx: TurnContext, sink: TurnSink, model: ModelTarget, docs: Doc[], saved: SavedNote[], web?: WebSearching) {
@@ -51,6 +52,7 @@ export function saveNoteTool(ctx: TurnContext, sink: TurnSink, model: ModelTarge
   })
 }
 
+/** A saving-only pass: save_note calls for what exploring gathered; its text output is not used. */
 const SAVE_SYSTEM = `You keep findings from a collection of documents as notes in the user's library. Below is what was read and noted while exploring the documents for the user's message. Call save_note once for each concept worth keeping, in markdown. ${NOTE_STYLE} ${LINK_INSTRUCTION} You may call it several times at once. Save only what the material below supports.`
 const SAVE_WEB_LINE = ` The web results below may explain a concept; cite one by its number ([3]), and every note still cites at least one document.`
 /** For a pass after exploring saved some notes and then ran out of steps. */

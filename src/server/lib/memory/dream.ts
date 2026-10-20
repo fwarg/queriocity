@@ -9,6 +9,15 @@ import { contextCharBudget } from '../trim-messages.ts'
 import { semanticChunk } from '../chunker.ts'
 import { getSpaceMemories, deleteMemoryEmbeddings, backfillMemoryEmbeddings } from './store.ts'
 
+/** Output: the compacted facts, one per line prefixed with "- ". */
+const compactSystem = (targetChars: number) => `You are a memory compactor. Given a list of facts from a user's space memory:
+1. Merge near-duplicate or redundant facts into one
+2. Remove facts that are subsets of others
+3. Preserve all unique information
+Keep each fact self-contained and specific (1-3 sentences); never truncate concrete details to save space.
+Output ONLY the final list, one fact per line, prefixed with "- ". No other text. No preamble.
+Target: approximately ${targetChars} characters total.`
+
 /**
  * Compact all memories for a space using the small LLM.
  * Merges near-duplicates and removes redundant entries.
@@ -34,13 +43,7 @@ export async function compactSpaceMemories(
 
   const result = await generateText({
     model: getSmallModel(),
-    system: `You are a memory compactor. Given a list of facts from a user's space memory:
-1. Merge near-duplicate or redundant facts into one
-2. Remove facts that are subsets of others
-3. Preserve all unique information
-Keep each fact self-contained and specific (1-3 sentences); never truncate concrete details to save space.
-Output ONLY the final list, one fact per line, prefixed with "- ". No other text. No preamble.
-Target: approximately ${tokensToChars(targetTokens)} characters total.`,
+    system: compactSystem(tokensToChars(targetTokens)),
     prompt: input,
     maxOutputTokens: targetTokens,
   })
@@ -75,6 +78,7 @@ Target: approximately ${tokensToChars(targetTokens)} characters total.`,
   return true
 }
 
+/** Output: one fact per line prefixed with "- ", or "NONE". */
 const DEEP_EXTRACT_SYSTEM = `Extract long-term valuable facts from this conversation. Include both:
 - User context: preferences, decisions, constraints, recurring interests
 - Research findings: key facts, conclusions, standards, tools, or sources surfaced by the assistant that would be useful to recall in future conversations on this topic
@@ -119,6 +123,20 @@ function newestWithin(lines: string[], maxChars: number): string[] {
   return lines.slice(start)
 }
 
+/** Input: extracted facts oldest-first, then the manual and always-keep ones. Output: one fact per line prefixed with "- ". */
+const consolidationSystem = (targetChars: number) => `You are consolidating a space memory from multiple conversations.
+Facts are listed oldest-first. When facts conflict, prefer the newer one.
+
+Tasks:
+1. Merge near-duplicates into the more specific/recent version
+2. Remove facts that are fully covered by another
+3. If the same topic recurs across many facts, synthesize a general preference
+4. Preserve all unique constraints, decisions, and preferences
+
+Each fact may be 1-3 sentences; keep the specifics that make it usable.
+Output ONLY the final fact list, one per line, prefixed with "- ".
+Be ruthless: if in doubt, cut. Total output MUST NOT exceed ${targetChars} characters.`
+
 /**
  * Deep-dream compaction: re-extracts from source conversations using the thinking model,
  * then synthesises with contradiction resolution and pattern inference.
@@ -152,18 +170,7 @@ export async function deepDreamSpace(
 
   const synthesis = await generateText({
     model: getThinkingModelOrFallback(),
-    system: `You are consolidating a space memory from multiple conversations.
-Facts are listed oldest-first. When facts conflict, prefer the newer one.
-
-Tasks:
-1. Merge near-duplicates into the more specific/recent version
-2. Remove facts that are fully covered by another
-3. If the same topic recurs across many facts, synthesize a general preference
-4. Preserve all unique constraints, decisions, and preferences
-
-Each fact may be 1-3 sentences; keep the specifics that make it usable.
-Output ONLY the final fact list, one per line, prefixed with "- ".
-Be ruthless: if in doubt, cut. Total output MUST NOT exceed ${targetChars} characters.`,
+    system: consolidationSystem(targetChars),
     prompt: inputLines,
   })
 

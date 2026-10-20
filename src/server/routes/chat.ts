@@ -83,12 +83,21 @@ export const chatRouter = new Hono<AppEnv>()
 
 chatRouter.use('*', authMiddleware)
 
+/** Output: a JSON array of strings, taken from the first `[...]` in the reply. */
+const QUERY_SUGGESTIONS_SYSTEM = 'Return a JSON array of exactly 3 short search query suggestions that complete or refine the user\'s partial input. Return ONLY the raw JSON array, no markdown, no explanation.'
+
+/** Output: a JSON array of 3 strings, taken from the first `[...]` in the reply. */
+const FOLLOW_UP_SYSTEM = `Suggest 3 natural follow-up questions a curious reader would ask next after this exchange.
+Each must be self-contained (no "it"/"that" referring to the previous answer), under 12 words, and explore something the answer did NOT already cover.
+Write them in the same language as the question.
+Return ONLY a raw JSON array of 3 strings, no markdown, no explanation.`
+
 chatRouter.post('/suggest', rateLimitByUser(suggestLimiter, 'suggest'), zValidator('json', z.object({ text: z.string().min(5).max(500) })), async (c) => {
   const { text } = c.req.valid('json')
   try {
     const { text: raw } = await generateText({
       model: getFlashModel(),
-      system: 'Return a JSON array of exactly 3 short search query suggestions that complete or refine the user\'s partial input. Return ONLY the raw JSON array, no markdown, no explanation.',
+      system: QUERY_SUGGESTIONS_SYSTEM,
       messages: [{ role: 'user', content: text }],
       maxOutputTokens: 120,
       // The client aborts a suggestion that has gone stale; stopping here frees the model for the
@@ -111,8 +120,7 @@ chatRouter.post('/suggest', rateLimitByUser(suggestLimiter, 'suggest'), zValidat
 })
 
 const RELATED_INPUT_CHARS = 1500
-/** Suggests follow-up questions from a finished exchange. Best-effort: an empty array simply
- *  means no chips are shown, so a slow or unavailable small model costs nothing. */
+
 /** The small model's title for a new chat whose first title was weak, asked for by the client once
  *  the answer is shown — so the call never holds up the answer. Returns the title as it now stands. */
 chatRouter.post('/:sessionId/title', rateLimitByUser(suggestLimiter, 'title'), async (c) => {
@@ -120,6 +128,8 @@ chatRouter.post('/:sessionId/title', rateLimitByUser(suggestLimiter, 'title'), a
   return title === null ? c.json({ error: 'Not found' }, 404) : c.json({ title })
 })
 
+/** Suggests follow-up questions from a finished exchange. Best-effort: an empty array simply
+ *  means no chips are shown, so a slow or unavailable small model costs nothing. */
 chatRouter.post('/related', rateLimitByUser(suggestLimiter, 'related'), zValidator('json', z.object({
   question: z.string().min(1).max(2000),
   answer: z.string().min(1),
@@ -128,10 +138,7 @@ chatRouter.post('/related', rateLimitByUser(suggestLimiter, 'related'), zValidat
   try {
     const { text: raw } = await generateText({
       model: getFlashModel(),
-      system: `Suggest 3 natural follow-up questions a curious reader would ask next after this exchange.
-Each must be self-contained (no "it"/"that" referring to the previous answer), under 12 words, and explore something the answer did NOT already cover.
-Write them in the same language as the question.
-Return ONLY a raw JSON array of 3 strings, no markdown, no explanation.`,
+      system: FOLLOW_UP_SYSTEM,
       messages: [{
         role: 'user',
         content: `Question: ${question.slice(0, RELATED_INPUT_CHARS)}\n\nAnswer: ${answer.slice(0, RELATED_INPUT_CHARS)}`,

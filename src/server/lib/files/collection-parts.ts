@@ -20,6 +20,7 @@ const OUTLINE_MAX_TOKENS = 150
 const MIN_OVERLAP = 40
 const MAX_OVERLAP = 600
 
+/** Output: one line describing the part, kept as that part's outline line. */
 const OUTLINE_SYSTEM = `You describe one part of a document in a single line of at most ${OUTLINE_LINE_CHARS} characters: what it covers, naming any section headings it contains. No preamble. ${LANGUAGE_RULE}`
 
 export interface DocPart {

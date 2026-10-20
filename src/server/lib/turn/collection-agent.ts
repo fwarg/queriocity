@@ -31,6 +31,7 @@ export const DEFAULT_EXPLORE_MAX_STEPS = 20
 export const MAX_EXPLORE_STEPS = 100
 /** Read part texts kept in full; older ones are replaced, their content being in the notes. */
 const PARTS_KEPT = 2
+/** The exploring loop: tool calls, then a short "done". Only the notes it records reach the answer. */
 const EXPLORE_SYSTEM = `You explore a collection of documents to answer the user's message, which may come with an attached document (for instance their own draft).
 A first look — each document's passages nearest the message — is given below; use it to decide which documents to look into. A document it shows nothing close for can be ruled out without searching it.
 Use the tools: list_documents, outline, search_collection and read_part to find and read what matters, and note to record every finding you will need — with the document label, part and a short quote. Only your notes reach the answer, so note as you go.
@@ -38,6 +39,7 @@ Be targeted: read the parts that bear on the message, not everything. A search a
 To summarise what a document says about something, read the two or three parts that match it most often in the search results, not just one.
 When your notes cover the message, stop calling tools and reply "done".`
 
+/** The answer after exploring: Markdown streamed to the user, citing documents by label ([C1]). */
 const ANSWER_SYSTEM = `Answer the user's message from what was gathered while exploring the documents the user selected: the notes, the passages found (excerpts), and the parts read in full, all below. Use everything relevant there; be thorough rather than brief when the material allows. Do not invent what it does not say; say so when it does not cover something.
 Cite a document inline by its label (e.g. [C1]); do not invent any other citation format. Use ## headings, lists and tables where they help. Always respond in the same language the user used.`
 

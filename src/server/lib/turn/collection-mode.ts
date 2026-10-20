@@ -11,6 +11,7 @@ import { collectionIndex } from './collection-agent.ts'
 /** A choice is quick or not worth waiting for: excerpts are the safe default. */
 const CHOOSE_TIMEOUT_MS = 20_000
 
+/** Output: `excerpts|whole|explore - reason`; chooseMode falls back to excerpts when it cannot parse it. */
 const CHOOSE_SYSTEM = `You decide how to answer a message about a collection of documents. Reply with one word — excerpts, whole or explore — then " - " and a reason of at most 12 words.
 excerpts: the answer is a fact or passage found in one or a few places in the documents.
 whole: the message is about the collection as a whole — summarise, compare, report on, or review something against all of it.

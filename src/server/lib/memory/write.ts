@@ -39,6 +39,15 @@ async function conflictCandidates(existing: MemoryRow[], facts: string[]): Promi
   return [...picked].map(id => byId.get(id)!).filter(Boolean)
 }
 
+/** Output: a JSON array, one `{ i, op, target? }` per new fact in order; `op` is ADD, UPDATE or NOOP. */
+const PLAN_WRITES_SYSTEM = `You maintain a user's long-term memory. For each NEW fact decide exactly one action:
+- ADD: genuinely new information.
+- UPDATE: it supersedes an EXISTING memory (same subject, changed or more specific value). Give the existing index.
+- NOOP: already covered by an existing memory; adds nothing.
+Prefer ADD when unsure. Never merge unrelated subjects.
+Respond with ONLY a JSON array, one object per new fact, in order:
+[{"i":0,"op":"ADD"},{"i":1,"op":"UPDATE","target":3},{"i":2,"op":"NOOP"}]`
+
 /** Ask the small model whether each fact is new, an update of an existing memory, or redundant.
  *  On any failure every fact falls back to ADD — a duplicate is recoverable, a lost fact is not. */
 async function planMemoryWrites(facts: MemoryFact[], candidates: MemoryRow[]): Promise<MemoryWrite[]> {
@@ -50,13 +59,7 @@ async function planMemoryWrites(facts: MemoryFact[], candidates: MemoryRow[]): P
   try {
     const result = await generateText({
       model: getSmallModel(),
-      system: `You maintain a user's long-term memory. For each NEW fact decide exactly one action:
-- ADD: genuinely new information.
-- UPDATE: it supersedes an EXISTING memory (same subject, changed or more specific value). Give the existing index.
-- NOOP: already covered by an existing memory; adds nothing.
-Prefer ADD when unsure. Never merge unrelated subjects.
-Respond with ONLY a JSON array, one object per new fact, in order:
-[{"i":0,"op":"ADD"},{"i":1,"op":"UPDATE","target":3},{"i":2,"op":"NOOP"}]`,
+      system: PLAN_WRITES_SYSTEM,
       prompt: `EXISTING MEMORIES:\n${existingList}\n\nNEW FACTS:\n${newList}`,
       maxOutputTokens: 400,
     })
@@ -191,6 +194,9 @@ function sessionExists(sessionId: string): boolean {
   return row != null
 }
 
+/** Output: one note per line prefixed with "- ", or "NONE"; `[N]` markers are kept for mapFactCitations. */
+const EXTRACT_SYSTEM = `Extract noteworthy facts, preferences, decisions, or research findings from this conversation that would be useful in future conversations in this space. Write each as a single self-contained note of 1-3 sentences — include enough context that it stands on its own later. Preserve any [N] citation markers from the assistant's message that support the note. Output one note per line, prefixed with "- ". Only durable, useful information — skip ephemeral details. If there is nothing worth keeping, output "NONE".`
+
 /** Extract memories from a completed chat using the small model. */
 export async function extractMemoriesPostHoc(
   spaceId: string,
@@ -204,14 +210,14 @@ export async function extractMemoriesPostHoc(
 
   // Clamped to what the configured small model can actually accept. The admin setting allows up to
   // 100000 chars, which no 4k-context model can take — and the extraction then fails outright
-  // rather than extracting less. `|| 6000` also covers a non-numeric setting: `slice(-NaN)`
-  // silently returns the *whole* string, so a bad value disabled the limit rather than tripping it.
+  // rather than extracting less. A non-numeric setting falls back to 6000 (getNumberSetting): as NaN,
+  // `slice(-NaN)` would silently return the *whole* string, disabling the limit rather than tripping it.
   const configured = await getNumberSetting('memory_extract_chars', 6000)
   const maxChars = Math.min(configured, SMALL_MODEL_INPUT_CHARS)
   const combined = `User: ${userContent}\n\nAssistant: ${assistantContent}`
   const result = await generateText({
     model: getSmallModel(),
-    system: `Extract noteworthy facts, preferences, decisions, or research findings from this conversation that would be useful in future conversations in this space. Write each as a single self-contained note of 1-3 sentences — include enough context that it stands on its own later. Preserve any [N] citation markers from the assistant's message that support the note. Output one note per line, prefixed with "- ". Only durable, useful information — skip ephemeral details. If there is nothing worth keeping, output "NONE".`,
+    system: EXTRACT_SYSTEM,
     prompt: combined.slice(-maxChars),
     maxOutputTokens: 600,
   })

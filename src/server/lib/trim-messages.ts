@@ -234,9 +234,7 @@ async function extendSummary(summary: string, fresh: string[], budgetChars: numb
   for (let i = 0; i < input.length; i += window) {
     const { text } = await generateText({
       model: getSmallModel(),
-      system: `${COMPACT_RULES}
-You are given the existing summary, then newer messages. Return ONE updated summary that keeps what still matters from the existing one and adds the newer messages.
-Output ONLY the summary, no preamble. Target approximately ${budgetChars} characters.`,
+      system: extendSummarySystem(budgetChars),
       prompt: `Existing summary:\n${current}\n\nNewer messages:\n${input.slice(i, i + window)}`,
       maxOutputTokens: Math.ceil(budgetChars / CHARS_PER_TOKEN),
     })
@@ -262,6 +260,15 @@ const COMPACT_RULES = `You are compacting an earlier portion of a long conversat
 2. Omit pleasantries, repeated context, and anything superseded by a later message.
 3. Write as a compact third-person briefing note, not a transcript.`
 
+/** Output: the summary as plain text, no preamble. `targetChars` is advisory; maxOutputTokens bounds it. */
+const summarizeSystem = (targetChars: number) => `${COMPACT_RULES}
+Output ONLY the summary, no preamble. Target approximately ${targetChars} characters.`
+
+/** Input: the existing summary, then newer messages. Output: one updated summary as plain text. */
+const extendSummarySystem = (targetChars: number) => `${COMPACT_RULES}
+You are given the existing summary, then newer messages. Return ONE updated summary that keeps what still matters from the existing one and adds the newer messages.
+Output ONLY the summary, no preamble. Target approximately ${targetChars} characters.`
+
 /** Summarizes `input` in serial small-model chunks, to roughly `budgetChars` in total. */
 async function summarizeHistory(input: string, budgetChars: number): Promise<string> {
   const numChunks = Math.min(MAX_HISTORY_COMPRESS_CHUNKS, Math.ceil(input.length / SMALL_MODEL_INPUT_CHARS))
@@ -271,8 +278,7 @@ async function summarizeHistory(input: string, budgetChars: number): Promise<str
     const chunk = input.slice(i * SMALL_MODEL_INPUT_CHARS, (i + 1) * SMALL_MODEL_INPUT_CHARS)
     const { text } = await generateText({
       model: getSmallModel(),
-      system: `${COMPACT_RULES}
-Output ONLY the summary, no preamble. Target approximately ${perChunkChars} characters.`,
+      system: summarizeSystem(perChunkChars),
       prompt: chunk,
       maxOutputTokens: Math.ceil(perChunkChars / CHARS_PER_TOKEN),
     })

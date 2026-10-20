@@ -21,6 +21,7 @@ const EXTRACTS_KEPT_PER_DOC = 20
 /** What a document with nothing on the task answers with; the answer lists it as read but empty. */
 const NOTHING_RELEVANT = 'NOTHING RELEVANT'
 
+/** Output: two lines identifying the document, then bullets; ending in NOTHING_RELEVANT marks it read but empty. */
 const EXTRACT_SYSTEM = `You read one document from a collection for a task the user gave. Another step combines what you write with the same from every other document, so extract from this one only.
 Write:
 - First line: what the document is, in one sentence (type and topic).
@@ -31,6 +32,7 @@ Write:
 If nothing in it bears on the task, write the first two lines and then exactly: ${NOTHING_RELEVANT}
 At most ${EXTRACT_MAX_CHARS} characters. No preamble. ${LANGUAGE_RULE}`
 
+/** Output: the user's draft as short bullet points, given to every extract call as context. */
 const DRAFT_CARD_SYSTEM = `You summarise the user's own draft so that other documents can be read with it in mind: its topic, main claims, method, results, and its structure (section headings).
 Short bullet points, at most ${DRAFT_CARD_MAX_CHARS} characters. No preamble. ${LANGUAGE_RULE}`
 

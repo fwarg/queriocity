@@ -25,6 +25,7 @@ const MAX_CHANGES = 15
 const MAX_TIDY_TAGS = 300
 const MAX_HINT_PAIRS = 40
 
+/** Output: one `old -> new` line per change, or NONE; validated by parseTagChanges. */
 const TIDY_SYSTEM = `You tidy the tag tree of a personal knowledge base. Tags are lowercase and nest with / (plants/roses).
 Propose at most ${MAX_CHANGES} changes that make the tree more consistent:
 - merge tags that mean the same — synonyms, singular and plural, the same word in another language — into the more used one;

@@ -386,6 +386,10 @@ export function describeOutcome(o: UrlOutcome): string {
   return `${o.action} ${kchars(o.from)} → ${kchars(o.to)}${unread}`
 }
 
+/** Output: the summary as plain text, no preamble. `targetChars` is advisory; maxOutputTokens bounds it. */
+const sectionSummarySystem = (targetChars: number) =>
+  `Summarize this section of a web page concisely, preserving all technically important facts. Output only the summary, no preamble. Target approximately ${targetChars} characters.`
+
 export async function summarizeContent(url: string, content: string, targetChars: number): Promise<{ content: string; unread: number }> {
   const hostname = new URL(url).hostname
   const start = performance.now()
@@ -405,7 +409,7 @@ export async function summarizeContent(url: string, content: string, targetChars
       const perChunkChars = chunkSummaryChars(chunk.length, targetChars, numChunks)
       const { text } = await generateText({
         model: getSmallModel(),
-        system: `Summarize this section of a web page concisely, preserving all technically important facts. Output only the summary, no preamble. Target approximately ${perChunkChars} characters.`,
+        system: sectionSummarySystem(perChunkChars),
         prompt: chunk,
         // The target above is an instruction a model may ignore; this is the bound that holds.
         maxOutputTokens: Math.ceil(perChunkChars / CHARS_PER_TOKEN),

@@ -69,6 +69,7 @@ const editImageSchema = z.object({
 
 type ToolOutcome = { success: boolean; prompt: string; seed?: number; error?: string }
 
+/** Image turns: a generate_image or edit_image call; any text only after a web_search, as one sentence. */
 const imageSystem = (lastGeneratedImageUrl?: string) => `You are an image generation assistant.
 - When asked to draw, illustrate, create, or generate an image, call generate_image with a detailed visual prompt.
 - When asked to edit, change, or modify a previously generated image, call edit_image.${lastGeneratedImageUrl ? ` The most recently generated image is at ${lastGeneratedImageUrl}.` : ''}

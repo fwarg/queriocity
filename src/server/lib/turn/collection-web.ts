@@ -29,6 +29,7 @@ export async function startWeb(ctx: TurnContext): Promise<WebSearching | undefin
   return { results: [], egress, budget: await newSearchBudget('balanced'), tainted: new Set() }
 }
 
+/** With web search on while exploring: adds web_search, for context the documents lack. */
 export const EXPLORE_WEB_INSTRUCTION = `\nYou also have web_search, for context the documents lack — a work they cite, how a term is used elsewhere, whether something has changed since. Explore the documents first; the web never stands in for them, and searching it is not needed for most messages.`
 
 /** The web_search tool. Results go to the model and are kept, numbered, for the answer. */
