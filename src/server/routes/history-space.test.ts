@@ -9,8 +9,7 @@
 import '../lib/test-support/test-env.ts'
 
 import { describe, test, expect, beforeAll } from 'bun:test'
-import { db, sqlite, users, spaces, chatSessions, messages } from '../lib/db.ts'
-import { initMessageSearch } from '../lib/migrations.ts'
+import { db, users, spaces, chatSessions, messages } from '../lib/db.ts'
 import { historyRouter, ftsPrefixQuery } from './history.ts'
 import { eq } from 'drizzle-orm'
 import { signToken, AUTH_COOKIE } from '../lib/auth.ts'
@@ -154,18 +153,6 @@ describe('GET /history/search over message content', () => {
 
   test('reads FTS syntax in the query as plain words', async () => {
     expect(await search('"post* (office')).toEqual(['old-1'])
-  })
-
-  test('indexes messages written before the index existed', async () => {
-    // An upgraded database: messages present, no index and no triggers yet.
-    for (const t of ['messages_fts_insert', 'messages_fts_delete', 'messages_fts_update']) sqlite.run(`DROP TRIGGER ${t}`)
-    sqlite.run('DROP TABLE messages_fts')
-    await db.insert(messages).values({ id: 'fts-3', sessionId: 'old-2', role: 'user', content: 'Varroa mites again', createdAt: new Date() })
-
-    initMessageSearch(sqlite)
-
-    expect(await search('varroa')).toEqual(['old-2'])
-    expect(await search('honung')).toEqual(['old-0'])
   })
 
   test('forgets a message once it is deleted', async () => {

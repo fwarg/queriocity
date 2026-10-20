@@ -249,8 +249,7 @@ adminRouter.post('/users/:id/reset-password', async (c) => {
 /** Deleting a user takes everything of theirs that the schema cannot.
  *
  *  `db.delete(users)` cascades the tables with foreign keys — sessions, messages, uploads, spaces,
- *  memories — except on databases created before 2026-04-01, where `chat_sessions` and
- *  `uploaded_files` have no foreign key to `users`; those two are deleted explicitly. It reaches none of the vec0 tables, which cannot carry one, nor `chat_chunk_meta` and
+ *  memories. It reaches none of the vec0 tables, which cannot carry one, nor `chat_chunk_meta` and
  *  `file_chunk_meta`, which hold a verbatim copy of every conversation and document. Nor the PNGs
  *  on disk. Deleting the account has to mean deleting the data, so this mirrors what the chat,
  *  file and space delete routes each already do for their own scope. */
@@ -278,11 +277,7 @@ adminRouter.delete('/users/:id', async (c) => {
   // orphaned by a regenerate or an aborted turn would otherwise survive the account itself.
   await deleteUserImages(id)
 
-  db.transaction(tx => {
-    tx.delete(chatSessions).where(eq(chatSessions.userId, id)).run()
-    tx.delete(uploadedFiles).where(eq(uploadedFiles.userId, id)).run()
-    tx.delete(users).where(eq(users.id, id)).run()
-  })
+  await db.delete(users).where(eq(users.id, id))
   console.log(`  [admin] deleted user ${id} by ${c.get('userId')} — ${sessionIds.length} chat(s), ${fileIds.length} file(s), ${memoryIds.length} memor${memoryIds.length === 1 ? 'y' : 'ies'}`)
   return c.json({ ok: true })
 })
