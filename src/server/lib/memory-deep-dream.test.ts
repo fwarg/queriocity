@@ -51,7 +51,7 @@ afterAll(() => {
   mock.module('./embeddings.ts', () => realEmbeddings)
 })
 
-const { deepDreamSpace } = await import('./memory.ts')
+const { deepDreamSpace } = await import('./memory/index.ts')
 const { contextCharBudget } = await import('./trim-messages.ts')
 
 type WireMessage = { role: string; content: string | Array<{ text?: string }> }

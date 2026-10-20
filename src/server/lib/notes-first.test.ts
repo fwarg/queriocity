@@ -10,7 +10,7 @@ import { envOverride } from './test-support/env-override.ts'
 const { db, users, uploadedFiles, setAppSetting, EMBED_DIMS } = await import('./db.ts')
 const { saveNote } = await import('./files/notes.ts')
 const { indexResourceText } = await import('./files/ingest.ts')
-const { buildNotesBlock, buildChatFileBlock } = await import('./memory.ts')
+const { buildNotesBlock, buildChatFileBlock } = await import('./memory/index.ts')
 
 const ME = 'nf-user'
 const OTHER = 'nf-other'

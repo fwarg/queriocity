@@ -8,7 +8,7 @@ import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import {
   hashPassword, verifyPassword, validatePassword, signToken, AUTH_COOKIE, COOKIE_OPTIONS,
 } from '../lib/auth.ts'
-import { getUserMemories, saveUserMemory, deleteUserMemory, embedMemory, suggestUserMemories } from '../lib/memory.ts'
+import { getUserMemories, saveUserMemory, deleteUserMemory, embedMemory, suggestUserMemories } from '../lib/memory/index.ts'
 import { LANG_CODES } from '../../shared/i18n/index.ts'
 import { THEMES } from '../../shared/theme.ts'
 

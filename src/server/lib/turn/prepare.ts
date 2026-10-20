@@ -5,7 +5,7 @@ import { webSearch, webSearchMulti, newSearchBudget, type SearchResult, type Eng
 import { fetchUrlAllPages, processUrlsForContext, DEFAULT_MAX_URL_CONTEXT_CHARS, type ProcessedUrl } from '../fetch-url.ts'
 import { rerankSearchResults } from '../reranker.ts'
 import { memoryTokenBudget, notesRagBudget, spaceRagBudget } from '../rag-settings.ts'
-import { buildMemoryBlock, buildChatFileBlock, buildCollectionBlock, buildNotesBlock, userMemoryBlockIfEnabled, joinMemoryBlocks } from '../memory.ts'
+import { buildMemoryBlock, buildChatFileBlock, buildCollectionBlock, buildNotesBlock, userMemoryBlockIfEnabled, joinMemoryBlocks } from '../memory/index.ts'
 import { contextCharBudget } from '../trim-messages.ts'
 import { hasAttachment } from '../../../shared/context.ts'
 import { userQueryOf, additionalInstructions, type TurnContext, type TurnMessage } from './context.ts'

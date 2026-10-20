@@ -20,8 +20,8 @@ export const spaceRagBudget = async (): Promise<number> =>
  *  `rerank_top_n` prunes whatever comes back, so this is the *candidate* count and that is the
  *  ceiling on what reranking can consider.
  *
- *  Lives in its own module rather than in memory.ts because uploads-search.ts needs it too, and
- *  memory.ts already imports uploads-search.ts — the other direction would be a cycle.
+ *  Lives in its own module rather than in memory/ because uploads-search.ts needs it too, and
+ *  memory/ already imports uploads-search.ts — the other direction would be a cycle.
  *
  *  Read per call: it is an Admin setting and takes effect without a restart. */
 export const ragTopK = async (): Promise<number> =>

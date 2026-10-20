@@ -5,11 +5,11 @@
  *  rerank) is exercised end-to-end; what is easy to get silently wrong — and what these cover —
  *  is the budget arithmetic and the guarantee that pinned/always-keep entries survive it. */
 
-// Must precede the ./memory.ts import — it reaches lib/db.ts, which opens DB_PATH at load.
+// Must precede the ./memory/index.ts import — it reaches lib/db.ts, which opens DB_PATH at load.
 import './test-support/test-env.ts'
 
 import { describe, test, expect } from 'bun:test'
-import { selectMemories, isSensitiveFact, isDurableUserFact, mapFactCitations, pickFallbackSources, MEMORY_MAX_SOURCES, type MemoryCandidate, type MemorySource, type RankableSource } from './memory.ts'
+import { selectMemories, isSensitiveFact, isDurableUserFact, mapFactCitations, pickFallbackSources, MEMORY_MAX_SOURCES, type MemoryCandidate, type MemorySource, type RankableSource } from './memory/index.ts'
 
 /** ~1 token per 4 chars, matching the estimate selectMemories uses. */
 const mem = (id: string, tokens: number): MemoryCandidate =>

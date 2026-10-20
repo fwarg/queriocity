@@ -8,7 +8,7 @@ import { randomUUID } from 'crypto'
 import { canUnlock, describeContents, monitorsInSpace, sessionIdsInSpace } from '../lib/space-lock.ts'
 import { deleteSessionImages } from '../lib/image-store.ts'
 import { deindexSession } from '../lib/chat-indexer.ts'
-import { deleteMemoryEmbeddings } from '../lib/memory.ts'
+import { deleteMemoryEmbeddings } from '../lib/memory/index.ts'
 
 export const spacesRouter = new Hono<AppEnv>()
 

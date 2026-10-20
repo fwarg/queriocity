@@ -17,7 +17,7 @@ import { loadCatalogue, saveCatalogue, keyStatus, cloudTarget, catalogueSchema }
 import { allLlmAccess, setLlmAccess, monthlyLlmUsage, meteredUsage } from '../lib/llm-usage.ts'
 import { monthKey } from '../lib/search/usage.ts'
 import { rerank, rerankEnabled } from '../lib/reranker.ts'
-import { runDream, deleteMemoryEmbeddings } from '../lib/memory.ts'
+import { runDream, deleteMemoryEmbeddings } from '../lib/memory/index.ts'
 import { deleteFileChunks } from '../lib/vector-cleanup.ts'
 import { deleteUserImages } from '../lib/image-store.ts'
 import { describeProviders, PROVIDERS } from '../lib/search/index.ts'
