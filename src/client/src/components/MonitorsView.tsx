@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { SectionHeader } from './SectionHeader.tsx'
 import { useConfirm } from './confirm.tsx'
-import { EmptyState, PRIMARY_BTN, RowAction } from './ui.tsx'
+import { EmptyState, ErrorBanner, PRIMARY_BTN, RowAction } from './ui.tsx'
+import { errorMessage } from '../lib/errors.ts'
 import { Plus, Pencil, Trash2, Play, X, ChevronDown, ChevronRight } from 'lucide-react'
 import {
   fetchMonitors, createMonitor, updateMonitor, deleteMonitor,
@@ -74,6 +75,7 @@ function MonitorCard({ monitor, onEdit, onDelete, onRun, onOpenSession, isGlobal
   const [runs, setRuns] = useState<MonitorRun[]>([])
   const [loadingRuns, setLoadingRuns] = useState(false)
   const [running, setRunning] = useState(false)
+  const [runError, setRunError] = useState('')
 
   async function toggleExpand() {
     if (!expanded && runs.length === 0) {
@@ -85,12 +87,15 @@ function MonitorCard({ monitor, onEdit, onDelete, onRun, onOpenSession, isGlobal
 
   async function handleRun() {
     setRunning(true)
+    setRunError('')
     try {
       await onRun(monitor)
       // Reload runs after successful run
       const updated = await fetchMonitorRuns(monitor.id)
       setRuns(updated)
       setExpanded(true)
+    } catch (err) {
+      setRunError(errorMessage(t, err, t('monitor.actionFailed')))
     } finally {
       setRunning(false)
     }
@@ -154,6 +159,8 @@ function MonitorCard({ monitor, onEdit, onDelete, onRun, onOpenSession, isGlobal
         </div>
       </div>
 
+      <ErrorBanner message={runError} onDismiss={() => setRunError('')} className="mx-3 mb-3" />
+
       {expanded && (
         <div className="border-t border-gray-700 px-3 py-2">
           {loadingRuns ? (
@@ -190,6 +197,13 @@ export function MonitorsView({ spaces, isAdmin, timezone, onOpenSession, onCount
   const [globalEditor, setGlobalEditor] = useState<'new' | Monitor | null>(null)
   const [globalExpanded, setGlobalExpanded] = useState(false)
   const [adminExpanded, setAdminExpanded] = useState(false)
+  const [error, setError] = useState('')
+
+  /** Runs a list action, showing its failure instead of leaving the list as if it had worked. */
+  async function guarded(action: () => Promise<void>) {
+    setError('')
+    try { await action() } catch (err) { setError(errorMessage(t, err, t('monitor.actionFailed'))) }
+  }
 
   useEffect(() => {
     fetchMonitors().then(setMonitors).catch(() => {})
@@ -228,31 +242,40 @@ export function MonitorsView({ spaces, isAdmin, timezone, onOpenSession, onCount
 
   async function handleDelete(id: string) {
     if (!await confirm({ message: t('monitor.deleteConfirm'), confirmLabel: t('common.delete'), danger: true })) return
-    await deleteMonitor(id)
-    setMonitors(prev => prev.filter(m => m.id !== id))
+    await guarded(async () => {
+      await deleteMonitor(id)
+      setMonitors(prev => prev.filter(m => m.id !== id))
+    })
   }
 
   async function handleGlobalDelete(id: string) {
     if (!await confirm({ message: t('monitor.deleteGlobalConfirm'), confirmLabel: t('common.delete'), danger: true })) return
     const { deleteGlobalMonitor } = await import('../lib/api.ts')
-    await deleteGlobalMonitor(id)
-    setGlobalMonitors(prev => prev.filter(m => m.id !== id))
+    await guarded(async () => {
+      await deleteGlobalMonitor(id)
+      setGlobalMonitors(prev => prev.filter(m => m.id !== id))
+    })
   }
 
   async function handleRun(monitor: Monitor) {
+    // Not guarded: the card that started the run reports its own failure.
     await triggerMonitorRun(monitor.id)
     setMonitors(prev => prev.map(m => m.id === monitor.id ? { ...m, lastRunAt: Math.floor(Date.now() / 1000) } : m))
   }
 
   async function handleSubscribe(id: string) {
-    await subscribeMonitor(id)
-    const sub = globalMonitors.find(m => m.id === id)
-    if (sub) setMonitors(prev => [...prev, { ...sub, subscribed: true }])
+    await guarded(async () => {
+      await subscribeMonitor(id)
+      const sub = globalMonitors.find(m => m.id === id)
+      if (sub) setMonitors(prev => [...prev, { ...sub, subscribed: true }])
+    })
   }
 
   async function handleUnsubscribe(id: string) {
-    await unsubscribeMonitor(id)
-    setMonitors(prev => prev.filter(m => m.id !== id))
+    await guarded(async () => {
+      await unsubscribeMonitor(id)
+      setMonitors(prev => prev.filter(m => m.id !== id))
+    })
   }
 
   const subscribedIds = new Set(monitors.filter(m => m.subscribed).map(m => m.id))
@@ -278,6 +301,7 @@ export function MonitorsView({ spaces, isAdmin, timezone, onOpenSession, onCount
           </button>
         </SectionHeader>
       </div>
+      <ErrorBanner message={error} onDismiss={() => setError('')} className="mb-4" />
 
       {ownMonitors.length === 0 && subscribedMonitors.length === 0 ? (
         <EmptyState>{t('monitor.none')}</EmptyState>

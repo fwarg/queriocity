@@ -4,7 +4,8 @@ import { NoteEditor } from './NoteEditor.tsx'
 import { NoteTrustBadge } from './NoteTrust.tsx'
 import { SectionHeader } from './SectionHeader.tsx'
 import { useConfirm } from './confirm.tsx'
-import { EmptyState, ListRow, PRIMARY_BTN, RowAction } from './ui.tsx'
+import { EmptyState, ErrorBanner, ListRow, PRIMARY_BTN, RowAction } from './ui.tsx'
+import { errorMessage } from '../lib/errors.ts'
 import { ResourceDetail } from './ResourceDetail.tsx'
 import { CHIP_TONES, EMPTY_FILTER, isFiltered, matchesFilter, ResourceFilters, ResourceTypeIcon, toggleSpace, toggleTag, type ResourceFilter } from './ResourceFilters.tsx'
 import { deleteFile, ingestUrl, uploadFile, type Resource } from '../lib/api.ts'
@@ -71,6 +72,7 @@ export function ResourcesView({ resources, onChanged, openId, onOpenIdChange, on
   const fileRef = useRef<HTMLInputElement>(null)
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'ok' | 'error'>('idle')
   const [uploadMsg, setUploadMsg] = useState('')
+  const [deleteError, setDeleteError] = useState('')
 
   const [urlOpen, setUrlOpen] = useState(false)
   const [urlValue, setUrlValue] = useState('')
@@ -128,11 +130,12 @@ export function ResourcesView({ resources, onChanged, openId, onOpenIdChange, on
       // linkCount also counts outgoing links; with no incoming ones the option does nothing.
       option: resource.linkCount ? { label: t('files.deleteUnlink', { name: resource.filename }), onChange: v => { unlink = v } } : undefined,
     })) return
-    deleteFile(resource.id, { unlink }).then(onChanged).catch(() => {})
+    deleteFile(resource.id, { unlink }).then(onChanged).catch(err => setDeleteError(errorMessage(t, err, t('files.deleteFailed'))))
   }
 
   return (
     <div className="flex flex-col flex-1 overflow-y-auto p-6 gap-4">
+      <ErrorBanner message={deleteError} onDismiss={() => setDeleteError('')} />
       <SectionHeader title={t('nav.resources')} intro={t('files.intro')} about={t('files.aboutTitle')} topic="resources">
         <div className="flex flex-col gap-1 items-end">
           <div className="flex flex-wrap gap-2">

@@ -217,6 +217,7 @@ export const en = {
   'chat.deleteConfirm': 'Delete this chat? This cannot be undone.',
   'chat.deleteFailed': 'Failed to delete chat.',
   'chat.moveFailed': 'Could not move the chat.',
+  'chat.renameFailed': 'Could not rename the chat.',
   'chat.retry': 'Retry',
   'chat.retryTitle': 'Answer again — switch the mode first to retry differently',
   'chat.thinkingActive': 'Model thinking active',
@@ -250,6 +251,7 @@ export const en = {
   'chat.lockConfirmNew': '"{name}" is confidential, so this chat will be locked for good once you send: no web search, URL fetching, image generation or cloud models.',
   'chat.lockConfirmAction': 'Lock this chat',
   'space.lockChangeFailed': 'Could not change the lock.',
+  'space.resourcesFailed': 'Could not update the resources in this space.',
   'space.lockAction': 'Lock',
   'space.transformFailed': 'Transform failed',
   'space.holdsChats': { one: '{count} chat', other: '{count} chats' },
@@ -267,6 +269,7 @@ export const en = {
   'memory.none': 'No memories yet. The assistant will save noteworthy facts from conversations in this space.',
   'memory.addPlaceholder': 'Add a fact…',
   'memory.compact': 'Compact',
+  'memory.saveFailed': 'Could not save the memory change.',
   'memory.compacting': 'Compacting…',
   'memory.alreadyCompact': 'Already within target',
   'memory.recreateAll': 'Recreate all',
@@ -325,6 +328,7 @@ export const en = {
   'files.filterNone': 'No resources match this filter.',
   'files.deleteNamed': 'Delete resource "{name}"',
   'files.deleteConfirm': 'Delete "{name}"? Its excerpts are removed from every space it is tagged to.',
+  'files.deleteFailed': 'Could not delete the resource.',
   'files.deleteUnlink': 'Also turn [[{name}]] in other notes into plain text. Otherwise those links stay, and reconnect if a resource with this title comes back.',
 
   'space.kind': 'Space',
@@ -693,6 +697,7 @@ export const en = {
   'settings.changingPassword': 'Changing…',
   'settings.passwordChanged': 'Password changed.',
   'settings.passwordChangeFailed': 'Could not change password',
+  'settings.saveFailed': 'Could not save settings',
 
   // --- Memory about you ---
   'userMemory.none': 'Nothing saved yet.',
@@ -717,6 +722,7 @@ export const en = {
   'template.edit': 'Edit template',
   'template.delete': 'Delete template',
   'template.deleteConfirm': 'Delete this template? This cannot be undone.',
+  'template.deleteFailed': 'Could not delete the template.',
   'template.back': 'Back to template list',
   'template.use': 'Use template',
   'template.research.name': 'Research deep-dive',
@@ -846,6 +852,7 @@ export const en = {
 
   // --- Monitors ---
   'monitor.new': 'New monitor',
+  'monitor.actionFailed': 'Could not update the monitor.',
   'monitor.aboutTitle': 'About monitors',
   'monitor.intro': 'A monitor re-runs a query on a schedule and stores each run as a chat. Older runs are pruned once the keep count is reached.',
   'monitor.none': 'No monitors yet. Create one to run a query automatically on a schedule.',

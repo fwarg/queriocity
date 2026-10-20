@@ -4,10 +4,10 @@ import { z } from 'zod'
 import { generateText, embed } from 'ai'
 import { db, users, invites, chatSessions, spaces, spaceMemories, userMemories, uploadedFiles, authCredentials, getAppSetting, setAppSetting, bumpTokenVersion } from '../lib/db.ts'
 import { similarityReport, SIMILARITY_REPORT_LIMIT } from '../lib/files/related.ts'
-import { relatedMinSimilarity as relatedMinSimilaritySetting, relatedMinRelevance as relatedMinRelevanceSetting, notesRagBudget as notesRagBudgetSetting, topicMinSimilarity as topicMinSimilaritySetting, exploreMinRelevance, tagMatchSimilarity as tagMatchSimilaritySetting, tagPlaceSimilarity as tagPlaceSimilaritySetting } from '../lib/rag-settings.ts'
+import { relatedMinSimilarity as relatedMinSimilaritySetting, relatedMinRelevance as relatedMinRelevanceSetting, notesRagBudget as notesRagBudgetSetting, topicMinSimilarity as topicMinSimilaritySetting, exploreMinRelevance, tagMatchSimilarity as tagMatchSimilaritySetting, tagPlaceSimilarity as tagPlaceSimilaritySetting, memoryTokenBudget as memoryTokenBudgetSetting, spaceRagBudget as spaceRagBudgetSetting } from '../lib/rag-settings.ts'
 import { eq, desc } from 'drizzle-orm'
 import { indexSession, deindexSession } from '../lib/chat-indexer.ts'
-import { EMBED_MAX_INPUT_CHARS, SMALL_MODEL_INPUT_CHARS, DEFAULT_MEMORY_TOKEN_BUDGET, researchMaxTokens as researchMaxTokensSetting } from '../lib/llm.ts'
+import { EMBED_MAX_INPUT_CHARS, SMALL_MODEL_INPUT_CHARS, researchMaxTokens as researchMaxTokensSetting } from '../lib/llm.ts'
 import { DEFAULT_MAX_URL_CONTEXT_CHARS, MIN_URL_CONTEXT_CHARS, SCRAPE_MAX_CHARS } from '../lib/fetch-url.ts'
 import { randomUUID, randomInt } from 'crypto'
 import { hashPassword } from '../lib/auth.ts'
@@ -61,7 +61,7 @@ adminRouter.use('*', adminMiddleware)
 
 adminRouter.get('/settings', async (c) => {
   const [memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, ragMinRelevance, attachmentChars, spaceRagBudget, queryReformulation, chatTitleModel, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow, compressHistoryOverflow, resourceSummary, relatedMinSimilarity, relatedMinRelevance, notesRagBudget, topicMinSimilarity, collectionFullTextTokens, collectionFullTextTokensCloud, collectionExploreMaxSteps, collectionExploreMinRelevance, researchMaxTokens, tagMatchSimilarity, tagPlaceSimilarity] = await Promise.all([
-    getAppSetting('memory_token_budget', DEFAULT_MEMORY_TOKEN_BUDGET).then(Number),
+    memoryTokenBudgetSetting(),
     getAppSetting('user_memory_token_budget', '300').then(Number),
     getAppSetting('dream_hour', '-1').then(Number),
     getAppSetting('dream_threshold', '1500').then(Number),
@@ -72,7 +72,7 @@ adminRouter.get('/settings', async (c) => {
     getAppSetting('rag_top_k', '15').then(Number),
     getAppSetting('rag_min_relevance', '0').then(Number),
     getAppSetting('attachment_chars', '20000').then(Number),
-    getAppSetting('space_rag_budget', '500').then(Number),
+    spaceRagBudgetSetting(),
     getAppSetting('query_reformulation', 'true').then(v => v === 'true'),
     getAppSetting('chat_title_model', 'true').then(v => v === 'true'),
     getAppSetting('rss_feed_chars_budget', '50000').then(Number),

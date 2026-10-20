@@ -19,7 +19,8 @@ import { useConfirm } from './components/confirm.tsx'
 import { useGuide, useGuideNavigation } from './components/GuideView.tsx'
 import type { GuideTarget } from '@shared/guide/index.ts'
 import { splitGroupedCitations } from '@shared/citations.ts'
-import { EmptyState, PRIMARY_BTN, RowAction } from './components/ui.tsx'
+import { EmptyState, ErrorBanner, PRIMARY_BTN, RowAction } from './components/ui.tsx'
+import { errorMessage } from './lib/errors.ts'
 import { SectionHeader } from './components/SectionHeader.tsx'
 import { SpacesView } from './components/SpacesView.tsx'
 import { ResourcesView } from './components/ResourcesView.tsx'
@@ -235,7 +236,8 @@ export default function App() {
     onAcknowledge: async () => {
       if (!currentUser) return
       const settings = { ...currentUser.settings, cloudAcknowledged: true }
-      await updateSettings(settings)
+      // Persisting is best-effort: a failed save only means the notice is shown again next session.
+      await updateSettings(settings).catch(() => {})
       setCurrentUser({ ...currentUser, settings })
     },
   })
@@ -376,7 +378,8 @@ export default function App() {
       } else if (token) {
         setAuthView('register')
       } else {
-        hasUsers().then(exists => setAuthView(exists ? 'login' : 'register'))
+        // Login is the safe guess when the server cannot say: registration needs an invite anyway.
+        hasUsers().then(exists => setAuthView(exists ? 'login' : 'register')).catch(() => setAuthView('login'))
       }
     })
   }, [])
@@ -606,7 +609,7 @@ export default function App() {
     setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, title: trimmed } : s))
     setSpaceChats(prev => prev?.map(s => s.id === sessionId ? { ...s, title: trimmed } : s) ?? prev)
     setEditingTitle(false)
-    updateSessionTitle(sessionId, trimmed).catch(() => {})
+    updateSessionTitle(sessionId, trimmed).catch(err => setStatus(errorMessage(t, err, t('chat.renameFailed'))))
   }
 
   function handleExport(scope: 'full' | 'last') {
@@ -786,6 +789,12 @@ export default function App() {
     }).catch(() => {})
   }
 
+  /** Reports a failed memory change and reloads the list, undoing any optimistic edit. */
+  function memoryFailed(err: unknown) {
+    setSpaceError(errorMessage(t, err, t('memory.saveFailed')))
+    if (currentSpaceId) fetchSpaceMemories(currentSpaceId).then(({ memories }) => setSpaceMemories(memories)).catch(() => {})
+  }
+
   function handleCreateMemory() {
     const content = newMemoryDraft.trim()
     if (!content || !currentSpaceId) { setNewMemoryOpen(false); return }
@@ -793,14 +802,14 @@ export default function App() {
       setSpaceMemories(prev => [m, ...prev])
       setNewMemoryDraft('')
       setNewMemoryOpen(false)
-    }).catch(() => {})
+    }).catch(memoryFailed)
   }
 
   function handleDeleteMemory(id: string) {
     if (!currentSpaceId) return
     deleteSpaceMemory(currentSpaceId, id).then(() => {
       setSpaceMemories(prev => prev.filter(m => m.id !== id))
-    }).catch(() => {})
+    }).catch(memoryFailed)
   }
 
   function handleMemorySave(id: string) {
@@ -808,13 +817,13 @@ export default function App() {
     setEditingMemoryId(null)
     if (!content || !currentSpaceId) return
     setSpaceMemories(prev => prev.map(m => m.id === id ? { ...m, content } : m))
-    updateSpaceMemory(currentSpaceId, id, { content }).catch(() => {})
+    updateSpaceMemory(currentSpaceId, id, { content }).catch(memoryFailed)
   }
 
   function handleMemoryAlwaysKeep(id: string, alwaysKeep: boolean) {
     if (!currentSpaceId) return
     setSpaceMemories(prev => prev.map(m => m.id === id ? { ...m, alwaysKeep } : m))
-    updateSpaceMemory(currentSpaceId, id, { alwaysKeep }).catch(() => {})
+    updateSpaceMemory(currentSpaceId, id, { alwaysKeep }).catch(memoryFailed)
   }
 
   async function handleTransform() {
@@ -1215,6 +1224,8 @@ export default function App() {
                               if (compacted) fetchSpaceMemories(currentSpaceId!).then(({ memories }) => { setSpaceMemories(memories) }).catch(() => {})
                               setCompactResult(compacted ? `${before} → ${after}` : t('memory.alreadyCompact'))
                               setTimeout(() => setCompactResult(null), 4000)
+                            } catch (err) {
+                              memoryFailed(err)
                             } finally {
                               setCompacting(false)
                             }
@@ -1256,8 +1267,7 @@ export default function App() {
                       <button
                         onClick={async () => {
                           if (!await confirm({ message: t('memory.clearConfirm'), confirmLabel: t('common.clearAll'), danger: true })) return
-                          await clearSpaceMemories(currentSpaceId!)
-                          setSpaceMemories([])
+                          await clearSpaceMemories(currentSpaceId!).then(() => setSpaceMemories([]), memoryFailed)
                         }}
                         disabled={compacting || recreating}
                         className="text-xs text-gray-500 hover:text-red-400 disabled:opacity-50"
@@ -1393,9 +1403,13 @@ export default function App() {
                   {filesSectionOpen && (
                     <button
                       onClick={async () => {
-                        const all = await fetchFiles()
-                        setAllUserFiles(all.filter(f => !taggedFiles.some(t => t.id === f.id)))
-                        setFilePickerOpen(o => !o)
+                        try {
+                          const all = await fetchFiles()
+                          setAllUserFiles(all.filter(f => !taggedFiles.some(t => t.id === f.id)))
+                          setFilePickerOpen(o => !o)
+                        } catch (err) {
+                          setSpaceError(errorMessage(t, err, t('space.resourcesFailed')))
+                        }
                       }}
                       className="text-xs text-gray-500 hover:text-gray-300"
                     >
@@ -1407,7 +1421,10 @@ export default function App() {
                   <TagResourcePicker
                     resources={allUserFiles}
                     onTag={async id => {
-                      await tagFileToSpace(currentSpaceId!, id)
+                      try { await tagFileToSpace(currentSpaceId!, id) } catch (err) {
+                        setSpaceError(errorMessage(t, err, t('space.resourcesFailed')))
+                        return
+                      }
                       setAllUserFiles(prev => prev.filter(f => f.id !== id))
                       fetchSpaceFiles(currentSpaceId!).then(setTaggedFiles).catch(() => {})
                       fetchSpaces().then(setSpaces).catch(() => {})
@@ -1445,7 +1462,10 @@ export default function App() {
                       tone="danger"
                       label={t('resource.untagFrom', { name: f.filename })}
                       onClick={async () => {
-                        await untagFileFromSpace(currentSpaceId!, f.id)
+                        try { await untagFileFromSpace(currentSpaceId!, f.id) } catch (err) {
+                          setSpaceError(errorMessage(t, err, t('space.resourcesFailed')))
+                          return
+                        }
                         fetchSpaces().then(setSpaces).catch(() => {})
                         setPinnedFileIds(prev => prev.filter(id => id !== f.id))
                         setTaggedFiles(prev => prev.filter(t => t.id !== f.id))
@@ -1708,12 +1728,7 @@ export default function App() {
                 </span>
               </div>
             )}
-            {spaceError && (
-              <div className="mx-4 mt-3 flex items-start gap-2 rounded border border-red-700/50 bg-red-950/20 px-3 py-2 text-xs text-red-200">
-                <span className="flex-1">{spaceError}</span>
-                <button onClick={() => setSpaceError(null)} className="text-red-300 hover:text-red-100" aria-label={t('common.dismiss')}><X size={14} /></button>
-              </div>
-            )}
+            <ErrorBanner message={spaceError} onDismiss={() => setSpaceError(null)} className="mx-4 mt-3" />
             {messages.length === 0 && !streaming ? (
               <div className="flex flex-col items-center justify-center flex-1 gap-3 text-gray-500 px-4">
                 <img src="/logo.webp" alt="Queriocity" className="w-24 sm:w-32 md:w-40 h-auto" />

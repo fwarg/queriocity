@@ -8,6 +8,8 @@ import { PromptStudio } from './PromptStudio.tsx'
 import { useT } from '../lib/i18n.tsx'
 import type { TranslationKey } from '@shared/i18n/index.ts'
 import { GuideLink } from './GuideView.tsx'
+import { ErrorBanner } from './ui.tsx'
+import { errorMessage } from '../lib/errors.ts'
 
 /** Copy for the built-in templates is keyed by the ids already in templates.ts rather than by
  *  extra fields on the data, so adding a template is one entry there and a block in the catalogs.
@@ -67,6 +69,7 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
   const [values, setValues] = useState<Record<string, string>>({})
   const [customTemplates, setCustomTemplates] = useState<CustomTemplate[]>([])
   const [studio, setStudio] = useState<'create' | CustomTemplate | null>(null)
+  const [error, setError] = useState('')
   const panelRef = useRef<HTMLDivElement>(null)
   const studioRef = useRef<'create' | CustomTemplate | null>(null)
 
@@ -107,8 +110,12 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
   async function handleDeleteCustom(e: React.MouseEvent, id: string) {
     e.stopPropagation()
     if (!await confirm({ message: t('template.deleteConfirm'), confirmLabel: t('common.delete'), danger: true })) return
-    await deleteCustomTemplate(id)
-    setCustomTemplates(prev => prev.filter(t => t.id !== id))
+    try {
+      await deleteCustomTemplate(id)
+      setCustomTemplates(prev => prev.filter(t => t.id !== id))
+    } catch (err) {
+      setError(errorMessage(t, err, t('template.deleteFailed')))
+    }
   }
 
   function handleStudioSave(saved: CustomTemplate) {
@@ -219,6 +226,8 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
                 </div>
               </div>
             )}
+
+            <ErrorBanner message={error} onDismiss={() => setError('')} className="mt-3" />
 
             {/* Create button */}
             <button

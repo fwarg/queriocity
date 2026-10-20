@@ -1,4 +1,5 @@
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
+import { bodyLimit } from 'hono/body-limit'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { generateText } from 'ai'
@@ -35,17 +36,33 @@ export const filesRouter = new Hono<AppEnv>()
 filesRouter.use('*', authMiddleware)
 
 const MAX_SIZE = 50 * 1024 * 1024 // 50 MB
+const TOO_LARGE = 'File too large (max 50 MB)'
+// Multipart framing around the file; bodyLimit counts the whole request.
+const MULTIPART_OVERHEAD = 64 * 1024
 
-filesRouter.post('/upload', async (c) => {
-  const userId = c.get('userId') as string
-  const body = await c.req.parseBody()
-  const file = body['file'] as File | undefined
+/** Throttles and caps the body before parseBody buffers it — the size check on the parsed File
+ *  alone runs only after the whole request is already in memory. */
+const uploadGuard = (label: string) => [
+  rateLimitByUser(ingestLimiter, label),
+  bodyLimit({ maxSize: MAX_SIZE + MULTIPART_OVERHEAD, onError: c => c.json({ error: TOO_LARGE }, 413) }),
+] as const
 
-  if (!file) return c.json({ error: 'No file provided' }, 400)
-  if (file.size > MAX_SIZE) return c.json({ error: 'File too large (max 50 MB)' }, 413)
+/** The multipart `file` field, or the error response when it is missing, too large or of a type we
+ *  cannot ingest. The type is the one the client declared. */
+async function readUpload(c: Context<AppEnv>): Promise<File | Response> {
+  const file = (await c.req.parseBody())['file']
+  if (!(file instanceof File)) return c.json({ error: 'No file provided' }, 400)
+  if (file.size > MAX_SIZE) return c.json({ error: TOO_LARGE }, 413)
   if (!ACCEPTED_MIME_TYPES.has(file.type.split(';')[0].trim())) {
     return c.json({ error: `Unsupported file type: ${file.type}. Accepted: PDF, plain text, Markdown, CSV, HTML, images.` }, 400)
   }
+  return file
+}
+
+filesRouter.post('/upload', ...uploadGuard('upload'), async (c) => {
+  const userId = c.get('userId') as string
+  const file = await readUpload(c)
+  if (file instanceof Response) return file
 
   const buffer = await file.arrayBuffer()
   console.log(`\n━━━ [upload] "${file.name}"  type=${file.type}  size=${(file.size / 1024).toFixed(0)}KB`)
@@ -86,14 +103,9 @@ filesRouter.post('/ingest-url', rateLimitByUser(ingestLimiter, 'ingest-url'), as
 })
 
 
-filesRouter.post('/extract', async (c) => {
-  const body = await c.req.parseBody()
-  const file = body['file'] as File | undefined
-  if (!file) return c.json({ error: 'No file provided' }, 400)
-  if (file.size > MAX_SIZE) return c.json({ error: 'File too large (max 50 MB)' }, 413)
-  if (!ACCEPTED_MIME_TYPES.has(file.type.split(';')[0].trim())) {
-    return c.json({ error: `Unsupported file type: ${file.type}. Accepted: PDF, plain text, Markdown, CSV, HTML, images.` }, 400)
-  }
+filesRouter.post('/extract', ...uploadGuard('extract'), async (c) => {
+  const file = await readUpload(c)
+  if (file instanceof Response) return file
   const maxChars = parseInt(await getAppSetting('attachment_chars', '20000'))
   const buffer = await file.arrayBuffer()
   console.log(`\n━━━ [extract] "${file.name}"  type=${file.type}  size=${(file.size / 1024).toFixed(0)}KB`)

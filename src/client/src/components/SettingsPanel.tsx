@@ -1,6 +1,6 @@
 import { useState, useEffect, type FormEvent } from 'react'
 import { Trash2, X } from 'lucide-react'
-import { RowAction } from './ui.tsx'
+import { ErrorBanner, RowAction } from './ui.tsx'
 import {
   updateSettings, changePassword,
   fetchUserMemories, createUserMemory, updateUserMemory, deleteUserMemory, suggestUserMemories,
@@ -26,6 +26,13 @@ function UserMemoryList() {
   const [scanStatus, setScanStatus] = useState('')
   const [suggestions, setSuggestions] = useState<string[]>([])
   const [scanDepth, setScanDepth] = useState(20)
+  const [error, setError] = useState('')
+
+  /** Reports a failed change and reloads the list, undoing any optimistic edit. */
+  function failed(err: unknown) {
+    setError(errorMessage(t, err, t('memory.saveFailed')))
+    fetchUserMemories().then(r => setMemories(r.memories)).catch(() => {})
+  }
 
   useEffect(() => { fetchUserMemories().then(r => setMemories(r.memories)).catch(() => {}) }, [])
 
@@ -57,7 +64,7 @@ function UserMemoryList() {
     const content = draft.trim()
     setDraft('')
     if (!content) return
-    createUserMemory(content).then(m => setMemories(prev => [m, ...prev])).catch(() => {})
+    createUserMemory(content).then(m => setMemories(prev => [m, ...prev])).catch(failed)
   }
 
   function saveEdit(id: string) {
@@ -65,21 +72,22 @@ function UserMemoryList() {
     setEditingId(null)
     if (!content) return
     setMemories(prev => prev.map(m => m.id === id ? { ...m, content } : m))
-    updateUserMemory(id, { content }).catch(() => {})
+    updateUserMemory(id, { content }).catch(failed)
   }
 
   function toggleKeep(m: UserMemory) {
     setMemories(prev => prev.map(x => x.id === m.id ? { ...x, alwaysKeep: !m.alwaysKeep } : x))
-    updateUserMemory(m.id, { alwaysKeep: !m.alwaysKeep }).catch(() => {})
+    updateUserMemory(m.id, { alwaysKeep: !m.alwaysKeep }).catch(failed)
   }
 
   function remove(id: string) {
     setMemories(prev => prev.filter(m => m.id !== id))
-    deleteUserMemory(id).catch(() => {})
+    deleteUserMemory(id).catch(failed)
   }
 
   return (
     <div className="mt-1 flex flex-col gap-1">
+      <ErrorBanner message={error} onDismiss={() => setError('')} />
       <input
         type="text"
         value={draft}
@@ -254,6 +262,7 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
   const [newPassword, setNewPassword] = useState('')
   const [pwBusy, setPwBusy] = useState(false)
   const [passwordMsg, setPasswordMsg] = useState('')
+  const [saveError, setSaveError] = useState('')
   const [passwordOk, setPasswordOk] = useState(false)
 
   async function handleChangePassword() {
@@ -277,12 +286,15 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     setBusy(true)
+    setSaveError('')
     try {
       const form = { customPrompt, showThinking, useThinking, useSpaceRag, useChatRag, querySuggestions, followUpSuggestions, userMemory, imageWatermark, fontSize, theme, timezone, language: lang }
       await updateSettings({ ...form, timezone: timezone || undefined })
       onSave(form)
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
+    } catch (err) {
+      setSaveError(errorMessage(t, err, t('settings.saveFailed')))
     } finally {
       setBusy(false)
     }
@@ -527,6 +539,7 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
               {pwBusy ? t('settings.changingPassword') : t('settings.changePassword')}
             </button>
           </div>
+          <ErrorBanner message={saveError} onDismiss={() => setSaveError('')} />
           <div className="flex gap-2 justify-end">
             <button type="button" onClick={onClose} className="px-4 py-1.5 rounded text-sm text-gray-400 hover:text-gray-200">
               {t('common.cancel')}

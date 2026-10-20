@@ -199,6 +199,8 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
       const { sessions } = await reindexChats()
       setReindexResult(sessions)
       setTimeout(() => setReindexResult(null), 5000)
+    } catch {
+      setError('Failed to reindex chats.')
     } finally {
       setReindexing(false)
     }
@@ -209,6 +211,8 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     setModelResults(null)
     try {
       setModelResults(await testModels())
+    } catch {
+      setError('Failed to test models.')
     } finally {
       setTestingModels(false)
     }
@@ -220,6 +224,8 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
       await triggerDream()
       setDreamTriggered(true)
       setTimeout(() => setDreamTriggered(false), 3000)
+    } catch {
+      setError('Failed to start compaction.')
     } finally {
       setDreamRunning(false)
     }
@@ -252,6 +258,8 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
       const url = `${window.location.origin}/register?token=${token}`
       setInviteUrl(url)
       setInvites(await listInvites())
+    } catch {
+      setError('Failed to create invite.')
     } finally {
       setBusy(false)
     }

@@ -213,6 +213,7 @@ export const sv: Catalog = {
   'chat.deleteConfirm': 'Ta bort den här chatten? Det går inte att ångra.',
   'chat.deleteFailed': 'Kunde inte ta bort chatten.',
   'chat.moveFailed': 'Kunde inte flytta chatten.',
+  'chat.renameFailed': 'Kunde inte byta namn på chatten.',
   'chat.retry': 'Försök igen',
   'chat.retryTitle': 'Svara igen — byt läge först för att få ett annat svar',
   'chat.thinkingActive': 'Modellens tänkande är aktivt',
@@ -246,6 +247,7 @@ export const sv: Catalog = {
   'chat.lockConfirmNew': '"{name}" är konfidentiell, så chatten låses för gott när du skickar: ingen webbsökning, URL-hämtning, bildgenerering eller molnmodeller.',
   'chat.lockConfirmAction': 'Lås chatten',
   'space.lockChangeFailed': 'Kunde inte ändra låset.',
+  'space.resourcesFailed': 'Kunde inte uppdatera resurserna i utrymmet.',
   'space.lockAction': 'Lås',
   'space.transformFailed': 'Sammanställningen misslyckades',
   'space.holdsChats': { one: '{count} chatt', other: '{count} chattar' },
@@ -263,6 +265,7 @@ export const sv: Catalog = {
   'memory.none': 'Inga minnen än. Assistenten sparar noterbara fakta från samtalen i det här utrymmet.',
   'memory.addPlaceholder': 'Lägg till ett faktum…',
   'memory.compact': 'Komprimera',
+  'memory.saveFailed': 'Kunde inte spara ändringen i minnet.',
   'memory.compacting': 'Komprimerar…',
   'memory.alreadyCompact': 'Redan inom målet',
   'memory.recreateAll': 'Skapa om alla',
@@ -321,6 +324,7 @@ export const sv: Catalog = {
   'files.filterNone': 'Inga resurser matchar filtret.',
   'files.deleteNamed': 'Ta bort resursen ”{name}”',
   'files.deleteConfirm': 'Ta bort ”{name}”? Utdragen försvinner från alla utrymmen den är kopplad till.',
+  'files.deleteFailed': 'Kunde inte ta bort resursen.',
   'files.deleteUnlink': 'Gör också om [[{name}]] i andra anteckningar till vanlig text. Annars ligger länkarna kvar och kopplas ihop igen om en resurs med den här titeln kommer tillbaka.',
 
   'space.kind': 'Utrymme',
@@ -689,6 +693,7 @@ export const sv: Catalog = {
   'settings.changingPassword': 'Byter…',
   'settings.passwordChanged': 'Lösenordet har bytts.',
   'settings.passwordChangeFailed': 'Kunde inte byta lösenord',
+  'settings.saveFailed': 'Kunde inte spara inställningarna',
 
   // --- Minne om dig ---
   'userMemory.none': 'Inget sparat än.',
@@ -713,6 +718,7 @@ export const sv: Catalog = {
   'template.edit': 'Redigera mallen',
   'template.delete': 'Ta bort mallen',
   'template.deleteConfirm': 'Ta bort mallen? Detta går inte att ångra.',
+  'template.deleteFailed': 'Kunde inte ta bort mallen.',
   'template.back': 'Tillbaka till mallistan',
   'template.use': 'Använd mallen',
   'template.research.name': 'Djupdykning',
@@ -842,6 +848,7 @@ export const sv: Catalog = {
 
   // --- Bevakningar ---
   'monitor.new': 'Ny bevakning',
+  'monitor.actionFailed': 'Kunde inte uppdatera bevakningen.',
   'monitor.aboutTitle': 'Om bevakningar',
   'monitor.intro': 'En bevakning kör en fråga enligt ett schema och sparar varje körning som en chatt. Äldre körningar rensas bort när antalet som ska sparas nås.',
   'monitor.none': 'Inga bevakningar än. Skapa en för att köra en fråga automatiskt enligt schema.',

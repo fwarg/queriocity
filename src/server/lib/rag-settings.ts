@@ -1,4 +1,13 @@
 import { getAppSetting } from './db.ts'
+import { DEFAULT_MEMORY_TOKEN_BUDGET } from './llm.ts'
+
+/** Token budget for a space's memory block. */
+export const memoryTokenBudget = async (): Promise<number> =>
+  Number(await getAppSetting('memory_token_budget', DEFAULT_MEMORY_TOKEN_BUDGET))
+
+/** Token budget for resource excerpts injected alongside a space's memory (and picked collections). */
+export const spaceRagBudget = async (): Promise<number> =>
+  Number(await getAppSetting('space_rag_budget', '500'))
 
 /** How many nearest chunks every vector search asks for.
  *

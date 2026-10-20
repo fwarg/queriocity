@@ -26,6 +26,19 @@ describe('isBlockedAddress', () => {
     }
   })
 
+  test('blocks v4 embedded in hex-form mapped, NAT64 and 6to4 v6', () => {
+    for (const ip of ['::ffff:7f00:1', '::ffff:a9fe:a9fe', '64:ff9b::7f00:1', '2002:c0a8:101::', '::7f00:1']) {
+      expect(isBlockedAddress(ip)).toBe(true)
+    }
+    expect(isBlockedAddress('::ffff:808:808')).toBe(false)
+    expect(isBlockedAddress('2002:808:808::')).toBe(false)
+  })
+
+  test('blocks benchmarking and IETF-assignment v4', () => {
+    for (const ip of ['198.18.0.1', '198.19.255.255', '192.0.0.8']) expect(isBlockedAddress(ip)).toBe(true)
+    for (const ip of ['198.20.0.1', '192.0.1.1']) expect(isBlockedAddress(ip)).toBe(false)
+  })
+
   test('allows public v6 and rejects unparseable input', () => {
     expect(isBlockedAddress('2606:4700:4700::1111')).toBe(false)
     expect(isBlockedAddress('not-an-ip')).toBe(true)
@@ -47,6 +60,12 @@ describe('assertFetchableUrl', () => {
     expect(await blocked('http://127.0.0.1:11434/api/tags')).toContain('loopback')
     expect(await blocked('http://169.254.169.254/latest/meta-data/')).toContain('loopback')
     expect(await blocked('http://[::1]:3000/')).toContain('loopback')
+  })
+
+  test('rejects v4-mapped v6 literals, which URL parsing rewrites to hex', async () => {
+    expect(await blocked('http://[::ffff:127.0.0.1]/')).toContain('loopback')
+    expect(await blocked('http://[::ffff:169.254.169.254]/latest/meta-data/')).toContain('loopback')
+    expect(await blocked('http://[64:ff9b::7f00:1]/')).toContain('loopback')
   })
 
   test('rejects internal hostnames', async () => {

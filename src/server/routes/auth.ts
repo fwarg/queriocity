@@ -2,8 +2,8 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie'
-import { db, users, authCredentials, invites, parseSettings, getAppSetting } from '../lib/db.ts'
-import { eq, count } from 'drizzle-orm'
+import { db, users, authCredentials, invites, parseSettings } from '../lib/db.ts'
+import { and, eq, count, isNull } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import bcrypt from 'bcryptjs'
 import {
@@ -11,7 +11,7 @@ import {
   validatePassword, AUTH_COOKIE, COOKIE_OPTIONS,
 } from '../lib/auth.ts'
 import { RateLimiter, clientIp, warnIfProxyUntrusted } from '../lib/rate-limit.ts'
-import { DEFAULT_MEMORY_TOKEN_BUDGET } from '../lib/llm.ts'
+import { memoryTokenBudget as memoryTokenBudgetSetting } from '../lib/rag-settings.ts'
 import { LANG_CODES } from '../../shared/i18n/index.ts'
 
 export const authRouter = new Hono()
@@ -63,25 +63,33 @@ authRouter.post('/register', zValidator('json', registerSchema), async (c) => {
     .where(eq(authCredentials.email, email.toLowerCase())).get()
   if (existing) return c.json({ error: 'Email already registered', code: 'email_registered' }, 409)
 
-  // Consumed only once registration is certain to proceed. Marking it above, before the
-  // duplicate-email check, meant someone who already had an account burned their own invite by
-  // opening the link a second time — and only an admin could issue another.
-  if (userCount > 0 && inviteToken) {
-    await db.update(invites).set({ usedAt: new Date() }).where(eq(invites.id, inviteToken))
-  }
-
-  const role: 'user' | 'admin' = userCount === 0 ? 'admin' : 'user'
   const userId = randomUUID()
   const now = new Date()
   const passwordHash = await hashPassword(password)
 
-  await db.insert(users).values({
-    id: userId, email: email.toLowerCase(), name: name ?? null,
-    role, settings: JSON.stringify(language ? { language } : {}), createdAt: now, updatedAt: now,
+  // Synchronous, with no await inside: the checks above ran across awaits, so two concurrent
+  // requests could both pass them. Re-deciding the role and claiming the invite here is what makes
+  // "one first admin" and "one use per invite" hold. The invite is consumed only once registration
+  // is certain to proceed — burning it before the duplicate-email check locked out returning users.
+  const role = db.transaction((tx): 'user' | 'admin' | null => {
+    const [{ value: current }] = tx.select({ value: count() }).from(users).all()
+    if (current > 0) {
+      if (!inviteToken) return null
+      const claimed = tx.update(invites).set({ usedAt: now })
+        .where(and(eq(invites.id, inviteToken), isNull(invites.usedAt))).returning({ id: invites.id }).all()
+      if (!claimed.length) return null
+    }
+    const role = current === 0 ? 'admin' : 'user'
+    tx.insert(users).values({
+      id: userId, email: email.toLowerCase(), name: name ?? null,
+      role, settings: JSON.stringify(language ? { language } : {}), createdAt: now, updatedAt: now,
+    }).run()
+    tx.insert(authCredentials).values({
+      userId, email: email.toLowerCase(), passwordHash, active: true,
+    }).run()
+    return role
   })
-  await db.insert(authCredentials).values({
-    userId, email: email.toLowerCase(), passwordHash, active: true,
-  })
+  if (!role) return c.json({ error: 'Invite already used', code: 'invite_used' }, 403)
 
   const token = await signToken({ userId, email: email.toLowerCase(), role, tokenVersion: 0 })
   setCookie(c, AUTH_COOKIE, token, COOKIE_OPTIONS)
@@ -124,7 +132,7 @@ authRouter.get('/me', async (c) => {
     const { userId, tokenVersion } = await verifyToken(token)
     const [user, memoryTokenBudget, cred] = await Promise.all([
       db.select().from(users).where(eq(users.id, userId)).get(),
-      getAppSetting('memory_token_budget', DEFAULT_MEMORY_TOKEN_BUDGET).then(v => parseInt(v)),
+      memoryTokenBudgetSetting(),
       db.select({ mustChangePassword: authCredentials.mustChangePassword })
         .from(authCredentials).where(eq(authCredentials.userId, userId)).get(),
     ])

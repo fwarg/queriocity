@@ -660,6 +660,11 @@ function initSchema() {
   try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN edited_at INTEGER') } catch {}
   try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN status TEXT') } catch {}
   try { sqlite.run('ALTER TABLE custom_templates ADD COLUMN instruction_note_ids TEXT') } catch {}
+  // Lookups by the second PK column, or by columns added above: without these each is a table scan.
+  sqlite.run('CREATE INDEX IF NOT EXISTS idx_space_files_file_id ON space_files(file_id)')
+  sqlite.run('CREATE INDEX IF NOT EXISTS idx_monitor_runs_session_id ON monitor_runs(session_id)')
+  sqlite.run('CREATE INDEX IF NOT EXISTS idx_uploaded_files_derived_from ON uploaded_files(derived_from)')
+  sqlite.run('CREATE INDEX IF NOT EXISTS idx_uploaded_files_origin_session ON uploaded_files(user_id, origin_session_id)')
   try { sqlite.run('ALTER TABLE custom_templates ADD COLUMN instruction_text TEXT') } catch {}
   try { sqlite.run('ALTER TABLE custom_templates ADD COLUMN example_file_ids TEXT') } catch {}
   try { sqlite.run('ALTER TABLE custom_templates ADD COLUMN settings TEXT') } catch {}
