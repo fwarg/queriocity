@@ -9,7 +9,8 @@
 import '../lib/test-support/test-env.ts'
 
 import { describe, test, expect, beforeAll } from 'bun:test'
-import { db, sqlite, users, spaces, chatSessions, messages, initMessageSearch } from '../lib/db.ts'
+import { db, sqlite, users, spaces, chatSessions, messages } from '../lib/db.ts'
+import { initMessageSearch } from '../lib/migrations.ts'
 import { historyRouter, ftsPrefixQuery } from './history.ts'
 import { eq } from 'drizzle-orm'
 import { signToken, AUTH_COOKIE } from '../lib/auth.ts'
@@ -161,7 +162,7 @@ describe('GET /history/search over message content', () => {
     sqlite.run('DROP TABLE messages_fts')
     await db.insert(messages).values({ id: 'fts-3', sessionId: 'old-2', role: 'user', content: 'Varroa mites again', createdAt: new Date() })
 
-    initMessageSearch()
+    initMessageSearch(sqlite)
 
     expect(await search('varroa')).toEqual(['old-2'])
     expect(await search('honung')).toEqual(['old-0'])
