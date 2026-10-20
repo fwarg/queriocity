@@ -126,8 +126,7 @@ function TagRow({ node, depth, actions }: { node: TagTreeNode; depth: number; ac
             autoCapitalize="none"
             onBlur={e => submit(e.target.value)}
             onKeyDown={e => {
-              // Stopped: Firefox would deliver the rest of this Enter to the confirm dialog's Cancel.
-              if (e.key === 'Enter') { e.preventDefault(); submit(e.currentTarget.value) }
+              if (e.key === 'Enter') submit(e.currentTarget.value)
               if (e.key === 'Escape') setEditing(null)
             }}
             className="flex-1 text-sm bg-gray-800 border border-emerald-700 rounded px-2 py-1 text-gray-100 focus:outline-none"

@@ -34,6 +34,15 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
   // A backdrop click cancels only when it also began there: a dialog opened on mousedown — by a field
   // that submits on blur — would otherwise be cancelled by the mouseup of the very click that opened it.
   const pressedBackdrop = useRef(false)
+  const cancelRef = useRef<HTMLButtonElement>(null)
+
+  // Cancel takes focus a tick late: a dialog opened by Enter in a field would otherwise get the rest
+  // of that keystroke, and Firefox, which presses a button on keypress, would cancel it unseen.
+  useEffect(() => {
+    if (!pending) return
+    const id = setTimeout(() => cancelRef.current?.focus())
+    return () => clearTimeout(id)
+  }, [pending])
 
   const settle = (ok: boolean) => {
     pending?.resolve(ok)
@@ -76,7 +85,7 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
             <div className="flex justify-end gap-2">
               {/* Cancel takes focus: Enter on a dialog you did not expect should not confirm it. */}
               <button
-                autoFocus
+                ref={cancelRef}
                 onClick={() => settle(false)}
                 className="px-3 py-1.5 rounded text-sm bg-gray-700 hover:bg-gray-600 text-gray-200"
               >
