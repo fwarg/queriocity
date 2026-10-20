@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
-import { BookOpen, RotateCcw, ShieldCheck, Trash2 } from 'lucide-react'
+import { RotateCcw, ShieldCheck } from 'lucide-react'
 import { MessageList, ImageCaptionContext } from './components/MessageList.tsx'
 import { PromptStudio } from './components/PromptStudio.tsx'
 import { ContextMeter } from './components/ContextIndicators.tsx'
@@ -10,34 +10,33 @@ import { LoginPage } from './components/LoginPage.tsx'
 import { RegisterPage } from './components/RegisterPage.tsx'
 import { SettingsPanel } from './components/SettingsPanel.tsx'
 import { AdminPanel } from './components/AdminPanel.tsx'
-import { ViewTabs } from './components/ViewTabs.tsx'
 import { ExploreView } from './components/ExploreView.tsx'
 import type { ResourceFilter } from './components/ResourceFilters.tsx'
-import { MonitorsView } from './components/MonitorsView.tsx'
-import { ChatRow } from './components/ChatRow.tsx'
 import { useConfirm } from './components/confirm.tsx'
 import { useGuide, useGuideNavigation } from './components/GuideView.tsx'
 import type { GuideTarget } from '@shared/guide/index.ts'
-import { EmptyState, ErrorBanner, RowAction } from './components/ui.tsx'
+import { ErrorBanner } from './components/ui.tsx'
 import { errorMessage } from './lib/errors.ts'
-import { SectionHeader } from './components/SectionHeader.tsx'
 import { SpacesView } from './components/SpacesView.tsx'
 import { SpaceDetail } from './components/SpaceDetail.tsx'
+import { Sidebar, type NavView } from './components/Sidebar.tsx'
+import { ChatsView, type ChatsTab } from './components/ChatsView.tsx'
 import { ChatHeader } from './components/ChatHeader.tsx'
 import { ChatSearchBar } from './components/ChatSearchBar.tsx'
 import { ExportMenu } from './components/ExportMenu.tsx'
 import { ResourcesView } from './components/ResourcesView.tsx'
 import {
-  fetchHistory, fetchSession, deleteSession, updateSessionTitle, fetchFiles, getMe, hasUsers, logout,
-  updateSettings, fetchSpaces, createSpace, promoteCollection, updateSpace, deleteSpace, assignChatToSpace,
-  searchHistory, fetchMonitors, activeRecipe,
+  fetchHistory, fetchSession, deleteSession, updateSessionTitle, fetchFiles, updateSettings, fetchSpaces,
+  createSpace, promoteCollection, updateSpace, deleteSpace, assignChatToSpace, fetchMonitors, activeRecipe,
 } from './lib/api.ts'
-import type { AuthUser, Resource, Space, SpaceKind, CustomTemplate } from './lib/api.ts'
+import type { Resource, Space, SpaceKind, CustomTemplate } from './lib/api.ts'
 import { useChat } from './hooks/useChat.ts'
 import { useModelPicker } from './hooks/useModelPicker.ts'
 import { useChatSearch } from './hooks/useChatSearch.ts'
-import { useLang, useT } from './lib/i18n.tsx'
-import { applyTheme } from './lib/theme.ts'
+import { useChatHistory, type Session } from './hooks/useChatHistory.ts'
+import { useAuth } from './hooks/useAuth.ts'
+import { useUserPreferences } from './hooks/useUserPreferences.ts'
+import { useT } from './lib/i18n.tsx'
 import { DEFAULT_THEME } from '@shared/theme.ts'
 import type { ContextReport } from '@shared/context.ts'
 import type { CollectionMode } from '@shared/context.ts'
@@ -45,23 +44,16 @@ import type { CollectionMode } from '@shared/context.ts'
 /** One per mode worth showing off: something current, something comparative, something explained. */
 const EXAMPLE_KEYS = ['guide.example1', 'guide.example2', 'guide.example3'] as const
 
-type AuthView = 'loading' | 'login' | 'register'
-type MainView = 'chat' | 'chats' | 'files' | 'spaces' | 'explore'
-type ChatsTab = 'chats' | 'monitors'
+type MainView = 'chat' | NavView
 const CHATS_TAB_KEY = 'queriocity.chatsTab'
 const NOTES_FIRST_KEY = 'queriocity.notesFirst'
-/** `locked`: its space is locked; `chatLocked`: the chat itself is, having read the confidential
- *  collections and resources named in `lockedBy`. */
-type Session = { id: string; title: string; spaceId: string | null; locked?: boolean; chatLocked?: boolean | number; lockedBy?: string[] }
 
 export default function App() {
   const t = useT()
   const confirm = useConfirm()
   const openGuide = useGuide()
-  const { setLang } = useLang()
-  const [authView, setAuthView] = useState<AuthView>('loading')
-  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null)
-  const [inviteToken, setInviteToken] = useState<string | undefined>()
+  const { authView, setAuthView, currentUser, setCurrentUser, inviteToken, signedIn, signOut } = useAuth()
+  useUserPreferences(currentUser)
 
   const [focusMode, setFocusMode] = useState<'flash' | 'balanced' | 'thorough' | 'image'>('balanced')
   const [searchCategories, setSearchCategories] = useState<Array<'news' | 'science' | 'discussions' | 'tech'>>([])
@@ -92,13 +84,16 @@ export default function App() {
   const [inputSeed, setInputSeed] = useState<{ text: string; n: number }>()
 
   const [sessionId, setSessionId] = useState<string | undefined>()
-  const [sessions, setSessions] = useState<Session[]>([])
   const [sessionSearch, setSessionSearch] = useState('')
   const [files, setFiles] = useState<Resource[]>([])
   const [spaces, setSpaces] = useState<Space[]>([])
   /** Message from a refused lock change or chat move — both are server decisions the user cannot
    *  predict from the UI alone, so the reason has to be surfaced rather than silently reverted. */
   const [spaceError, setSpaceError] = useState<string | null>(null)
+  /** A list the user is looking at could not be fetched: said, rather than shown empty or stale. */
+  const loadFailed = useCallback((err: unknown) => setSpaceError(errorMessage(t, err, t('common.loadFailed'))), [t])
+  const history = useChatHistory({ userId: currentUser?.id, onError: loadFailed })
+  const { sessions, setSessions } = history
   const [monitorCount, setMonitorCount] = useState(0)
   const [isMonitorSession, setIsMonitorSession] = useState(false)
   const [currentSpaceId, setCurrentSpaceId] = useState<string | null>(null)
@@ -131,10 +126,6 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [showAdmin, setShowAdmin] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [chatSort, setChatSort] = useState<'updated' | 'created'>('updated')
-  const [chatSearch, setChatSearch] = useState('')
-  const [chatSearchResults, setChatSearchResults] = useState<Session[] | null>(null)
-  const [chatTotal, setChatTotal] = useState(0)
 
   // The guide's "Open Spaces →" buttons. Registered rather than passed, because the guide is
   // mounted above App so that any view's ⓘ can open it.
@@ -146,11 +137,6 @@ export default function App() {
     setView(target === 'monitors' ? 'chats' : target)
     setSidebarOpen(false)
   }, [setChatsTab]))
-  const [chatHasMore, setChatHasMore] = useState(false)
-  const [chatLoadingMore, setChatLoadingMore] = useState(false)
-  const chatOffsetRef = useRef(0)
-  const sentinelRef = useRef<HTMLDivElement>(null)
-  const sidebarSentinelRef = useRef<HTMLDivElement>(null)
 
   const activeSpaceId = sessionId
     ? sessions.find(s => s.id === sessionId)?.spaceId ?? null
@@ -247,92 +233,6 @@ export default function App() {
 
   const bottomRef = useRef<HTMLDivElement>(null)
 
-  // The signed-in setting wins over the browser guess the provider started from. One-way: the
-  // provider never writes back to user settings, so this cannot loop against the PATCH below.
-  const userLang = currentUser?.settings?.language
-  useEffect(() => { if (userLang) setLang(userLang) }, [userLang, setLang])
-
-  const fontSize = currentUser?.settings?.fontSize ?? 17
-  useEffect(() => {
-    const boost = 2
-    document.documentElement.style.fontSize =
-      `clamp(${fontSize}px, calc(${fontSize}px + ${boost} * (1440px - 100vw) / 1065), ${fontSize + boost}px)`
-  }, [fontSize])
-
-  // Signed out, the theme stored in this browser stays (theme-init.js applied it before paint).
-  const theme = currentUser ? currentUser.settings?.theme ?? DEFAULT_THEME : undefined
-  useEffect(() => { if (theme) applyTheme(theme) }, [theme])
-
-  const PAGE_SIZE = 50
-
-  /** A list the user is looking at could not be fetched: said, rather than shown empty or stale. */
-  const loadFailed = useCallback((err: unknown) => setSpaceError(errorMessage(t, err, t('common.loadFailed'))), [t])
-
-  function loadChats(sort: 'updated' | 'created', offset: number, replace: boolean) {
-    setChatLoadingMore(true)
-    fetchHistory(sort, offset)
-      .then(({ items, total }) => {
-        setSessions(prev => replace ? items : [...prev, ...items])
-        setChatTotal(total)
-        chatOffsetRef.current = offset + items.length
-        setChatHasMore(items.length === PAGE_SIZE)
-      })
-      .catch(loadFailed)
-      .finally(() => setChatLoadingMore(false))
-  }
-
-  useEffect(() => {
-    if (!currentUser) return
-    chatOffsetRef.current = 0
-    setSessions([])
-    setChatHasMore(false)
-    loadChats(chatSort, 0, true)
-  }, [chatSort, currentUser])
-
-  useEffect(() => {
-    if (!chatSearch.trim()) { setChatSearchResults(null); return }
-    const t = setTimeout(() => {
-      searchHistory(chatSearch.trim()).then(items => setChatSearchResults(items)).catch(() => {})
-    }, 300)
-    return () => clearTimeout(t)
-  }, [chatSearch])
-
-  useEffect(() => {
-    const callback = ([entry]: IntersectionObserverEntry[]) => {
-      if (entry.isIntersecting && !chatLoadingMore && chatHasMore) {
-        loadChats(chatSort, chatOffsetRef.current, false)
-      }
-    }
-    const obs = new IntersectionObserver(callback)
-    if (sentinelRef.current) obs.observe(sentinelRef.current)
-    if (sidebarSentinelRef.current) obs.observe(sidebarSentinelRef.current)
-    return () => obs.disconnect()
-  }, [chatHasMore, chatLoadingMore, chatSort])
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    const token = params.get('token')
-    if (token) {
-      setInviteToken(token)
-      window.history.replaceState({}, '', window.location.pathname)
-    }
-
-    getMe().then(user => {
-      if (user) {
-        setCurrentUser(user)
-        setAuthView('loading')
-        fetchFiles().then(setFiles).catch(() => {})
-        fetchSpaces().then(setSpaces).catch(() => {})
-        fetchMonitors().then(ms => setMonitorCount(ms.length)).catch(() => {})
-      } else if (token) {
-        setAuthView('register')
-      } else {
-        // Login is the safe guess when the server cannot say: registration needs an invite anyway.
-        hasUsers().then(exists => setAuthView(exists ? 'login' : 'register')).catch(() => setAuthView('login'))
-      }
-    })
-  }, [])
-
   useEffect(() => {
     setPinnedFileIds([])
     setPinnedMemoryIds([])
@@ -341,7 +241,7 @@ export default function App() {
     // `activeSpaceIsCollection` is a dependency so promotion fills the list in without reopening.
     setSpaceChats(null)
     if (!currentSpaceId || activeSpaceIsCollection) return
-    fetchHistory(chatSort, 0, currentSpaceId)
+    fetchHistory(history.sort, 0, currentSpaceId)
       .then(({ items }) => setSpaceChats(items))
       .catch(err => { setSpaceChats([]); setSpaceError(errorMessage(t, err, t('space.loadFailed'))) })
   }, [currentSpaceId, activeSpaceIsCollection])
@@ -354,24 +254,14 @@ export default function App() {
 
   const findInChat = useChatSearch({ messages, sessionId, shortcutEnabled: view === 'chat' && messages.length > 0 })
 
-  function handleAuthSuccess(user: AuthUser) {
-    setCurrentUser(user)
-    setAuthView('loading')
-    fetchFiles().then(setFiles).catch(() => {})
-    fetchSpaces().then(setSpaces).catch(() => {})
-    fetchMonitors().then(ms => setMonitorCount(ms.length)).catch(() => {})
-  }
-
   async function handleLogout() {
-    await logout()
-    setCurrentUser(null)
+    await signOut()
     setSessions([])
     setFiles([])
     setSpaces([])
     setMessages([])
     setCurrentSpaceId(null)
     setMonitorCount(0)
-    setAuthView('login')
   }
 
 
@@ -495,6 +385,14 @@ export default function App() {
     }).catch(() => setStatus(t('chat.deleteFailed')))
   }
 
+  /** A sidebar view: opened, or closed back to the chat when it is already open. Resources and Spaces
+   *  open on their list, not on whatever resource or space was last looked at. */
+  function toggleView(target: NavView) {
+    setView(v => v === target ? 'chat' : target)
+    if (target === 'files') { setOpenResourceId(null); setResourceSeed(null) }
+    if (target === 'spaces') setCurrentSpaceId(null)
+  }
+
   function handleCreateSpace(name: string, kind: SpaceKind) {
     createSpace(name, kind).then(s => setSpaces(prev => [...prev, s])).catch(() => {})
   }
@@ -613,6 +511,12 @@ export default function App() {
   }, [loadFailed])
   // Refreshed whenever a view that lists the library opens: notes are also created from chat
   // answers, splits and the server side, none of which pass through these views.
+  // The user's library, spaces and monitor count: on sign-in, and on a session restored at load.
+  useEffect(() => {
+    if (!currentUser) return
+    reloadFiles()
+    fetchMonitors().then(ms => setMonitorCount(ms.length)).catch(loadFailed)
+  }, [currentUser?.id])
   useEffect(() => { if (view === 'files' || view === 'explore') reloadFiles() }, [view, reloadFiles])
   const tagCount = useMemo(() => new Set(files.flatMap(f => f.tags)).size, [files])
 
@@ -623,7 +527,7 @@ export default function App() {
   if (authView === 'login') {
     return (
       <LoginPage
-        onLogin={handleAuthSuccess}
+        onLogin={signedIn}
         showRegisterLink={!!inviteToken}
         onRegister={() => setAuthView('register')}
       />
@@ -632,7 +536,7 @@ export default function App() {
   if (authView === 'register') {
     return (
       <RegisterPage
-        onRegister={handleAuthSuccess}
+        onRegister={signedIn}
         inviteToken={inviteToken}
         showLoginLink={true}
         onLogin={() => setAuthView('login')}
@@ -693,100 +597,25 @@ export default function App() {
       )}
 
       {/* Sidebar — overlay on mobile, static on md+ */}
-      {sidebarOpen && (
-        <div
-          className="fixed inset-0 bg-black/50 z-20 md:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
-      <aside className={`
-        fixed inset-y-0 left-0 z-30 w-64 bg-gray-900 border-r border-gray-800 flex flex-col p-3 gap-1
-        transform transition-transform duration-200
-        ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
-        md:relative md:translate-x-0 md:w-56 md:z-auto md:transition-none
-      `}>
-        <div className="px-3 py-2">
-          <div className="text-base font-bold text-gray-50 tracking-wide">Queriocity</div>
-          <div className="text-xs text-gray-500">v{__APP_VERSION__}</div>
-        </div>
-        <button
-          onClick={() => { newChat(); setSidebarOpen(false) }}
-          className="w-full text-left px-3 py-2 rounded bg-blue-600 hover:bg-blue-500 text-sm font-medium"
-        >
-          + {t('chat.new')}
-        </button>
-        <button
-          onClick={() => { setView(v => v === 'chats' ? 'chat' : 'chats'); setSidebarOpen(false) }}
-          className={`w-full text-left px-3 py-2 rounded text-sm font-medium ${view === 'chats' ? 'bg-indigo-700 text-white' : 'text-indigo-400 hover:bg-gray-800'}`}
-        >
-          {t('nav.chats')} ({chatTotal || sessions.length})
-        </button>
-        <button
-          onClick={() => { setView(v => v === 'files' ? 'chat' : 'files'); setOpenResourceId(null); setResourceSeed(null); setSidebarOpen(false) }}
-          className={`w-full text-left px-3 py-2 rounded text-sm font-medium ${view === 'files' ? 'bg-indigo-700 text-white' : 'text-indigo-400 hover:bg-gray-800'}`}
-        >
-          {t('nav.resources')} ({files.length})
-        </button>
-        <button
-          onClick={() => { setView(v => v === 'spaces' ? 'chat' : 'spaces'); setCurrentSpaceId(null); setSidebarOpen(false) }}
-          className={`w-full text-left px-3 py-2 rounded text-sm font-medium ${view === 'spaces' ? 'bg-indigo-700 text-white' : 'text-indigo-400 hover:bg-gray-800'}`}
-        >
-          {t('nav.workspaces')} ({spaces.length})
-        </button>
-        <button
-          onClick={() => { setView(v => v === 'explore' ? 'chat' : 'explore'); setSidebarOpen(false) }}
-          className={`w-full text-left px-3 py-2 rounded text-sm font-medium ${view === 'explore' ? 'bg-indigo-700 text-white' : 'text-indigo-400 hover:bg-gray-800'}`}
-        >
-          {t('nav.explore')} ({tagCount})
-        </button>
-        <div className="border-t border-gray-800 my-1" />
-        <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-1">
-          {sessions.length > 5 && (
-            <input
-              type="search"
-              placeholder={t('chat.searchPlaceholder')}
-              value={sessionSearch}
-              onChange={e => setSessionSearch(e.target.value)}
-              className="mx-1 px-2 py-1 rounded bg-gray-800 border border-gray-700 text-xs text-gray-300 focus:outline-none focus:border-blue-500"
-            />
-          )}
-          {sessions.filter(s => !sessionSearch || s.title.toLowerCase().includes(sessionSearch.toLowerCase())).map(s => (
-            <div key={s.id} className={`flex items-center rounded hover:bg-gray-800 ${sessionId === s.id && view === 'chat' ? 'bg-gray-800' : ''}`}>
-              <button onClick={() => { loadSession(s.id, s.title); setSidebarOpen(false) }} className="flex-1 text-left px-3 py-2 text-sm truncate">
-                {s.title}
-              </button>
-              <RowAction
-                icon={<Trash2 size={14} />}
-                tone="danger"
-                persistent
-                label={t('chat.deleteNamed', { title: s.title })}
-                onClick={() => handleDeleteSession(s.id)}
-              />
-            </div>
-          ))}
-          <div ref={sidebarSentinelRef} className="py-1 text-center text-xs text-gray-600">
-            {chatLoadingMore ? t('common.loading') : ''}
-          </div>
-        </div>
-
-        {/* Bottom user area */}
-        <div className="border-t border-gray-800 pt-2 flex flex-col gap-1">
-          <button onClick={() => { openGuide(); setSidebarOpen(false) }} className="w-full text-left px-3 py-2 rounded text-xs text-gray-400 hover:bg-gray-800 flex items-center gap-1.5">
-            <BookOpen size={12} /> {t('nav.guide')}
-          </button>
-          <button onClick={() => { setShowSettings(true); setSidebarOpen(false) }} className="w-full text-left px-3 py-2 rounded text-xs text-gray-400 hover:bg-gray-800">
-            ⚙ {t('nav.settings')}
-          </button>
-          {currentUser?.role === 'admin' && (
-            <button onClick={() => { setShowAdmin(true); setSidebarOpen(false) }} className="w-full text-left px-3 py-2 rounded text-xs text-gray-400 hover:bg-gray-800">
-              ◈ {t('nav.admin')}
-            </button>
-          )}
-          <button onClick={handleLogout} className="w-full text-left px-3 py-2 rounded text-xs text-gray-500 hover:bg-gray-800 hover:text-red-400">
-            {t('nav.signOut')} — {currentUser?.name ?? currentUser?.email}
-          </button>
-        </div>
-      </aside>
+      <Sidebar
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        view={view}
+        onNavigate={toggleView}
+        counts={{ chats: history.total || sessions.length, resources: files.length, spaces: spaces.length, tags: tagCount }}
+        history={history}
+        filter={sessionSearch}
+        onFilterChange={setSessionSearch}
+        activeChatId={view === 'chat' ? sessionId : undefined}
+        onNewChat={() => newChat()}
+        onOpenChat={(id, title) => loadSession(id, title)}
+        onDeleteChat={id => handleDeleteSession(id)}
+        onGuide={() => openGuide()}
+        onSettings={() => setShowSettings(true)}
+        onAdmin={currentUser?.role === 'admin' ? () => setShowAdmin(true) : undefined}
+        onSignOut={handleLogout}
+        userLabel={currentUser?.name ?? currentUser?.email ?? ''}
+      />
 
       {/* Main */}
       <div className="flex flex-col flex-1 min-h-0 min-w-0 overflow-hidden">
@@ -804,72 +633,26 @@ export default function App() {
         {/* Every view: the chat moves, lock changes and space edits that fail are made from several. */}
         <ErrorBanner message={spaceError} onDismiss={() => setSpaceError(null)} className="mx-4 mt-3" />
         {view === 'chats' ? (
-          <div className="flex flex-col flex-1 min-h-0">
-          <ViewTabs
-            tabs={[
-              { id: 'chats' as const, label: `${t('nav.chats')} (${chatTotal || sessions.length})` },
-              { id: 'monitors' as const, label: `${t('nav.monitors')} (${monitorCount})` },
-            ]}
-            active={chatsTab}
-            onChange={setChatsTab}
+          <ChatsView
+            tab={chatsTab}
+            onTabChange={setChatsTab}
+            history={history}
+            chatCount={history.total || sessions.length}
+            monitorCount={monitorCount}
+            onMonitorCountChange={setMonitorCount}
+            spaces={spaces}
+            chatSpaces={chatSpaces}
+            spaceName={id => id ? spaces.find(sp => sp.id === id)?.name ?? null : null}
+            spaceIsLocked={spaceIsLocked}
+            isAdmin={currentUser?.role === 'admin'}
+            timezone={currentUser?.settings?.timezone ?? ''}
+            spacePickerOpen={spacePickerOpen}
+            onSpacePickerChange={setSpacePickerOpen}
+            onOpenChat={(id, title) => loadSession(id, title)}
+            onOpenMonitorRun={(id, title) => { loadSession(id, title, false, true); setSidebarOpen(false) }}
+            onAssignChat={handleAssignToSpace}
+            onDeleteChat={id => handleDeleteSession(id)}
           />
-          {chatsTab === 'monitors' ? (
-            <MonitorsView
-              spaces={spaces}
-              isAdmin={currentUser?.role === 'admin'}
-              timezone={currentUser?.settings?.timezone ?? ''}
-              onCountChange={setMonitorCount}
-              onOpenSession={(id, title) => { loadSession(id, title, false, true); setSidebarOpen(false) }}
-            />
-          ) : (
-          <div className="flex flex-col flex-1 overflow-y-auto p-6 gap-3" onClick={() => setSpacePickerOpen(null)}>
-            <div className="mb-2">
-            <SectionHeader title={t('nav.chats')} intro={t('chat.intro')} about={t('chat.aboutTitle')} topic="gettingStarted">
-              {!chatSearchResults && (
-                <div className="flex items-center gap-1 text-xs">
-                  <button onClick={() => setChatSort('updated')} className={chatSort === 'updated' ? 'text-indigo-400' : 'text-gray-500 hover:text-gray-300'}>{t('chat.sortActive')}</button>
-                  <span className="text-gray-700">·</span>
-                  <button onClick={() => setChatSort('created')} className={chatSort === 'created' ? 'text-indigo-400' : 'text-gray-500 hover:text-gray-300'}>{t('chat.sortCreated')}</button>
-                </div>
-              )}
-            </SectionHeader>
-            </div>
-            <input
-              type="search"
-              placeholder={t('chat.searchAllPlaceholder')}
-              value={chatSearch}
-              onChange={e => setChatSearch(e.target.value)}
-              className="px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-sm text-gray-300 focus:outline-none focus:border-indigo-500 mb-1"
-            />
-            {chatSearchResults !== null && (
-              <p className="text-xs text-gray-500 mb-1">
-                {chatSearchResults.length === 0 ? t('common.noResults') : t('common.results', { count: chatSearchResults.length })}
-              </p>
-            )}
-            {(chatSearchResults ?? sessions).length === 0 && !chatSearch ? (
-              <EmptyState>{t('chat.noneSaved')}</EmptyState>
-            ) : (chatSearchResults ?? sessions).map(s => (
-              <ChatRow
-                key={s.id}
-                chat={s}
-                spaceName={s.spaceId ? spaces.find(sp => sp.id === s.spaceId)?.name ?? null : null}
-                chatSpaces={chatSpaces}
-                spaceIsLocked={spaceIsLocked}
-                pickerOpen={spacePickerOpen === s.id}
-                onOpen={() => loadSession(s.id, s.title)}
-                onTogglePicker={() => setSpacePickerOpen(prev => prev === s.id ? null : s.id)}
-                onAssign={spaceId => handleAssignToSpace(s.id, spaceId)}
-                onDelete={() => handleDeleteSession(s.id)}
-              />
-            ))}
-            {!chatSearchResults && (
-              <div ref={sentinelRef} className="py-1 text-center text-xs text-gray-600">
-                {chatLoadingMore ? t('common.loading') : ''}
-              </div>
-            )}
-          </div>
-          )}
-          </div>
         ) : view === 'spaces' ? (
           currentSpace ? (
             <SpaceDetail
