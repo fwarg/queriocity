@@ -19,23 +19,18 @@ import { useConfirm } from './components/confirm.tsx'
 import { useGuide, useGuideNavigation } from './components/GuideView.tsx'
 import type { GuideTarget } from '@shared/guide/index.ts'
 import { splitGroupedCitations } from '@shared/citations.ts'
-import { EmptyState, ErrorBanner, PRIMARY_BTN, RowAction } from './components/ui.tsx'
+import { EmptyState, ErrorBanner, RowAction } from './components/ui.tsx'
 import { errorMessage } from './lib/errors.ts'
 import { SectionHeader } from './components/SectionHeader.tsx'
 import { SpacesView } from './components/SpacesView.tsx'
+import { SpaceDetail } from './components/SpaceDetail.tsx'
 import { ResourcesView } from './components/ResourcesView.tsx'
-import { TagResourcePicker } from './components/TagResourcePicker.tsx'
-import { byTypeThenTitle, ResourceTypeIcon } from './components/ResourceFilters.tsx'
 import {
-  fetchHistory, fetchSession, deleteSession, updateSessionTitle,
-  fetchFiles, getMe, hasUsers, logout, updateSettings,
-  fetchSpaces, createSpace, promoteCollection, updateSpace, deleteSpace, assignChatToSpace, recreateChatMemories,
-  fetchSpaceMemories, createSpaceMemory, updateSpaceMemory, deleteSpaceMemory, compactSpaceMemories, recreateAllSpaceMemories, clearSpaceMemories,
-  fetchChatIndexStatus, rebuildChatIndex, searchHistory,
-  fetchSpaceFiles, tagFileToSpace, untagFileFromSpace, transformSpace,
-  fetchMonitors, activeRecipe,
+  fetchHistory, fetchSession, deleteSession, updateSessionTitle, fetchFiles, getMe, hasUsers, logout,
+  updateSettings, fetchSpaces, createSpace, promoteCollection, updateSpace, deleteSpace, assignChatToSpace,
+  searchHistory, fetchMonitors, activeRecipe,
 } from './lib/api.ts'
-import type { AuthUser, Message, Resource, Space, SpaceKind, SpaceMemory, SpaceFile, CustomTemplate } from './lib/api.ts'
+import type { AuthUser, Message, Resource, Space, SpaceKind, CustomTemplate } from './lib/api.ts'
 import { useChat } from './hooks/useChat.ts'
 import { useModelPicker } from './hooks/useModelPicker.ts'
 import { useLang, useT } from './lib/i18n.tsx'
@@ -55,30 +50,6 @@ const NOTES_FIRST_KEY = 'queriocity.notesFirst'
 /** `locked`: its space is locked; `chatLocked`: the chat itself is, having read the confidential
  *  collections and resources named in `lockedBy`. */
 type Session = { id: string; title: string; spaceId: string | null; locked?: boolean; chatLocked?: boolean | number; lockedBy?: string[] }
-
-const MEMORY_HEADER_TOKENS = 30
-
-/** Per-memory content cap, mirrored from the server's zod `.max(600)` on the add/edit routes. */
-const MEMORY_CONTENT_MAXLEN = 600
-
-/** Bare hostname for a source chip; falls back to the raw string. */
-function hostnameOf(url: string): string {
-  try { return new URL(url).hostname.replace(/^www\./, '') } catch { return url }
-}
-
-/** How many memories will not fit the per-request budget. They are no longer *excluded* — the
- *  server picks the most relevant ones per query — so this is a "not all at once" hint, not a
- *  warning that the tail is unreachable. */
-function countOverflowMemories(memories: SpaceMemory[], budget: number): number {
-  let acc = MEMORY_HEADER_TOKENS
-  let injected = 0
-  for (const m of memories) {
-    acc += Math.ceil(m.content.length / 4)
-    if (acc > budget) break
-    injected++
-  }
-  return Math.max(0, memories.length - injected)
-}
 
 export default function App() {
   const t = useT()
@@ -132,32 +103,11 @@ export default function App() {
   const [chatSearchCursor, setChatSearchCursor] = useState(0)
   const chatSearchInputRef = useRef<HTMLInputElement>(null)
   const [currentSpaceId, setCurrentSpaceId] = useState<string | null>(null)
-  const [editingSpaceId, setEditingSpaceId] = useState<string | null>(null)
-  const [spaceDraft, setSpaceDraft] = useState('')
   const [spacePickerOpen, setSpacePickerOpen] = useState<string | null>(null)
-  const [spaceMemories, setSpaceMemories] = useState<SpaceMemory[]>([])
-  const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null)
-  const [memoryDraft, setMemoryDraft] = useState('')
-  const [newMemoryOpen, setNewMemoryOpen] = useState(false)
-  const [newMemoryDraft, setNewMemoryDraft] = useState('')
-  const [memorySectionOpen, setMemorySectionOpen] = useState(false)
-  const [taggedFiles, setTaggedFiles] = useState<SpaceFile[]>([])
-  const [chatIndexStatus, setChatIndexStatus] = useState<{ indexed: number; total: number } | null>(null)
-  const [rebuildingIndex, setRebuildingIndex] = useState(false)
-  const [rebuildIndexProgress, setRebuildIndexProgress] = useState<string | null>(null)
-  const [filesSectionOpen, setFilesSectionOpen] = useState(false)
-  const [allUserFiles, setAllUserFiles] = useState<Resource[]>([])
-  const [filePickerOpen, setFilePickerOpen] = useState(false)
   const [pinnedFileIds, setPinnedFileIds] = useState<string[]>([])
   const [pinnedMemoryIds, setPinnedMemoryIds] = useState<string[]>([])
   /** Chats belonging to the open space, fetched server-side. `null` while loading. */
   const [spaceChats, setSpaceChats] = useState<Session[] | null>(null)
-  const [transformStatus, setTransformStatus] = useState<'idle' | 'loading' | 'error'>('idle')
-  const [transformError, setTransformError] = useState('')
-  const [compacting, setCompacting] = useState(false)
-  const [compactResult, setCompactResult] = useState<string | null>(null)
-  const [recreating, setRecreating] = useState(false)
-  const [recreateProgress, setRecreateProgress] = useState<string | null>(null)
   const [view, setView] = useState<MainView>('chat')
   const [focusMessageId, setFocusMessageId] = useState<string | null>(null)
   // Monitors live as a tab of Chats: a monitor is a recurring chat, and its runs are chats.
@@ -214,7 +164,8 @@ export default function App() {
   // banner and the disabled controls, so a stale value degrades the UI, never the guarantee.
   const activeSpaceLocked = !!activeSpaceId && spaces.some(s => s.id === activeSpaceId && s.offline)
   const spaceIsLocked = (id: string | null | undefined) => !!id && spaces.some(sp => sp.id === id && sp.offline)
-  const activeSpaceIsCollection = spaces.some(sp => sp.id === currentSpaceId && sp.kind === 'collection')
+  const currentSpace = spaces.find(sp => sp.id === currentSpaceId)
+  const activeSpaceIsCollection = currentSpace?.kind === 'collection'
   // The chat's own lock, from having read a confidential collection or resource; and whether the next
   // message would lock it by picking a confidential collection. Advisory, as above.
   const activeSession = sessionId ? [...sessions, ...(spaceChats ?? [])].find(s => s.id === sessionId) : undefined
@@ -269,7 +220,6 @@ export default function App() {
       if (lockedBy) setSpaceChats(prev => prev && prev.map(s => s.id === id ? { ...s, ...lock } : s))
       if (activeSpaceId) {
         setSpaces(sps => sps.map(sp => sp.id === activeSpaceId ? { ...sp, chatCount: sp.chatCount + 1 } : sp))
-        fetchSpaceMemories(activeSpaceId).then(({ memories }) => setSpaceMemories(memories)).catch(() => {})
         if (activeSpaceId === currentSpaceId) {
           setSpaceChats(prev => prev && prev.some(s => s.id === id) ? prev : [{ id, title, spaceId: activeSpaceId }, ...(prev ?? [])])
         }
@@ -387,32 +337,14 @@ export default function App() {
   useEffect(() => {
     setPinnedFileIds([])
     setPinnedMemoryIds([])
-    if (currentSpaceId) fetchSpaceFiles(currentSpaceId).then(setTaggedFiles).catch(() => {})
-    else setTaggedFiles([])
-    // Chats, memories and the chat index describe conversations, which a collection has none of.
-    // `activeSpaceIsCollection` is a dependency so promotion fills them in without reopening.
-    if (currentSpaceId && !activeSpaceIsCollection) {
-      fetchSpaceMemories(currentSpaceId).then(({ memories }) => { setSpaceMemories(memories) }).catch(() => {})
-      fetchChatIndexStatus(currentSpaceId).then(setChatIndexStatus).catch(() => {})
-      // Fetched per space rather than filtered out of `sessions`: that array holds only the most
-      // recent page, so a space with no recently-updated chats would look empty.
-      setSpaceChats(null)
-      fetchHistory(chatSort, 0, currentSpaceId)
-        .then(({ items }) => setSpaceChats(items))
-        .catch(() => setSpaceChats([]))
-    } else {
-      setSpaceMemories([])
-      setChatIndexStatus(null)
-      setSpaceChats(null)
-      setPinnedFileIds([])
-      setPinnedMemoryIds([])
-    }
-    setMemorySectionOpen(false)
-    setFilesSectionOpen(false)
-    setFilePickerOpen(false)
-    setNewMemoryOpen(false)
-    setCompactResult(null)
-    setRecreateProgress(null)
+    // Fetched per space rather than filtered out of `sessions`: that array holds only the most recent
+    // page, so a space with no recently-updated chats would look empty. A collection holds no chats;
+    // `activeSpaceIsCollection` is a dependency so promotion fills the list in without reopening.
+    setSpaceChats(null)
+    if (!currentSpaceId || activeSpaceIsCollection) return
+    fetchHistory(chatSort, 0, currentSpaceId)
+      .then(({ items }) => setSpaceChats(items))
+      .catch(() => setSpaceChats([]))
   }, [currentSpaceId, activeSpaceIsCollection])
 
   useEffect(() => {
@@ -738,10 +670,7 @@ export default function App() {
     }).catch(() => {})
   }
 
-  function handleSpaceRenameSave(id: string) {
-    const name = spaceDraft.trim()
-    setEditingSpaceId(null)
-    if (!name) return
+  function handleSpaceRename(id: string, name: string) {
     setSpaces(prev => prev.map(s => s.id === id ? { ...s, name } : s))
     updateSpace(id, { name }).catch(() => {})
   }
@@ -787,59 +716,6 @@ export default function App() {
       }))
       setSpaceError(res.error ?? t('chat.moveFailed'))
     }).catch(() => {})
-  }
-
-  /** Reports a failed memory change and reloads the list, undoing any optimistic edit. */
-  function memoryFailed(err: unknown) {
-    setSpaceError(errorMessage(t, err, t('memory.saveFailed')))
-    if (currentSpaceId) fetchSpaceMemories(currentSpaceId).then(({ memories }) => setSpaceMemories(memories)).catch(() => {})
-  }
-
-  function handleCreateMemory() {
-    const content = newMemoryDraft.trim()
-    if (!content || !currentSpaceId) { setNewMemoryOpen(false); return }
-    createSpaceMemory(currentSpaceId, content).then(m => {
-      setSpaceMemories(prev => [m, ...prev])
-      setNewMemoryDraft('')
-      setNewMemoryOpen(false)
-    }).catch(memoryFailed)
-  }
-
-  function handleDeleteMemory(id: string) {
-    if (!currentSpaceId) return
-    deleteSpaceMemory(currentSpaceId, id).then(() => {
-      setSpaceMemories(prev => prev.filter(m => m.id !== id))
-    }).catch(memoryFailed)
-  }
-
-  function handleMemorySave(id: string) {
-    const content = memoryDraft.trim()
-    setEditingMemoryId(null)
-    if (!content || !currentSpaceId) return
-    setSpaceMemories(prev => prev.map(m => m.id === id ? { ...m, content } : m))
-    updateSpaceMemory(currentSpaceId, id, { content }).catch(memoryFailed)
-  }
-
-  function handleMemoryAlwaysKeep(id: string, alwaysKeep: boolean) {
-    if (!currentSpaceId) return
-    setSpaceMemories(prev => prev.map(m => m.id === id ? { ...m, alwaysKeep } : m))
-    updateSpaceMemory(currentSpaceId, id, { alwaysKeep }).catch(memoryFailed)
-  }
-
-  async function handleTransform() {
-    if (!currentSpaceId) return
-    setTransformStatus('loading')
-    setTransformError('')
-    try {
-      const fileIds = pinnedFileIds.length ? pinnedFileIds : undefined
-      await transformSpace(currentSpaceId, 'summarize', fileIds)
-      fetchSpaceMemories(currentSpaceId).then(({ memories }) => setSpaceMemories(memories)).catch(() => {})
-      setTransformStatus('idle')
-    } catch (err: unknown) {
-      setTransformStatus('error')
-      setTransformError(err instanceof Error ? err.message : t('space.transformFailed'))
-      setTimeout(() => setTransformStatus('idle'), 5000)
-    }
   }
 
   /** ResourcesView mutates the library; the list stays here because the space panel tags from it. */
@@ -1039,6 +915,8 @@ export default function App() {
           </button>
           <span className="font-semibold text-gray-50 text-sm">Queriocity</span>
         </div>
+        {/* Every view: the chat moves, lock changes and space edits that fail are made from several. */}
+        <ErrorBanner message={spaceError} onDismiss={() => setSpaceError(null)} className="mx-4 mt-3" />
         {view === 'chats' ? (
           <div className="flex flex-col flex-1 min-h-0">
           <ViewTabs
@@ -1107,454 +985,36 @@ export default function App() {
           )}
           </div>
         ) : view === 'spaces' ? (
-          currentSpaceId ? (
-            <div className="flex flex-col flex-1 overflow-y-auto p-6 gap-3">
-              <div className="flex items-center flex-wrap gap-3 mb-2">
-                <button
-                  onClick={() => setCurrentSpaceId(null)}
-                  className="text-gray-500 hover:text-gray-300 text-sm"
-                >
-                  ← {t('nav.workspaces')}
-                </button>
-                {editingSpaceId === currentSpaceId ? (
-                  <input
-                    autoFocus
-                    type="text"
-                    value={spaceDraft}
-                    onChange={e => setSpaceDraft(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') handleSpaceRenameSave(currentSpaceId); if (e.key === 'Escape') setEditingSpaceId(null) }}
-                    onBlur={() => handleSpaceRenameSave(currentSpaceId)}
-                    className="text-lg font-semibold bg-transparent border-b border-indigo-500 text-gray-100 focus:outline-none"
-                  />
-                ) : (
-                  <h2 className="text-lg font-semibold text-gray-200 flex items-center gap-2">
-                    {spaces.find(s => s.id === currentSpaceId)?.name ?? ''}
-                    <button
-                      onClick={() => { setSpaceDraft(spaces.find(s => s.id === currentSpaceId)?.name ?? ''); setEditingSpaceId(currentSpaceId) }}
-                      className="text-gray-600 hover:text-gray-400 text-sm"
-                      aria-label={t('space.rename')}
-                    >
-                      ✎
-                    </button>
-                  </h2>
-                )}
-                {activeSpaceIsCollection ? (
-                  <div className="ml-auto flex flex-wrap gap-2">
-                    <button
-                      onClick={() => analyzeCollection(currentSpaceId!)}
-                      title={t('collection.analyzeTitle')}
-                      className={PRIMARY_BTN}
-                    >
-                      {t('collection.analyze')}
-                    </button>
-                    <button
-                      onClick={() => createRecipeFromCollection(currentSpaceId!)}
-                      title={t('collection.recipeTitle')}
-                      className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-sm font-medium whitespace-nowrap"
-                    >
-                      {t('collection.recipe')}
-                    </button>
-                    <button
-                      onClick={() => compileIntoNotes(currentSpaceId!, true)}
-                      title={t('collection.compileTitle')}
-                      className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-sm font-medium whitespace-nowrap"
-                    >
-                      {t('collection.compile')}
-                    </button>
-                    <button
-                      onClick={handlePromoteCollection}
-                      title={t('collection.promoteTitle')}
-                      className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-sm font-medium whitespace-nowrap"
-                    >
-                      {t('collection.promote')}
-                    </button>
-                  </div>
-                ) : (
-                  <div className="ml-auto flex flex-wrap gap-2">
-                    {(spaces.find(s => s.id === currentSpaceId)?.resourceCount ?? 0) > 0 && (
-                      <button
-                        onClick={() => analyzeSpace(currentSpaceId!)}
-                        title={t('space.analyzeTitle')}
-                        className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-sm font-medium whitespace-nowrap"
-                      >
-                        {t('collection.analyze')}
-                      </button>
-                    )}
-                    {(spaces.find(s => s.id === currentSpaceId)?.resourceCount ?? 0) > 0 && (
-                      <button
-                        onClick={() => compileIntoNotes(currentSpaceId!, false)}
-                        title={t('collection.compileTitle')}
-                        className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-sm font-medium whitespace-nowrap"
-                      >
-                        {t('collection.compile')}
-                      </button>
-                    )}
-                    <button
-                      onClick={() => newChat(currentSpaceId!)}
-                      className={PRIMARY_BTN}
-                    >
-                      + {t('chat.new')}
-                    </button>
-                  </div>
-                )}
-              </div>
-              {/* Memory describes conversations, which a collection has none of — as do the chat
-                  index and the chat list further down, each guarded the same way because the
-                  resources section sits between them. Resources are the whole of a collection. */}
-              {!activeSpaceIsCollection && <>
-              {/* Memory section */}
-              <div className="border border-gray-800 rounded-lg p-3">
-                <div className="flex items-center justify-between">
-                  <button
-                    onClick={() => setMemorySectionOpen(o => !o)}
-                    className="flex items-center gap-1.5 text-sm font-medium text-gray-400 hover:text-gray-200"
-                  >
-                    <span>{memorySectionOpen ? '▾' : '▸'}</span>
-                    {t('memory.section', { count: spaceMemories.length })}
-                  </button>
-                  {memorySectionOpen && !newMemoryOpen && (
-                    <div className="flex items-center gap-2">
-                      {spaceMemories.length > 1 && (
-                        <button
-                          onClick={async () => {
-                            setCompacting(true)
-                            setCompactResult(null)
-                            try {
-                              const { before, after, compacted } = await compactSpaceMemories(currentSpaceId!)
-                              if (compacted) fetchSpaceMemories(currentSpaceId!).then(({ memories }) => { setSpaceMemories(memories) }).catch(() => {})
-                              setCompactResult(compacted ? `${before} → ${after}` : t('memory.alreadyCompact'))
-                              setTimeout(() => setCompactResult(null), 4000)
-                            } catch (err) {
-                              memoryFailed(err)
-                            } finally {
-                              setCompacting(false)
-                            }
-                          }}
-                          disabled={compacting}
-                          className="text-xs text-gray-500 hover:text-gray-300 disabled:opacity-50"
-                        >
-                          {compacting ? t('memory.compacting') : t('memory.compact')}
-                        </button>
-                      )}
-                      {compactResult && <span className="text-xs text-gray-500">{compactResult}</span>}
-                      <button
-                        onClick={async () => {
-                          if (!await confirm({ message: t('memory.recreateConfirm'), confirmLabel: t('memory.recreateAll'), danger: true })) return
-                          setRecreating(true)
-                          setRecreateProgress(null)
-                          setCompactResult(null)
-                          try {
-                            for await (const ev of recreateAllSpaceMemories(currentSpaceId!)) {
-                              if (ev.processing !== undefined) setRecreateProgress(`${ev.processing}/${ev.total}`)
-                              if (ev.done) {
-                                fetchSpaceMemories(currentSpaceId!).then(({ memories }) => { setSpaceMemories(memories) }).catch(() => {})
-                                if (ev.errors) {
-                                  setCompactResult(t('memory.recreateErrors', { count: ev.errors }))
-                                  setTimeout(() => setCompactResult(null), 6000)
-                                }
-                              }
-                            }
-                          } finally {
-                            setRecreating(false)
-                            setRecreateProgress(null)
-                          }
-                        }}
-                        disabled={compacting || recreating}
-                        className="text-xs text-gray-500 hover:text-gray-300 disabled:opacity-50"
-                      >
-                        {recreating ? (recreateProgress ? t('common.processing', { progress: recreateProgress }) : t('common.starting')) : t('memory.recreateAll')}
-                      </button>
-                      <button
-                        onClick={async () => {
-                          if (!await confirm({ message: t('memory.clearConfirm'), confirmLabel: t('common.clearAll'), danger: true })) return
-                          await clearSpaceMemories(currentSpaceId!).then(() => setSpaceMemories([]), memoryFailed)
-                        }}
-                        disabled={compacting || recreating}
-                        className="text-xs text-gray-500 hover:text-red-400 disabled:opacity-50"
-                      >
-                        {t('common.clearAll')}
-                      </button>
-                      <button onClick={() => setNewMemoryOpen(true)} className="text-xs text-blue-400 hover:text-blue-300">+ Add</button>
-                    </div>
-                  )}
-                </div>
-                {memorySectionOpen && (() => {
-                  const overflow = countOverflowMemories(spaceMemories, currentUser?.memoryTokenBudget ?? 1500)
-                  return overflow > 0 ? (
-                    <p className="text-xs text-gray-500 mt-1">
-                      {t('memory.overflow', { count: overflow })}
-                    </p>
-                  ) : null
-                })()}
-                {memorySectionOpen && newMemoryOpen && (
-                  <div className="mb-2">
-                    <textarea
-                      autoFocus
-                      rows={2}
-                      maxLength={MEMORY_CONTENT_MAXLEN}
-                      value={newMemoryDraft}
-                      onChange={e => setNewMemoryDraft(e.target.value)}
-                      onInput={e => { const el = e.currentTarget; el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px` }}
-                      onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleCreateMemory(); if (e.key === 'Escape') { setNewMemoryOpen(false); setNewMemoryDraft('') } }}
-                      onBlur={handleCreateMemory}
-                      placeholder={t('memory.addPlaceholder')}
-                      className="w-full px-2 py-1.5 rounded bg-gray-800 border border-gray-700 text-xs text-gray-200 focus:outline-none focus:border-blue-500 resize-none"
-                    />
-                  </div>
-                )}
-                {memorySectionOpen && spaceMemories.length === 0 && !newMemoryOpen ? (
-                  <p className="text-xs text-gray-600 mt-2">{t('memory.none')}</p>
-                ) : memorySectionOpen && spaceMemories.map(m => (
-                  <div key={m.id} className="flex items-start gap-1.5 group py-1">
-                    <input
-                      type="checkbox"
-                      checked={pinnedMemoryIds.includes(m.id)}
-                      onChange={() => setPinnedMemoryIds(prev => prev.includes(m.id) ? prev.filter(id => id !== m.id) : [...prev, m.id])}
-                      className="mt-0.5 shrink-0 accent-indigo-500 cursor-pointer"
-                      title={t('memory.pinTitle')}
-                    />
-                    <button
-                      onClick={() => handleMemoryAlwaysKeep(m.id, !m.alwaysKeep)}
-                      className={`shrink-0 text-xs leading-none mt-0.5 transition-colors ${m.alwaysKeep ? 'text-amber-400 hover:text-amber-300' : 'text-gray-700 hover:text-gray-500 md:opacity-0 md:group-hover:opacity-100'}`}
-                      title={m.alwaysKeep ? t('memory.alwaysKeptTitle') : t('memory.alwaysKeepTitle')}
-                      aria-label={m.alwaysKeep ? t('memory.alwaysKeepUnset') : t('memory.alwaysKeep')}
-                      aria-pressed={m.alwaysKeep}
-                    >
-                      {m.alwaysKeep ? '★' : '☆'}
-                    </button>
-                    {editingMemoryId === m.id ? (
-                      <textarea
-                        autoFocus
-                        rows={2}
-                        maxLength={MEMORY_CONTENT_MAXLEN}
-                        value={memoryDraft}
-                        onChange={e => setMemoryDraft(e.target.value)}
-                        onInput={e => { const el = e.currentTarget; el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px` }}
-                        onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleMemorySave(m.id); if (e.key === 'Escape') setEditingMemoryId(null) }}
-                        onBlur={() => handleMemorySave(m.id)}
-                        className="flex-1 px-2 py-0.5 rounded bg-gray-800 border border-gray-700 text-xs text-gray-200 focus:outline-none focus:border-blue-500 resize-none"
-                      />
-                    ) : (
-                      <div className="flex-1 min-w-0">
-                        <span
-                          onClick={() => { setMemoryDraft(m.content); setEditingMemoryId(m.id) }}
-                          className="block text-xs text-gray-300 cursor-pointer hover:text-gray-100 whitespace-pre-wrap break-words"
-                        >
-                          {m.content}
-                        </span>
-                        {((m.sources && m.sources.length > 0) || m.checkedAt != null) && (
-                          <div className="flex flex-wrap items-center gap-1 mt-0.5" title={m.sources && m.sources.length > 0 ? t('memory.sourcesTitle') : undefined}>
-                            {m.sources?.map(s => (
-                              <a
-                                key={s.url}
-                                href={s.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                title={s.title}
-                                className="max-w-[11rem] truncate rounded bg-gray-800 px-1 py-0.5 text-[10px] text-gray-400 hover:text-gray-200"
-                              >
-                                {hostnameOf(s.url)}
-                              </a>
-                            ))}
-                            {m.checkedAt != null && (
-                              <span
-                                className="text-[10px] text-gray-600"
-                                title={t('memory.checkedTitle', { date: new Date(m.checkedAt * 1000).toLocaleDateString(lang, { year: 'numeric', month: 'long', day: 'numeric' }) })}
-                              >
-                                {t('memory.checked', { date: new Date(m.checkedAt * 1000).toLocaleDateString(lang, { month: 'short', day: 'numeric' }) })}
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    <span className="text-[10px] text-gray-600 shrink-0 mt-0.5">{t(m.source === 'tool' ? 'memory.sourceAuto' : m.source === 'extraction' ? 'memory.sourceExtracted' : m.source === 'compact' ? 'memory.sourceCompact' : 'memory.sourceManual')}</span>
-                    {editingMemoryId !== m.id && (
-                      <button
-                        onClick={() => { setMemoryDraft(m.content); setEditingMemoryId(m.id) }}
-                        className="text-gray-700 hover:text-gray-400 text-xs shrink-0 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
-                        aria-label={t('common.edit')}
-                      >
-                        ✎
-                      </button>
-                    )}
-                    <RowAction
-                      icon={<Trash2 size={14} />}
-                      tone="danger"
-                      label={t('common.delete')}
-                      onClick={() => handleDeleteMemory(m.id)}
-                    />
-                  </div>
-                ))}
-              </div>
-
-              </>}
-
-              {/* Tagged files section */}
-              <div className="border border-gray-800 rounded-lg p-3">
-                <div className="flex items-center justify-between">
-                  <button
-                    onClick={() => setFilesSectionOpen(o => !o)}
-                    className="flex items-center gap-1.5 text-sm font-medium text-gray-400 hover:text-gray-200"
-                  >
-                    <span>{filesSectionOpen ? '▾' : '▸'}</span>
-                    Tagged resources ({taggedFiles.length})
-                  </button>
-                  {filesSectionOpen && (
-                    <button
-                      onClick={async () => {
-                        try {
-                          const all = await fetchFiles()
-                          setAllUserFiles(all.filter(f => !taggedFiles.some(t => t.id === f.id)))
-                          setFilePickerOpen(o => !o)
-                        } catch (err) {
-                          setSpaceError(errorMessage(t, err, t('space.resourcesFailed')))
-                        }
-                      }}
-                      className="text-xs text-gray-500 hover:text-gray-300"
-                    >
-                      + {t('files.tagResource')}
-                    </button>
-                  )}
-                </div>
-                {filesSectionOpen && filePickerOpen && allUserFiles.length > 0 && (
-                  <TagResourcePicker
-                    resources={allUserFiles}
-                    onTag={async id => {
-                      try { await tagFileToSpace(currentSpaceId!, id) } catch (err) {
-                        setSpaceError(errorMessage(t, err, t('space.resourcesFailed')))
-                        return
-                      }
-                      setAllUserFiles(prev => prev.filter(f => f.id !== id))
-                      fetchSpaceFiles(currentSpaceId!).then(setTaggedFiles).catch(() => {})
-                      fetchSpaces().then(setSpaces).catch(() => {})
-                    }}
-                  />
-                )}
-                {filesSectionOpen && filePickerOpen && allUserFiles.length === 0 && (
-                  <p className="text-xs text-gray-600 mt-2">{t('files.noneUntagged')}</p>
-                )}
-                {filesSectionOpen && taggedFiles.length === 0 && !filePickerOpen && (
-                  <p className="text-xs text-gray-600 mt-2">{t('files.noneTagged')}</p>
-                )}
-                {filesSectionOpen && [...taggedFiles].sort(byTypeThenTitle).map(f => (
-                  <div key={f.id} className="flex items-center gap-1.5 justify-between group py-1">
-                    {/* Pins narrow a space's chats to these resources; a collection has no chats. */}
-                    {!activeSpaceIsCollection && (
-                      <input
-                        type="checkbox"
-                        checked={pinnedFileIds.includes(f.id)}
-                        onChange={() => setPinnedFileIds(prev => prev.includes(f.id) ? prev.filter(id => id !== f.id) : [...prev, f.id])}
-                        className="shrink-0 accent-indigo-500 cursor-pointer"
-                        title={t('files.pinTitle')}
-                      />
-                    )}
-                    <ResourceTypeIcon resource={f} size={12} />
-                    <button
-                      onClick={() => openResource(f.id)}
-                      title={t('files.openResource')}
-                      className="text-left text-xs text-gray-300 hover:text-gray-50 hover:underline truncate flex-1 min-w-0"
-                    >
-                      {f.filename}
-                    </button>
-                    <RowAction
-                      icon={<X size={14} />}
-                      tone="danger"
-                      label={t('resource.untagFrom', { name: f.filename })}
-                      onClick={async () => {
-                        try { await untagFileFromSpace(currentSpaceId!, f.id) } catch (err) {
-                          setSpaceError(errorMessage(t, err, t('space.resourcesFailed')))
-                          return
-                        }
-                        fetchSpaces().then(setSpaces).catch(() => {})
-                        setPinnedFileIds(prev => prev.filter(id => id !== f.id))
-                        setTaggedFiles(prev => prev.filter(t => t.id !== f.id))
-                      }}
-                    />
-                  </div>
-                ))}
-                {/* The summary is saved as space memory, which only a space's chats read. */}
-                {filesSectionOpen && taggedFiles.length > 0 && !activeSpaceIsCollection && (
-                  <div className="mt-2 flex items-center gap-2">
-                    <button
-                      onClick={handleTransform}
-                      disabled={transformStatus === 'loading'}
-                      className="text-xs px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-50"
-                      title={pinnedFileIds.length ? t('files.summarizeSelectedTitle') : t('files.summarizeAllTitle')}
-                    >
-                      {transformStatus === 'loading' ? t('files.summarizing') : `⟳ ${t('files.summarize')}`}
-                    </button>
-                    {transformStatus === 'error' && <span className="text-xs text-red-400">{transformError}</span>}
-                  </div>
-                )}
-              </div>
-
-              {!activeSpaceIsCollection && chatIndexStatus !== null && (
-                <div className="border border-gray-800 rounded-lg p-3 flex items-center justify-between gap-2">
-                  <span className="text-xs text-gray-500">
-                    {t('space.chatIndex', { indexed: chatIndexStatus.indexed, total: chatIndexStatus.total })}
-                    {chatIndexStatus.indexed < chatIndexStatus.total && (
-                      <span className="text-amber-500/80"> ⚠</span>
-                    )}
-                  </span>
-                  <button
-                    onClick={async () => {
-                      setRebuildingIndex(true)
-                      setRebuildIndexProgress(null)
-                      try {
-                        for await (const ev of rebuildChatIndex(currentSpaceId!)) {
-                          if (ev.processing !== undefined) setRebuildIndexProgress(`${ev.processing}/${ev.total}`)
-                          if (ev.done) fetchChatIndexStatus(currentSpaceId!).then(setChatIndexStatus).catch(() => {})
-                        }
-                      } finally {
-                        setRebuildingIndex(false)
-                        setRebuildIndexProgress(null)
-                      }
-                    }}
-                    disabled={rebuildingIndex}
-                    className="text-xs text-gray-500 hover:text-gray-300 disabled:opacity-50 whitespace-nowrap"
-                  >
-                    {rebuildingIndex
-                      ? (rebuildIndexProgress ? t('space.indexing', { progress: rebuildIndexProgress }) : t('common.starting'))
-                      : t('space.rebuildIndex')}
-                  </button>
-                </div>
-              )}
-
-              {!activeSpaceIsCollection && (() => {
-                const loaded = spaceChats ?? []
-                const filtered = loaded.filter(s => !sessionSearch || s.title.toLowerCase().includes(sessionSearch.toLowerCase()))
-                return (
-                  <>
-                    <input
-                      type="search"
-                      placeholder={t('chat.searchPlaceholder')}
-                      value={sessionSearch}
-                      onChange={e => setSessionSearch(e.target.value)}
-                      className="px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-300 focus:outline-none focus:border-blue-500"
-                    />
-                    {spaceChats === null ? (
-                      <EmptyState>{t('chat.loading')}</EmptyState>
-                    ) : filtered.length === 0 ? (
-                      <EmptyState>{t(loaded.length === 0 ? 'chat.noneInSpace' : 'chat.noneMatching')}</EmptyState>
-                    ) : filtered.map(s => (
-                      <ChatRow
-                        key={s.id}
-                        chat={s}
-                        spaceName={spaces.find(sp => sp.id === s.spaceId)?.name ?? null}
-                        chatSpaces={chatSpaces}
-                        spaceIsLocked={spaceIsLocked}
-                        pickerOpen={spacePickerOpen === s.id}
-                        onOpen={() => loadSession(s.id, s.title)}
-                        onTogglePicker={() => setSpacePickerOpen(prev => prev === s.id ? null : s.id)}
-                        onAssign={spaceId => handleAssignToSpace(s.id, spaceId)}
-                        onRecreateMemories={() => { recreateChatMemories(s.id).catch(() => {}); setSpacePickerOpen(null) }}
-                      />
-                    ))}
-                  </>
-                )
-              })()}
-            </div>
+          currentSpace ? (
+            <SpaceDetail
+              key={`${currentSpace.id}:${currentSpace.kind}`}
+              space={currentSpace}
+              chatSpaces={chatSpaces}
+              spaceName={id => spaces.find(sp => sp.id === id)?.name ?? null}
+              spaceIsLocked={spaceIsLocked}
+              memoryTokenBudget={currentUser?.memoryTokenBudget ?? 1500}
+              chats={spaceChats}
+              sessionSearch={sessionSearch}
+              onSessionSearchChange={setSessionSearch}
+              spacePickerOpen={spacePickerOpen}
+              onSpacePickerChange={setSpacePickerOpen}
+              pinnedFileIds={pinnedFileIds}
+              setPinnedFileIds={setPinnedFileIds}
+              pinnedMemoryIds={pinnedMemoryIds}
+              setPinnedMemoryIds={setPinnedMemoryIds}
+              onBack={() => setCurrentSpaceId(null)}
+              onRename={name => handleSpaceRename(currentSpace.id, name)}
+              onSpacesChanged={() => { fetchSpaces().then(setSpaces).catch(() => {}) }}
+              onError={setSpaceError}
+              onAnalyze={() => currentSpace.kind === 'collection' ? analyzeCollection(currentSpace.id) : analyzeSpace(currentSpace.id)}
+              onCreateRecipe={() => createRecipeFromCollection(currentSpace.id)}
+              onCompileNotes={() => compileIntoNotes(currentSpace.id, currentSpace.kind === 'collection')}
+              onPromote={handlePromoteCollection}
+              onNewChat={() => newChat(currentSpace.id)}
+              onOpenChat={(id, title) => loadSession(id, title)}
+              onAssignChat={handleAssignToSpace}
+              onOpenResource={openResource}
+            />
           ) : (
             <SpacesView
               spaces={spaces}
@@ -1728,7 +1188,6 @@ export default function App() {
                 </span>
               </div>
             )}
-            <ErrorBanner message={spaceError} onDismiss={() => setSpaceError(null)} className="mx-4 mt-3" />
             {messages.length === 0 && !streaming ? (
               <div className="flex flex-col items-center justify-center flex-1 gap-3 text-gray-500 px-4">
                 <img src="/logo.webp" alt="Queriocity" className="w-24 sm:w-32 md:w-40 h-auto" />
