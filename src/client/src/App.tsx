@@ -929,7 +929,9 @@ export default function App() {
               const pickerId = `heading-${sessionId}`
               return (
                 <ChatHeader
-                  key={sessionId}
+                  // Prefixed: ChatInput, a sibling, is keyed by the bare session id, and two siblings
+                  // with one key leave React unable to remove the old header.
+                  key={`header-${sessionId}`}
                   title={sessions.find(s => s.id === sessionId)?.title ?? ''}
                   spaceId={spaceId}
                   spaceName={spaceId ? spaces.find(sp => sp.id === spaceId)?.name ?? null : null}
