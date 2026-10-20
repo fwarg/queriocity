@@ -16,7 +16,7 @@ export const historyRouter = new Hono<AppEnv>()
 historyRouter.use('*', authMiddleware)
 
 historyRouter.get('/', async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const limit = Math.min(parseInt(c.req.query('limit') ?? '50'), 200)
   const offset = parseInt(c.req.query('offset') ?? '0')
   const sort = c.req.query('sort') === 'created' ? 'created' : 'updated'
@@ -51,10 +51,11 @@ historyRouter.get('/', async (c) => {
 })
 
 historyRouter.get('/search', async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const q = (c.req.query('q') ?? '').trim()
   if (!q) return c.json([])
-  const like = `%${q}%`
+  // Escaped so a typed % or _ matches itself instead of acting as a wildcard.
+  const like = `%${q.replace(/[\\%_]/g, ch => `\\${ch}`)}%`
   // Aliased to camelCase: this is the one endpoint built from raw SQL rather than drizzle, and
   // returning `space_id` meant every searched chat reached the client with `spaceId` undefined —
   // no padlock, unlocked spaces offered as move targets for a locked chat, and the next message
@@ -64,21 +65,21 @@ historyRouter.get('/search', async (c) => {
            cs.created_at AS createdAt, cs.updated_at AS updatedAt
     FROM chat_sessions cs
     LEFT JOIN monitor_runs mr ON mr.session_id = cs.id
-    WHERE cs.user_id = ? AND (mr.id IS NULL OR cs.graduated = 1) AND cs.title LIKE ? COLLATE NOCASE
+    WHERE cs.user_id = ? AND (mr.id IS NULL OR cs.graduated = 1) AND cs.title LIKE ? ESCAPE '\\' COLLATE NOCASE
     UNION
     SELECT DISTINCT cs.id, cs.title, cs.user_id AS userId, cs.space_id AS spaceId, cs.locked AS chatLocked, cs.locked_by AS lockedBy,
            cs.created_at AS createdAt, cs.updated_at AS updatedAt
     FROM chat_sessions cs
     JOIN messages m ON m.session_id = cs.id
     LEFT JOIN monitor_runs mr ON mr.session_id = cs.id
-    WHERE cs.user_id = ? AND (mr.id IS NULL OR cs.graduated = 1) AND m.content LIKE ? COLLATE NOCASE
+    WHERE cs.user_id = ? AND (mr.id IS NULL OR cs.graduated = 1) AND m.content LIKE ? ESCAPE '\\' COLLATE NOCASE
     ORDER BY updatedAt DESC LIMIT 100
   `).all(userId, like, userId, like)
   return c.json((results as Array<{ lockedBy: string | null }>).map(withLockReasons))
 })
 
 historyRouter.get('/:id', async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const id = c.req.param('id')
 
   const session = await db.select().from(chatSessions)
@@ -100,7 +101,7 @@ historyRouter.get('/:id', async (c) => {
 
 /** Pins or unpins one message: a pinned message is kept in full when the chat outgrows the context. */
 historyRouter.patch('/:id/messages/:mid', zValidator('json', z.object({ pinned: z.boolean() })), async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const id = c.req.param('id')
   const session = await db.select({ id: chatSessions.id }).from(chatSessions)
     .where(and(eq(chatSessions.id, id), eq(chatSessions.userId, userId))).get()
@@ -115,7 +116,7 @@ historyRouter.patch('/:id/messages/:mid', zValidator('json', z.object({ pinned: 
 /** Deletes one turn of a chat (a question and its answer), along with its chat-RAG chunks and
  *  generated images. Memories already extracted from it stay; they are managed separately. */
 historyRouter.delete('/:id/messages', zValidator('json', z.object({ ids: z.array(z.string()).min(1).max(2) })), async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const id = c.req.param('id')
   const session = await db.select({ id: chatSessions.id }).from(chatSessions)
     .where(and(eq(chatSessions.id, id), eq(chatSessions.userId, userId))).get()
@@ -136,7 +137,7 @@ historyRouter.patch('/:id', zValidator('json', z.object({
   title: z.string().min(1).max(200).optional(),
   spaceId: z.string().uuid().nullable().optional(),
 })), async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const id = c.req.param('id')
   const body = c.req.valid('json')
 
@@ -194,7 +195,7 @@ historyRouter.patch('/:id', zValidator('json', z.object({
 })
 
 historyRouter.post('/:id/recreate-memories', async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const id = c.req.param('id')
 
   const session = await db.select().from(chatSessions)
@@ -217,7 +218,7 @@ historyRouter.post('/:id/recreate-memories', async (c) => {
 })
 
 historyRouter.delete('/:id', async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const id = c.req.param('id')
 
   const session = await db.select().from(chatSessions)

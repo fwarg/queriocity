@@ -90,3 +90,19 @@ describe('POST /auth/register', () => {
     expect(statuses.filter(s => s === 403)).toHaveLength(2)
   })
 })
+
+describe('POST /auth/logout', () => {
+  test('revokes the token, so a copy of the cookie stops working', async () => {
+    const login = await app.request('/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: TAKEN, password: PASSWORD }),
+    })
+    const cookie = login.headers.get('set-cookie')!.split(';')[0]
+    expect((await app.request('/auth/me', { headers: { cookie } })).status).toBe(200)
+
+    await app.request('/auth/logout', { method: 'POST', headers: { cookie } })
+
+    expect((await app.request('/auth/me', { headers: { cookie } })).status).toBe(401)
+  })
+})

@@ -476,7 +476,7 @@ export async function updateSpace(
 /** Deleting a locked space deletes its chats too — the server does this so they are not orphaned
  *  into unlocked ones. `deletedChats` is what actually went, for the confirmation message. */
 export async function deleteSpace(id: string): Promise<{ deletedChats: number }> {
-  const res = await fetch(`${BASE}/spaces/${id}`, { method: 'DELETE' })
+  const res = await send(`${BASE}/spaces/${id}`, 'Could not delete the space', { method: 'DELETE' })
   const body = await res.json().catch(() => ({})) as { deletedChats?: number }
   return { deletedChats: body.deletedChats ?? 0 }
 }

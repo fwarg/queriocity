@@ -116,7 +116,7 @@ const RELATED_INPUT_CHARS = 1500
 /** The small model's title for a new chat whose first title was weak, asked for by the client once
  *  the answer is shown — so the call never holds up the answer. Returns the title as it now stands. */
 chatRouter.post('/:sessionId/title', rateLimitByUser(suggestLimiter, 'title'), async (c) => {
-  const title = await refineChatTitle(c.req.param('sessionId'), c.get('userId') as string)
+  const title = await refineChatTitle(c.req.param('sessionId'), c.get('userId'))
   return title === null ? c.json({ error: 'Not found' }, 404) : c.json({ title })
 })
 
@@ -156,7 +156,7 @@ Return ONLY a raw JSON array of 3 strings, no markdown, no explanation.`,
  *  event the client saw and then following along live. Returns 404 once the run has expired,
  *  which the client treats as "give up" rather than an error. */
 chatRouter.get('/resume/:sessionId', async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const sessionId = c.req.param('sessionId')
   const run = getRun(sessionId)
   if (!run || run.userId !== userId) return c.json({ error: 'No resumable run' }, 404)
@@ -196,10 +196,10 @@ chatRouter.get('/resume/:sessionId', async (c) => {
 
 /** The extra models this user may pick for a message now (none when picking is not enabled for
  *  them), and every model's context size for the meter. */
-chatRouter.get('/models', async (c) => c.json(await modelChoices(c.get('userId') as string)))
+chatRouter.get('/models', async (c) => c.json(await modelChoices(c.get('userId'))))
 
 chatRouter.post('/:sessionId/stop', async (c) => {
-  const stopped = stopRun(c.req.param('sessionId'), c.get('userId') as string)
+  const stopped = stopRun(c.req.param('sessionId'), c.get('userId'))
   return c.json({ stopped })
 })
 
@@ -212,12 +212,12 @@ chatRouter.post('/:sessionId/approve', zValidator('json', z.object({
 })), async (c) => {
   const { id, allow } = c.req.valid('json')
   const run = getRun(c.req.param('sessionId'))
-  if (!run || run.userId !== (c.get('userId') as string)) return c.json({ settled: false }, 404)
+  if (!run || run.userId !== (c.get('userId'))) return c.json({ settled: false }, 404)
   return c.json({ settled: settleApproval(run, id, allow) })
 })
 
 chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', chatSchema), async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const { sessionId, spaceId, messages: requestMsgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, collectionIds, ephemeral, regenerate, notesFirst, modelId, collectionMode = 'auto', attachedFileIds, exploreWeb, exploreNotes, recipe, documentIds: requestedDocumentIds } = c.req.valid('json')
   const sid = sessionId ?? randomUUID()
   const msgs = requestMsgs.map(({ role, content }) => ({ role, content }))

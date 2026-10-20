@@ -60,7 +60,7 @@ async function readUpload(c: Context<AppEnv>): Promise<File | Response> {
 }
 
 filesRouter.post('/upload', ...uploadGuard('upload'), async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const file = await readUpload(c)
   if (file instanceof Response) return file
 
@@ -78,7 +78,7 @@ filesRouter.post('/upload', ...uploadGuard('upload'), async (c) => {
 })
 
 filesRouter.post('/ingest-url', rateLimitByUser(ingestLimiter, 'ingest-url'), async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const body = await c.req.json() as { url?: string }
   const url = body.url?.trim()
   if (!url) return c.json({ error: 'No URL provided' }, 400)
@@ -119,7 +119,7 @@ filesRouter.post('/extract', ...uploadGuard('extract'), async (c) => {
 })
 
 filesRouter.get('/', async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const files = await db.select({
     id: uploadedFiles.id,
     filename: uploadedFiles.filename,
@@ -211,7 +211,7 @@ filesRouter.post('/notes', zValidator('json', noteBody.partial({ tags: true, rev
   originSessionId: z.string().optional(),
   originMessageId: z.string().optional(),
 })), async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   try {
     const id = await saveNote(userId, c.req.valid('json'))
     return c.json({ id }, 201)
@@ -221,7 +221,7 @@ filesRouter.post('/notes', zValidator('json', noteBody.partial({ tags: true, rev
 })
 
 filesRouter.patch('/notes/:id', zValidator('json', noteBody.partial().extend({ author: z.enum(['human', 'model']).optional() })), async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const id = c.req.param('id')
   const patch = c.req.valid('json')
 
@@ -255,7 +255,7 @@ filesRouter.get('/topics', zValidator('query', z.object({
   scope: z.enum(['notes', 'all']).optional(),
 })), async (c) => {
   const { threshold, scope } = c.req.valid('query')
-  return c.json(topicMap(c.get('userId') as string, threshold ?? await topicMinSimilarity(), { includeFiles: scope === 'all' }))
+  return c.json(topicMap(c.get('userId'), threshold ?? await topicMinSimilarity(), { includeFiles: scope === 'all' }))
 })
 
 /** The note map: every note (or one topic's) with lines to its most similar notes and its links. */
@@ -265,7 +265,7 @@ filesRouter.get('/topics/notes', zValidator('query', z.object({
   topic: z.string().max(64).optional(),
 })), async (c) => {
   const { threshold, scope, topic } = c.req.valid('query')
-  const map = noteMap(c.get('userId') as string, threshold ?? await topicMinSimilarity(), { includeFiles: scope === 'all', topic })
+  const map = noteMap(c.get('userId'), threshold ?? await topicMinSimilarity(), { includeFiles: scope === 'all', topic })
   // The topic is gone when the notes changed since the map was drawn; the client reloads it.
   return map ? c.json(map) : c.json({ error: 'Not found' }, 404)
 })
@@ -273,7 +273,7 @@ filesRouter.get('/topics/notes', zValidator('query', z.object({
 /** Names one topic (cached by its members). */
 filesRouter.post('/topics/name', zValidator('json', z.object({ ids: z.array(z.string()).min(1).max(MAX_TOPIC_RESOURCES) })), async (c) => {
   try {
-    return c.json(await nameTopic(c.get('userId') as string, c.req.valid('json').ids))
+    return c.json(await nameTopic(c.get('userId'), c.req.valid('json').ids))
   } catch {
     return c.json({ error: 'Not found' }, 404)
   }
@@ -285,7 +285,7 @@ filesRouter.post('/tags/bulk', zValidator('json', z.object({
   ids: z.array(z.string()).min(1).max(MAX_TOPIC_RESOURCES),
 })), (c) => {
   const { path, ids } = c.req.valid('json')
-  return c.json({ tagged: addTagToResources(c.get('userId') as string, ids, path) })
+  return c.json({ tagged: addTagToResources(c.get('userId'), ids, path) })
 })
 
 /** The caller's library as an Obsidian vault (zip of markdown files), optionally with chats and
@@ -293,7 +293,7 @@ filesRouter.post('/tags/bulk', zValidator('json', z.object({
 filesRouter.get('/export/obsidian', async (c) => {
   // `?full=1` adds chats and generated images; `?okf=1` writes the OKF flavour.
   const okf = c.req.query('okf') === '1'
-  const zip = await exportVault(c.get('userId') as string, { full: c.req.query('full') === '1', okf })
+  const zip = await exportVault(c.get('userId'), { full: c.req.query('full') === '1', okf })
   const stamp = new Date().toISOString().slice(0, 10)
   return c.body(zip.buffer as ArrayBuffer, 200, {
     'Content-Type': 'application/zip',
@@ -308,15 +308,15 @@ filesRouter.get('/graph', zValidator('query', z.object({
   chats: z.enum(['0', '1']).optional(),
 })), (c) => {
   const { tag, space, chats } = c.req.valid('query')
-  return c.json(globalGraph(c.get('userId') as string, { tag: tag || undefined, spaceId: space || undefined, includeChats: chats === '1' }))
+  return c.json(globalGraph(c.get('userId'), { tag: tag || undefined, spaceId: space || undefined, includeChats: chats === '1' }))
 })
 
-filesRouter.get('/tags', (c) => c.json(listTags(c.get('userId') as string)))
+filesRouter.get('/tags', (c) => c.json(listTags(c.get('userId'))))
 
 /** Proposed renames that tidy the tag tree; nothing changes until each is applied as a rename. */
 filesRouter.post('/tags/tidy', async (c) => {
   try {
-    return c.json({ changes: await proposeTagTidy(c.get('userId') as string) })
+    return c.json({ changes: await proposeTagTidy(c.get('userId')) })
   } catch (e) {
     console.warn(`  [tags] tidy failed: ${e instanceof Error ? e.message : e}`)
     return c.json({ error: 'Could not propose tag changes' }, 502)
@@ -330,7 +330,7 @@ filesRouter.patch('/tags', zValidator('json', z.object({
 })), (c) => {
   const { from, to } = c.req.valid('json')
   try {
-    return c.json({ moved: renameTag(c.get('userId') as string, from, to) })
+    return c.json({ moved: renameTag(c.get('userId'), from, to) })
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : 'Could not rename tag' }, 400)
   }
@@ -338,11 +338,11 @@ filesRouter.patch('/tags', zValidator('json', z.object({
 
 /** Remove a tag and everything under it from every resource. */
 filesRouter.delete('/tags', zValidator('query', z.object({ path: z.string().min(1).max(MAX_TAG_CHARS) })), (c) =>
-  c.json({ deleted: deleteTag(c.get('userId') as string, c.req.valid('query').path) }))
+  c.json({ deleted: deleteTag(c.get('userId'), c.req.valid('query').path) }))
 
 /** Replace a resource's tags — any kind of resource, not only notes. */
 filesRouter.put('/:id/tags', zValidator('json', z.object({ tags: tagList })), async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const resource = await ownedResource(c.req.param('id'), userId)
   if (!resource) return c.json({ error: 'Not found' }, 404)
   return c.json({ tags: setResourceTags(userId, resource.id, c.req.valid('json').tags) })
@@ -350,7 +350,7 @@ filesRouter.put('/:id/tags', zValidator('json', z.object({ tags: tagList })), as
 
 /** Resources similar in content, from the stored chunk vectors — suggestions, never applied. */
 filesRouter.get('/:id/related', async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const resource = await ownedResource(c.req.param('id'), userId)
   if (!resource) return c.json({ error: 'Not found' }, 404)
   const [minSimilarity, minRelevance] = await Promise.all([relatedMinSimilarity(), relatedMinRelevance()])
@@ -366,7 +366,7 @@ filesRouter.post('/split', zValidator('json', z.object({
 })), async (c) => {
   const { title, body, hint } = c.req.valid('json')
   try {
-    return c.json(await proposeSplit(title, body, hint, listTags(c.get('userId') as string)))
+    return c.json(await proposeSplit(title, body, hint, listTags(c.get('userId'))))
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : 'Could not split' }, 422)
   }
@@ -374,7 +374,7 @@ filesRouter.post('/split', zValidator('json', z.object({
 
 /** Links the small model proposes for a note, picked from its similar resources. */
 filesRouter.get('/:id/link-suggestions', async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const [minSimilarity, minRelevance] = await Promise.all([relatedMinSimilarity(), relatedMinRelevance()])
   try {
     return c.json(await suggestLinks(userId, c.req.param('id'), { minSimilarity, minRelevance }))
@@ -391,7 +391,7 @@ filesRouter.post('/:id/link-suggestions/accept', zValidator('json', z.object({
 })), async (c) => {
   const { targetId, phrase, heading } = c.req.valid('json')
   try {
-    await acceptLink(c.get('userId') as string, c.req.param('id'), targetId, phrase, heading)
+    await acceptLink(c.get('userId'), c.req.param('id'), targetId, phrase, heading)
     return c.json({ ok: true })
   } catch {
     return c.json({ error: 'Not found' }, 404)
@@ -401,7 +401,7 @@ filesRouter.post('/:id/link-suggestions/accept', zValidator('json', z.object({
 /** Turns a suggestion down for good. */
 filesRouter.post('/:id/link-suggestions/dismiss', zValidator('json', z.object({ targetId: z.string() })), (c) => {
   try {
-    dismissLink(c.get('userId') as string, c.req.param('id'), c.req.valid('json').targetId)
+    dismissLink(c.get('userId'), c.req.param('id'), c.req.valid('json').targetId)
     return c.json({ ok: true })
   } catch {
     return c.json({ error: 'Not found' }, 404)
@@ -410,7 +410,7 @@ filesRouter.post('/:id/link-suggestions/dismiss', zValidator('json', z.object({ 
 
 /** The resource's explicit neighbourhood — links, derivations, chat of origin — to 1 or 2 hops. */
 filesRouter.get('/:id/graph', zValidator('query', z.object({ depth: z.coerce.number().int().min(1).max(2).default(1) })), async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const resource = await ownedResource(c.req.param('id'), userId)
   if (!resource) return c.json({ error: 'Not found' }, 404)
   return c.json(localGraph(userId, resource.id, c.req.valid('query').depth))
@@ -423,7 +423,7 @@ filesRouter.post('/:id/see-also', zValidator('json', z.object({
 })), async (c) => {
   const { targetId, heading } = c.req.valid('json')
   try {
-    await addSeeAlso(c.get('userId') as string, c.req.param('id'), targetId, heading)
+    await addSeeAlso(c.get('userId'), c.req.param('id'), targetId, heading)
     return c.json({ ok: true })
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : 'Could not add the link' }, 404)
@@ -443,7 +443,7 @@ filesRouter.patch('/:id', zValidator('json', z.object({
   // then writes an empty title — a resource with no name anywhere in the list or its citations.
   filename: z.string().trim().min(1).max(200),
 })), async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const id = c.req.param('id')
   const { filename } = c.req.valid('json')
 
@@ -463,7 +463,7 @@ function confidentiality(own: boolean, tagged: Array<{ name: string; kind: strin
 
 /** Marks a resource confidential or not. Removable at any time: chats that read it are locked and stay so. */
 filesRouter.patch('/:id/confidential', zValidator('json', z.object({ confidential: z.boolean() })), async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const resource = await ownedResource(c.req.param('id'), userId)
   if (!resource) return c.json({ error: 'Not found' }, 404)
   const { confidential } = c.req.valid('json')
@@ -473,7 +473,7 @@ filesRouter.patch('/:id/confidential', zValidator('json', z.object({ confidentia
 })
 
 filesRouter.get('/:id', async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const resource = await ownedResource(c.req.param('id'), userId)
   if (!resource) return c.json({ error: 'Not found' }, 404)
 
@@ -540,13 +540,13 @@ filesRouter.get('/:id', async (c) => {
 
 /** A note's earlier versions: what an agent replaced, and what a restore replaced. */
 filesRouter.get('/:id/revisions', async (c) => {
-  const resource = await ownedResource(c.req.param('id'), c.get('userId') as string)
+  const resource = await ownedResource(c.req.param('id'), c.get('userId'))
   if (!resource) return c.json({ error: 'Not found' }, 404)
   return c.json(noteRevisions(resource.id))
 })
 
 filesRouter.post('/:id/revisions/:revisionId/restore', async (c) => {
-  const restored = await restoreRevision(c.get('userId') as string, c.req.param('id'), c.req.param('revisionId'))
+  const restored = await restoreRevision(c.get('userId'), c.req.param('id'), c.req.param('revisionId'))
   return restored ? c.json({ ok: true }) : c.json({ error: 'Not found' }, 404)
 })
 
@@ -554,7 +554,7 @@ filesRouter.post('/:id/revisions/:revisionId/restore', async (c) => {
  *  the overlapping chunks would inject the same passage several times. The paperclip already covers
  *  attaching a document in full. */
 filesRouter.get('/:id/text', async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const resource = await ownedResource(c.req.param('id'), userId)
   if (!resource) return c.json({ error: 'Not found' }, 404)
   if (resource.kind !== 'note') return c.json({ error: 'Only notes can be attached from the library' }, 400)
@@ -569,7 +569,7 @@ filesRouter.post('/:id/transform', zValidator('json', z.object({
   operation: z.enum(TRANSFORM_OPERATIONS).optional(),
   templateId: z.string().optional(),
 })), async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const { operation, templateId } = c.req.valid('json')
   const resource = await ownedResource(c.req.param('id'), userId)
   if (!resource) return c.json({ error: 'Not found' }, 404)
@@ -601,7 +601,7 @@ filesRouter.post('/:id/transform', zValidator('json', z.object({
 })
 
 filesRouter.delete('/:id', async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const fileId = c.req.param('id')
 
   const file = await db.select().from(uploadedFiles)

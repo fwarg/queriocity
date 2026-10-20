@@ -13,7 +13,7 @@ export const templatesRouter = new Hono<AppEnv>()
 templatesRouter.use('*', authMiddleware)
 
 templatesRouter.get('/', async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const rows = await db.select().from(customTemplates)
     .where(eq(customTemplates.userId, userId))
     .orderBy(desc(customTemplates.createdAt))
@@ -77,7 +77,7 @@ const templateBody = z.object({
 })
 
 templatesRouter.post('/', zValidator('json', templateBody), async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const body = c.req.valid('json')
   const now = new Date()
   const id = randomUUID()
@@ -92,7 +92,7 @@ templatesRouter.post('/', zValidator('json', templateBody), async (c) => {
 })
 
 templatesRouter.patch('/:id', zValidator('json', templateBody.partial()), async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const id = c.req.param('id')
   const body = c.req.valid('json')
   const existing = await db.select().from(customTemplates)
@@ -106,7 +106,7 @@ templatesRouter.patch('/:id', zValidator('json', templateBody.partial()), async 
 })
 
 templatesRouter.delete('/:id', async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const id = c.req.param('id')
   const existing = await db.select().from(customTemplates)
     .where(and(eq(customTemplates.id, id), eq(customTemplates.userId, userId))).get()

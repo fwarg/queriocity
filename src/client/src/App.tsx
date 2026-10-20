@@ -706,7 +706,7 @@ export default function App() {
         ? prev.filter(s => s.spaceId !== id)
         : prev.map(s => s.spaceId === id ? { ...s, spaceId: null } : s))
       if (currentSpaceId === id) setCurrentSpaceId(null)
-    }).catch(() => {})
+    }).catch(err => setSpaceError(errorMessage(t, err, t('space.deleteFailed'))))
   }
 
   /** Lock or unlock a space.

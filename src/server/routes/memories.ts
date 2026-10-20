@@ -24,7 +24,7 @@ async function verifySpaceOwner(spaceId: string, userId: string) {
 }
 
 memoriesRouter.get('/:spaceId/memories', async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const spaceId = c.req.param('spaceId')
   if (!await verifySpaceOwner(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
   const memories = await getSpaceMemories(spaceId)
@@ -32,7 +32,7 @@ memoriesRouter.get('/:spaceId/memories', async (c) => {
 })
 
 memoriesRouter.get('/:spaceId/chat-index-status', async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const spaceId = c.req.param('spaceId')
   if (!await verifySpaceOwner(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
   const total = (await db.select({ count: sql<number>`count(*)` }).from(chatSessions)
@@ -47,7 +47,7 @@ memoriesRouter.get('/:spaceId/chat-index-status', async (c) => {
 })
 
 memoriesRouter.post('/:spaceId/rebuild-chat-index', async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const spaceId = c.req.param('spaceId')
   if (!await verifySpaceOwner(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
   const chats = await db.select().from(chatSessions).where(eq(chatSessions.spaceId, spaceId))
@@ -75,7 +75,7 @@ memoriesRouter.post('/:spaceId/rebuild-chat-index', async (c) => {
 memoriesRouter.post('/:spaceId/memories', zValidator('json', z.object({
   content: z.string().min(1).max(600),
 })), async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const spaceId = c.req.param('spaceId')
   const space = await verifySpaceOwner(spaceId, userId)
   if (!space) return c.json({ error: 'Not found' }, 404)
@@ -92,7 +92,7 @@ memoriesRouter.patch('/:spaceId/memories/:id', zValidator('json', z.object({
   content: z.string().min(1).max(600).optional(),
   alwaysKeep: z.boolean().optional(),
 })), async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const spaceId = c.req.param('spaceId')
   const id = c.req.param('id')
   if (!await verifySpaceOwner(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
@@ -119,7 +119,7 @@ memoriesRouter.patch('/:spaceId/memories/:id', zValidator('json', z.object({
 })
 
 memoriesRouter.delete('/:spaceId/memories/:id', async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const spaceId = c.req.param('spaceId')
   const id = c.req.param('id')
   if (!await verifySpaceOwner(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
@@ -134,7 +134,7 @@ memoriesRouter.delete('/:spaceId/memories/:id', async (c) => {
 })
 
 memoriesRouter.delete('/:spaceId/memories', async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const spaceId = c.req.param('spaceId')
   if (!await verifySpaceOwner(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
   const ids = (await getSpaceMemories(spaceId)).map(m => m.id)
@@ -144,7 +144,7 @@ memoriesRouter.delete('/:spaceId/memories', async (c) => {
 })
 
 memoriesRouter.post('/:spaceId/compact', async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const spaceId = c.req.param('spaceId')
   if (!await verifySpaceOwner(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
   const targetTokens = parseInt(await getAppSetting('dream_target', '700'))
@@ -155,7 +155,7 @@ memoriesRouter.post('/:spaceId/compact', async (c) => {
 })
 
 memoriesRouter.post('/:spaceId/recreate-memories', async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const spaceId = c.req.param('spaceId')
   if (!await verifySpaceOwner(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
 
@@ -212,7 +212,7 @@ memoriesRouter.post('/:spaceId/recreate-memories', async (c) => {
 })
 
 memoriesRouter.get('/:spaceId/files', async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const spaceId = c.req.param('spaceId')
   if (!await verifySpaceOwner(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
   const rows = await db.select({
@@ -233,7 +233,7 @@ memoriesRouter.post('/:spaceId/transform', zValidator('json', z.object({
   operation: z.enum(['summarize']),
   fileIds: z.array(z.string()).optional(),
 })), async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const spaceId = c.req.param('spaceId')
   const { operation, fileIds } = c.req.valid('json')
   const space = await verifySpaceOwner(spaceId, userId)
@@ -268,7 +268,7 @@ memoriesRouter.post('/:spaceId/transform', zValidator('json', z.object({
 })
 
 memoriesRouter.post('/:spaceId/files', zValidator('json', z.object({ fileId: z.string() })), async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const spaceId = c.req.param('spaceId')
   const { fileId } = c.req.valid('json')
   if (!await verifySpaceOwner(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
@@ -280,7 +280,7 @@ memoriesRouter.post('/:spaceId/files', zValidator('json', z.object({ fileId: z.s
 })
 
 memoriesRouter.delete('/:spaceId/files/:fileId', async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const spaceId = c.req.param('spaceId')
   const fileId = c.req.param('fileId')
   if (!await verifySpaceOwner(spaceId, userId)) return c.json({ error: 'Not found' }, 404)

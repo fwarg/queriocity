@@ -247,6 +247,7 @@ export const sv: Catalog = {
   'chat.lockConfirmNew': '"{name}" är konfidentiell, så chatten låses för gott när du skickar: ingen webbsökning, URL-hämtning, bildgenerering eller molnmodeller.',
   'chat.lockConfirmAction': 'Lås chatten',
   'space.lockChangeFailed': 'Kunde inte ändra låset.',
+  'space.deleteFailed': 'Kunde inte ta bort utrymmet.',
   'space.resourcesFailed': 'Kunde inte uppdatera resurserna i utrymmet.',
   'space.lockAction': 'Lås',
   'space.transformFailed': 'Sammanställningen misslyckades',

@@ -251,6 +251,7 @@ export const en = {
   'chat.lockConfirmNew': '"{name}" is confidential, so this chat will be locked for good once you send: no web search, URL fetching, image generation or cloud models.',
   'chat.lockConfirmAction': 'Lock this chat',
   'space.lockChangeFailed': 'Could not change the lock.',
+  'space.deleteFailed': 'Could not delete the space.',
   'space.resourcesFailed': 'Could not update the resources in this space.',
   'space.lockAction': 'Lock',
   'space.transformFailed': 'Transform failed',

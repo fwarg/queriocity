@@ -115,4 +115,12 @@ describe('GET /history/search', () => {
     const times = items.map(i => i.updatedAt)
     expect(times).toEqual([...times].sort((a, b) => b - a))
   })
+
+  test('treats % and _ in the query as literal characters', async () => {
+    // Unescaped, `_` matches any one character and `%` anything, so both would hit every chat.
+    for (const q of ['old_chat', 'old%chat']) {
+      const res = await app.request(`/history/search?q=${encodeURIComponent(q)}`, { headers: { cookie } })
+      expect(await res.json()).toEqual([])
+    }
+  })
 })

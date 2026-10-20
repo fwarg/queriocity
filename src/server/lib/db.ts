@@ -560,7 +560,8 @@ function initSchema() {
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_uploaded_files_user_id ON uploaded_files(user_id)`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_file_chunk_meta_file_id ON file_chunk_meta(file_id)`)
   sqlite.run(`CREATE INDEX IF NOT EXISTS idx_space_memories_space_id ON space_memories(space_id)`)
-  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_space_files_space_id ON space_files(space_id)`)
+  // Redundant with the (space_id, file_id) primary key, which already serves space_id lookups.
+  sqlite.run('DROP INDEX IF EXISTS idx_space_files_space_id')
   sqlite.run(`CREATE TABLE IF NOT EXISTS custom_templates (
     id             TEXT PRIMARY KEY,
     user_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

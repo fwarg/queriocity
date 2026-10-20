@@ -140,7 +140,7 @@ monitorsRouter.delete('/global/:id', async (c) => {
 
 // List user's own monitors + subscribed global monitors
 monitorsRouter.get('/', async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
 
   const ownMonitors = await db.select().from(monitors)
     .where(eq(monitors.userId, userId))
@@ -166,7 +166,7 @@ monitorsRouter.get('/', async (c) => {
 
 // Create private monitor
 monitorsRouter.post('/', zValidator('json', monitorBody), async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const body = c.req.valid('json')
   if (body.spaceId && !await ownsSpace(body.spaceId, userId)) return c.json({ error: 'Space not found' }, 404)
   // A monitor writes its runs into the space as chats, which a collection has no room for.
@@ -207,7 +207,7 @@ monitorsRouter.post('/', zValidator('json', monitorBody), async (c) => {
 
 // Update own monitor
 monitorsRouter.patch('/:id', zValidator('json', monitorBody.partial()), async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const id = c.req.param('id')
   const body = c.req.valid('json')
 
@@ -249,7 +249,7 @@ monitorsRouter.patch('/:id', zValidator('json', monitorBody.partial()), async (c
 
 // Delete own monitor
 monitorsRouter.delete('/:id', async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const id = c.req.param('id')
 
   const monitor = await db.select().from(monitors)
@@ -262,7 +262,7 @@ monitorsRouter.delete('/:id', async (c) => {
 
 // Trigger immediate run
 monitorsRouter.post('/:id/run', async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const id = c.req.param('id')
 
   const monitor = await db.select().from(monitors).where(eq(monitors.id, id)).get()
@@ -285,7 +285,7 @@ monitorsRouter.post('/:id/run', async (c) => {
 
 // List runs for a monitor (current user's runs)
 monitorsRouter.get('/:id/runs', async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const id = c.req.param('id')
 
   const monitor = await db.select().from(monitors).where(eq(monitors.id, id)).get()
@@ -306,7 +306,7 @@ monitorsRouter.get('/:id/runs', async (c) => {
 
 // Subscribe to a global monitor
 monitorsRouter.post('/:id/subscribe', async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const id = c.req.param('id')
 
   const monitor = await db.select().from(monitors).where(eq(monitors.id, id)).get()
@@ -319,7 +319,7 @@ monitorsRouter.post('/:id/subscribe', async (c) => {
 
 // Unsubscribe from a global monitor
 monitorsRouter.delete('/:id/subscribe', async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const id = c.req.param('id')
 
   await db.delete(monitorSubscriptions)

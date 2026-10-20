@@ -177,7 +177,7 @@ adminRouter.patch('/settings', zValidator('json', z.object({
  *  Only the caller's resources: an admin tool, but not a way to read other users' titles. */
 adminRouter.get('/similarity', async (c) => {
   const [report, minSimilarity, minRelevance] = await Promise.all([
-    similarityReport(c.get('userId') as string), relatedMinSimilaritySetting(), relatedMinRelevanceSetting(),
+    similarityReport(c.get('userId')), relatedMinSimilaritySetting(), relatedMinRelevanceSetting(),
   ])
   return c.json({ ...report, minSimilarity, minRelevance, reranker: rerankEnabled(), limit: SIMILARITY_REPORT_LIMIT })
 })
@@ -359,7 +359,7 @@ adminRouter.post('/llm-catalogue/test', zValidator('json', z.object({ modelId: z
   if (!target) return c.json({ ok: false, ms: 0, info: 'Not in the saved catalogue, or its API key env var is not set' } satisfies ProbeResult)
   console.log(`  [admin] testing cloud model ${modelId} (${target.model}) at ${target.baseURL}`)
   // Metered like any other call: the probe is paid for, and counts towards the provider's cap.
-  const metered = { ...target, onUsage: meteredUsage(c.get('userId') as string, target.entry, target.source, { endpoint: target }) }
+  const metered = { ...target, onUsage: meteredUsage(c.get('userId'), target.entry, target.source, { endpoint: target }) }
   return c.json(await probeChat(languageModel(metered), Math.min(target.entry.maxOutputTokens, CLOUD_PROBE_MAX_TOKENS)))
 })
 
