@@ -50,31 +50,44 @@ historyRouter.get('/', async (c) => {
   return c.json({ items: items.map(withLockReasons), total: totalRow?.total ?? 0 })
 })
 
+/** The query as FTS5 word prefixes: each word must begin a word of the message. Each is quoted, so
+ *  nothing typed is read as FTS syntax. Null when the query holds no words at all. */
+export function ftsPrefixQuery(q: string): string | null {
+  const words = q.match(/[\p{L}\p{N}]+/gu)
+  return words ? words.map(w => `"${w}"*`).join(' ') : null
+}
+
+const SEARCH_COLUMNS = `cs.id, cs.title, cs.user_id AS userId, cs.space_id AS spaceId, cs.locked AS chatLocked,
+  cs.locked_by AS lockedBy, cs.created_at AS createdAt, cs.updated_at AS updatedAt`
+// Monitor runs are listed under their monitor until a user graduates one into a chat.
+const LISTED_CHAT = 'cs.user_id = ? AND (mr.id IS NULL OR cs.graduated = 1)'
+
 historyRouter.get('/search', async (c) => {
   const userId = c.get('userId')
   const q = (c.req.query('q') ?? '').trim()
   if (!q) return c.json([])
-  // Escaped so a typed % or _ matches itself instead of acting as a wildcard.
+  // Titles are few and short, so they keep substring matching; the % and _ a user types are
+  // escaped to match themselves. Message content goes through the full-text index instead, which
+  // matches word prefixes — a LIKE there scanned every message ever written.
   const like = `%${q.replace(/[\\%_]/g, ch => `\\${ch}`)}%`
+  const fts = ftsPrefixQuery(q)
   // Aliased to camelCase: this is the one endpoint built from raw SQL rather than drizzle, and
   // returning `space_id` meant every searched chat reached the client with `spaceId` undefined —
   // no padlock, unlocked spaces offered as move targets for a locked chat, and the next message
   // posted without a space at all.
-  const results = sqlite.prepare(`
-    SELECT DISTINCT cs.id, cs.title, cs.user_id AS userId, cs.space_id AS spaceId, cs.locked AS chatLocked, cs.locked_by AS lockedBy,
-           cs.created_at AS createdAt, cs.updated_at AS updatedAt
-    FROM chat_sessions cs
+  const byTitle = `
+    SELECT ${SEARCH_COLUMNS} FROM chat_sessions cs
     LEFT JOIN monitor_runs mr ON mr.session_id = cs.id
-    WHERE cs.user_id = ? AND (mr.id IS NULL OR cs.graduated = 1) AND cs.title LIKE ? ESCAPE '\\' COLLATE NOCASE
-    UNION
-    SELECT DISTINCT cs.id, cs.title, cs.user_id AS userId, cs.space_id AS spaceId, cs.locked AS chatLocked, cs.locked_by AS lockedBy,
-           cs.created_at AS createdAt, cs.updated_at AS updatedAt
-    FROM chat_sessions cs
-    JOIN messages m ON m.session_id = cs.id
+    WHERE ${LISTED_CHAT} AND cs.title LIKE ? ESCAPE '\\' COLLATE NOCASE`
+  const byContent = `
+    SELECT ${SEARCH_COLUMNS} FROM messages_fts
+    JOIN messages m ON m.rowid = messages_fts.rowid
+    JOIN chat_sessions cs ON cs.id = m.session_id
     LEFT JOIN monitor_runs mr ON mr.session_id = cs.id
-    WHERE cs.user_id = ? AND (mr.id IS NULL OR cs.graduated = 1) AND m.content LIKE ? ESCAPE '\\' COLLATE NOCASE
-    ORDER BY updatedAt DESC LIMIT 100
-  `).all(userId, like, userId, like)
+    WHERE messages_fts MATCH ? AND ${LISTED_CHAT}`
+  const results = fts
+    ? sqlite.prepare(`${byTitle} UNION ${byContent} ORDER BY updatedAt DESC LIMIT 100`).all(userId, like, fts, userId)
+    : sqlite.prepare(`${byTitle} ORDER BY updatedAt DESC LIMIT 100`).all(userId, like)
   return c.json((results as Array<{ lockedBy: string | null }>).map(withLockReasons))
 })
 

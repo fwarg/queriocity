@@ -305,6 +305,30 @@ export function resetFileEmbeddings(): void {
   sqlite.run('DROP TABLE IF EXISTS file_chunks')
 }
 
+/** Full-text index over message content, for chat search: word-prefix and case-insensitive
+ *  (unicode-aware, so Å/å fold too). Diacritics are kept — in Swedish "år" and "ar" are different
+ *  words. External-content, so the text is not stored twice; triggers keep it in step with
+ *  `messages`, and a database that predates the index is backfilled once when it is created.
+ *
+ *  Exported for the test that guards the backfill; initSchema is the only caller in production. */
+export function initMessageSearch(): void {
+  const exists = sqlite.query("SELECT 1 FROM sqlite_master WHERE name = 'messages_fts'").get()
+  sqlite.run(`CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+    content, content='messages', content_rowid='rowid', tokenize='unicode61 remove_diacritics 0'
+  )`)
+  sqlite.run(`CREATE TRIGGER IF NOT EXISTS messages_fts_insert AFTER INSERT ON messages BEGIN
+    INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
+  END`)
+  sqlite.run(`CREATE TRIGGER IF NOT EXISTS messages_fts_delete AFTER DELETE ON messages BEGIN
+    INSERT INTO messages_fts(messages_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
+  END`)
+  sqlite.run(`CREATE TRIGGER IF NOT EXISTS messages_fts_update AFTER UPDATE OF content ON messages BEGIN
+    INSERT INTO messages_fts(messages_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
+    INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
+  END`)
+  if (!exists) sqlite.run("INSERT INTO messages_fts(messages_fts) VALUES ('rebuild')")
+}
+
 function initSchema() {
   // Ahead of everything below: the notes work added it, and several statements here read it.
   try { sqlite.run(`ALTER TABLE uploaded_files ADD COLUMN kind TEXT NOT NULL DEFAULT 'file'`) } catch { /* already present, or no table yet */ }
@@ -666,6 +690,7 @@ function initSchema() {
   sqlite.run('CREATE INDEX IF NOT EXISTS idx_monitor_runs_session_id ON monitor_runs(session_id)')
   sqlite.run('CREATE INDEX IF NOT EXISTS idx_uploaded_files_derived_from ON uploaded_files(derived_from)')
   sqlite.run('CREATE INDEX IF NOT EXISTS idx_uploaded_files_origin_session ON uploaded_files(user_id, origin_session_id)')
+  initMessageSearch()
   try { sqlite.run('ALTER TABLE custom_templates ADD COLUMN instruction_text TEXT') } catch {}
   try { sqlite.run('ALTER TABLE custom_templates ADD COLUMN example_file_ids TEXT') } catch {}
   try { sqlite.run('ALTER TABLE custom_templates ADD COLUMN settings TEXT') } catch {}

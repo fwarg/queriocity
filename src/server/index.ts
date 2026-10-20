@@ -15,6 +15,7 @@ import { authMiddleware, type AppEnv } from './middleware/auth.ts'
 import { cors } from 'hono/cors'
 import { secureHeaders } from 'hono/secure-headers'
 import { logger } from 'hono/logger'
+import { bodyLimit } from 'hono/body-limit'
 import { serveStatic } from 'hono/bun'
 import { chatRouter } from './routes/chat.ts'
 import { filesRouter } from './routes/files.ts'
@@ -94,6 +95,13 @@ if (ALLOWED_ORIGIN === '*') {
   console.warn('[cors] ALLOWED_ORIGIN=* allows any site to call this API. Set it to your own origin, or leave it unset for same-origin only.')
 }
 if (ALLOWED_ORIGIN) app.use('/api/*', cors({ origin: ALLOWED_ORIGIN, credentials: true }))
+
+// Bun's own cap is 128 MB. Pasted text and attachments sent as text can be large, hence 10 MB
+// rather than the usual 1 MB; the upload routes carry their own, larger limit.
+const API_BODY_LIMIT = 10 * 1024 * 1024
+const UPLOAD_PATHS = new Set(['/api/files/upload', '/api/files/extract'])
+const apiBodyLimit = bodyLimit({ maxSize: API_BODY_LIMIT, onError: c => c.json({ error: 'Request too large (max 10 MB)' }, 413) })
+app.use('/api/*', (c, next) => UPLOAD_PATHS.has(c.req.path) ? next() : apiBodyLimit(c, next))
 
 app.route('/api/auth', authRouter)
 app.route('/api/chat', chatRouter)

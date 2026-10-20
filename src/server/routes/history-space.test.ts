@@ -9,8 +9,9 @@
 import '../lib/test-support/test-env.ts'
 
 import { describe, test, expect, beforeAll } from 'bun:test'
-import { db, users, spaces, chatSessions } from '../lib/db.ts'
-import { historyRouter } from './history.ts'
+import { db, sqlite, users, spaces, chatSessions, messages, initMessageSearch } from '../lib/db.ts'
+import { historyRouter, ftsPrefixQuery } from './history.ts'
+import { eq } from 'drizzle-orm'
 import { signToken, AUTH_COOKIE } from '../lib/auth.ts'
 import { Hono } from 'hono'
 
@@ -122,5 +123,59 @@ describe('GET /history/search', () => {
       const res = await app.request(`/history/search?q=${encodeURIComponent(q)}`, { headers: { cookie } })
       expect(await res.json()).toEqual([])
     }
+  })
+})
+
+describe('GET /history/search over message content', () => {
+  const search = async (q: string) => {
+    const res = await app.request(`/history/search?q=${encodeURIComponent(q)}`, { headers: { cookie } })
+    expect(res.status).toBe(200)
+    return (await res.json() as Array<{ id: string }>).map(i => i.id)
+  }
+
+  beforeAll(async () => {
+    const now = new Date()
+    await db.insert(messages).values([
+      { id: 'fts-1', sessionId: 'old-0', role: 'assistant', content: 'Honungen från Åre lagras i kallt förråd.', createdAt: now },
+      { id: 'fts-2', sessionId: 'old-1', role: 'user', content: 'Where does the post office open?', createdAt: now },
+    ])
+  })
+
+  test('matches word prefixes regardless of case, Å and å alike', async () => {
+    expect(await search('honung')).toEqual(['old-0'])
+    expect(await search('ÅRE KALL')).toEqual(['old-0'])
+  })
+
+  test('matches the start of a word, not a fragment inside one', async () => {
+    expect(await search('ost')).toEqual([])
+    expect(await search('pos')).toEqual(['old-1'])
+  })
+
+  test('reads FTS syntax in the query as plain words', async () => {
+    expect(await search('"post* (office')).toEqual(['old-1'])
+  })
+
+  test('indexes messages written before the index existed', async () => {
+    // An upgraded database: messages present, no index and no triggers yet.
+    for (const t of ['messages_fts_insert', 'messages_fts_delete', 'messages_fts_update']) sqlite.run(`DROP TRIGGER ${t}`)
+    sqlite.run('DROP TABLE messages_fts')
+    await db.insert(messages).values({ id: 'fts-3', sessionId: 'old-2', role: 'user', content: 'Varroa mites again', createdAt: new Date() })
+
+    initMessageSearch()
+
+    expect(await search('varroa')).toEqual(['old-2'])
+    expect(await search('honung')).toEqual(['old-0'])
+  })
+
+  test('forgets a message once it is deleted', async () => {
+    await db.delete(messages).where(eq(messages.id, 'fts-2'))
+    expect(await search('post')).toEqual([])
+  })
+})
+
+describe('ftsPrefixQuery', () => {
+  test('quotes each word as a prefix and drops punctuation', () => {
+    expect(ftsPrefixQuery('bee* "hive" OR')).toBe('"bee"* "hive"* "OR"*')
+    expect(ftsPrefixQuery('%_ -')).toBeNull()
   })
 })
