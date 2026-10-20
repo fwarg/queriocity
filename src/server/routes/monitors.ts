@@ -179,7 +179,7 @@ monitorsRouter.post('/', zValidator('json', monitorBody), async (c) => {
   const now = new Date()
   const id = randomUUID()
   const userRow = await db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get()
-  const tz = (parseSettings(userRow?.settings ?? '{}').timezone as string | undefined) ?? null
+  const tz = parseSettings(userRow?.settings ?? '{}').timezone ?? null
   const nextRunAt = computeNextRunAt(body.intervalMinutes, body.preferredHour, tz, now, true)
 
   await db.insert(monitors).values({
@@ -229,7 +229,7 @@ monitorsRouter.patch('/:id', zValidator('json', monitorBody.partial()), async (c
   const scheduleChanged = body.intervalMinutes !== undefined || body.preferredHour !== undefined
   let nextRunAt: Date | undefined
   const userRow = await db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get()
-  const tz = (parseSettings(userRow?.settings ?? '{}').timezone as string | undefined) ?? null
+  const tz = parseSettings(userRow?.settings ?? '{}').timezone ?? null
   if (scheduleChanged) {
     nextRunAt = computeNextRunAt(newInterval, newHour, tz, now, true)
   }

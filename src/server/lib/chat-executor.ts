@@ -52,7 +52,7 @@ export async function executeChatAndSave({
   const ctx: TurnContext = {
     userId, sid: sessionId, msgs, pinned: new Set(), focusMode, spaceId, locked: false,
     models: { ...models, thinking: models.chat },
-    settings, customPrompt: settings.customPrompt as string | undefined, collections: [],
+    settings, customPrompt: settings.customPrompt, collections: [],
     abortSignal: AbortSignal.timeout(MONITOR_TIMEOUT_MS),
     monitor: { feedItems, maxStepsOverride: focusMode === 'balanced' ? MONITOR_MAX_STEPS : undefined },
   }

@@ -1,5 +1,5 @@
 import { streamText } from 'ai'
-import { getAppSetting } from '../db.ts'
+import { getNumberSetting } from '../db.ts'
 import { languageModel, outputCap, tokensToChars, estimateTokens, researchMaxTokens, type ModelTarget } from '../llm.ts'
 import { splitAttachments } from '../../../shared/context.ts'
 import { userMemoryBlockIfEnabled, joinMemoryBlocks } from '../memory/index.ts'
@@ -21,8 +21,8 @@ const HISTORY_RESERVE_CHARS = 4000
  *  sharply with prompt length, while a cloud model reads a long prompt quickly, and seeing every
  *  document side by side finds the links between them that reading one at a time misses. The model's
  *  own context caps both, so the cloud default amounts to "whatever fits". */
-export const DEFAULT_COLLECTION_FULL_TEXT_TOKENS = '30000'
-export const DEFAULT_COLLECTION_FULL_TEXT_TOKENS_CLOUD = '1000000'
+export const DEFAULT_COLLECTION_FULL_TEXT_TOKENS = 30000
+export const DEFAULT_COLLECTION_FULL_TEXT_TOKENS_CLOUD = 1_000_000
 /** The task when a message is only an attachment. */
 const ATTACHMENT_ONLY_TASK = 'Review the attached document against the documents in the collection.'
 
@@ -96,9 +96,9 @@ async function* onFirstOutput<P extends { type: string }>(stream: AsyncIterable<
 /** The full-text threshold for this model: the cloud one for a cloud (metered) model, else the local one. */
 async function fullTextMaxChars(model: ModelTarget): Promise<number> {
   const tokens = model.onUsage
-    ? await getAppSetting('collection_full_text_tokens_cloud', DEFAULT_COLLECTION_FULL_TEXT_TOKENS_CLOUD)
-    : await getAppSetting('collection_full_text_tokens', DEFAULT_COLLECTION_FULL_TEXT_TOKENS)
-  return tokensToChars(Number(tokens))
+    ? await getNumberSetting('collection_full_text_tokens_cloud', DEFAULT_COLLECTION_FULL_TEXT_TOKENS_CLOUD)
+    : await getNumberSetting('collection_full_text_tokens', DEFAULT_COLLECTION_FULL_TEXT_TOKENS)
+  return tokensToChars(tokens)
 }
 
 /** The model that answers, and so reads each document: flash's model in flash, else as research picks it. */

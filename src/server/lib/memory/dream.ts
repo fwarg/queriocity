@@ -2,7 +2,7 @@
 
 import { generateText } from 'ai'
 import { randomUUID } from 'crypto'
-import { db, spaceMemories, chatSessions, messages, spaces, getAppSetting, setAppSetting } from '../db.ts'
+import { db, spaceMemories, chatSessions, messages, spaces, getAppSetting, getNumberSetting, setAppSetting } from '../db.ts'
 import { eq, asc, ne, and, gt, sql } from 'drizzle-orm'
 import { getSmallModel, getChatModel, getThinkingModelOrFallback, localTurnModels, modelTarget, estimateTokens, tokensToChars } from '../llm.ts'
 import { contextCharBudget } from '../trim-messages.ts'
@@ -211,8 +211,8 @@ Be ruthless: if in doubt, cut. Total output MUST NOT exceed ${targetChars} chara
 
 export async function runDream() {
   const [threshold, target, deep] = await Promise.all([
-    getAppSetting('dream_threshold', '1500').then(Number),
-    getAppSetting('dream_target', '700').then(Number),
+    getNumberSetting('dream_threshold', 1500),
+    getNumberSetting('dream_target', 700),
     getAppSetting('dream_deep', 'false').then(v => v === 'true'),
   ])
   const allSpaces = await db.select({ id: spaces.id }).from(spaces)
@@ -224,7 +224,7 @@ export async function runDream() {
     try {
       if (deep) {
         const key = `deep_dream_at_${sp.id}`
-        const lastRunAt = new Date(parseInt(await getAppSetting(key, '0')))
+        const lastRunAt = new Date(await getNumberSetting(key, 0))
         const hasNew = await db.select({ id: chatSessions.id })
           .from(chatSessions)
           .where(and(eq(chatSessions.spaceId, sp.id), gt(chatSessions.createdAt, lastRunAt)))

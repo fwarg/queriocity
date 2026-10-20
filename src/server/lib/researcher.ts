@@ -431,9 +431,9 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
       execute: async ({ url }) => {
         if (toolBudgetRemaining <= MIN_URL_CONTEXT_CHARS) return CONTEXT_BUDGET_DEAD_MSG
         if (!await permitEgress('fetch', url)) return EGRESS_REFUSED_MSG
-        const raw = await fetchUrl(url)
-        if (raw.startsWith('Error fetching')) return raw
-        const [{ content, outcome }] = await processUrlsForContext([{ url, content: raw }], toolBudgetRemaining, fetchSummarize, urlContextChars)
+        const fetched = await fetchUrl(url)
+        if (!fetched.ok) return fetched.error
+        const [{ content, outcome }] = await processUrlsForContext([{ url, content: fetched.text }], toolBudgetRemaining, fetchSummarize, urlContextChars)
         if (outcome) await onUrlRead?.(new URL(url).hostname, outcome)
         // The page just read is untrusted: anything in it could be an instruction to leak.
         noteTaint(egress, content)

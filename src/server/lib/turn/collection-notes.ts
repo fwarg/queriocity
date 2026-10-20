@@ -1,7 +1,7 @@
 import { generateText, stepCountIs, tool } from 'ai'
 import { z } from 'zod'
 import { saveAgentNote } from '../files/agent-notes.ts'
-import { translate, type Lang } from '../../../shared/i18n/index.ts'
+import { translate } from '../../../shared/i18n/index.ts'
 import { languageModel, type ModelTarget } from '../llm.ts'
 import { asDocumentReferences } from '../../../shared/citations.ts'
 import type { Doc } from './collection-evidence.ts'
@@ -30,7 +30,7 @@ export const EXPLORE_NOTES_INSTRUCTION = `\nYou can also keep findings in the us
 export function saveNoteTool(ctx: TurnContext, sink: TurnSink, model: ModelTarget, docs: Doc[], saved: SavedNote[], web?: WebSearching) {
   const documents = new Map(docs.map(d => [d.label, d.filename]))
   const documentIds = new Map(docs.map(d => [d.label, d.fileId]))
-  const lang = (ctx.settings.language as Lang | undefined) ?? 'en'
+  const lang = ctx.settings.language ?? 'en'
   return tool({
     description: 'Save a note in the user\'s library: a title and a markdown body citing the documents by label, e.g. [C1]. Saving under an earlier title of yours replaces that note.',
     inputSchema: z.object({ title: z.string(), body: z.string() }),

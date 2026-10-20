@@ -20,7 +20,16 @@ const FETCH_TIMEOUT_MS = parseInt(process.env.FETCH_TIMEOUT_MS ?? '10000', 10)
 const PROXY_URL = process.env.FETCH_PROXY_URL
 const proxyAgent = PROXY_URL ? new ProxyAgent(PROXY_URL) : undefined
 const CACHE_TTL_MS = 5 * 60 * 1000
-const fetchCache = new Map<string, { result: string; ts: number }>()
+/** A fetched page's text, or why there is none. `error` is worded for the model, which is handed it
+ *  as a failed fetch_url result. A type rather than a sentinel string: page text beginning with
+ *  "Error" (an article on error handling, say) used to be taken for a failed fetch. */
+export type FetchedPage = { ok: true; text: string } | { ok: false; error: string }
+
+const page = (text: string): FetchedPage => ({ ok: true, text })
+const failed = (url: string, reason: unknown): FetchedPage =>
+  ({ ok: false, error: `Error fetching ${url}: ${reason instanceof Error ? reason.message : String(reason)}` })
+
+const fetchCache = new Map<string, { result: FetchedPage; ts: number }>()
 // Entries hold whole page bodies, so this is a memory bound, not just hygiene.
 const FETCH_CACHE_MAX_ENTRIES = 200
 const DEFAULT_MAX_PAGES = parseInt(process.env.FETCH_MAX_PAGES ?? '8')
@@ -192,13 +201,12 @@ export function urlLabel(url: string): string {
   }
 }
 
-export async function fetchUrl(url: string): Promise<string> {
+export async function fetchUrl(url: string): Promise<FetchedPage> {
   try {
     await assertFetchableUrl(url)
   } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err)
-    console.warn(`  [fetch-url] blocked ${url} — ${reason}`)
-    return `Error fetching ${url}: ${reason}`
+    console.warn(`  [fetch-url] blocked ${url} — ${err instanceof Error ? err.message : String(err)}`)
+    return failed(url, err)
   }
 
   const cached = fetchCache.get(url)
@@ -207,7 +215,7 @@ export async function fetchUrl(url: string): Promise<string> {
     return cached.result
   }
   const start = performance.now()
-  const cache = (result: string) => {
+  const cache = (result: FetchedPage) => {
     const now = Date.now()
     if (fetchCache.size >= FETCH_CACHE_MAX_ENTRIES) {
       for (const [k, v] of fetchCache) if (now - v.ts >= CACHE_TTL_MS) fetchCache.delete(k)
@@ -224,7 +232,7 @@ export async function fetchUrl(url: string): Promise<string> {
       const text = segments.map(s => s.text).join(' ').replace(/\s+/g, ' ').trim()
       const result = text.slice(0, MAX_CHARS)
       console.log(`  [fetch-url] youtube transcript ${videoId} — ${result.length}${text.length > MAX_CHARS ? ` chars (truncated from ${text.length})` : ' chars'} in ${(performance.now() - start).toFixed(0)}ms`)
-      return cache(result)
+      return cache(page(result))
     } catch (e) {
       console.log(`  [fetch-url] youtube transcript failed (${e}), falling back to static fetch`)
     }
@@ -236,7 +244,7 @@ export async function fetchUrl(url: string): Promise<string> {
   if (indexed && indexed.text.length >= MIN_PAGE_CHARS) {
     const result = indexed.text.slice(0, MAX_CHARS)
     console.log(`  [fetch-url] ${indexed.provider} ${url} — ${result.length} chars in ${(performance.now() - start).toFixed(0)}ms`)
-    return cache(result)
+    return cache(page(result))
   }
 
   try {
@@ -244,19 +252,19 @@ export async function fetchUrl(url: string): Promise<string> {
     if (text.length >= MIN_PAGE_CHARS) {
       const result = text.slice(0, MAX_CHARS)
       console.log(`  [fetch-url] static ${url} — ${result.length}${text.length > MAX_CHARS ? ` chars (truncated from ${text.length})` : ' chars'} in ${(performance.now() - start).toFixed(0)}ms`)
-      return cache(result)
+      return cache(page(result))
     }
     console.log(`  [fetch-url] static fetch short (${text.length} chars), trying Playwright`)
   } catch (err) {
     // A blocked redirect target must not fall through to Playwright, which would follow it.
     if (err instanceof BlockedUrlError) {
       console.warn(`  [fetch-url] blocked redirect from ${url} — ${err.message}`)
-      return `Error fetching ${url}: ${err.message}`
+      return failed(url, err)
     }
     if (err instanceof HttpError && proxyAgent) {
       // With a proxy (Tor), HTTP errors mean the exit node is blocked — Playwright would also fail or timeout
       console.log(`  [fetch-url] HTTP ${err.status} via proxy — skipping Playwright`)
-      return cache(`Error fetching ${url}: HTTP ${err.status}`)
+      return cache(failed(url, `HTTP ${err.status}`))
     }
     console.log(`  [fetch-url] static fetch failed: ${err}, trying Playwright`)
   }
@@ -264,10 +272,10 @@ export async function fetchUrl(url: string): Promise<string> {
     const text = await fetchWithPlaywright(url)
     const result = text.slice(0, MAX_CHARS)
     console.log(`  [fetch-url] playwright ${url} — ${result.length}${text.length > MAX_CHARS ? ` chars (truncated from ${text.length})` : ' chars'} in ${(performance.now() - start).toFixed(0)}ms`)
-    return cache(result)
+    return cache(page(result))
   } catch (err) {
     console.log(`  [fetch-url] playwright failed: ${err}`)
-    return cache(`Error fetching ${url}: ${err}`)
+    return cache(failed(url, err))
   }
 }
 
@@ -279,8 +287,9 @@ function buildPageUrl(url: string, page: number): string {
 
 export async function fetchUrlAllPages(url: string, maxPages = DEFAULT_MAX_PAGES): Promise<string> {
   console.log(`  [fetch-url] page 1: ${url}`)
-  const first = await fetchUrl(url)
-  if (first.startsWith('Error')) return first
+  const firstPage = await fetchUrl(url)
+  if (!firstPage.ok) return firstPage.error
+  const first = firstPage.text
 
   const limit = maxPages === 0 ? Infinity : maxPages
   const pages = [first]
@@ -288,8 +297,9 @@ export async function fetchUrlAllPages(url: string, maxPages = DEFAULT_MAX_PAGES
   for (let p = 2; p <= limit; p++) {
     const pageUrl = buildPageUrl(url, p)
     console.log(`  [fetch-url] page ${p}: ${pageUrl}`)
-    const content = await fetchUrl(pageUrl)
-    if (content.startsWith('Error') || content.length < MIN_PAGE_CHARS) {
+    const next = await fetchUrl(pageUrl)
+    const content = next.ok ? next.text : ''
+    if (content.length < MIN_PAGE_CHARS) {
       console.log(`  [fetch-url] page ${p} empty/error — stopping at ${p - 1} pages`)
       break
     }

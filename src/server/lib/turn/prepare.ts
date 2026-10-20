@@ -1,4 +1,4 @@
-import { db, uploadedFiles, getAppSetting } from '../db.ts'
+import { db, uploadedFiles, getAppSetting, getNumberSetting } from '../db.ts'
 import { eq, sql } from 'drizzle-orm'
 import { reformulateLLM } from '../reformulate.ts'
 import { webSearch, webSearchMulti, newSearchBudget, type SearchResult, type EngineError, type SearchBudget } from '../search/index.ts'
@@ -31,8 +31,8 @@ export type ResearchInputs = Awaited<ReturnType<typeof prepareResearch>>
  *  memory and document context, prefetched URLs, and the settings that shape the run. */
 export async function prepareResearch(ctx: TurnContext) {
   const [fetchMaxPages, urlContextChars, fetchSummarize, compressHistory] = await Promise.all([
-    getAppSetting('fetch_max_pages', '8').then(Number),
-    getAppSetting('fetch_max_url_context_chars', String(DEFAULT_MAX_URL_CONTEXT_CHARS)).then(Number),
+    getNumberSetting('fetch_max_pages', 8),
+    getNumberSetting('fetch_max_url_context_chars', DEFAULT_MAX_URL_CONTEXT_CHARS),
     getAppSetting('fetch_summarize_overflow', 'false').then(v => v === 'true'),
     getAppSetting('compress_history_overflow', 'false').then(v => v === 'true'),
   ])

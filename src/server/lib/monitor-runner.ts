@@ -1,4 +1,4 @@
-import { db, monitors, monitorSubscriptions, monitorRuns, chatSessions, messages, getAppSetting } from './db.ts'
+import { db, monitors, monitorSubscriptions, monitorRuns, chatSessions, messages, getNumberSetting } from './db.ts'
 import { eq, and, lte, desc, count } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { executeChatAndSave } from './chat-executor.ts'
@@ -118,7 +118,7 @@ async function runMonitorForUser(
     const selectedNames = JSON.parse(monitor.feedSources) as string[]
     if (selectedNames.length > 0) {
       console.log(`  [monitor] fetching ${selectedNames.length} RSS feeds`)
-      const charsBudget = await getAppSetting('rss_feed_chars_budget', '50000').then(Number)
+      const charsBudget = await getNumberSetting('rss_feed_chars_budget', 50000)
       feedItems = await fetchSelectedFeeds(selectedNames, charsBudget)
       console.log(`  [monitor] got ${feedItems.length} feed items total`)
     }

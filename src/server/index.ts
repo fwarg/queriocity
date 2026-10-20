@@ -29,7 +29,7 @@ import { imagesRouter } from './routes/images.ts'
 import { templatesRouter } from './routes/templates.ts'
 import { monitorsRouter } from './routes/monitors.ts'
 import { feedsRouter } from './routes/feeds.ts'
-import { db, messages, sqlite, getAppSetting, setAppSetting } from './lib/db.ts'
+import { db, messages, sqlite, getAppSetting, getNumberSetting, setAppSetting } from './lib/db.ts'
 import { like } from 'drizzle-orm'
 import { runDream } from './lib/memory/index.ts'
 import { runDueMonitors } from './lib/monitor-runner.ts'
@@ -226,7 +226,7 @@ preflight().catch(() => {})
 setInterval(async () => {
   runDueMonitors().catch(e => console.error('[monitors] run failed:', e))
 
-  const hour = parseInt(await getAppSetting('dream_hour', '-1'))
+  const hour = await getNumberSetting('dream_hour', -1)
   if (hour < 0) return
   const now = new Date()
   if (now.getHours() !== hour) return

@@ -2,12 +2,13 @@
 
 import { generateText } from 'ai'
 import { randomUUID } from 'crypto'
-import { db, userMemories, chatSessions, messages, spaces, monitorRuns, getAppSetting } from '../db.ts'
+import { db, userMemories, chatSessions, messages, spaces, monitorRuns, getNumberSetting } from '../db.ts'
 import { eq, desc, and, or, isNull } from 'drizzle-orm'
 import { getSmallModel, estimateTokens } from '../llm.ts'
 import { embedText } from '../embeddings.ts'
 import { embedMemory, deleteMemoryEmbeddings } from './store.ts'
 import { rankMemoriesByRelevance, selectMemories } from './recall.ts'
+import type { UserSettings } from '../../../shared/user-settings.ts'
 
 export async function getUserMemories(userId: string) {
   return db.select().from(userMemories)
@@ -287,10 +288,10 @@ Most conversations contain nothing that qualifies. Answering "NONE" is the expec
  *  accidentally inject it for someone who left the setting off. */
 export async function userMemoryBlockIfEnabled(
   userId: string,
-  settings: Record<string, unknown>,
+  settings: UserSettings,
   query?: string,
 ): Promise<string> {
   if (settings.userMemory !== true) return ''
-  const budget = await getAppSetting('user_memory_token_budget', '300').then(Number)
+  const budget = await getNumberSetting('user_memory_token_budget', 300)
   return buildUserMemoryBlock(userId, budget, query)
 }

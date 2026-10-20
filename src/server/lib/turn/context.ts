@@ -8,6 +8,7 @@ import type { DocumentScope } from '../files/collection-coverage.ts'
 import type { ContextReport, CollectionMode } from '../../../shared/context.ts'
 import type { RecipePrompt } from '../recipes.ts'
 import { stepEvent, type ProgressStep } from '../progress.ts'
+import type { UserSettings } from '../../../shared/user-settings.ts'
 
 export const KEEPALIVE_INTERVAL_MS = 15000
 
@@ -29,7 +30,7 @@ export interface TurnContext {
   locked: boolean
   /** May write to the space's memory: false for a locked turn in an unlocked space. Defaults to true. */
   spaceWrites?: boolean
-  settings: Record<string, unknown>
+  settings: UserSettings
   customPrompt?: string
   /** The recipe whose chip is in the chat input (lib/recipes.ts). */
   recipe?: RecipePrompt

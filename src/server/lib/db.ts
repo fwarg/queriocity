@@ -4,6 +4,7 @@ import { drizzle } from 'drizzle-orm/bun-sqlite'
 import { eq, sql } from 'drizzle-orm'
 import { sqliteTable, text, integer, primaryKey, type AnySQLiteColumn } from 'drizzle-orm/sqlite-core'
 import { migrate } from './migrations.ts'
+import { parseUserSettings, type UserSettings } from '../../shared/user-settings.ts'
 
 const DB_PATH = process.env.DB_PATH ?? 'queriocity.db'
 
@@ -371,14 +372,21 @@ backfillMonitorTimezones()
 
 export { sqlite }
 
-/** Safely parse a user's settings JSON, returning {} on malformed data. */
-export function parseSettings(s: string): Record<string, unknown> {
-  try { return JSON.parse(s) } catch { return {} }
+/** A user's stored settings JSON, validated; malformed JSON reads as no settings at all. */
+export function parseSettings(s: string): UserSettings {
+  try { return parseUserSettings(JSON.parse(s)) } catch { return {} }
 }
 
 export async function getAppSetting(key: string, fallback: string): Promise<string> {
   const row = await db.select().from(appSettings).where(eq(appSettings.key, key)).get()
   return row?.value ?? fallback
+}
+
+/** A numeric app setting; `fallback` when it is unset or not a number. */
+export async function getNumberSetting(key: string, fallback: number): Promise<number> {
+  const raw = (await getAppSetting(key, '')).trim()
+  const value = raw === '' ? NaN : Number(raw)
+  return Number.isFinite(value) ? value : fallback
 }
 
 /** getAppSetting for a caller that cannot await: one primary-key lookup. */

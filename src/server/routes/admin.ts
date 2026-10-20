@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { generateText, embed } from 'ai'
-import { db, users, invites, chatSessions, spaces, spaceMemories, userMemories, uploadedFiles, authCredentials, getAppSetting, setAppSetting, bumpTokenVersion } from '../lib/db.ts'
+import { db, users, invites, chatSessions, spaces, spaceMemories, userMemories, uploadedFiles, authCredentials, getAppSetting, getNumberSetting, setAppSetting, bumpTokenVersion } from '../lib/db.ts'
 import { similarityReport, SIMILARITY_REPORT_LIMIT } from '../lib/files/related.ts'
 import { relatedMinSimilarity as relatedMinSimilaritySetting, relatedMinRelevance as relatedMinRelevanceSetting, notesRagBudget as notesRagBudgetSetting, topicMinSimilarity as topicMinSimilaritySetting, exploreMinRelevance, tagMatchSimilarity as tagMatchSimilaritySetting, tagPlaceSimilarity as tagPlaceSimilaritySetting, memoryTokenBudget as memoryTokenBudgetSetting, spaceRagBudget as spaceRagBudgetSetting } from '../lib/rag-settings.ts'
 import { eq, desc } from 'drizzle-orm'
@@ -62,22 +62,22 @@ adminRouter.use('*', adminMiddleware)
 adminRouter.get('/settings', async (c) => {
   const [memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, ragMinRelevance, attachmentChars, spaceRagBudget, queryReformulation, chatTitleModel, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow, compressHistoryOverflow, resourceSummary, relatedMinSimilarity, relatedMinRelevance, notesRagBudget, topicMinSimilarity, collectionFullTextTokens, collectionFullTextTokensCloud, collectionExploreMaxSteps, collectionExploreMinRelevance, researchMaxTokens, tagMatchSimilarity, tagPlaceSimilarity] = await Promise.all([
     memoryTokenBudgetSetting(),
-    getAppSetting('user_memory_token_budget', '300').then(Number),
-    getAppSetting('dream_hour', '-1').then(Number),
-    getAppSetting('dream_threshold', '1500').then(Number),
-    getAppSetting('dream_target', '700').then(Number),
+    getNumberSetting('user_memory_token_budget', 300),
+    getNumberSetting('dream_hour', -1),
+    getNumberSetting('dream_threshold', 1500),
+    getNumberSetting('dream_target', 700),
     getAppSetting('dream_deep', 'false').then(v => v === 'true'),
-    getAppSetting('memory_extract_chars', '6000').then(Number),
-    getAppSetting('rerank_top_n', '15').then(Number),
-    getAppSetting('rag_top_k', '15').then(Number),
-    getAppSetting('rag_min_relevance', '0').then(Number),
-    getAppSetting('attachment_chars', '20000').then(Number),
+    getNumberSetting('memory_extract_chars', 6000),
+    getNumberSetting('rerank_top_n', 15),
+    getNumberSetting('rag_top_k', 15),
+    getNumberSetting('rag_min_relevance', 0),
+    getNumberSetting('attachment_chars', 20000),
     spaceRagBudgetSetting(),
     getAppSetting('query_reformulation', 'true').then(v => v === 'true'),
     getAppSetting('chat_title_model', 'true').then(v => v === 'true'),
-    getAppSetting('rss_feed_chars_budget', '50000').then(Number),
-    getAppSetting('fetch_max_pages', '8').then(Number),
-    getAppSetting('fetch_max_url_context_chars', String(DEFAULT_MAX_URL_CONTEXT_CHARS)).then(Number),
+    getNumberSetting('rss_feed_chars_budget', 50000),
+    getNumberSetting('fetch_max_pages', 8),
+    getNumberSetting('fetch_max_url_context_chars', DEFAULT_MAX_URL_CONTEXT_CHARS),
     getAppSetting('fetch_summarize_overflow', 'false').then(v => v === 'true'),
     getAppSetting('compress_history_overflow', 'false').then(v => v === 'true'),
     getAppSetting('resource_summary', 'true').then(v => v === 'true'),
@@ -85,9 +85,9 @@ adminRouter.get('/settings', async (c) => {
     relatedMinRelevanceSetting(),
     notesRagBudgetSetting(),
     topicMinSimilaritySetting(),
-    getAppSetting('collection_full_text_tokens', DEFAULT_COLLECTION_FULL_TEXT_TOKENS).then(Number),
-    getAppSetting('collection_full_text_tokens_cloud', DEFAULT_COLLECTION_FULL_TEXT_TOKENS_CLOUD).then(Number),
-    getAppSetting('collection_explore_max_steps', DEFAULT_EXPLORE_MAX_STEPS).then(Number),
+    getNumberSetting('collection_full_text_tokens', DEFAULT_COLLECTION_FULL_TEXT_TOKENS),
+    getNumberSetting('collection_full_text_tokens_cloud', DEFAULT_COLLECTION_FULL_TEXT_TOKENS_CLOUD),
+    getNumberSetting('collection_explore_max_steps', DEFAULT_EXPLORE_MAX_STEPS),
     exploreMinRelevance(),
     researchMaxTokensSetting(),
     tagMatchSimilaritySetting(),

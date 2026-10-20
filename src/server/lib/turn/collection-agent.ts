@@ -1,6 +1,6 @@
 import { generateText, streamText, tool, stepCountIs, type ModelMessage, type ToolSet } from 'ai'
 import { z } from 'zod'
-import { getAppSetting } from '../db.ts'
+import { getNumberSetting } from '../db.ts'
 import { languageModel, outputCap, researchMaxTokens, type ModelTarget } from '../llm.ts'
 import { embedText } from '../embeddings.ts'
 import { userMemoryBlockIfEnabled, joinMemoryBlocks } from '../memory/index.ts'
@@ -26,7 +26,7 @@ import { userQueryOf, withInstructions, withKeepalive, documentSet, type TurnCon
  *  (part texts already read are dropped; the notes are restated every step), and the answer is one
  *  streamed call over the notes. An exploration that ends early is answered from what it noted. */
 
-export const DEFAULT_EXPLORE_MAX_STEPS = '20'
+export const DEFAULT_EXPLORE_MAX_STEPS = 20
 /** The admin setting's ceiling, and the most a collection's size can raise the limit to. */
 export const MAX_EXPLORE_STEPS = 100
 /** Read part texts kept in full; older ones are replaced, their content being in the notes. */
@@ -61,7 +61,7 @@ async function exploreAndAnswer(ctx: TurnContext, sink: TurnSink): Promise<TurnR
   const fileSources = docs.map(d => ({ title: `[${d.label}] ${d.filename}`, url: `file:${d.fileId}`, label: d.label }))
   if (fileSources.length) await sink.emit({ type: 'file_sources', sources: fileSources })
   const gathered: Gathered = { notes: [], seen: new Map(), reads: new Map(), queries: [], locked: ctx.locked }
-  const maxSteps = exploreSteps(Number(await getAppSetting('collection_explore_max_steps', DEFAULT_EXPLORE_MAX_STEPS)), docs, ctx.exploreNotes === true)
+  const maxSteps = exploreSteps(await getNumberSetting('collection_explore_max_steps', DEFAULT_EXPLORE_MAX_STEPS), docs, ctx.exploreNotes === true)
   // Saving notes covers every document, so nothing is ruled out by closeness to the message.
   const overview = await firstLook(splitAttachments(userQueryOf(ctx.msgs)).text, docs, gathered, { search: !ctx.exploreNotes })
   const web = await startWeb(ctx)

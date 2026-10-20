@@ -252,7 +252,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   // Resolved once so every phase of this turn runs on the same models.
   const resolved = await resolveTurnModels({ userId, modelId, focusMode, locked, cloudAcknowledged: storedSettings.cloudAcknowledged === true })
   const settings = resolved.forceThinking ? { ...storedSettings, useThinking: true } : storedSettings
-  const customPrompt = settings.customPrompt as string | undefined
+  const customPrompt = settings.customPrompt
   const recipeText = recipe ? recipePrompt(userId, recipe, contextCharBudget(resolved.models.chat.contextTokens)) : undefined
   // Everything that changes the answer for the same question belongs here. `searchCategories`
   // picks which corpus is searched and `locked` removes web search entirely, so leaving either

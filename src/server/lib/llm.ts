@@ -68,7 +68,7 @@ export const researchMaxTokens = () => Number(getAppSettingSync('research_max_to
 /** Default `memory_token_budget` when the admin setting is unset: how many tokens of space memory
  *  may go into a prompt. Sized for the richer 1-3 sentence notes the extractor now writes; the
  *  reranker keeps only the most relevant ones, so a larger store does not mean a larger prompt. */
-export const DEFAULT_MEMORY_TOKEN_BUDGET = '1500'
+export const DEFAULT_MEMORY_TOKEN_BUDGET = 1500
 
 /** The one token↔char conversion in the app. Every context budget derives from it.
  *

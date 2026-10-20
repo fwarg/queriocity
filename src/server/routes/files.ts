@@ -3,7 +3,7 @@ import { bodyLimit } from 'hono/body-limit'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { generateText } from 'ai'
-import { db, sqlite, uploadedFiles, spaceFiles, spaces, customTemplates, chatSessions, getAppSetting } from '../lib/db.ts'
+import { db, sqlite, uploadedFiles, spaceFiles, spaces, customTemplates, chatSessions, getNumberSetting } from '../lib/db.ts'
 import { relatedMinSimilarity, relatedMinRelevance, topicMinSimilarity } from '../lib/rag-settings.ts'
 import { MAX_TOPIC_RESOURCES, nameTopic, noteMap, topicMap } from '../lib/files/topics.ts'
 import { and, eq, sql } from 'drizzle-orm'
@@ -34,6 +34,9 @@ import { deleteFileChunks } from '../lib/vector-cleanup.ts'
 export const filesRouter = new Hono<AppEnv>()
 
 filesRouter.use('*', authMiddleware)
+
+/** What a resource needs to be shown as a link to another: its name, and the icon its kind and origin pick. */
+const RESOURCE_LINK_COLUMNS = { id: uploadedFiles.id, filename: uploadedFiles.filename, kind: uploadedFiles.kind, origin: uploadedFiles.origin }
 
 const MAX_SIZE = 50 * 1024 * 1024 // 50 MB
 const TOO_LARGE = 'File too large (max 50 MB)'
@@ -88,8 +91,9 @@ filesRouter.post('/ingest-url', rateLimitByUser(ingestLimiter, 'ingest-url'), as
   try { new URL(url) } catch { return c.json({ error: 'Invalid URL' }, 400) }
   console.log(`\n━━━ [ingest-url] ${url}`)
 
-  const text = await fetchUrl(url)
-  if (text.startsWith('Error fetching')) return c.json({ error: `Could not fetch URL: ${text}` }, 400)
+  const fetched = await fetchUrl(url)
+  if (!fetched.ok) return c.json({ error: `Could not fetch URL: ${fetched.error}` }, 400)
+  const text = fetched.text
   const filename = urlLabel(url)
 
   const buffer = new TextEncoder().encode(text).buffer as ArrayBuffer
@@ -109,7 +113,7 @@ filesRouter.post('/ingest-url', rateLimitByUser(ingestLimiter, 'ingest-url'), as
 filesRouter.post('/extract', ...uploadGuard('extract'), async (c) => {
   const file = await readUpload(c)
   if (file instanceof Response) return file
-  const maxChars = parseInt(await getAppSetting('attachment_chars', '20000'))
+  const maxChars = await getNumberSetting('attachment_chars', 20000)
   const buffer = await file.arrayBuffer()
   console.log(`\n━━━ [extract] "${file.name}"  type=${file.type}  size=${(file.size / 1024).toFixed(0)}KB`)
   const text = await extractFileText(buffer, file.type)
@@ -498,10 +502,10 @@ filesRouter.get('/:id', async (c) => {
   // it. Ownership is already established by `resource`, and derived_from can only point at a
   // resource the same user owns, so neither query needs its own user filter.
   const source = resource.derivedFrom
-    ? await db.select({ id: uploadedFiles.id, filename: uploadedFiles.filename, kind: uploadedFiles.kind, origin: uploadedFiles.origin })
+    ? await db.select(RESOURCE_LINK_COLUMNS)
         .from(uploadedFiles).where(eq(uploadedFiles.id, resource.derivedFrom)).get()
     : undefined
-  const derived = await db.select({ id: uploadedFiles.id, filename: uploadedFiles.filename, kind: uploadedFiles.kind, origin: uploadedFiles.origin })
+  const derived = await db.select(RESOURCE_LINK_COLUMNS)
     .from(uploadedFiles).where(eq(uploadedFiles.derivedFrom, resource.id))
 
   // Resolved on read and owner-checked: a deleted chat leaves the id behind and simply shows nothing.
@@ -562,7 +566,7 @@ filesRouter.get('/:id/text', async (c) => {
   if (!resource) return c.json({ error: 'Not found' }, 404)
   if (resource.kind !== 'note') return c.json({ error: 'Only notes can be attached from the library' }, 400)
 
-  const maxChars = parseInt(await getAppSetting('attachment_chars', '20000'))
+  const maxChars = await getNumberSetting('attachment_chars', 20000)
   // `confidential` lets the client ask before attaching it locks the chat; the server locks the turn
   // either way, from the attached id.
   return c.json({ filename: resource.filename, content: (resource.body ?? '').slice(0, maxChars), confidential: readsConfidential({ fileIds: [resource.id] }).length > 0 })

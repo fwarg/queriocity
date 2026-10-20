@@ -1,13 +1,13 @@
-import { getAppSetting } from './db.ts'
+import { getNumberSetting } from './db.ts'
 import { DEFAULT_MEMORY_TOKEN_BUDGET } from './llm.ts'
 
 /** Token budget for a space's memory block. */
-export const memoryTokenBudget = async (): Promise<number> =>
-  Number(await getAppSetting('memory_token_budget', DEFAULT_MEMORY_TOKEN_BUDGET))
+export const memoryTokenBudget = (): Promise<number> =>
+  getNumberSetting('memory_token_budget', DEFAULT_MEMORY_TOKEN_BUDGET)
 
 /** Token budget for resource excerpts injected alongside a space's memory (and picked collections). */
-export const spaceRagBudget = async (): Promise<number> =>
-  Number(await getAppSetting('space_rag_budget', '500'))
+export const spaceRagBudget = (): Promise<number> =>
+  getNumberSetting('space_rag_budget', 500)
 
 /** How many nearest chunks every vector search asks for.
  *
@@ -24,67 +24,53 @@ export const spaceRagBudget = async (): Promise<number> =>
  *  memory/ already imports uploads-search.ts — the other direction would be a cycle.
  *
  *  Read per call: it is an Admin setting and takes effect without a restart. */
-export const ragTopK = async (): Promise<number> =>
-  parseInt(await getAppSetting('rag_top_k', '15'), 10) || 15
+export const ragTopK = (): Promise<number> =>
+  getNumberSetting('rag_top_k', 15)
 
 /** Minimum cross-encoder relevance score a resource/document chunk must clear to be injected at
  *  all, instead of always filling out the top-K regardless of how weak the match is. `0` (default)
  *  disables the floor. Only meaningful when reranking is enabled — there is no model-agnostic
  *  equivalent over raw vector distance, so callers without a reranker are unaffected. */
-export const ragMinRelevance = async (): Promise<number> =>
-  parseFloat(await getAppSetting('rag_min_relevance', '0')) || 0
+export const ragMinRelevance = (): Promise<number> =>
+  getNumberSetting('rag_min_relevance', 0)
 
 /** Reranker relevance (0–1) below which an Explore answer takes a passage or part as unrelated.
  *  Lower than the retrieval floor: question-to-passage scores run low — relevant passages scored
  *  0.05–0.86 in real runs, unrelated ones 0.035 or less. */
 export const DEFAULT_EXPLORE_MIN_RELEVANCE = 0.05
-export const exploreMinRelevance = async (): Promise<number> => {
-  const v = parseFloat(await getAppSetting('collection_explore_min_relevance', String(DEFAULT_EXPLORE_MIN_RELEVANCE)))
-  return Number.isNaN(v) ? DEFAULT_EXPLORE_MIN_RELEVANCE : v
-}
+export const exploreMinRelevance = (): Promise<number> =>
+  getNumberSetting('collection_explore_min_relevance', DEFAULT_EXPLORE_MIN_RELEVANCE)
 
 /** Cosine similarity a resource must reach to be offered as "similar content". What counts as
  *  similar depends on the embedding model, hence a setting; the scores are logged to calibrate it. */
 export const DEFAULT_RELATED_MIN_SIMILARITY = 0.5
-export const relatedMinSimilarity = async (): Promise<number> => {
-  const v = parseFloat(await getAppSetting('related_min_similarity', String(DEFAULT_RELATED_MIN_SIMILARITY)))
-  return Number.isNaN(v) ? DEFAULT_RELATED_MIN_SIMILARITY : v
-}
+export const relatedMinSimilarity = (): Promise<number> =>
+  getNumberSetting('related_min_similarity', DEFAULT_RELATED_MIN_SIMILARITY)
 
 /** Reranker relevance (0–1) a candidate must reach when a reranker judges "similar content". 0.5
  *  is where a logit-scoring cross-encoder's own verdict turns from irrelevant to relevant. */
 export const DEFAULT_RELATED_MIN_RELEVANCE = 0.5
-export const relatedMinRelevance = async (): Promise<number> => {
-  const v = parseFloat(await getAppSetting('related_min_relevance', String(DEFAULT_RELATED_MIN_RELEVANCE)))
-  return Number.isNaN(v) ? DEFAULT_RELATED_MIN_RELEVANCE : v
-}
+export const relatedMinRelevance = (): Promise<number> =>
+  getNumberSetting('related_min_relevance', DEFAULT_RELATED_MIN_RELEVANCE)
 
 /** Token budget for the "Notes first" block. Larger than the space RAG budget: there the notes are
  *  one source among several, here they are what the answer is meant to rest on. */
 export const DEFAULT_NOTES_RAG_BUDGET = 1500
-export const notesRagBudget = async (): Promise<number> => {
-  const v = parseInt(await getAppSetting('notes_rag_budget', String(DEFAULT_NOTES_RAG_BUDGET)), 10)
-  return Number.isNaN(v) ? DEFAULT_NOTES_RAG_BUDGET : v
-}
+export const notesRagBudget = (): Promise<number> =>
+  getNumberSetting('notes_rag_budget', DEFAULT_NOTES_RAG_BUDGET)
 
 /** Average cosine similarity at which the topic map stops merging notes into a topic. Depends on the
  *  embedding model like the related-content floor; Admin → Similarity shows the values to pick from. */
 export const DEFAULT_TOPIC_MIN_SIMILARITY = 0.6
-export const topicMinSimilarity = async (): Promise<number> => {
-  const v = parseFloat(await getAppSetting('topic_min_similarity', String(DEFAULT_TOPIC_MIN_SIMILARITY)))
-  return Number.isNaN(v) ? DEFAULT_TOPIC_MIN_SIMILARITY : v
-}
+export const topicMinSimilarity = (): Promise<number> =>
+  getNumberSetting('topic_min_similarity', DEFAULT_TOPIC_MIN_SIMILARITY)
 
 /** Cosine similarity at which a topic is offered as an existing tag, and the lower one at which a new
  *  topic is placed beside its nearest tag. Short phrases embed noisily and the scale depends on the
  *  model; each match and placement is logged as a `[tags]` line to calibrate them. */
 export const DEFAULT_TAG_MATCH_SIMILARITY = 0.8
 export const DEFAULT_TAG_PLACE_SIMILARITY = 0.6
-export const tagMatchSimilarity = async (): Promise<number> => {
-  const v = parseFloat(await getAppSetting('tag_match_similarity', String(DEFAULT_TAG_MATCH_SIMILARITY)))
-  return Number.isNaN(v) ? DEFAULT_TAG_MATCH_SIMILARITY : v
-}
-export const tagPlaceSimilarity = async (): Promise<number> => {
-  const v = parseFloat(await getAppSetting('tag_place_similarity', String(DEFAULT_TAG_PLACE_SIMILARITY)))
-  return Number.isNaN(v) ? DEFAULT_TAG_PLACE_SIMILARITY : v
-}
+export const tagMatchSimilarity = (): Promise<number> =>
+  getNumberSetting('tag_match_similarity', DEFAULT_TAG_MATCH_SIMILARITY)
+export const tagPlaceSimilarity = (): Promise<number> =>
+  getNumberSetting('tag_place_similarity', DEFAULT_TAG_PLACE_SIMILARITY)

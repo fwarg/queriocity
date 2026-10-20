@@ -6,7 +6,7 @@ import { z } from 'zod'
 import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import { COLLECTION_HOLDS_NO_CHATS } from '../lib/ownership.ts'
 import { getSpaceMemories, saveMemory, compactSpaceMemories, extractMemoriesPostHoc, retroExtractionInputs, embedMemory, deleteMemoryEmbeddings } from '../lib/memory/index.ts'
-import { getAppSetting } from '../lib/db.ts'
+import { getNumberSetting } from '../lib/db.ts'
 import { indexSession } from '../lib/chat-indexer.ts'
 import { generateText } from 'ai'
 import { getChatModel } from '../lib/llm.ts'
@@ -147,7 +147,7 @@ memoriesRouter.post('/:spaceId/compact', async (c) => {
   const userId = c.get('userId')
   const spaceId = c.req.param('spaceId')
   if (!await verifySpaceOwner(spaceId, userId)) return c.json({ error: 'Not found' }, 404)
-  const targetTokens = parseInt(await getAppSetting('dream_target', '700'))
+  const targetTokens = await getNumberSetting('dream_target', 700)
   const before = (await getSpaceMemories(spaceId)).length
   const compacted = await compactSpaceMemories(spaceId, targetTokens)
   const after = compacted ? (await getSpaceMemories(spaceId)).length : before

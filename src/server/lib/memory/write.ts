@@ -2,7 +2,7 @@
 
 import { generateText } from 'ai'
 import { randomUUID } from 'crypto'
-import { db, spaceMemories, sqlite, getAppSetting } from '../db.ts'
+import { db, spaceMemories, sqlite, getNumberSetting } from '../db.ts'
 import { eq } from 'drizzle-orm'
 import { getSmallModel, SMALL_MODEL_INPUT_CHARS } from '../llm.ts'
 import { embedTexts } from '../embeddings.ts'
@@ -206,7 +206,7 @@ export async function extractMemoriesPostHoc(
   // 100000 chars, which no 4k-context model can take — and the extraction then fails outright
   // rather than extracting less. `|| 6000` also covers a non-numeric setting: `slice(-NaN)`
   // silently returns the *whole* string, so a bad value disabled the limit rather than tripping it.
-  const configured = parseInt(await getAppSetting('memory_extract_chars', '6000'), 10) || 6000
+  const configured = await getNumberSetting('memory_extract_chars', 6000)
   const maxChars = Math.min(configured, SMALL_MODEL_INPUT_CHARS)
   const combined = `User: ${userContent}\n\nAssistant: ${assistantContent}`
   const result = await generateText({

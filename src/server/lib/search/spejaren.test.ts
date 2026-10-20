@@ -247,8 +247,8 @@ describe('fetchUrl', () => {
     configure(searxngStub([]), spejaren)
 
     // A public IP literal passes the URL guard without DNS; were the copy ignored, it would be fetched live.
-    const content = await fetchUrl('http://93.184.215.14/spejaren-test')
+    const fetched = await fetchUrl('http://93.184.215.14/spejaren-test')
 
-    expect(content).toBe(`[spejaren · example.com]\nBin\n\n${text}`)
+    expect(fetched).toEqual({ ok: true, text: `[spejaren · example.com]\nBin\n\n${text}` })
   })
 })
