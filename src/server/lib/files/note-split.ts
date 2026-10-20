@@ -13,9 +13,14 @@ export { splitSources, withSources, type NotePart }
 const SYSTEM = `You split a long note into short, self-contained notes for a personal knowledge base, one idea per note.
 Rules:
 - 2 to 8 notes. Each must make sense read alone: name its subject, do not rely on "as above".
-- Keep the wording of the original where possible; do not add facts.
+- Each note is about one concept, method or claim, stated so that it holds on its own — what was
+  found or argued, and under which conditions — not a summary of a section of the text.
+- Never write "the study", "the paper" or "this work": name the work (its title or authors) where it
+  matters.
+- Keep the wording of the original where possible; do not add facts or explanations of your own.
 - Keep citation markers such as [3] or [F1] exactly as written, next to the text they support.
-- Titles: short and specific, in the note's language.
+- Titles name the concept or claim (e.g. "Benjamini–Hochberg FDR correction"), never a section
+  ("Results", "Method of the study"); short and specific, in the note's language.
 - Under each title, one line \`tags: a, b/c\` with 1-3 lowercase tags (\`/\` nests them). Reuse the
   user's existing tags where they fit; make a new one only when none does.
 - First, one OVERVIEW block: a title for the text as a whole and a 1-3 sentence summary of what it

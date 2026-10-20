@@ -68,14 +68,14 @@ export function SplitNotesDialog({ title, body, options, fromNoteId, onClose, on
     setError('')
     try {
       const saved: Array<{ id: string; title: string }> = []
-      for (const p of kept) saved.push({ id: (await createNote(p.title.trim(), p.body, { ...options, tags: p.tags })).id, title: p.title.trim() })
+      for (const p of kept) saved.push({ id: (await createNote(p.title.trim(), p.body, { ...options, author: 'model', tags: p.tags })).id, title: p.title.trim() })
       if (overview && fromNoteId) {
         for (const s of saved) await addSeeAlso(fromNoteId, s.id, t('links.seeAlso'))
       } else if (overview) {
         const links = `${t('split.overviewIntro')}\n\n${saved.map(s => `- ${wikilinkFor(s.title)}`).join('\n')}`
         const hub = overviewSummary.trim() ? `${overviewSummary.trim()}\n\n${links}` : links
         const hubTitle = overviewTitle.trim() || title.trim() || t('split.overviewTitle')
-        saved.push({ id: (await createNote(hubTitle, hub, { ...options, tags: overviewTags })).id, title: hubTitle })
+        saved.push({ id: (await createNote(hubTitle, hub, { ...options, author: 'model', tags: overviewTags })).id, title: hubTitle })
       }
       onSaved(saved)
     } catch (err) {

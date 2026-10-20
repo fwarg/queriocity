@@ -1,15 +1,14 @@
-import { db, uploadedFiles, getAppSetting } from '../db.ts'
+import { db, uploadedFiles, getAppSetting, getNumberSetting } from '../db.ts'
 import { eq, sql } from 'drizzle-orm'
 import { reformulateLLM } from '../reformulate.ts'
 import { webSearch, webSearchMulti, newSearchBudget, type SearchResult, type EngineError, type SearchBudget } from '../search/index.ts'
 import { fetchUrlAllPages, processUrlsForContext, DEFAULT_MAX_URL_CONTEXT_CHARS, type ProcessedUrl } from '../fetch-url.ts'
-import { DEFAULT_MEMORY_TOKEN_BUDGET } from '../llm.ts'
 import { rerankSearchResults } from '../reranker.ts'
-import { notesRagBudget } from '../rag-settings.ts'
-import { buildMemoryBlock, buildChatFileBlock, buildCollectionBlock, buildNotesBlock, userMemoryBlockIfEnabled, joinMemoryBlocks } from '../memory.ts'
+import { memoryTokenBudget, notesRagBudget, spaceRagBudget } from '../rag-settings.ts'
+import { buildMemoryBlock, buildChatFileBlock, buildCollectionBlock, buildNotesBlock, userMemoryBlockIfEnabled, joinMemoryBlocks } from '../memory/index.ts'
 import { contextCharBudget } from '../trim-messages.ts'
 import { hasAttachment } from '../../../shared/context.ts'
-import { userQueryOf, type TurnContext, type TurnMessage } from './context.ts'
+import { userQueryOf, additionalInstructions, type TurnContext, type TurnMessage } from './context.ts'
 
 /** Token budget for the collections picked this request, or 0 when none are.
  *
@@ -17,7 +16,7 @@ import { userQueryOf, type TurnContext, type TurnMessage } from './context.ts'
  *  many tokens of retrieved document may enter a prompt — and one knob is easier to reason about
  *  than two. Read only when collections are actually selected, so the usual request is unchanged. */
 export const collectionRagBudget = async (collections: string[]): Promise<number> =>
-  collections.length ? Number(await getAppSetting('space_rag_budget', '500')) : 0
+  collections.length ? await spaceRagBudget() : 0
 
 /** Maps the client's category chips onto SearXNG category names. */
 export function toSearxngCategories(cats?: string[]): string | undefined {
@@ -32,8 +31,8 @@ export type ResearchInputs = Awaited<ReturnType<typeof prepareResearch>>
  *  memory and document context, prefetched URLs, and the settings that shape the run. */
 export async function prepareResearch(ctx: TurnContext) {
   const [fetchMaxPages, urlContextChars, fetchSummarize, compressHistory] = await Promise.all([
-    getAppSetting('fetch_max_pages', '8').then(Number),
-    getAppSetting('fetch_max_url_context_chars', String(DEFAULT_MAX_URL_CONTEXT_CHARS)).then(Number),
+    getNumberSetting('fetch_max_pages', 8),
+    getNumberSetting('fetch_max_url_context_chars', DEFAULT_MAX_URL_CONTEXT_CHARS),
     getAppSetting('fetch_summarize_overflow', 'false').then(v => v === 'true'),
     getAppSetting('compress_history_overflow', 'false').then(v => v === 'true'),
   ])
@@ -55,7 +54,7 @@ export async function prepareResearch(ctx: TurnContext) {
  *  (Whole collection, Explore); empty outside a space. */
 export async function spaceMemoryOnly(ctx: TurnContext, query: string): Promise<string> {
   if (!ctx.spaceId) return ''
-  const budget = Number(await getAppSetting('memory_token_budget', DEFAULT_MEMORY_TOKEN_BUDGET))
+  const budget = await memoryTokenBudget()
   return (await buildMemoryBlock(ctx.spaceId, budget, 0, query, undefined, ctx.includeMemoryIds, ctx.locked)).block
 }
 
@@ -70,7 +69,7 @@ export function thinkingFor(ctx: TurnContext) {
 
 /** Context left for prefetched page text once the system prompt and history are counted. */
 function urlBudgetChars(ctx: TurnContext, contextTokens: number, memoryBlock: string): number {
-  const estSystemChars = 500 + (memoryBlock?.length ?? 0) + (ctx.customPrompt?.length ?? 0)
+  const estSystemChars = 500 + (memoryBlock?.length ?? 0) + (additionalInstructions(ctx)?.length ?? 0)
   const estMsgsChars = ctx.msgs.reduce((s, m) => s + m.content.length, 0)
   return Math.max(0, contextCharBudget(contextTokens) - estSystemChars - estMsgsChars)
 }
@@ -89,8 +88,8 @@ async function gatherContext(ctx: TurnContext, searchBudget: SearchBudget, fetch
   const [fileCountRow, { initialQueries, initialResults, engineErrors }, memoryBudget, ragBudget, prefetchedUrls] = await Promise.all([
     ctx.monitor ? Promise.resolve({ count: 0 }) : db.select({ count: sql<number>`count(*)` }).from(uploadedFiles).where(eq(uploadedFiles.userId, ctx.userId)).get(),
     preSearch(ctx, notesBlock.block, lastHasAttachment, searchBudget),
-    ctx.spaceId ? getAppSetting('memory_token_budget', DEFAULT_MEMORY_TOKEN_BUDGET).then(Number) : Promise.resolve(Number(DEFAULT_MEMORY_TOKEN_BUDGET)),
-    getAppSetting('space_rag_budget', '500').then(Number),
+    ctx.spaceId ? memoryTokenBudget() : Promise.resolve(0),
+    spaceRagBudget(),
     ctx.locked ? Promise.resolve([]) : prefetchUrlsFromMessage(userQuery, lastHasAttachment, fetchMaxPages),
   ])
   const hasFiles = (fileCountRow?.count ?? 0) > 0

@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, type FormEvent, type KeyboardEvent } from 'react'
-import { Send, Paperclip, X, Square, LayoutGrid, ChevronDown, ChevronUp, NotebookPen, Library, EyeOff } from 'lucide-react'
+import { Send, Paperclip, X, Square, LayoutGrid, ChevronDown, ChevronUp, NotebookPen, Library, EyeOff, BookMarked, FileText } from 'lucide-react'
 import { AI_SYSTEM_NOTICE_SHORT } from '../lib/ai-notice.ts'
-import { extractFileForContext, uploadFile, tagFileToSpace, fetchFiles, fetchNoteText, fetchSuggestions, type Resource } from '../lib/api.ts'
+import { extractFileForContext, uploadFile, tagFileToSpace, fetchFiles, fetchNoteText, fetchSuggestions, type Resource, type CustomTemplate } from '../lib/api.ts'
 import { Modal } from './Modal.tsx'
 import { TemplateSelector } from './TemplateSelector.tsx'
 import { ModelPicker } from './ModelPicker.tsx'
@@ -46,6 +46,17 @@ interface Props {
   /** Explore may also search the web; offered only while Explore is chosen and the turn is not locked. */
   exploreWeb?: boolean
   onExploreWebChange?: (on: boolean) => void
+  /** Explore may save notes to the library, marked as the model's drafts; offered while Explore is chosen. */
+  exploreNotes?: boolean
+  /** One resource read as Explore's document, beside any collections; removable like a pick. */
+  scopedDocument?: { id: string; title: string } | null
+  onScopedDocumentChange?: (doc: null) => void
+  onExploreNotesChange?: (on: boolean) => void
+  /** Text to put in the message box, from outside it; a new `n` puts it in again. */
+  seed?: { text: string; n: number }
+  /** The recipe whose chip is shown; every message carries it until the chip is removed. */
+  recipe?: CustomTemplate | null
+  onRecipeChange?: (recipe: CustomTemplate | null) => void
   /** "Notes first": answer from the user's own notes before the web. Offered once they have notes. */
   notesAvailable?: boolean
   notesFirst?: boolean
@@ -104,10 +115,12 @@ const CATEGORY_LABEL_KEYS: Record<SearchCategory, TranslationKey> = {
   tech: 'category.tech',
 }
 
-export function ChatInput({ models = [], modelId = '', defaultModel, onModelChange, onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, collections, selectedCollections, onCollectionsChange, collectionMode = 'auto', onCollectionModeChange, spaceResources = 0, exploreWeb = false, onExploreWebChange, notesAvailable = false, notesFirst = false, onNotesFirstChange, suggestionsEnabled, lockedSpace = false, chatLocked = false, hasHistory = false, related = [], onRelatedSelect, spaceId, onAddedToLibrary }: Props) {
+export function ChatInput({ models = [], modelId = '', defaultModel, onModelChange, onSubmit, onCancel, disabled, focusMode, onFocusModeChange, searchCategories, onSearchCategoriesChange, collections, selectedCollections, onCollectionsChange, collectionMode = 'auto', onCollectionModeChange, spaceResources = 0, exploreWeb = false, onExploreWebChange, exploreNotes = false, onExploreNotesChange, seed, recipe, onRecipeChange, scopedDocument = null, onScopedDocumentChange, notesAvailable = false, notesFirst = false, onNotesFirstChange, suggestionsEnabled, lockedSpace = false, chatLocked = false, hasHistory = false, related = [], onRelatedSelect, spaceId, onAddedToLibrary }: Props) {
   const t = useT()
   const confirm = useConfirm()
   const [value, setValue] = useState('')
+  // Keyed on `n`, so the same text can be put in twice.
+  useEffect(() => { if (seed) setValue(seed.text) }, [seed?.n])
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [extractStatus, setExtractStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [extractError, setExtractError] = useState('')
@@ -155,8 +168,9 @@ export function ChatInput({ models = [], modelId = '', defaultModel, onModelChan
   // whichever groups apply — the trigger names what is currently in force.
   const categoriesAvailable = !lockedSpace && (focusMode === 'balanced' || focusMode === 'thorough')
   const notesOffered = notesAvailable && focusMode !== 'image' && !!onNotesFirstChange
-  const spaceReadable = spaceResources > 0 && focusMode !== 'image'
-  const readMode = shownReadMode(collectionMode, selectedCollections.length > 0)
+  // A scoped document is read like a space's resources: the read mode applies with no collection picked.
+  const spaceReadable = (spaceResources > 0 || !!scopedDocument) && focusMode !== 'image'
+  const readMode = shownReadMode(collectionMode, selectedCollections.length > 0 || !!scopedDocument)
   const sourcesPicker = categoriesAvailable || collections.length > 0 || notesOffered || spaceReadable
   const sourcesActive = searchCategories.length > 0 || selectedCollections.length > 0 || (notesOffered && notesFirst)
   const pickedNames = [
@@ -165,6 +179,7 @@ export function ChatInput({ models = [], modelId = '', defaultModel, onModelChan
     ...collections.filter(c => selectedCollections.includes(c.id)).map(c => c.name),
     ...(focusMode !== 'image' && (selectedCollections.length > 0 ? readMode !== 'auto' : spaceReadable && readMode !== 'excerpts') ? [t(COLLECTION_MODE_LABEL_KEYS[readMode])] : []),
     ...(focusMode !== 'image' && readMode === 'explore' && exploreWeb && !lockedSpace ? [t('collection.exploreWeb')] : []),
+    ...(focusMode !== 'image' && readMode === 'explore' && exploreNotes ? [t('collection.exploreNotes')] : []),
   ]
   // "All" is a statement about categories only, and unqualified it reads as "everything" once
   // collections share the button — no collection is picked by default.
@@ -209,6 +224,16 @@ export function ChatInput({ models = [], modelId = '', defaultModel, onModelChan
     const added = collections.find(c => c.offline && ids.includes(c.id) && !selectedCollections.includes(c.id))
     if (added && !await confirmLock(added.name)) return
     onCollectionsChange(ids)
+  }
+
+  /** Takes on a recipe's chip and the settings it names; a collection since deleted is dropped. */
+  async function applyRecipe(r: CustomTemplate) {
+    onRecipeChange?.(r)
+    const { collectionIds, collectionMode: readMode, exploreWeb: web } = r.settings
+    const ids = collectionIds?.filter(id => collections.some(c => c.id === id))
+    if (ids?.length) await pickCollections(ids)
+    if (readMode) onCollectionModeChange?.(readMode)
+    if (web !== undefined) onExploreWebChange?.(web)
   }
 
   function handleSubmit(e: FormEvent) {
@@ -308,12 +333,13 @@ export function ChatInput({ models = [], modelId = '', defaultModel, onModelChan
       <div className={`overflow-hidden transition-all duration-300 flex flex-col gap-2 px-4 ${collapsed ? 'max-h-0' : 'max-h-[34rem] pb-4'}`}>
       {showTemplates && (
         <TemplateSelector
-          onSelect={(text, mode, whole) => {
+          onSelect={(text, mode, whole, picked) => {
             setValue(text)
             onFocusModeChange(mode)
             setShowTemplates(false)
             // Opened too, so the collection to read is picked where the switch is.
             if (whole && onCollectionModeChange) { onCollectionModeChange('whole'); setSourcesOpen(true) }
+            if (picked) applyRecipe(picked)
           }}
           onClose={() => setShowTemplates(false)}
         />
@@ -414,6 +440,7 @@ export function ChatInput({ models = [], modelId = '', defaultModel, onModelChan
               onChange={pickCollections}
               spaceReadable={spaceReadable}
               web={!lockedSpace && onExploreWebChange ? { on: exploreWeb, onChange: onExploreWebChange } : undefined}
+              notes={onExploreNotesChange ? { on: exploreNotes, onChange: onExploreNotesChange } : undefined}
               mode={focusMode !== 'image' ? readMode : undefined}
               onModeChange={onCollectionModeChange}
             />
@@ -454,6 +481,8 @@ export function ChatInput({ models = [], modelId = '', defaultModel, onModelChan
           ))}
         </div>
       )}
+      {recipe && <RecipeChip recipe={recipe} onRemove={() => onRecipeChange?.(null)} />}
+      {scopedDocument && <DocumentChip title={scopedDocument.title} onRemove={() => onScopedDocumentChange?.(null)} />}
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {attachments.map((att, i) => (
@@ -599,8 +628,39 @@ function NotePicker({ onPick, onClose }: { onPick: (id: string) => void; onClose
   )
 }
 
+/** The active recipe. Warns, without blocking, when an instruction note is one nobody has reviewed:
+ *  a model-written style guide steers every answer of the chat. */
+function RecipeChip({ recipe, onRemove }: { recipe: CustomTemplate; onRemove: () => void }) {
+  const t = useT()
+  const unreviewed = recipe.instructions.some(n => n.trust === 'unreviewed' || n.trust === 'unknown')
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 text-xs">
+      <span className="inline-flex items-center gap-1 max-w-full px-2 py-1 rounded bg-teal-900 text-teal-100">
+        <BookMarked size={12} className="shrink-0" />
+        <span className="truncate">{t('recipe.chip', { name: recipe.name })}</span>
+        <button type="button" onClick={onRemove} aria-label={t('recipe.chipRemove')} className="shrink-0 text-teal-300 hover:text-white ml-0.5"><X size={12} /></button>
+      </span>
+      {unreviewed && <span className="text-amber-300">{t('recipe.unreviewed')}</span>}
+    </div>
+  )
+}
+
+/** The one document this chat reads, from "Save notes from this document". */
+function DocumentChip({ title, onRemove }: { title: string; onRemove: () => void }) {
+  const t = useT()
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 text-xs">
+      <span className="inline-flex items-center gap-1 max-w-full px-2 py-1 rounded bg-emerald-900 text-emerald-100">
+        <FileText size={12} className="shrink-0" />
+        <span className="truncate">{t('chat.documentChip', { name: title })}</span>
+        <button type="button" onClick={onRemove} aria-label={t('chat.documentRemove')} className="shrink-0 text-emerald-300 hover:text-white ml-0.5"><X size={12} /></button>
+      </span>
+    </div>
+  )
+}
+
 /** Copy for each way of reading the picked collections, keyed by mode. */
-const COLLECTION_MODE_LABEL_KEYS: Record<CollectionMode, TranslationKey> = {
+export const COLLECTION_MODE_LABEL_KEYS: Record<CollectionMode, TranslationKey> = {
   auto: 'collection.mode.auto', excerpts: 'collection.mode.excerpts', whole: 'collection.mode.whole', explore: 'collection.mode.explore',
 }
 const COLLECTION_MODE_DESC_KEYS: Record<CollectionMode, TranslationKey> = {
@@ -616,13 +676,15 @@ function shownReadMode(mode: CollectionMode, picked: boolean): CollectionMode {
 /** The collection chips, and once one is picked — or in a space chat, always — how to read them.
  *  `mode` is undefined where the choice does not apply (image mode). The chosen mode's description is
  *  shown, not only in a tooltip: a phone never shows a title. */
-function CollectionsGroup({ collections, selected, onChange, spaceReadable, web, mode, onModeChange }: {
+function CollectionsGroup({ collections, selected, onChange, spaceReadable, web, notes, mode, onModeChange }: {
   collections: Array<{ id: string; name: string; offline?: boolean }>
   selected: string[]
   onChange: (ids: string[]) => void
   spaceReadable: boolean
   /** The Explore web opt-in; undefined where it is not offered (a locked turn). */
   web?: { on: boolean; onChange: (on: boolean) => void }
+  /** The Explore note-saving opt-in. */
+  notes?: { on: boolean; onChange: (on: boolean) => void }
   mode?: CollectionMode
   onModeChange?: (mode: CollectionMode) => void
 }) {
@@ -671,6 +733,12 @@ function CollectionsGroup({ collections, selected, onChange, spaceReadable, web,
               <label className="ml-1 inline-flex items-center gap-1 text-xs text-gray-400 cursor-pointer" title={t('collection.exploreWebDesc')}>
                 <input type="checkbox" checked={web.on} onChange={e => web.onChange(e.target.checked)} className="accent-amber-600 cursor-pointer" />
                 {t('collection.exploreWeb')}
+              </label>
+            )}
+            {mode === 'explore' && notes && (
+              <label className="ml-1 inline-flex items-center gap-1 text-xs text-gray-400 cursor-pointer" title={t('collection.exploreNotesDesc')}>
+                <input type="checkbox" checked={notes.on} onChange={e => notes.onChange(e.target.checked)} className="accent-amber-600 cursor-pointer" />
+                {t('collection.exploreNotes')}
               </label>
             )}
           </div>

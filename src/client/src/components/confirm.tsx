@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { useT } from '../lib/i18n.tsx'
 
 interface ConfirmRequest {
@@ -7,6 +7,8 @@ interface ConfirmRequest {
   confirmLabel?: string
   /** Red button. For anything that destroys something or cannot be undone. */
   danger?: boolean
+  /** A checkbox under the message, unticked; its state is reported to `onChange`. */
+  option?: { label: string; onChange: (checked: boolean) => void }
 }
 
 type Ask = (req: ConfirmRequest) => Promise<boolean>
@@ -29,6 +31,18 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
   const [pending, setPending] = useState<{ req: ConfirmRequest; resolve: (ok: boolean) => void } | null>(null)
 
   const ask = useCallback<Ask>(req => new Promise(resolve => setPending({ req, resolve })), [])
+  // A backdrop click cancels only when it also began there: a dialog opened on mousedown — by a field
+  // that submits on blur — would otherwise be cancelled by the mouseup of the very click that opened it.
+  const pressedBackdrop = useRef(false)
+  const cancelRef = useRef<HTMLButtonElement>(null)
+
+  // Cancel takes focus a tick late: a dialog opened by Enter in a field would otherwise get the rest
+  // of that keystroke, and Firefox, which presses a button on keypress, would cancel it unseen.
+  useEffect(() => {
+    if (!pending) return
+    const id = setTimeout(() => cancelRef.current?.focus())
+    return () => clearTimeout(id)
+  }, [pending])
 
   const settle = (ok: boolean) => {
     pending?.resolve(ok)
@@ -50,7 +64,11 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
       {/* Rendered after the children, so it sits above a Modal at the same z-index — several of
           these are asked from inside one. */}
       {pending && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => settle(false)}>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onMouseDown={e => { pressedBackdrop.current = e.target === e.currentTarget }}
+          onClick={e => { if (pressedBackdrop.current && e.target === e.currentTarget) settle(false) }}
+        >
           <div
             role="dialog"
             aria-modal="true"
@@ -58,10 +76,16 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
             onClick={e => e.stopPropagation()}
           >
             <p className="text-sm text-gray-200 whitespace-pre-line">{pending.req.message}</p>
+            {pending.req.option && (
+              <label className="flex items-start gap-2 text-sm text-gray-300">
+                <input type="checkbox" className="mt-0.5" onChange={e => pending.req.option!.onChange(e.target.checked)} />
+                {pending.req.option.label}
+              </label>
+            )}
             <div className="flex justify-end gap-2">
               {/* Cancel takes focus: Enter on a dialog you did not expect should not confirm it. */}
               <button
-                autoFocus
+                ref={cancelRef}
                 onClick={() => settle(false)}
                 className="px-3 py-1.5 rounded text-sm bg-gray-700 hover:bg-gray-600 text-gray-200"
               >

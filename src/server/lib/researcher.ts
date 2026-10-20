@@ -3,7 +3,7 @@ import { z } from 'zod'
 import type { ModelMessage } from 'ai'
 import { webSearchMulti, trustedSearchMulti, hasTrustedSearch, hasFallbackSearch, type SearchResult, type EngineError, type SearchBudget } from './search/index.ts'
 import { searchUploads } from './files/uploads-search.ts'
-import { saveMemories, saveUserMemory, searchSpaceHistory, MEMORY_MAX_SOURCES, type MemorySource } from './memory.ts'
+import { saveMemories, saveUserMemory, searchSpaceHistory, MEMORY_MAX_SOURCES, type MemorySource } from './memory/index.ts'
 import { ragMinRelevance } from './rag-settings.ts'
 import { fetchUrl, processUrlsForContext, urlLabel, MIN_URL_CONTEXT_CHARS, type UrlOutcome } from './fetch-url.ts'
 import { trimMessages, compressMessages, contextCharBudget, meterBudgetChars, CONTEXT_RESERVE_FRACTION } from './trim-messages.ts'
@@ -13,7 +13,7 @@ import { queryTerms, querySimilarity, QUERY_DUPLICATE_THRESHOLD } from './query-
 import {
   applyEgressMode, createEgressContext, inspectQuery, inspectUrl, noteSeenUrl, noteTaint, noteUserText,
 } from './egress-guard.ts'
-import { languageModel, outputCap, RESEARCH_MAX_TOKENS, CHARS_PER_TOKEN, tokensToChars, type ModelTarget } from './llm.ts'
+import { languageModel, outputCap, researchMaxTokens, CHARS_PER_TOKEN, tokensToChars, type ModelTarget } from './llm.ts'
 
 
 export const SYSTEM_PROMPTS = {
@@ -431,9 +431,9 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
       execute: async ({ url }) => {
         if (toolBudgetRemaining <= MIN_URL_CONTEXT_CHARS) return CONTEXT_BUDGET_DEAD_MSG
         if (!await permitEgress('fetch', url)) return EGRESS_REFUSED_MSG
-        const raw = await fetchUrl(url)
-        if (raw.startsWith('Error fetching')) return raw
-        const [{ content, outcome }] = await processUrlsForContext([{ url, content: raw }], toolBudgetRemaining, fetchSummarize, urlContextChars)
+        const fetched = await fetchUrl(url)
+        if (!fetched.ok) return fetched.error
+        const [{ content, outcome }] = await processUrlsForContext([{ url, content: fetched.text }], toolBudgetRemaining, fetchSummarize, urlContextChars)
         if (outcome) await onUrlRead?.(new URL(url).hostname, outcome)
         // The page just read is untrusted: anything in it could be an instruction to leak.
         noteTaint(egress, content)
@@ -552,7 +552,7 @@ export async function runResearcher({ messages, focusMode, userId, model, abortS
     // returns {done:true} and the loop keeps going to the step cap, so every run that finished
     // early still paid for the remaining steps. Harmless in balanced, which registers no `done`.
     stopWhen: [stepCountIs(maxSteps), hasToolCall('done')],
-    maxOutputTokens: outputCap(model, RESEARCH_MAX_TOKENS),
+    maxOutputTokens: outputCap(model, researchMaxTokens()),
     tools,
     // Withhold the tools on the final step so it can only produce prose. `activeTools: []`
     // rather than `toolChoice: 'none'` so the schemas are not sent at all — the model cannot

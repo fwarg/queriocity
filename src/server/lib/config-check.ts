@@ -3,7 +3,7 @@ import { getEmbeddingModel, modelTarget, EMBED_MAX_INPUT_CHARS, SMALL_MODEL_INPU
 import { IMAGE_API } from './image-store.ts'
 import { LARGEST_CHUNK_CHARS } from './files/ingest.ts'
 import { remoteModelEndpoints } from './space-lock.ts'
-import { getAppSetting } from './db.ts'
+import { getNumberSetting } from './db.ts'
 
 // The value printed in the README's env example — a live deployment using it has an
 // effectively public signing key.
@@ -89,9 +89,9 @@ export function validateConfig(): void {
  *
  *  Async and reading an Admin setting, so it runs with the preflight rather than validateConfig. */
 export async function checkAttachmentBudget(): Promise<void> {
-  const attachmentChars = parseInt(await getAppSetting('attachment_chars', '20000'), 10) || 20000
+  const attachmentChars = await getNumberSetting('attachment_chars', 20000)
   const extractChars = Math.min(
-    parseInt(await getAppSetting('memory_extract_chars', '6000'), 10) || 6000,
+    await getNumberSetting('memory_extract_chars', 6000),
     SMALL_MODEL_INPUT_CHARS,
   )
   if (attachmentChars <= Math.max(EMBED_MAX_INPUT_CHARS, extractChars)) return

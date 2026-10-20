@@ -1,6 +1,8 @@
 import type { Lang } from '@shared/i18n/index.ts'
-import type { Theme } from '@shared/theme.ts'
+import type { UserSettings } from '@shared/user-settings.ts'
 import type { ContextReport } from '@shared/context.ts'
+import type { NoteStatus, NoteTrust } from '@shared/note-trust.ts'
+import type { ActiveRecipe, RecipeSettings } from '@shared/recipes.ts'
 import type { ApiErrorBody, ErrorCode } from '@shared/error-codes.ts'
 import type { LlmCatalogue, LlmAccess, UsageRow, AnswerModel, ModelChoices } from '@shared/llm-catalogue.ts'
 import type { CollectionMode } from '@shared/context.ts'
@@ -24,12 +26,28 @@ export async function apiError(res: Response, fallback: string): Promise<ApiErro
 
 const BASE = '/api'
 
+/** Sends a request (a JSON body when `json` is given), throwing an ApiError when it fails. */
+async function send(path: string, fallback: string, init: { method?: string; json?: unknown } = {}): Promise<Response> {
+  const res = await fetch(path, init.json === undefined ? { method: init.method } : {
+    method: init.method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(init.json),
+  })
+  if (!res.ok) throw await apiError(res, fallback)
+  return res
+}
+
+/** `send`, then the response body parsed as JSON. */
+async function requestJson<T>(path: string, fallback: string, init?: { method?: string; json?: unknown }): Promise<T> {
+  return (await send(path, fallback, init)).json() as Promise<T>
+}
+
 export interface AuthUser {
   id: string
   email: string
   name: string | null
   role: 'user' | 'admin'
-  settings: { customPrompt?: string; showThinking?: { balanced: boolean; thorough: boolean }; useThinking?: boolean; useSpaceRag?: boolean; useChatRag?: boolean; querySuggestions?: boolean; followUpSuggestions?: boolean; userMemory?: boolean; imageWatermark?: boolean; cloudAcknowledged?: boolean; fontSize?: number; theme?: Theme; timezone?: string; language?: Lang }
+  settings: UserSettings
   memoryTokenBudget: number
   /** True after an admin issued a temporary password — the user must set their own. */
   mustChangePassword?: boolean
@@ -96,29 +114,15 @@ export async function getMe(): Promise<AuthUser | null> {
 }
 
 export async function hasUsers(): Promise<boolean> {
-  const res = await fetch(`${BASE}/auth/has-users`)
-  const data = await res.json()
-  return data.hasUsers
+  return (await requestJson<{ hasUsers: boolean }>(`${BASE}/auth/has-users`, 'Could not reach the server')).hasUsers
 }
 
 export async function login(email: string, password: string): Promise<AuthUser> {
-  const res = await fetch(`${BASE}/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  })
-  if (!res.ok) throw await apiError(res, 'Login failed')
-  return res.json()
+  return requestJson(`${BASE}/auth/login`, 'Login failed', { method: 'POST', json: { email, password } })
 }
 
 export async function register(email: string, password: string, name?: string, inviteToken?: string, language?: Lang): Promise<AuthUser> {
-  const res = await fetch(`${BASE}/auth/register`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password, name, inviteToken, language }),
-  })
-  if (!res.ok) throw await apiError(res, 'Registration failed')
-  return res.json()
+  return requestJson(`${BASE}/auth/register`, 'Registration failed', { method: 'POST', json: { email, password, name, inviteToken, language } })
 }
 
 export async function logout(): Promise<void> {
@@ -140,47 +144,28 @@ export async function fetchSuggestions(text: string, signal?: AbortSignal): Prom
 }
 
 export async function updateSettings(settings: AuthUser["settings"]): Promise<void> {
-  await fetch(`${BASE}/users/settings`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(settings),
-  })
+  await send(`${BASE}/users/settings`, 'Could not save settings', { method: 'PATCH', json: settings })
 }
 
 // Admin
 export async function listUsers(): Promise<Array<{ id: string; email: string; name: string | null; role: string; createdAt: number }>> {
-  const res = await fetch(`${BASE}/admin/users`)
-  return res.json()
+  return requestJson(`${BASE}/admin/users`, 'Could not load users')
 }
 
 export async function setUserRole(id: string, role: 'user' | 'admin'): Promise<void> {
-  await fetch(`${BASE}/admin/users/${id}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ role }),
-  })
+  await send(`${BASE}/admin/users/${id}`, 'Could not change the role', { method: 'PATCH', json: { role } })
 }
 
 export async function deleteUser(id: string): Promise<void> {
-  await fetch(`${BASE}/admin/users/${id}`, { method: 'DELETE' })
+  await send(`${BASE}/admin/users/${id}`, 'Could not delete the user', { method: 'DELETE' })
 }
 
 export async function createInvite(email?: string): Promise<{ token: string; expiresAt: string }> {
-  const res = await fetch(`${BASE}/admin/invites`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email }),
-  })
-  return res.json()
+  return requestJson(`${BASE}/admin/invites`, 'Could not create the invite', { method: 'POST', json: { email } })
 }
 
 export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
-  const res = await fetch(`${BASE}/users/password`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ currentPassword, newPassword }),
-  })
-  if (!res.ok) throw await apiError(res, 'Could not change password')
+  await send(`${BASE}/users/password`, 'Could not change password', { method: 'POST', json: { currentPassword, newPassword } })
 }
 
 export async function resetUserPassword(id: string): Promise<{ tempPassword: string }> {
@@ -198,12 +183,11 @@ export interface Invite {
 }
 
 export async function listInvites(): Promise<Invite[]> {
-  const res = await fetch(`${BASE}/admin/invites`)
-  return res.json()
+  return requestJson(`${BASE}/admin/invites`, 'Could not load invites')
 }
 
 export async function revokeInvite(token: string): Promise<void> {
-  await fetch(`${BASE}/admin/invites/${token}`, { method: 'DELETE' })
+  await send(`${BASE}/admin/invites/${token}`, 'Could not revoke the invite', { method: 'DELETE' })
 }
 
 /** Extra models the user may pick for one message (none when picking is not enabled for them), and
@@ -216,8 +200,7 @@ export async function fetchModelChoices(): Promise<ModelChoices | null> {
 export type ModelTestResult = { role: string; model: string; ok: boolean; ms: number; info: string }
 
 export async function testModels(): Promise<ModelTestResult[]> {
-  const res = await fetch(`${BASE}/admin/models-test`)
-  return res.json()
+  return requestJson(`${BASE}/admin/models-test`, 'Could not test the models')
 }
 
 // Chat
@@ -238,6 +221,9 @@ export async function* streamChat(
   collectionMode?: CollectionMode,
   attachedFileIds?: string[],
   exploreWeb?: boolean,
+  exploreNotes?: boolean,
+  recipe?: ActiveRecipe,
+  documentIds?: string[],
 ): AsyncGenerator<{ type: string; [k: string]: unknown }> {
   const res = await fetch(`${BASE}/chat`, {
     method: 'POST',
@@ -262,9 +248,12 @@ export async function* streamChat(
       ...(notesFirst ? { notesFirst: true } : {}),
       ...(modelId ? { modelId } : {}),
       // A space chat reads its own resources in the chosen mode too, with no collection picked.
-      ...(collectionMode && (collectionIds?.length || spaceId) ? { collectionMode } : {}),
+      ...(collectionMode && (collectionIds?.length || documentIds?.length || spaceId) ? { collectionMode } : {}),
+      ...(documentIds?.length ? { documentIds } : {}),
       ...(attachedFileIds?.length ? { attachedFileIds } : {}),
       ...(exploreWeb ? { exploreWeb: true } : {}),
+      ...(exploreNotes ? { exploreNotes: true } : {}),
+      ...(recipe ? { recipe } : {}),
     }),
     signal,
   })
@@ -366,6 +355,17 @@ export async function decideEgress(sessionId: string, id: string, allow: boolean
  *  and the attachment body would just cost the small model context it does not have. */
 const RELATED_QUESTION_MAX = 2000
 
+/** The small model's title for a new chat whose first title was weak; null when it failed. */
+export async function refineChatTitle(sessionId: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${BASE}/chat/${sessionId}/title`, { method: 'POST' })
+    if (!res.ok) return null
+    return (await res.json()).title ?? null
+  } catch {
+    return null
+  }
+}
+
 export async function fetchRelatedQuestions(question: string, answer: string): Promise<string[]> {
   try {
     const res = await fetch(`${BASE}/chat/related`, {
@@ -383,8 +383,7 @@ export async function fetchRelatedQuestions(question: string, answer: string): P
 
 /** A stored chat: its messages, and what the model saw of them on the latest turn. */
 export async function fetchSession(id: string): Promise<{ messages: Message[]; context: ContextReport | null }> {
-  const res = await fetch(`${BASE}/history/${id}`)
-  const { session, messages } = await res.json()
+  const { session, messages } = await requestJson<{ session: { contextReport?: string | null } | null; messages: unknown }>(`${BASE}/history/${id}`, 'Could not load the chat')
   return { messages: toMessages(messages), context: parseContext(session?.contextReport) }
 }
 
@@ -411,34 +410,20 @@ function toMessages(messages: unknown): Message[] {
 }
 
 export async function setMessagePinned(sessionId: string, messageId: string, pinned: boolean): Promise<void> {
-  const res = await fetch(`${BASE}/history/${sessionId}/messages/${messageId}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ pinned }),
-  })
-  if (!res.ok) throw await apiError(res, 'Could not update the pin')
+  await send(`${BASE}/history/${sessionId}/messages/${messageId}`, 'Could not update the pin', { method: 'PATCH', json: { pinned } })
 }
 
 /** Deletes one turn (a question and its answer) from a stored chat. */
 export async function deleteMessages(sessionId: string, ids: string[]): Promise<void> {
-  const res = await fetch(`${BASE}/history/${sessionId}/messages`, {
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ids }),
-  })
-  if (!res.ok) throw await apiError(res, 'Could not delete the messages')
+  await send(`${BASE}/history/${sessionId}/messages`, 'Could not delete the messages', { method: 'DELETE', json: { ids } })
 }
 
 export async function updateSessionTitle(id: string, title: string): Promise<void> {
-  await fetch(`${BASE}/history/${id}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title }),
-  })
+  await send(`${BASE}/history/${id}`, 'Could not rename the chat', { method: 'PATCH', json: { title } })
 }
 
 export async function deleteSession(id: string): Promise<void> {
-  await fetch(`${BASE}/history/${id}`, { method: 'DELETE' })
+  await send(`${BASE}/history/${id}`, 'Could not delete the chat', { method: 'DELETE' })
 }
 
 export async function fetchHistory(
@@ -452,38 +437,24 @@ export async function fetchHistory(
   // Filtering server-side rather than in the caller: the response is one page, so a client-side
   // filter can only ever see the chats that page happens to contain.
   if (spaceId) params.set('spaceId', spaceId)
-  const res = await fetch(`${BASE}/history?${params}`)
-  return res.json()
+  return requestJson(`${BASE}/history?${params}`, 'Could not load chats')
 }
 
 export async function searchHistory(q: string): Promise<Array<{ id: string; title: string; spaceId: string | null }>> {
-  const res = await fetch(`${BASE}/history/search?q=${encodeURIComponent(q)}`)
-  return res.json()
+  return requestJson(`${BASE}/history/search?q=${encodeURIComponent(q)}`, 'Could not search chats')
 }
 
 export async function fetchSpaces(): Promise<Space[]> {
-  const res = await fetch(`${BASE}/spaces`)
-  return res.json()
+  return requestJson(`${BASE}/spaces`, 'Could not load spaces')
 }
 
 export async function createSpace(name: string, kind: SpaceKind = 'space', offline = false): Promise<Space> {
-  const res = await fetch(`${BASE}/spaces`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, kind, offline }),
-  })
-  if (!res.ok) throw await apiError(res, 'Could not create')
-  return res.json()
+  return requestJson(`${BASE}/spaces`, 'Could not create', { method: 'POST', json: { name, kind, offline } })
 }
 
 /** Turns a collection into a space. One-way — the server refuses the reverse. */
 export async function promoteCollection(id: string): Promise<void> {
-  const res = await fetch(`${BASE}/spaces/${id}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ kind: 'space' }),
-  })
-  if (!res.ok) throw await apiError(res, 'Could not promote')
+  await send(`${BASE}/spaces/${id}`, 'Could not promote', { method: 'PATCH', json: { kind: 'space' } })
 }
 
 /** Rename and/or change the lock. Returns the server's refusal message when unlocking is not
@@ -505,7 +476,7 @@ export async function updateSpace(
 /** Deleting a locked space deletes its chats too — the server does this so they are not orphaned
  *  into unlocked ones. `deletedChats` is what actually went, for the confirmation message. */
 export async function deleteSpace(id: string): Promise<{ deletedChats: number }> {
-  const res = await fetch(`${BASE}/spaces/${id}`, { method: 'DELETE' })
+  const res = await send(`${BASE}/spaces/${id}`, 'Could not delete the space', { method: 'DELETE' })
   const body = await res.json().catch(() => ({})) as { deletedChats?: number }
   return { deletedChats: body.deletedChats ?? 0 }
 }
@@ -522,63 +493,37 @@ export async function assignChatToSpace(chatId: string, spaceId: string | null):
 }
 
 export async function recreateChatMemories(chatId: string): Promise<void> {
-  await fetch(`${BASE}/history/${chatId}/recreate-memories`, { method: 'POST' })
+  await send(`${BASE}/history/${chatId}/recreate-memories`, 'Could not recreate memories', { method: 'POST' })
 }
 
 export interface SpaceFile { id: string; filename: string; size: number; createdAt: number; kind: 'file' | 'note'; origin: string | null }
 
 export async function fetchSpaceFiles(spaceId: string): Promise<SpaceFile[]> {
-  return fetch(`${BASE}/spaces/${spaceId}/files`).then(r => r.json())
+  return requestJson(`${BASE}/spaces/${spaceId}/files`, 'Could not load the space resources')
 }
 
 export async function tagFileToSpace(spaceId: string, fileId: string): Promise<void> {
-  await fetch(`${BASE}/spaces/${spaceId}/files`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ fileId }),
-  })
+  await send(`${BASE}/spaces/${spaceId}/files`, 'Could not add the resource', { method: 'POST', json: { fileId } })
 }
 
 export async function untagFileFromSpace(spaceId: string, fileId: string): Promise<void> {
-  await fetch(`${BASE}/spaces/${spaceId}/files/${fileId}`, { method: 'DELETE' })
+  await send(`${BASE}/spaces/${spaceId}/files/${fileId}`, 'Could not remove the resource', { method: 'DELETE' })
 }
 
 export async function transformSpace(spaceId: string, operation: 'summarize', fileIds?: string[]): Promise<{ memoryId: string; content: string }> {
-  const res = await fetch(`${BASE}/spaces/${spaceId}/transform`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ operation, ...(fileIds?.length ? { fileIds } : {}) }),
-  })
-  if (!res.ok) {
-    const e = await res.json().catch(() => ({})) as { error?: string }
-    throw new Error(e.error ?? 'Transform failed')
-  }
-  return res.json()
+  return requestJson(`${BASE}/spaces/${spaceId}/transform`, 'Transform failed', { method: 'POST', json: { operation, ...(fileIds?.length ? { fileIds } : {}) } })
 }
 
 export async function ingestUrl(url: string): Promise<{ fileId: string; filename: string }> {
-  const res = await fetch(`${BASE}/files/ingest-url`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url }),
-  })
-  if (!res.ok) {
-    const e = await res.json().catch(() => ({})) as { error?: string }
-    throw new Error(e.error ?? 'Failed to ingest URL')
-  }
-  return res.json()
+  return requestJson(`${BASE}/files/ingest-url`, 'Failed to ingest URL', { method: 'POST', json: { url } })
 }
 
-export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; userMemoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; ragTopK: number; ragMinRelevance: number; relatedMinSimilarity: number; relatedMinRelevance: number; rerankEnabled: boolean; attachmentChars: number; spaceRagBudget: number; notesRagBudget: number; topicMinSimilarity: number; collectionFullTextTokens: number; collectionFullTextTokensCloud: number; collectionExploreMaxSteps: number; collectionExploreMinRelevance: number; queryReformulation: boolean; rssFeedCharsBudget: number; fetchMaxPages: number; fetchMaxUrlContextChars: number; fetchSummarizeOverflow: boolean; compressHistoryOverflow: boolean; resourceSummary: boolean; limits: { smallModelInputChars: number; embedInputChars: number; scrapeMaxChars: number; minUrlContextChars: number } }> {
-  return fetch(`${BASE}/admin/settings`).then(r => r.json())
+export async function fetchAdminSettings(): Promise<{ memoryTokenBudget: number; userMemoryTokenBudget: number; dreamHour: number; dreamThreshold: number; dreamTarget: number; dreamDeep: boolean; memoryExtractChars: number; rerankTopN: number; ragTopK: number; ragMinRelevance: number; relatedMinSimilarity: number; relatedMinRelevance: number; rerankEnabled: boolean; attachmentChars: number; spaceRagBudget: number; notesRagBudget: number; topicMinSimilarity: number; tagMatchSimilarity: number; tagPlaceSimilarity: number; collectionFullTextTokens: number; collectionFullTextTokensCloud: number; collectionExploreMaxSteps: number; collectionExploreMinRelevance: number; researchMaxTokens: number; queryReformulation: boolean; chatTitleModel: boolean; rssFeedCharsBudget: number; fetchMaxPages: number; fetchMaxUrlContextChars: number; fetchSummarizeOverflow: boolean; compressHistoryOverflow: boolean; resourceSummary: boolean; limits: { smallModelInputChars: number; embedInputChars: number; scrapeMaxChars: number; minUrlContextChars: number } }> {
+  return requestJson(`${BASE}/admin/settings`, 'Could not load settings')
 }
 
-export async function updateAdminSettings(s: { memoryTokenBudget?: number; userMemoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; dreamDeep?: boolean; memoryExtractChars?: number; rerankTopN?: number; ragTopK?: number; ragMinRelevance?: number; relatedMinSimilarity?: number; relatedMinRelevance?: number; attachmentChars?: number; spaceRagBudget?: number; notesRagBudget?: number; topicMinSimilarity?: number; collectionFullTextTokens?: number; collectionFullTextTokensCloud?: number; collectionExploreMaxSteps?: number; collectionExploreMinRelevance?: number; queryReformulation?: boolean; rssFeedCharsBudget?: number; fetchMaxPages?: number; fetchMaxUrlContextChars?: number; fetchSummarizeOverflow?: boolean; compressHistoryOverflow?: boolean; resourceSummary?: boolean }): Promise<void> {
-  await fetch(`${BASE}/admin/settings`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(s),
-  })
+export async function updateAdminSettings(s: { memoryTokenBudget?: number; userMemoryTokenBudget?: number; dreamHour?: number; dreamThreshold?: number; dreamTarget?: number; dreamDeep?: boolean; memoryExtractChars?: number; rerankTopN?: number; ragTopK?: number; ragMinRelevance?: number; relatedMinSimilarity?: number; relatedMinRelevance?: number; attachmentChars?: number; spaceRagBudget?: number; notesRagBudget?: number; topicMinSimilarity?: number; tagMatchSimilarity?: number; tagPlaceSimilarity?: number; collectionFullTextTokens?: number; collectionFullTextTokensCloud?: number; collectionExploreMaxSteps?: number; collectionExploreMinRelevance?: number; researchMaxTokens?: number; queryReformulation?: boolean; chatTitleModel?: boolean; rssFeedCharsBudget?: number; fetchMaxPages?: number; fetchMaxUrlContextChars?: number; fetchSummarizeOverflow?: boolean; compressHistoryOverflow?: boolean; resourceSummary?: boolean }): Promise<void> {
+  await send(`${BASE}/admin/settings`, 'Could not save settings', { method: 'PATCH', json: s })
 }
 
 export interface SearchProviderPolicy {
@@ -641,13 +586,11 @@ export interface SimilarityReport {
 }
 
 export async function fetchSimilarityReport(): Promise<SimilarityReport> {
-  const res = await fetch(`${BASE}/admin/similarity`)
-  if (!res.ok) throw await apiError(res, 'Could not compute similarities')
-  return res.json()
+  return requestJson(`${BASE}/admin/similarity`, 'Could not compute similarities')
 }
 
 export async function fetchSearchPolicy(): Promise<{ policy: SearchPolicy; stored: boolean; providers: SearchProviderInfo[]; telemetry: Record<string, SearchProviderStats>; usage: Record<string, number> }> {
-  return fetch(`${BASE}/admin/search`).then(r => r.json())
+  return requestJson(`${BASE}/admin/search`, 'Could not load the search policy')
 }
 
 export async function saveSearchPolicy(policy: SearchPolicy): Promise<void> {
@@ -660,13 +603,11 @@ export async function saveSearchPolicy(policy: SearchPolicy): Promise<void> {
 }
 
 export async function resetSearchPolicy(): Promise<void> {
-  await fetch(`${BASE}/admin/search`, { method: 'DELETE' })
+  await send(`${BASE}/admin/search`, 'Could not reset the search policy', { method: 'DELETE' })
 }
 
 export async function fetchLlmCatalogue(): Promise<{ catalogue: LlmCatalogue; keys: Record<string, boolean> }> {
-  const res = await fetch(`${BASE}/admin/llm-catalogue`)
-  if (!res.ok) throw await apiError(res, 'Could not load the model catalogue')
-  return res.json()
+  return requestJson(`${BASE}/admin/llm-catalogue`, 'Could not load the model catalogue')
 }
 
 export async function saveLlmCatalogue(catalogue: LlmCatalogue): Promise<void> {
@@ -699,45 +640,31 @@ export function catalogueFieldName(path?: unknown[]): string {
 }
 
 export async function testCloudModel(modelId: string): Promise<{ ok: boolean; ms: number; info: string }> {
-  const res = await fetch(`${BASE}/admin/llm-catalogue/test`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ modelId }),
-  })
-  return res.json()
+  return requestJson(`${BASE}/admin/llm-catalogue/test`, 'Could not test the model', { method: 'POST', json: { modelId } })
 }
 
 export async function fetchLlmUsage(): Promise<{ month: string; access: Record<string, LlmAccess>; usage: UsageRow[] }> {
-  const res = await fetch(`${BASE}/admin/llm-usage`)
-  if (!res.ok) throw await apiError(res, 'Could not load cloud usage')
-  return res.json()
+  return requestJson(`${BASE}/admin/llm-usage`, 'Could not load cloud usage')
 }
 
 export async function saveLlmAccess(userId: string, access: LlmAccess): Promise<void> {
-  const res = await fetch(`${BASE}/admin/users/${userId}/llm-access`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(access),
-  })
-  if (!res.ok) throw await apiError(res, 'Cloud access was not saved')
+  await send(`${BASE}/admin/users/${userId}/llm-access`, 'Cloud access was not saved', { method: 'PUT', json: access })
 }
 
 export async function triggerDream(): Promise<void> {
-  await fetch(`${BASE}/admin/dream/run`, { method: 'POST' })
+  await send(`${BASE}/admin/dream/run`, 'Could not start compaction', { method: 'POST' })
 }
 
 export async function reindexChats(): Promise<{ sessions: number }> {
-  const res = await fetch(`${BASE}/admin/reindex-chats`, { method: 'POST' })
-  return res.json()
+  return requestJson(`${BASE}/admin/reindex-chats`, 'Could not reindex chats', { method: 'POST' })
 }
 
 export async function clearSpaceMemories(spaceId: string): Promise<void> {
-  await fetch(`${BASE}/spaces/${spaceId}/memories`, { method: 'DELETE' })
+  await send(`${BASE}/spaces/${spaceId}/memories`, 'Could not clear memories', { method: 'DELETE' })
 }
 
 export async function compactSpaceMemories(spaceId: string): Promise<{ before: number; after: number; compacted: boolean }> {
-  const res = await fetch(`${BASE}/spaces/${spaceId}/compact`, { method: 'POST' })
-  return res.json()
+  return requestJson(`${BASE}/spaces/${spaceId}/compact`, 'Could not compact memories', { method: 'POST' })
 }
 
 export async function* recreateAllSpaceMemories(
@@ -768,8 +695,7 @@ export async function* recreateAllSpaceMemories(
 }
 
 export async function fetchChatIndexStatus(spaceId: string): Promise<{ indexed: number; total: number }> {
-  const res = await fetch(`${BASE}/spaces/${spaceId}/chat-index-status`)
-  return res.json()
+  return requestJson(`${BASE}/spaces/${spaceId}/chat-index-status`, 'Could not load the index status')
 }
 
 export async function* rebuildChatIndex(
@@ -796,17 +722,11 @@ export async function* rebuildChatIndex(
 }
 
 export async function fetchSpaceMemories(spaceId: string): Promise<{ memories: SpaceMemory[] }> {
-  const res = await fetch(`${BASE}/spaces/${spaceId}/memories`)
-  return res.json()
+  return requestJson(`${BASE}/spaces/${spaceId}/memories`, 'Could not load memories')
 }
 
 export async function createSpaceMemory(spaceId: string, content: string): Promise<SpaceMemory> {
-  const res = await fetch(`${BASE}/spaces/${spaceId}/memories`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content }),
-  })
-  return res.json()
+  return requestJson(`${BASE}/spaces/${spaceId}/memories`, 'Could not add the memory', { method: 'POST', json: { content } })
 }
 
 export async function updateSpaceMemory(
@@ -814,15 +734,11 @@ export async function updateSpaceMemory(
   memoryId: string,
   updates: { content?: string; alwaysKeep?: boolean },
 ): Promise<void> {
-  await fetch(`${BASE}/spaces/${spaceId}/memories/${memoryId}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(updates),
-  })
+  await send(`${BASE}/spaces/${spaceId}/memories/${memoryId}`, 'Could not save the memory', { method: 'PATCH', json: updates })
 }
 
 export async function deleteSpaceMemory(spaceId: string, memoryId: string): Promise<void> {
-  await fetch(`${BASE}/spaces/${spaceId}/memories/${memoryId}`, { method: 'DELETE' })
+  await send(`${BASE}/spaces/${spaceId}/memories/${memoryId}`, 'Could not delete the memory', { method: 'DELETE' })
 }
 
 /** Account-wide facts, injected into every chat when the userMemory setting is on. */
@@ -851,15 +767,11 @@ export async function updateUserMemory(
   memoryId: string,
   updates: { content?: string; alwaysKeep?: boolean },
 ): Promise<void> {
-  await fetch(`${BASE}/users/memories/${memoryId}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(updates),
-  })
+  await send(`${BASE}/users/memories/${memoryId}`, 'Could not save the memory', { method: 'PATCH', json: updates })
 }
 
 export async function deleteUserMemory(memoryId: string): Promise<void> {
-  await fetch(`${BASE}/users/memories/${memoryId}`, { method: 'DELETE' })
+  await send(`${BASE}/users/memories/${memoryId}`, 'Could not delete the memory', { method: 'DELETE' })
 }
 
 /** Streams scan progress, then the proposed facts. Nothing is stored until the user accepts one. */
@@ -936,6 +848,13 @@ export interface Resource {
   /** Where it came from: the URL for an ingested page, the original filename for an upload, null
    *  for a note. Never edited — `filename` is a renameable title, this is the record of the source. */
   origin: string | null
+  /** A note's author: `human` or a model's label; null when unknown, and for files. */
+  generatedBy: string | null
+  /** When the owner marked the note reviewed. */
+  verifiedAt: number | null
+  /** When the owner last changed the text of a note a model wrote; null when never. Not a review. */
+  editedAt: number | null
+  status: NoteStatus | null
   createdAt: number
   updatedAt: number | null
 }
@@ -955,8 +874,10 @@ export interface ResourceDetail extends Resource {
   /** The resource a transform produced this note from, if any, and the notes produced from it. */
   derivedFrom: ResourceRef | null
   derived: ResourceRef[]
-  /** Topics not yet adopted as tags, normalised — offered as one-tap suggestions. */
-  suggestedTags: string[]
+  /** The model's notes that cite this resource, newest first: notes have been saved from it. */
+  notesSaved: Array<ResourceRef & { generatedBy: string | null; createdAt: number }>
+  /** Topics not yet adopted as tags, mapped onto the user's own tags where one fits; those first. */
+  suggestedTags: TagSuggestion[]
   /** This note's `[[links]]` in order; `target` is null while no resource carries the title. */
   links: Array<{ title: string; target: ResourceRef | null }>
   /** Notes linking here. */
@@ -966,6 +887,10 @@ export interface ResourceDetail extends Resource {
 }
 
 export interface NoteOptions {
+  /** `model` for text a model wrote; `model` names it, else the default chat model is assumed. */
+  author?: 'human' | 'model'
+  model?: string
+  reviewed?: boolean
   derivedFrom?: string
   originSessionId?: string
   originMessageId?: string
@@ -975,18 +900,11 @@ export interface NoteOptions {
 /** A proposed split of a long answer or note into short notes, with a title and summary for an
  *  overview note when the model gave one; nothing is saved. */
 export async function proposeNoteSplit(title: string, body: string, hint = ''): Promise<{ parts: Array<{ title: string; body: string; tags?: string[] }>; overview?: { title: string; body: string; tags?: string[] } }> {
-  const res = await fetch(`${BASE}/files/split`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title, body, ...(hint.trim() ? { hint: hint.trim() } : {}) }),
-  })
-  if (!res.ok) throw await apiError(res, 'Could not split')
-  return res.json()
+  return requestJson(`${BASE}/files/split`, 'Could not split', { method: 'POST', json: { title, body, ...(hint.trim() ? { hint: hint.trim() } : {}) } })
 }
 
 export async function fetchFiles(): Promise<Resource[]> {
-  const res = await fetch(`${BASE}/files`)
-  return res.json()
+  return requestJson(`${BASE}/files`, 'Could not load resources')
 }
 
 /** Marks a resource confidential or not: a confidential one is read only by locked chats. */
@@ -996,57 +914,46 @@ export async function setResourceConfidential(id: string, confidential: boolean)
 }
 
 export async function fetchResource(id: string): Promise<ResourceDetail> {
-  const res = await fetch(`${BASE}/files/${id}`)
-  if (!res.ok) throw await apiError(res, 'Could not load resource')
-  return res.json()
+  return requestJson(`${BASE}/files/${id}`, 'Could not load resource')
 }
 
 /** `confidential`: attaching it locks the chat. */
 export async function fetchNoteText(id: string): Promise<{ filename: string; content: string; confidential?: boolean }> {
-  const res = await fetch(`${BASE}/files/${id}/text`)
-  if (!res.ok) throw await apiError(res, 'Could not load note')
-  return res.json()
+  return requestJson(`${BASE}/files/${id}/text`, 'Could not load note')
 }
 
 export async function createNote(title: string, body: string, options: NoteOptions = {}): Promise<{ id: string }> {
-  const res = await fetch(`${BASE}/files/notes`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title, body, ...options }),
-  })
-  if (!res.ok) throw await apiError(res, 'Could not save note')
-  return res.json()
+  return requestJson(`${BASE}/files/notes`, 'Could not save note', { method: 'POST', json: { title, body, ...options } })
 }
 
 /** Renames any resource. The filename is a title: it is what the list and every future citation
  *  show, and it has no bearing on the stored content. */
 export async function renameResource(id: string, filename: string): Promise<void> {
-  const res = await fetch(`${BASE}/files/${id}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ filename }),
-  })
-  if (!res.ok) throw await apiError(res, 'Could not rename')
+  await send(`${BASE}/files/${id}`, 'Could not rename', { method: 'PATCH', json: { filename } })
 }
 
-export async function updateNote(id: string, patch: { title?: string; body?: string; tags?: string[] }): Promise<void> {
-  const res = await fetch(`${BASE}/files/notes/${id}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(patch),
-  })
-  if (!res.ok) throw await apiError(res, 'Could not save note')
+/** `author` sets the author of a note whose author is unknown; the server ignores it otherwise. */
+export async function updateNote(id: string, patch: { title?: string; body?: string; tags?: string[]; author?: 'human' | 'model'; reviewed?: boolean; status?: NoteStatus }): Promise<void> {
+  await send(`${BASE}/files/notes/${id}`, 'Could not save note', { method: 'PATCH', json: patch })
+}
+
+export interface NoteRevision { id: string; title: string; body: string; actor: string; createdAt: number }
+
+/** A note's earlier versions, newest first. */
+export async function fetchNoteRevisions(id: string): Promise<NoteRevision[]> {
+  return requestJson(`${BASE}/files/${id}/revisions`, 'Could not load versions')
+}
+
+export async function restoreNoteRevision(id: string, revisionId: string): Promise<void> {
+  await send(`${BASE}/files/${id}/revisions/${revisionId}/restore`, 'Could not restore the version', { method: 'POST' })
 }
 
 export async function setResourceTags(id: string, tags: string[]): Promise<string[]> {
-  const res = await fetch(`${BASE}/files/${id}/tags`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tags }),
-  })
-  if (!res.ok) throw await apiError(res, 'Could not save tags')
-  return (await res.json()).tags
+  return (await requestJson<{ tags: string[] }>(`${BASE}/files/${id}/tags`, 'Could not save tags', { method: 'PUT', json: { tags } })).tags
 }
+
+/** A tag offered to a resource: one the user already has, or a new one from its topics. */
+export interface TagSuggestion { path: string; existing: boolean }
 
 export interface RelatedResource extends ResourceRef {
   /** Already linked either way, or one made from the other. */
@@ -1056,9 +963,7 @@ export interface RelatedResource extends ResourceRef {
 
 /** Resources similar in content, and tags several of them share that this one lacks. */
 export async function fetchRelated(id: string): Promise<{ related: RelatedResource[]; tags: Array<{ path: string; count: number }> }> {
-  const res = await fetch(`${BASE}/files/${id}/related`)
-  if (!res.ok) throw await apiError(res, 'Could not load similar resources')
-  return res.json()
+  return requestJson(`${BASE}/files/${id}/related`, 'Could not load similar resources')
 }
 
 export interface GraphNode { id: string; label: string; kind: 'note' | 'file' | 'chat'; depth: number }
@@ -1073,9 +978,7 @@ export interface GraphEdge {
 
 /** A resource's explicit neighbourhood. Chat nodes have ids `chat:<sessionId>`. */
 export async function fetchGraph(id: string, depth: 1 | 2): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> {
-  const res = await fetch(`${BASE}/files/${id}/graph?depth=${depth}`)
-  if (!res.ok) throw await apiError(res, 'Could not load connections')
-  return res.json()
+  return requestJson(`${BASE}/files/${id}/graph?depth=${depth}`, 'Could not load connections')
 }
 
 export interface TopicMember { id: string; title: string; kind: 'file' | 'note' }
@@ -1125,30 +1028,16 @@ export async function fetchTopicMap(opts: { threshold?: number; all?: boolean } 
   const q = new URLSearchParams()
   if (opts.threshold !== undefined) q.set('threshold', opts.threshold.toFixed(2))
   if (opts.all) q.set('scope', 'all')
-  const res = await fetch(`${BASE}/files/topics?${q}`)
-  if (!res.ok) throw await apiError(res, 'Could not build the topic map')
-  return res.json()
+  return requestJson(`${BASE}/files/topics?${q}`, 'Could not build the topic map')
 }
 
 export async function nameTopic(ids: string[]): Promise<{ key: string; name: string; tag: string | null }> {
-  const res = await fetch(`${BASE}/files/topics/name`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ids }),
-  })
-  if (!res.ok) throw await apiError(res, 'Could not name the topic')
-  return res.json()
+  return requestJson(`${BASE}/files/topics/name`, 'Could not name the topic', { method: 'POST', json: { ids } })
 }
 
 /** Adds a tag to several resources, keeping their other tags. */
 export async function addTagToMany(path: string, ids: string[]): Promise<number> {
-  const res = await fetch(`${BASE}/files/tags/bulk`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path, ids }),
-  })
-  if (!res.ok) throw await apiError(res, 'Could not add the tag')
-  return (await res.json()).tagged
+  return (await requestJson<{ tagged: number }>(`${BASE}/files/tags/bulk`, 'Could not add the tag', { method: 'POST', json: { path, ids } })).tagged
 }
 
 export interface LinkSuggestion {
@@ -1161,27 +1050,15 @@ export interface LinkSuggestion {
 
 /** Links the small model proposes for a note, from its similar resources. */
 export async function fetchLinkSuggestions(noteId: string): Promise<LinkSuggestion[]> {
-  const res = await fetch(`${BASE}/files/${noteId}/link-suggestions`)
-  if (!res.ok) throw await apiError(res, 'Could not suggest links')
-  return res.json()
+  return requestJson(`${BASE}/files/${noteId}/link-suggestions`, 'Could not suggest links')
 }
 
 export async function acceptLinkSuggestion(noteId: string, s: LinkSuggestion, heading: string): Promise<void> {
-  const res = await fetch(`${BASE}/files/${noteId}/link-suggestions/accept`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ targetId: s.targetId, phrase: s.phrase, heading }),
-  })
-  if (!res.ok) throw await apiError(res, 'Could not add the link')
+  await send(`${BASE}/files/${noteId}/link-suggestions/accept`, 'Could not add the link', { method: 'POST', json: { targetId: s.targetId, phrase: s.phrase, heading } })
 }
 
 export async function dismissLinkSuggestion(noteId: string, targetId: string): Promise<void> {
-  const res = await fetch(`${BASE}/files/${noteId}/link-suggestions/dismiss`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ targetId }),
-  })
-  if (!res.ok) throw await apiError(res, 'Could not dismiss the suggestion')
+  await send(`${BASE}/files/${noteId}/link-suggestions/dismiss`, 'Could not dismiss the suggestion', { method: 'POST', json: { targetId } })
 }
 
 export interface LibraryGraphNode extends GraphNode {
@@ -1195,41 +1072,34 @@ export async function fetchLibraryGraph(opts: { tag?: string; spaceId?: string; 
   if (opts.tag) q.set('tag', opts.tag)
   if (opts.spaceId) q.set('space', opts.spaceId)
   if (opts.chats) q.set('chats', '1')
-  const res = await fetch(`${BASE}/files/graph?${q}`)
-  if (!res.ok) throw await apiError(res, 'Could not load the graph')
-  return res.json()
+  return requestJson(`${BASE}/files/graph?${q}`, 'Could not load the graph')
 }
 
 /** Adds `- [[target]]` under the note's "See also" heading (`heading`, in the reader's language). */
 export async function addSeeAlso(noteId: string, targetId: string, heading: string): Promise<void> {
-  const res = await fetch(`${BASE}/files/${noteId}/see-also`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ targetId, heading }),
-  })
-  if (!res.ok) throw await apiError(res, 'Could not add the link')
+  await send(`${BASE}/files/${noteId}/see-also`, 'Could not add the link', { method: 'POST', json: { targetId, heading } })
 }
 
 /** The user's tags with how many resources carry each directly. */
 export async function fetchTags(): Promise<Array<{ path: string; count: number }>> {
-  const res = await fetch(`${BASE}/files/tags`)
-  if (!res.ok) throw await apiError(res, 'Could not load tags')
-  return res.json()
+  return requestJson(`${BASE}/files/tags`, 'Could not load tags')
+}
+
+/** A rename proposed to tidy the tag tree. */
+export interface TagChange { from: string; to: string; count: number; merges: boolean }
+
+/** Asks the small model for renames that tidy the tag tree; nothing changes until each is applied. */
+export async function proposeTagTidy(): Promise<TagChange[]> {
+  return (await requestJson<{ changes: TagChange[] }>(`${BASE}/files/tags/tidy`, 'Could not propose tag changes', { method: 'POST' })).changes
 }
 
 /** Renames a tag and everything under it; an existing target merges. */
 export async function renameTag(from: string, to: string): Promise<void> {
-  const res = await fetch(`${BASE}/files/tags`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from, to }),
-  })
-  if (!res.ok) throw await apiError(res, 'Could not rename tag')
+  await send(`${BASE}/files/tags`, 'Could not rename tag', { method: 'PATCH', json: { from, to } })
 }
 
 export async function deleteTag(path: string): Promise<void> {
-  const res = await fetch(`${BASE}/files/tags?path=${encodeURIComponent(path)}`, { method: 'DELETE' })
-  if (!res.ok) throw await apiError(res, 'Could not delete tag')
+  await send(`${BASE}/files/tags?path=${encodeURIComponent(path)}`, 'Could not delete tag', { method: 'DELETE' })
 }
 
 export type TransformOperation = 'summarize' | 'keypoints' | 'questions' | 'outline'
@@ -1238,17 +1108,12 @@ export async function transformResource(
   id: string,
   target: { operation: TransformOperation } | { templateId: string },
 ): Promise<{ content: string }> {
-  const res = await fetch(`${BASE}/files/${id}/transform`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(target),
-  })
-  if (!res.ok) throw await apiError(res, 'Transform failed')
-  return res.json()
+  return requestJson(`${BASE}/files/${id}/transform`, 'Transform failed', { method: 'POST', json: target })
 }
 
-export async function deleteFile(id: string): Promise<void> {
-  await fetch(`${BASE}/files/${id}`, { method: 'DELETE' })
+/** `unlink`: turn `[[links]]` to it in other notes into plain text instead of leaving them dangling. */
+export async function deleteFile(id: string, { unlink = false } = {}): Promise<void> {
+  await send(`${BASE}/files/${id}${unlink ? '?unlink=1' : ''}`, 'Could not delete the resource', { method: 'DELETE' })
 }
 
 export interface CustomTemplate {
@@ -1257,15 +1122,28 @@ export interface CustomTemplate {
   description?: string
   promptText: string
   suggestedMode: 'flash' | 'balanced' | 'thorough' | 'image'
+  /** A recipe's parts (shared/recipes.ts); empty on a plain template. */
+  instructionText: string
+  instructions: Array<{ id: string; title: string; trust: NoteTrust }>
+  examples: Array<{ id: string; title: string }>
+  settings: RecipeSettings
   createdAt: number
 }
 
-export async function fetchCustomTemplates(): Promise<CustomTemplate[]> {
-  const res = await fetch(`${BASE}/templates`)
-  return res.json()
+export type CustomTemplateInput = Pick<CustomTemplate, 'name' | 'description' | 'promptText' | 'suggestedMode' | 'settings' | 'instructionText'> & {
+  instructionNoteIds: string[]
+  exampleFileIds: string[]
 }
 
-export async function createCustomTemplate(t: Omit<CustomTemplate, 'id' | 'createdAt'>): Promise<CustomTemplate> {
+/** What a chat request carries for a recipe's chip. */
+export const activeRecipe = (t: CustomTemplate): ActiveRecipe =>
+  ({ name: t.name, ...(t.instructionText?.trim() && { instructionText: t.instructionText }), instructionNoteIds: t.instructions.map(n => n.id), exampleFileIds: t.examples.map(e => e.id) })
+
+export async function fetchCustomTemplates(): Promise<CustomTemplate[]> {
+  return requestJson(`${BASE}/templates`, 'Could not load templates')
+}
+
+export async function createCustomTemplate(t: CustomTemplateInput): Promise<CustomTemplate> {
   const res = await fetch(`${BASE}/templates`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1278,16 +1156,21 @@ export async function createCustomTemplate(t: Omit<CustomTemplate, 'id' | 'creat
   return res.json()
 }
 
-export async function updateCustomTemplate(id: string, t: Partial<Omit<CustomTemplate, 'id' | 'createdAt'>>): Promise<void> {
-  await fetch(`${BASE}/templates/${id}`, {
+export async function updateCustomTemplate(id: string, t: Partial<CustomTemplateInput>): Promise<CustomTemplate> {
+  const res = await fetch(`${BASE}/templates/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(t),
   })
+  if (!res.ok) {
+    const { error } = await res.json().catch(() => ({ error: 'Update failed' }))
+    throw new Error(error ?? 'Update failed')
+  }
+  return res.json()
 }
 
 export async function deleteCustomTemplate(id: string): Promise<void> {
-  await fetch(`${BASE}/templates/${id}`, { method: 'DELETE' })
+  await send(`${BASE}/templates/${id}`, 'Could not delete the template', { method: 'DELETE' })
 }
 
 export interface Monitor {
@@ -1317,8 +1200,7 @@ export interface MonitorRun {
 }
 
 export async function fetchMonitors(): Promise<Monitor[]> {
-  const res = await fetch(`${BASE}/monitors`)
-  return res.json()
+  return requestJson(`${BASE}/monitors`, 'Could not load monitors')
 }
 
 export async function createMonitor(m: Omit<Monitor, 'id' | 'createdAt' | 'isGlobal'>): Promise<Monitor> {
@@ -1335,15 +1217,11 @@ export async function createMonitor(m: Omit<Monitor, 'id' | 'createdAt' | 'isGlo
 }
 
 export async function updateMonitor(id: string, m: Partial<Omit<Monitor, 'id' | 'createdAt' | 'isGlobal'>>): Promise<void> {
-  await fetch(`${BASE}/monitors/${id}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(m),
-  })
+  await send(`${BASE}/monitors/${id}`, 'Could not save the monitor', { method: 'PATCH', json: m })
 }
 
 export async function deleteMonitor(id: string): Promise<void> {
-  await fetch(`${BASE}/monitors/${id}`, { method: 'DELETE' })
+  await send(`${BASE}/monitors/${id}`, 'Could not delete the monitor', { method: 'DELETE' })
 }
 
 export async function triggerMonitorRun(id: string): Promise<void> {
@@ -1355,21 +1233,19 @@ export async function triggerMonitorRun(id: string): Promise<void> {
 }
 
 export async function fetchMonitorRuns(id: string): Promise<MonitorRun[]> {
-  const res = await fetch(`${BASE}/monitors/${id}/runs`)
-  return res.json()
+  return requestJson(`${BASE}/monitors/${id}/runs`, 'Could not load monitor runs')
 }
 
 export async function subscribeMonitor(id: string): Promise<void> {
-  await fetch(`${BASE}/monitors/${id}/subscribe`, { method: 'POST' })
+  await send(`${BASE}/monitors/${id}/subscribe`, 'Could not subscribe', { method: 'POST' })
 }
 
 export async function unsubscribeMonitor(id: string): Promise<void> {
-  await fetch(`${BASE}/monitors/${id}/subscribe`, { method: 'DELETE' })
+  await send(`${BASE}/monitors/${id}/subscribe`, 'Could not unsubscribe', { method: 'DELETE' })
 }
 
 export async function fetchGlobalMonitors(): Promise<Monitor[]> {
-  const res = await fetch(`${BASE}/monitors/global`)
-  return res.json()
+  return requestJson(`${BASE}/monitors/global`, 'Could not load monitors')
 }
 
 export async function createGlobalMonitor(m: Omit<Monitor, 'id' | 'createdAt' | 'isGlobal' | 'subscribed'>): Promise<Monitor> {
@@ -1386,15 +1262,11 @@ export async function createGlobalMonitor(m: Omit<Monitor, 'id' | 'createdAt' | 
 }
 
 export async function updateGlobalMonitor(id: string, m: Partial<Omit<Monitor, 'id' | 'createdAt' | 'isGlobal'>>): Promise<void> {
-  await fetch(`${BASE}/monitors/global/${id}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(m),
-  })
+  await send(`${BASE}/monitors/global/${id}`, 'Could not save the monitor', { method: 'PATCH', json: m })
 }
 
 export async function deleteGlobalMonitor(id: string): Promise<void> {
-  await fetch(`${BASE}/monitors/global/${id}`, { method: 'DELETE' })
+  await send(`${BASE}/monitors/global/${id}`, 'Could not delete the monitor', { method: 'DELETE' })
 }
 
 export interface FeedSource {
@@ -1414,6 +1286,5 @@ export interface FeedRegion {
 }
 
 export async function fetchFeeds(): Promise<FeedRegion[]> {
-  const res = await fetch(`${BASE}/feeds`)
-  return res.json()
+  return requestJson(`${BASE}/feeds`, 'Could not load feeds')
 }

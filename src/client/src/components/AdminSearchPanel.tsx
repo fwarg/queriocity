@@ -203,9 +203,13 @@ export function AdminSearchPanel() {
 
   const handleReset = async () => {
     if (!await confirm({ message: 'Discard the saved search settings and go back to the env defaults?', confirmLabel: 'Reset', danger: true })) return
-    await resetSearchPolicy()
-    await load()
-    setStatus('Reset to env defaults')
+    try {
+      await resetSearchPolicy()
+      await load()
+      setStatus('Reset to env defaults')
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : String(e))
+    }
   }
 
   return (

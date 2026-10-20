@@ -29,6 +29,7 @@ export async function startWeb(ctx: TurnContext): Promise<WebSearching | undefin
   return { results: [], egress, budget: await newSearchBudget('balanced'), tainted: new Set() }
 }
 
+/** With web search on while exploring: adds web_search, for context the documents lack. */
 export const EXPLORE_WEB_INSTRUCTION = `\nYou also have web_search, for context the documents lack — a work they cite, how a term is used elsewhere, whether something has changed since. Explore the documents first; the web never stands in for them, and searching it is not needed for most messages.`
 
 /** The web_search tool. Results go to the model and are kept, numbered, for the answer. */
@@ -46,7 +47,9 @@ export function webSearchTool(ctx: TurnContext, sink: TurnSink, web: WebSearchin
         noteSeenUrl(web.egress, r.url)
         if (!web.results.some(s => s.url === r.url)) web.results.push(r)
       }
-      return found.map(r => `${r.title} (${r.url}): ${(r.content ?? '').slice(0, SNIPPET_CHARS)}`).join('\n\n')
+      // Numbered as the answer and saved notes number them, so the model can cite one.
+      const number = (url: string) => web.results.findIndex(s => s.url === url) + 1
+      return found.map(r => `[${number(r.url)}] ${r.title} (${r.url}): ${(r.content ?? '').slice(0, SNIPPET_CHARS)}`).join('\n\n')
     },
   })
 }

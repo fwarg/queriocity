@@ -151,7 +151,9 @@ beslut och skälet till det.`,
 
 **Taggar** visar alla taggar som ett träd med antal — \`ml\` rymmer \`ml/rag\` och \`ml/agents\`.
 Tryck på en tagg för att se dess resurser; **⋯** bredvid byter namn på den (undertaggarna följer
-med), tar bort den eller visar den i grafen. Längst ner hittar **Att organisera** resurser utan
+med), flyttar den under en annan tagg (\`rosor\` under \`växter\` blir \`växter/rosor\`), tar bort
+den eller visar den i grafen. **Städa taggar…** föreslår sammanslagningar och flyttar för hela
+trädet; bocka i dem du vill ha. Längst ner hittar **Att organisera** resurser utan
 taggar och anteckningar utan länkar.
 
 **Ämnen** grupperar dina anteckningar efter vad de handlar om, även otaggade och olänkade, namnger
@@ -309,7 +311,14 @@ fortfarande kan ändra den innan du skickar.
 prompt, märk de utbytbara delarna med dubbla klamrar — \`Förklara {{begrepp}} för en {{mottagare}}\`
 — så gör studion ett fält av var och en. Fyll i testvärden, tryck **▶ Kör**, se vad som kommer
 tillbaka, justera, och spara när den beter sig. Sparade mallar dyker upp i mallväljaren under
-**Egna**, och kan ändras eller tas bort där.`,
+**Egna**, och kan ändras eller tas bort där.
+
+**Recept.** I studions avsnitt *Recept* lägger du till **instruktionsanteckningar** (en stilguide,
+en arbetsgång), **exempel** vars form ska efterliknas och samlingar att läsa. Mallen blir då ett
+recept: när du väljer den visas en *Recept*-etikett i meddelanderutan, och varje meddelande i
+chatten följer receptet tills du tar bort etiketten. Anteckningarna fungerar som instruktioner bara
+på det här sättet — aldrig när en sökning råkar hitta dem. En anteckning du inte har granskat får en
+varning bredvid etiketten.`,
   },
 
   images: {

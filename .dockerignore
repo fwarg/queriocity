@@ -2,6 +2,14 @@ node_modules
 dist
 *.db
 .env
+# Live data and local copies of it: databases (with -wal/-shm), images and backups. `*.db` above only
+# matches at the root, so without these every build uploaded them into the builder stage.
+docker/data/**
+!docker/data/global_news_rss_feeds.json
+production
+**/*.db
+**/*.db-wal
+**/*.db-shm
 temp
 docker/env.local
 

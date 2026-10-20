@@ -2,12 +2,15 @@ import { randomUUID } from 'crypto'
 import { and, eq, sql } from 'drizzle-orm'
 import { chatSessions, db, uploadedFiles } from '../db.ts'
 import { indexResourceText } from './ingest.ts'
-import { addUnderHeading, bodiesRelinkedTo, parseWikilinks, resolveDangling, syncLinks } from './links.ts'
+import { addUnderHeading, bodiesRelinkedTo, bodiesUnlinkedFrom, parseWikilinks, resolveDangling, syncLinks } from './links.ts'
 import { wikilinkFor } from '../../../shared/wikilinks.ts'
 import { describeResource } from './summarise.ts'
 import { resourceTagList, setResourceTags } from './tags.ts'
 import { inlineTags } from '../../../shared/tags.ts'
 import { plainCitations } from '../../../shared/note-citations.ts'
+import { HUMAN_AUTHOR, UNKNOWN_MODEL, type NoteStatus } from '../../../shared/note-trust.ts'
+import { modelTarget } from '../llm.ts'
+import { recordRevision } from './note-revisions.ts'
 
 /** Notes: the one resource the user writes rather than uploads.
  *
@@ -31,6 +34,18 @@ export interface NoteInput {
   originMessageId?: string
   /** Replaces the note's tags when given; left alone when omitted. */
   tags?: string[]
+  /** Who wrote it. At creation: omitted means the user. On an update it counts only for a note whose
+   *  author is unknown — a recorded author is never relabelled. */
+  author?: 'human' | 'model'
+  /** The writing model's label when `author` is `model`; when omitted, the default chat model's at
+   *  creation and UNKNOWN_MODEL on an update. */
+  model?: string
+  /** Sets or clears the review mark; left alone when omitted. */
+  reviewed?: boolean
+  /** The owner wrote this text (the editor), not a process (relinking, a restore). Changing a note a
+   *  model wrote marks it edited and keeps the model's version. */
+  edited?: boolean
+  status?: NoteStatus
 }
 
 /** Creates or updates a note, re-indexing only when the text actually changed.
@@ -52,13 +67,15 @@ export async function saveNote(userId: string, note: NoteInput, { describe = tru
   const now = new Date()
 
   if (existing) {
+    const editsModelText = note.edited && existing.body !== body && existing.generatedBy !== HUMAN_AUTHOR
+    if (editsModelText) recordRevision(id, existing.filename, existing.body ?? '', HUMAN_AUTHOR)
     await db.update(uploadedFiles)
-      .set({ filename: title, body, size, updatedAt: now })
+      .set({ filename: title, body, size, updatedAt: now, ...trustUpdate(existing, note, now), ...(editsModelText && { editedAt: now }) })
       .where(eq(uploadedFiles.id, id))
   } else {
     await db.insert(uploadedFiles).values({
       id, userId, filename: title, mimeType: NOTE_MIME_TYPE, size, kind: 'note', body,
-      ...await ownedProvenance(userId, note), createdAt: now, updatedAt: now,
+      ...await ownedProvenance(userId, note), ...trustAtCreation(note, now), createdAt: now, updatedAt: now,
     })
   }
   // `#tags` written in the text join the tag field. Removing one from the text leaves it there —
@@ -75,6 +92,31 @@ export async function saveNote(userId: string, note: NoteInput, { describe = tru
   if (!existing) resolveDangling(userId, id, title)
   else if (existing.filename !== title) await relinkRenamed(userId, id, existing.filename, title)
   return id
+}
+
+function trustAtCreation(note: NoteInput, now: Date) {
+  return {
+    generatedBy: note.author === 'model' ? note.model?.trim() || defaultModelLabel() : HUMAN_AUTHOR,
+    verifiedAt: note.reviewed ? now : null,
+    status: note.status ?? null,
+  }
+}
+
+/** Only the trust fields `note` names; an ordinary edit changes none of them. Reviewing a draft
+ *  makes it current unless a status is given too. */
+function trustUpdate(existing: { generatedBy: string | null; status: NoteStatus | null }, note: NoteInput, now: Date) {
+  const status = note.status ?? (note.reviewed && existing.status === 'draft' ? 'stable' : undefined)
+  return {
+    ...(note.author && !existing.generatedBy ? { generatedBy: note.author === 'human' ? HUMAN_AUTHOR : note.model?.trim() || UNKNOWN_MODEL } : {}),
+    ...(note.reviewed !== undefined ? { verifiedAt: note.reviewed ? now : null } : {}),
+    ...(status ? { status } : {}),
+  }
+}
+
+/** What a note written by the default chat model is labelled with. */
+export function defaultModelLabel(): string {
+  const chat = modelTarget('chat')
+  return chat.label ?? chat.model
 }
 
 /** derivedFrom and the chat of origin, each kept only when this user owns it — so a guessed id
@@ -123,6 +165,15 @@ async function relinkRenamed(userId: string, id: string, oldTitle: string, newTi
     await saveNote(userId, linking, { describe: false })
   }
   resolveDangling(userId, id, newTitle)
+}
+
+/** Turn `[[links]]` to a resource about to be deleted into plain text in the notes linking to it.
+ *  Asked for by the user on delete; otherwise the links are left dangling, to resolve again if a
+ *  resource with that title comes back. */
+export async function unlinkDeleted(userId: string, id: string, title: string): Promise<void> {
+  for (const linking of bodiesUnlinkedFrom(userId, id, title)) {
+    await saveNote(userId, linking, { describe: false })
+  }
 }
 
 /** Rewrites notes saved from answers in the older form, where every citation marker carried its own

@@ -2,11 +2,14 @@ import { useState, useEffect, useRef } from 'react'
 import { useConfirm } from './confirm.tsx'
 import { ArrowLeft, Pencil, Trash2, Plus } from 'lucide-react'
 import { MODE_COLORS, TEMPLATES, type Template, type FocusMode, type TemplateField } from '../lib/templates.ts'
-import { fetchCustomTemplates, deleteCustomTemplate, type CustomTemplate } from '../lib/api.ts'
+import { fetchCustomTemplates, deleteCustomTemplate, activeRecipe, type CustomTemplate } from '../lib/api.ts'
+import { isRecipe } from '@shared/recipes.ts'
 import { PromptStudio } from './PromptStudio.tsx'
 import { useT } from '../lib/i18n.tsx'
 import type { TranslationKey } from '@shared/i18n/index.ts'
 import { GuideLink } from './GuideView.tsx'
+import { ErrorBanner } from './ui.tsx'
+import { errorMessage } from '../lib/errors.ts'
 
 /** Copy for the built-in templates is keyed by the ids already in templates.ts rather than by
  *  extra fields on the data, so adding a template is one entry there and a block in the catalogs.
@@ -30,8 +33,9 @@ const MODE_LABEL_KEYS: Record<FocusMode, TranslationKey> = {
 }
 
 interface Props {
-  /** `wholeCollection`: the template is meant for the whole of the picked collections. */
-  onSelect: (text: string, mode: FocusMode, wholeCollection?: boolean) => void
+  /** `wholeCollection`: the template is meant for the whole of the picked collections. `recipe`: the
+   *  custom template is a recipe, whose chip and settings the input takes on. */
+  onSelect: (text: string, mode: FocusMode, wholeCollection?: boolean, recipe?: CustomTemplate) => void
   onClose: () => void
 }
 
@@ -65,13 +69,14 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
   const [values, setValues] = useState<Record<string, string>>({})
   const [customTemplates, setCustomTemplates] = useState<CustomTemplate[]>([])
   const [studio, setStudio] = useState<'create' | CustomTemplate | null>(null)
+  const [error, setError] = useState('')
   const panelRef = useRef<HTMLDivElement>(null)
   const studioRef = useRef<'create' | CustomTemplate | null>(null)
 
   useEffect(() => { studioRef.current = studio }, [studio])
 
   useEffect(() => {
-    fetchCustomTemplates().then(setCustomTemplates).catch(() => {})
+    fetchCustomTemplates().then(setCustomTemplates).catch(err => setError(errorMessage(t, err, t('common.loadFailed'))))
   }, [])
 
   useEffect(() => {
@@ -98,14 +103,19 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
 
   function handleUse() {
     if (!active) return
-    onSelect(active.assemble(values), active.suggestedMode, active.wholeCollection)
+    const custom = customTemplates.find(ct => ct.id === active.id)
+    onSelect(active.assemble(values), active.suggestedMode, active.wholeCollection, custom && isRecipe(activeRecipe(custom)) ? custom : undefined)
   }
 
   async function handleDeleteCustom(e: React.MouseEvent, id: string) {
     e.stopPropagation()
     if (!await confirm({ message: t('template.deleteConfirm'), confirmLabel: t('common.delete'), danger: true })) return
-    await deleteCustomTemplate(id)
-    setCustomTemplates(prev => prev.filter(t => t.id !== id))
+    try {
+      await deleteCustomTemplate(id)
+      setCustomTemplates(prev => prev.filter(t => t.id !== id))
+    } catch (err) {
+      setError(errorMessage(t, err, t('template.deleteFailed')))
+    }
   }
 
   function handleStudioSave(saved: CustomTemplate) {
@@ -181,7 +191,10 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
                         className="w-full text-left p-3 rounded-md bg-gray-800 hover:bg-gray-700 transition-colors pr-14"
                       >
                         <div className="flex items-start justify-between gap-2 mb-1">
-                          <span className="text-sm font-medium text-gray-50 leading-tight">{ct.name}</span>
+                          <span className="text-sm font-medium text-gray-50 leading-tight">
+                            {ct.name}
+                            {isRecipe(activeRecipe(ct)) && <span className="ml-1.5 align-middle text-[10px] px-1.5 py-0.5 rounded bg-teal-800 text-teal-100 font-medium">{t('recipe.badge')}</span>}
+                          </span>
                           <span className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium ${MODE_COLORS[ct.suggestedMode as FocusMode] ?? MODE_COLORS.balanced}`}>
                             {t(MODE_LABEL_KEYS[ct.suggestedMode])}
                           </span>
@@ -213,6 +226,8 @@ export function TemplateSelector({ onSelect, onClose }: Props) {
                 </div>
               </div>
             )}
+
+            <ErrorBanner message={error} onDismiss={() => setError('')} className="mt-3" />
 
             {/* Create button */}
             <button

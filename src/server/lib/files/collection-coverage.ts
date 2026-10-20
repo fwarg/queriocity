@@ -72,11 +72,23 @@ export async function coverCollection(scope: string[] | DocumentScope, opts: Cov
 
 /** What a turn reads: the resources tagged to `ids` (spaces or collections) — except in
  *  `pinned.spaceId`, only the resources pinned there. A bare id list reads them all. */
-export interface DocumentScope { ids: string[]; pinned?: { spaceId: string; fileIds: string[] } }
+/** `files`: resources read by id, outside any collection — already checked to be the user's. */
+export interface DocumentScope { ids: string[]; pinned?: { spaceId: string; fileIds: string[] }; files?: string[] }
+
+type ScopedFile = { id: string; filename: string; summary: string | null }
 
 /** The resources in scope, each once, by filename. */
-export function scopedFiles(scope: string[] | DocumentScope, includeConfidential: boolean): Array<{ id: string; filename: string; summary: string | null }> {
-  const { ids, pinned } = Array.isArray(scope) ? { ids: scope, pinned: undefined } : scope
+export function scopedFiles(scope: string[] | DocumentScope, includeConfidential: boolean): ScopedFile[] {
+  const { ids, pinned, files = [] } = Array.isArray(scope) ? { ids: scope, pinned: undefined } : scope
+  if (!files.length) return collectionFiles(ids, pinned, includeConfidential)
+  const byId = new Map([...collectionFiles(ids, pinned, includeConfidential), ...(sqlite.prepare(`
+    SELECT f.id, f.filename, f.summary FROM uploaded_files f
+    WHERE f.id IN (${files.map(() => '?').join(',')}) ${withoutConfidential('f.id', includeConfidential)}
+  `).all(...files) as ScopedFile[])].map(f => [f.id, f]))
+  return [...byId.values()].sort((a, b) => a.filename.localeCompare(b.filename) || a.id.localeCompare(b.id))
+}
+
+function collectionFiles(ids: string[], pinned: DocumentScope['pinned'], includeConfidential: boolean): ScopedFile[] {
   if (!ids.length) return []
   const params: string[] = []
   const clauses = ids.map(id => {
@@ -90,7 +102,7 @@ export function scopedFiles(scope: string[] | DocumentScope, includeConfidential
     JOIN uploaded_files f ON f.id = sf.file_id
     WHERE (${clauses.join(' OR ')}) ${withoutConfidential('f.id', includeConfidential)}
     ORDER BY f.filename, f.id
-  `).all(...params) as Array<{ id: string; filename: string; summary: string | null }>
+  `).all(...params) as ScopedFile[]
 }
 
 /** The confidential resources in scope — what an unlocked turn leaves out of it. Taken from the

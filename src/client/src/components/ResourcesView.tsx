@@ -1,9 +1,11 @@
 import { useRef, useState } from 'react'
 import { EyeOff, Trash2, X } from 'lucide-react'
 import { NoteEditor } from './NoteEditor.tsx'
+import { NoteTrustBadge } from './NoteTrust.tsx'
 import { SectionHeader } from './SectionHeader.tsx'
 import { useConfirm } from './confirm.tsx'
-import { EmptyState, ListRow, PRIMARY_BTN, RowAction } from './ui.tsx'
+import { EmptyState, ErrorBanner, ListRow, PRIMARY_BTN, RowAction } from './ui.tsx'
+import { errorMessage } from '../lib/errors.ts'
 import { ResourceDetail } from './ResourceDetail.tsx'
 import { CHIP_TONES, EMPTY_FILTER, isFiltered, matchesFilter, ResourceFilters, ResourceTypeIcon, toggleSpace, toggleTag, type ResourceFilter } from './ResourceFilters.tsx'
 import { deleteFile, ingestUrl, uploadFile, type Resource } from '../lib/api.ts'
@@ -49,6 +51,9 @@ interface Props {
   onOpenIdChange: (id: string | null) => void
   /** Open the chat a note was saved from. */
   onOpenChat: (id: string, title: string, messageId?: string) => void
+  onSaveNotes?: (resource: { id: string; filename: string; confidential: boolean }) => void
+  /** Starts a new recipe with a note as its instructions. */
+  onNewRecipe?: (note: { id: string; title: string }) => void
   /** Filter to start from, when another view (Explore) opens the library on a tag. */
   initialFilter?: Partial<ResourceFilter>
 }
@@ -57,7 +62,7 @@ interface Props {
  *
  *  Lives here rather than inline in App.tsx because it now owns a detail panel and two editors;
  *  the list state stays with the parent, which needs the same resources for space tagging. */
-export function ResourcesView({ resources, onChanged, openId, onOpenIdChange, onOpenChat, initialFilter }: Props) {
+export function ResourcesView({ resources, onChanged, openId, onOpenIdChange, onOpenChat, onSaveNotes, onNewRecipe, initialFilter }: Props) {
   const t = useT()
   const confirm = useConfirm()
   const { lang } = useLang()
@@ -67,6 +72,7 @@ export function ResourcesView({ resources, onChanged, openId, onOpenIdChange, on
   const fileRef = useRef<HTMLInputElement>(null)
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'ok' | 'error'>('idle')
   const [uploadMsg, setUploadMsg] = useState('')
+  const [deleteError, setDeleteError] = useState('')
 
   const [urlOpen, setUrlOpen] = useState(false)
   const [urlValue, setUrlValue] = useState('')
@@ -76,7 +82,7 @@ export function ResourcesView({ resources, onChanged, openId, onOpenIdChange, on
   const shown = resources.filter(r => matchesFilter(r, filter))
 
   if (openId) {
-    return <ResourceDetail id={openId} onBack={() => onOpenIdChange(null)} onChanged={onChanged} onOpen={onOpenIdChange} onOpenChat={onOpenChat} onTag={tag => { setFilter({ ...EMPTY_FILTER, tag }); onOpenIdChange(null) }} />
+    return <ResourceDetail id={openId} onBack={() => onOpenIdChange(null)} onChanged={onChanged} onOpen={onOpenIdChange} onOpenChat={onOpenChat} onSaveNotes={onSaveNotes} onNewRecipe={onNewRecipe} onTag={tag => { setFilter({ ...EMPTY_FILTER, tag }); onOpenIdChange(null) }} />
   }
 
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -116,16 +122,20 @@ export function ResourcesView({ resources, onChanged, openId, onOpenIdChange, on
   }
 
   async function handleDelete(resource: Resource) {
+    let unlink = false
     if (!await confirm({
       message: t('files.deleteConfirm', { name: resource.filename }),
       confirmLabel: t('common.delete'),
       danger: true,
+      // linkCount also counts outgoing links; with no incoming ones the option does nothing.
+      option: resource.linkCount ? { label: t('files.deleteUnlink', { name: resource.filename }), onChange: v => { unlink = v } } : undefined,
     })) return
-    deleteFile(resource.id).then(onChanged).catch(() => {})
+    deleteFile(resource.id, { unlink }).then(onChanged).catch(err => setDeleteError(errorMessage(t, err, t('files.deleteFailed'))))
   }
 
   return (
     <div className="flex flex-col flex-1 overflow-y-auto p-6 gap-4">
+      <ErrorBanner message={deleteError} onDismiss={() => setDeleteError('')} />
       <SectionHeader title={t('nav.resources')} intro={t('files.intro')} about={t('files.aboutTitle')} topic="resources">
         <div className="flex flex-col gap-1 items-end">
           <div className="flex flex-wrap gap-2">
@@ -208,6 +218,7 @@ export function ResourcesView({ resources, onChanged, openId, onOpenIdChange, on
                     {r.summary && <div className="text-xs text-gray-400 mt-0.5 line-clamp-2">{r.summary}</div>}
                     <div className="text-xs text-gray-500 mt-0.5">
                       {r.kind === 'note' ? t('note.kind') : r.mimeType} · {formatSize(r.size)} · {new Date((r.updatedAt ?? r.createdAt) * 1000).toLocaleDateString(lang)}
+                      <NoteTrustBadge resource={r} />
                     </div>
                     {/* Space and tag chips both narrow the list rather than opening the resource,
                         so they stop the row's own click — two grouping axes, one following projects

@@ -54,7 +54,7 @@ afterAll(() => {
   mock.module('./embeddings.ts', () => realEmbeddings)
 })
 
-const { saveMemories, saveMemory } = await import('./memory.ts')
+const { saveMemories, saveMemory } = await import('./memory/index.ts')
 
 const contents = async () =>
   (await db.select().from(spaceMemories).where(eq(spaceMemories.spaceId, 'cs'))).map(m => m.content)
@@ -121,7 +121,7 @@ describe('write-time conflict resolution', () => {
   })
 
   test('the model cannot file an identifier into the always-injected user profile', async () => {
-    const { saveUserMemory, getUserMemories } = await import('./memory.ts')
+    const { saveUserMemory, getUserMemories } = await import('./memory/index.ts')
 
     const rejected = await saveUserMemory('cu', 'The user can be reached at fredrik@example.com', 'tool')
     const kept = await saveUserMemory('cu', 'The user prefers answers in Swedish', 'tool')
@@ -133,7 +133,7 @@ describe('write-time conflict resolution', () => {
   })
 
   test('a hand-typed entry is still the user\'s own decision', async () => {
-    const { saveUserMemory, getUserMemories } = await import('./memory.ts')
+    const { saveUserMemory, getUserMemories } = await import('./memory/index.ts')
 
     // Manual entry is not screened — refusing to store what someone deliberately typed about
     // themselves would be paternalistic, and it is not the model's choice.
@@ -144,7 +144,7 @@ describe('write-time conflict resolution', () => {
   })
 
   test('the suggestion scan skips monitor runs and truncates inlined attachments', async () => {
-    const { suggestUserMemories } = await import('./memory.ts')
+    const { suggestUserMemories } = await import('./memory/index.ts')
     const { chatSessions, messages, monitorRuns, monitors } = await import('./db.ts')
     const { randomUUID } = await import('crypto')
     const now = new Date()
@@ -187,7 +187,7 @@ describe('write-time conflict resolution', () => {
   })
 
   test('the suggestion scan skips locked chats, by their own lock or their space\'s', async () => {
-    const { suggestUserMemories } = await import('./memory.ts')
+    const { suggestUserMemories } = await import('./memory/index.ts')
     const { chatSessions, messages, spaces } = await import('./db.ts')
     const { randomUUID } = await import('crypto')
     const now = new Date()
@@ -208,7 +208,7 @@ describe('write-time conflict resolution', () => {
   })
 
   test('the scan depth is caller-selectable but bounded', async () => {
-    const { suggestUserMemories } = await import('./memory.ts')
+    const { suggestUserMemories } = await import('./memory/index.ts')
     const { chatSessions, messages } = await import('./db.ts')
     const { randomUUID } = await import('crypto')
     const now = new Date()
@@ -239,7 +239,7 @@ describe('write-time conflict resolution', () => {
   })
 
   test('one chat cannot dominate the suggestion list, and near-copies collapse', async () => {
-    const { suggestUserMemories } = await import('./memory.ts')
+    const { suggestUserMemories } = await import('./memory/index.ts')
     const { chatSessions, messages, userMemories } = await import('./db.ts')
     const { randomUUID } = await import('crypto')
     const now = new Date()

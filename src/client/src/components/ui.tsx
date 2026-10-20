@@ -4,6 +4,9 @@
  *  by three different rules, three empty-state styles. The point of a primitive here is less reuse
  *  than a single answer — a new view inherits the conventions instead of inventing them again. */
 
+import { X } from 'lucide-react'
+import { useT } from '../lib/i18n.tsx'
+
 const TONES = {
   default: 'text-gray-600 hover:text-gray-300',
   danger: 'text-gray-600 hover:text-red-400',
@@ -71,4 +74,16 @@ export function ListRow({ onClick, align = 'start', children }: {
 /** "Nothing here yet" — `dense` for a nested list inside a row, where the page style shouts. */
 export function EmptyState({ dense = false, children }: { dense?: boolean; children: React.ReactNode }) {
   return <p className={dense ? 'text-xs text-gray-600' : 'text-sm text-gray-500'}>{children}</p>
+}
+
+/** A failed action, shown until dismissed. Renders nothing while `message` is empty. */
+export function ErrorBanner({ message, onDismiss, className = '' }: { message: string | null; onDismiss: () => void; className?: string }) {
+  const t = useT()
+  if (!message) return null
+  return (
+    <div className={`flex items-start gap-2 rounded border border-red-700/50 bg-red-950/20 px-3 py-2 text-xs text-red-200 ${className}`}>
+      <span className="flex-1">{message}</span>
+      <button onClick={onDismiss} className="text-red-300 hover:text-red-100" aria-label={t('common.dismiss')}><X size={14} /></button>
+    </div>
+  )
 }

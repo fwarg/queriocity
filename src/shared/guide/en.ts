@@ -150,8 +150,9 @@ and why it was made.`,
     body: `**Explore**, in the sidebar, shows how your library hangs together. It has four tabs.
 
 **Tags** lists every tag as a tree with counts — \`ml\` holds \`ml/rag\` and \`ml/agents\`. Tap a
-tag to see its resources; the **⋯** beside it renames it (sub-tags move along), deletes it, or shows
-it in the graph. At the bottom, **To organise** finds resources without tags and notes without links.
+tag to see its resources; the **⋯** beside it renames it (sub-tags move along), moves it under
+another tag (\`roses\` under \`plants\` becomes \`plants/roses\`), deletes it, or shows it in the graph.
+**Tidy tags…** suggests merges and moves for the whole tree; tick the ones you want. At the bottom, **To organise** finds resources without tags and notes without links.
 
 **Topics** groups your notes by what they are about, even untagged and unlinked ones, names each
 group, and shows what it lacks. **Tag all**, **Create overview note** or **Link these notes** fixes it
@@ -307,7 +308,13 @@ box where you can still edit it before sending.
 Studio**. Write a prompt, mark the variable parts with double braces — \`Explain {{concept}} to a
 {{audience}}\` — and the Studio turns each one into a field. Fill in test values, press **▶ Run**,
 see what comes back, adjust, and save it when it behaves. Saved templates appear in the picker
-under **Custom**, and can be edited or deleted from there.`,
+under **Custom**, and can be edited or deleted from there.
+
+**Recipes.** In the Studio's *Recipe* section, add **instruction notes** (a style guide, a
+procedure), **examples** whose form to imitate, and collections to read. The template becomes a
+recipe: picking it puts a *Recipe* chip in the message box, and every message of that chat follows
+it until you remove the chip. The notes act as instructions only this way — never when a search
+happens to find them. A note you haven't reviewed gets a warning beside the chip.`,
   },
 
   images: {

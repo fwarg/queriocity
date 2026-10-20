@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import type { SearchResult } from './search/index.ts'
 import { localTurnModels } from './llm.ts'
-import { extractMemoriesPostHoc, toMemorySources } from './memory.ts'
+import { extractMemoriesPostHoc, toMemorySources } from './memory/index.ts'
 import { CitationNormalizer } from './citation-normalizer.ts'
 import { indexContents } from './chat-indexer.ts'
 import { nullStream } from './researcher-stream.ts'
@@ -52,7 +52,7 @@ export async function executeChatAndSave({
   const ctx: TurnContext = {
     userId, sid: sessionId, msgs, pinned: new Set(), focusMode, spaceId, locked: false,
     models: { ...models, thinking: models.chat },
-    settings, customPrompt: settings.customPrompt as string | undefined, collections: [],
+    settings, customPrompt: settings.customPrompt, collections: [],
     abortSignal: AbortSignal.timeout(MONITOR_TIMEOUT_MS),
     monitor: { feedItems, maxStepsOverride: focusMode === 'balanced' ? MONITOR_MAX_STEPS : undefined },
   }

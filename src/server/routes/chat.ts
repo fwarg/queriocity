@@ -14,11 +14,15 @@ import { hasTrustedSearch } from '../lib/search/index.ts'
 import { getFlashModel } from '../lib/llm.ts'
 import { resolveTurnModels, modelChoices, answerModelOf, attachAnswer, pickedModelOf, type ResolvedModels } from '../lib/cloud-models.ts'
 import type { AnswerModel } from '../../shared/llm-catalogue.ts'
-import { extractMemoriesPostHoc, toMemorySources } from '../lib/memory.ts'
-import { ownedCollectionIds } from '../lib/files/collections.ts'
+import { extractMemoriesPostHoc, toMemorySources } from '../lib/memory/index.ts'
+import { ownedCollectionIds, ownedResourceIds } from '../lib/files/collections.ts'
+import { initialChatTitle, refineChatTitle, type InitialTitle } from '../lib/chat-title.ts'
 import { readsConfidential, trackLeftOut, parseLockedBy } from '../lib/files/confidential.ts'
 import { confidentialInScope } from '../lib/files/collection-coverage.ts'
 import { hasAttachment, COLLECTION_MODES, type ContextReport } from '../../shared/context.ts'
+import { MAX_EXAMPLES, MAX_INSTRUCTION_NOTES, MAX_INSTRUCTION_TEXT } from '../../shared/recipes.ts'
+import { recipePrompt } from '../lib/recipes.ts'
+import { contextCharBudget } from '../lib/trim-messages.ts'
 import { indexContents, deindexContent } from '../lib/chat-indexer.ts'
 import { ownsSpace, sessionOwnership } from '../lib/ownership.ts'
 import { isSpaceLocked } from '../lib/space-lock.ts'
@@ -29,9 +33,9 @@ import {
   APPROVAL_TIMEOUT_MS, type LiveRun,
 } from '../lib/stream-buffer.ts'
 import { deleteSupersededImages } from '../lib/image-store.ts'
+import { linkNotesToAnswer } from '../lib/files/agent-notes.ts'
 import { runTurn, createSink, toSearxngCategories, userQueryOf, documentSet, KEEPALIVE_INTERVAL_MS, type TurnContext } from '../lib/turn/index.ts'
 
-const SESSION_TITLE_MAX = 60
 
 // Content is generously bounded rather than tightly: a user message can carry an inlined
 // attachment, capped separately by the attachment_chars setting (admin max 500000).
@@ -50,6 +54,8 @@ const chatSchema = z.object({
   includeMemoryIds: z.array(z.string()).optional(),
   /** Collections picked for this request only — they apply with or without a space. */
   collectionIds: z.array(z.string()).max(20).optional(),
+  /** Resources read as Whole or Explore's documents, e.g. one document to save notes from. */
+  documentIds: z.array(z.string()).max(20).optional(),
   ephemeral: z.boolean().optional(),
   /** Re-answering the last question: replaces the previous answer instead of appending. */
   regenerate: z.boolean().optional(),
@@ -61,20 +67,37 @@ const chatSchema = z.object({
   collectionMode: z.enum(COLLECTION_MODES).optional(),
   /** Explore may also search the web; ignored when the turn is locked. */
   exploreWeb: z.boolean().optional(),
+  exploreNotes: z.boolean().optional(),
   /** Library resources whose text the client attached to the message, so a confidential one locks the turn. */
   attachedFileIds: z.array(z.string()).max(20).optional(),
+  /** The recipe whose chip is in the chat input (lib/recipes.ts); its resources lock the turn like attachments. */
+  recipe: z.object({
+    name: z.string().min(1).max(100),
+    instructionText: z.string().max(MAX_INSTRUCTION_TEXT).optional(),
+    instructionNoteIds: z.array(z.string()).max(MAX_INSTRUCTION_NOTES),
+    exampleFileIds: z.array(z.string()).max(MAX_EXAMPLES),
+  }).optional(),
 })
 
 export const chatRouter = new Hono<AppEnv>()
 
 chatRouter.use('*', authMiddleware)
 
+/** Output: a JSON array of strings, taken from the first `[...]` in the reply. */
+const QUERY_SUGGESTIONS_SYSTEM = 'Return a JSON array of exactly 3 short search query suggestions that complete or refine the user\'s partial input. Return ONLY the raw JSON array, no markdown, no explanation.'
+
+/** Output: a JSON array of 3 strings, taken from the first `[...]` in the reply. */
+const FOLLOW_UP_SYSTEM = `Suggest 3 natural follow-up questions a curious reader would ask next after this exchange.
+Each must be self-contained (no "it"/"that" referring to the previous answer), under 12 words, and explore something the answer did NOT already cover.
+Write them in the same language as the question.
+Return ONLY a raw JSON array of 3 strings, no markdown, no explanation.`
+
 chatRouter.post('/suggest', rateLimitByUser(suggestLimiter, 'suggest'), zValidator('json', z.object({ text: z.string().min(5).max(500) })), async (c) => {
   const { text } = c.req.valid('json')
   try {
     const { text: raw } = await generateText({
       model: getFlashModel(),
-      system: 'Return a JSON array of exactly 3 short search query suggestions that complete or refine the user\'s partial input. Return ONLY the raw JSON array, no markdown, no explanation.',
+      system: QUERY_SUGGESTIONS_SYSTEM,
       messages: [{ role: 'user', content: text }],
       maxOutputTokens: 120,
       // The client aborts a suggestion that has gone stale; stopping here frees the model for the
@@ -97,6 +120,14 @@ chatRouter.post('/suggest', rateLimitByUser(suggestLimiter, 'suggest'), zValidat
 })
 
 const RELATED_INPUT_CHARS = 1500
+
+/** The small model's title for a new chat whose first title was weak, asked for by the client once
+ *  the answer is shown — so the call never holds up the answer. Returns the title as it now stands. */
+chatRouter.post('/:sessionId/title', rateLimitByUser(suggestLimiter, 'title'), async (c) => {
+  const title = await refineChatTitle(c.req.param('sessionId'), c.get('userId'))
+  return title === null ? c.json({ error: 'Not found' }, 404) : c.json({ title })
+})
+
 /** Suggests follow-up questions from a finished exchange. Best-effort: an empty array simply
  *  means no chips are shown, so a slow or unavailable small model costs nothing. */
 chatRouter.post('/related', rateLimitByUser(suggestLimiter, 'related'), zValidator('json', z.object({
@@ -107,10 +138,7 @@ chatRouter.post('/related', rateLimitByUser(suggestLimiter, 'related'), zValidat
   try {
     const { text: raw } = await generateText({
       model: getFlashModel(),
-      system: `Suggest 3 natural follow-up questions a curious reader would ask next after this exchange.
-Each must be self-contained (no "it"/"that" referring to the previous answer), under 12 words, and explore something the answer did NOT already cover.
-Write them in the same language as the question.
-Return ONLY a raw JSON array of 3 strings, no markdown, no explanation.`,
+      system: FOLLOW_UP_SYSTEM,
       messages: [{
         role: 'user',
         content: `Question: ${question.slice(0, RELATED_INPUT_CHARS)}\n\nAnswer: ${answer.slice(0, RELATED_INPUT_CHARS)}`,
@@ -135,7 +163,7 @@ Return ONLY a raw JSON array of 3 strings, no markdown, no explanation.`,
  *  event the client saw and then following along live. Returns 404 once the run has expired,
  *  which the client treats as "give up" rather than an error. */
 chatRouter.get('/resume/:sessionId', async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const sessionId = c.req.param('sessionId')
   const run = getRun(sessionId)
   if (!run || run.userId !== userId) return c.json({ error: 'No resumable run' }, 404)
@@ -175,10 +203,10 @@ chatRouter.get('/resume/:sessionId', async (c) => {
 
 /** The extra models this user may pick for a message now (none when picking is not enabled for
  *  them), and every model's context size for the meter. */
-chatRouter.get('/models', async (c) => c.json(await modelChoices(c.get('userId') as string)))
+chatRouter.get('/models', async (c) => c.json(await modelChoices(c.get('userId'))))
 
 chatRouter.post('/:sessionId/stop', async (c) => {
-  const stopped = stopRun(c.req.param('sessionId'), c.get('userId') as string)
+  const stopped = stopRun(c.req.param('sessionId'), c.get('userId'))
   return c.json({ stopped })
 })
 
@@ -191,13 +219,13 @@ chatRouter.post('/:sessionId/approve', zValidator('json', z.object({
 })), async (c) => {
   const { id, allow } = c.req.valid('json')
   const run = getRun(c.req.param('sessionId'))
-  if (!run || run.userId !== (c.get('userId') as string)) return c.json({ settled: false }, 404)
+  if (!run || run.userId !== (c.get('userId'))) return c.json({ settled: false }, 404)
   return c.json({ settled: settleApproval(run, id, allow) })
 })
 
 chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', chatSchema), async (c) => {
-  const userId = c.get('userId') as string
-  const { sessionId, spaceId, messages: requestMsgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, collectionIds, ephemeral, regenerate, notesFirst, modelId, collectionMode = 'auto', attachedFileIds, exploreWeb } = c.req.valid('json')
+  const userId = c.get('userId')
+  const { sessionId, spaceId, messages: requestMsgs, focusMode, searchCategories, includeFileIds, includeMemoryIds, collectionIds, ephemeral, regenerate, notesFirst, modelId, collectionMode = 'auto', attachedFileIds, exploreWeb, exploreNotes, recipe, documentIds: requestedDocumentIds } = c.req.valid('json')
   const sid = sessionId ?? randomUUID()
   const msgs = requestMsgs.map(({ role, content }) => ({ role, content }))
 
@@ -210,8 +238,9 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   // a collection deleted in another tab should let the turn proceed without it rather than fail it.
   // Sorted so the cache key does not depend on the order the client happened to send.
   const collections = (await ownedCollectionIds(collectionIds ?? [], userId)).sort()
+  const documentIds = (await ownedResourceIds(requestedDocumentIds ?? [], userId)).sort()
 
-  const { locked, spaceLocked, lockedBy } = await turnLock(sessionId, spaceId, { collectionIds: collections, fileIds: [...includeFileIds ?? [], ...attachedFileIds ?? []] })
+  const { locked, spaceLocked, lockedBy } = await turnLock(sessionId, spaceId, { collectionIds: collections, fileIds: [...includeFileIds ?? [], ...attachedFileIds ?? [], ...documentIds, ...recipe?.instructionNoteIds ?? [], ...recipe?.exampleFileIds ?? []] })
   if (locked && focusMode === 'image') {
     return c.json({ error: 'Image generation is unavailable in a locked chat — it would send the prompt to the diffusion server.' }, 409)
   }
@@ -230,7 +259,8 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   // Resolved once so every phase of this turn runs on the same models.
   const resolved = await resolveTurnModels({ userId, modelId, focusMode, locked, cloudAcknowledged: storedSettings.cloudAcknowledged === true })
   const settings = resolved.forceThinking ? { ...storedSettings, useThinking: true } : storedSettings
-  const customPrompt = settings.customPrompt as string | undefined
+  const customPrompt = settings.customPrompt
+  const recipeText = recipe ? recipePrompt(userId, recipe, contextCharBudget(resolved.models.chat.contextTokens)) : undefined
   // Everything that changes the answer for the same question belongs here. `searchCategories`
   // picks which corpus is searched and `locked` removes web search entirely, so leaving either
   // out served the previous filter's answer to a question asked under a different one.
@@ -239,9 +269,11 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     [...(includeFileIds ?? [])].sort().join(','),
     [...(includeMemoryIds ?? [])].sort().join(','),
     collections.join(','),
+    documentIds.join(','),
     // Whole-collection and explored answers are never stored, but must not be served an excerpt answer either.
-    collections.length || (spaceId && (collectionMode === 'whole' || collectionMode === 'explore')) ? collectionMode : '',
+    collections.length || documentIds.length || (spaceId && (collectionMode === 'whole' || collectionMode === 'explore')) ? collectionMode : '',
     customPrompt ?? '',
+    recipeText ? recipeText.instructions + recipeText.examples : '',
     [...(searchCategories ?? [])].sort().join(','),
     locked ? 'locked' : '',
     // The model that actually answers, so a cloud answer is never replayed for a local request.
@@ -259,7 +291,9 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   const run = startRun(sid, userId)
   c.req.raw.signal.addEventListener('abort', () => scheduleAbandon(run))
   // A turn locked by what it read, outside a locked space, locks its chat for good, naming why.
-  const tail = { sid, userId, msgs, spaceId, regenerate, ephemeral, t0: Date.now(), lockedBy: locked && !spaceLocked ? lockedBy : undefined, spaceWrites }
+  const firstUser = msgs.find(m => m.role === 'user')?.content ?? ''
+  const title = initialChatTitle(firstUser, { documentIds, collections, attachedFileIds, recipeName: recipe?.name })
+  const tail = { sid, userId, msgs, spaceId, regenerate, ephemeral, t0: Date.now(), lockedBy: locked && !spaceLocked ? lockedBy : undefined, spaceWrites, title }
 
   // A cache hit is a real turn, not a shortcut around one: it emits the same events and runs the
   // same tail as a generated answer, so the exchange is saved and its citations still resolve.
@@ -267,7 +301,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
   if (cached) return streamRun(c, run, out => replayCached(out, cached, { ...tail, model: answerModelOf(resolved, focusMode) }, resolved))
 
   const ctx: TurnContext = {
-    userId, sid, msgs, focusMode, spaceId, locked, spaceWrites, settings, customPrompt, collections, collectionMode, exploreWeb: exploreWeb === true && !locked,
+    userId, sid, msgs, focusMode, spaceId, locked, spaceWrites, settings, customPrompt, recipe: recipeText, collections, documentIds, collectionMode, exploreWeb: exploreWeb === true && !locked, exploreNotes: exploreNotes === true,
     // Pins travel as indices, so the messages handed to the model carry nothing but role and content.
     pinned: new Set(requestMsgs.flatMap((m, i) => m.pinned ? [i] : [])),
     models: resolved.models,
@@ -282,8 +316,8 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     // An unlocked turn leaves confidential resources out — of the picked collections, and of every
     // search it runs; the footer says how many.
     // Whole and Explore asked for in a space read the space's resources too (turn/context.ts documentSet).
-    const readsSpace = !!spaceId && (collectionMode === 'whole' || collectionMode === 'explore')
-    const leftOut = new Set<string>(locked ? [] : confidentialInScope(readsSpace ? documentSet(ctx) : collections))
+    const readsDocuments = (!!spaceId || documentIds.length > 0) && (collectionMode === 'whole' || collectionMode === 'explore')
+    const leftOut = new Set<string>(locked ? [] : confidentialInScope(readsDocuments ? documentSet(ctx) : collections))
     const result = await trackLeftOut(leftOut, () => runTurn(ctx, sink))
     if (leftOut.size) await sink.emit({ type: 'confidential_excluded', count: leftOut.size })
     const aborted = ctx.abortSignal.aborted
@@ -297,7 +331,7 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     }
     // The latest report is also stored with the chat, so the meter reappears when it is reopened.
     // Read now, not before the turn: the hosting provider is known only once the calls report it.
-    await finishTurn(out, { ...tail, fullContent: result.content, sources: result.sources, fileSources: result.fileSources, context: sink.lastContext, aborted, model, onStored: id => attachAnswer(resolved, id) })
+    await finishTurn(out, { ...tail, fullContent: result.content, sources: result.sources, fileSources: result.fileSources, context: sink.lastContext, aborted, model, onStored: id => { attachAnswer(resolved, id); linkNotesToAnswer(userId, result.savedNoteIds ?? [], sid, id) } })
   })
 })
 
@@ -390,26 +424,28 @@ interface TurnTail {
   lockedBy?: string[]
   /** False when the space's memory and history index must not take this turn (see `spaceWrites`). */
   spaceWrites?: boolean
+  /** The title a new chat is stored with; ignored for an existing one. */
+  title: InitialTitle
 }
 
 /** Common tail for every mode: persist the exchange, close the stream, and kick off the
  *  background memory/index work. Centralised because four branches ran their own copy and the
  *  cached-answer path quietly omitted all of it — losing the turn from the conversation. */
 async function finishTurn(out: SSEStream, {
-  sid, userId, msgs, fullContent, sources, fileSources, spaceId, regenerate, ephemeral, t0, context, aborted, model, onStored, lockedBy, spaceWrites = true,
+  sid, userId, msgs, fullContent, sources, fileSources, spaceId, regenerate, ephemeral, t0, context, aborted, model, onStored, lockedBy, spaceWrites = true, title: initial,
 }: TurnTail): Promise<void> {
   const elapsedMs = Date.now() - t0
   if (ephemeral || (aborted && !fullContent.trim())) {
     await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, elapsedMs, ...(model && { model }) }) })
     return
   }
-  const { title, supersededAnswer, userMessageId, assistantMessageId } = await persistMessage(sid, userId, msgs, fullContent, sources, fileSources, spaceId, regenerate, model)
+  const { title, titlePending, supersededAnswer, userMessageId, assistantMessageId } = await persistMessage(sid, userId, msgs, fullContent, sources, fileSources, initial, spaceId, regenerate, model)
   onStored?.(assistantMessageId)
   if (lockedBy) await db.update(chatSessions).set({ locked: true, lockedBy: JSON.stringify(lockedBy) }).where(eq(chatSessions.id, sid))
   if (context) await db.update(chatSessions).set({ contextReport: JSON.stringify(context) }).where(eq(chatSessions.id, sid))
   // The stored ids let the client pin these messages without reloading the chat.
   // The model again, now with the hosting provider the calls reported, for the live answer's badge.
-  await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title, elapsedMs, userMessageId, assistantMessageId, ...(model && { model }), ...(lockedBy && { chatLocked: true, lockedBy }) }) })
+  await out.writeSSE({ data: JSON.stringify({ type: 'done', sessionId: sid, title, elapsedMs, userMessageId, assistantMessageId, ...(titlePending && { titlePending }), ...(model && { model }), ...(lockedBy && { chatLocked: true, lockedBy }) }) })
   // Outside the spaceId block below: a regenerate strands its predecessor's image whether or not
   // the chat belongs to a space. Fire-and-forget, as the chat-delete path does — a failed unlink
   // costs a stray file the startup sweep will collect, and must not fail the turn.
@@ -490,19 +526,22 @@ async function persistMessage(
   assistantContent: string,
   sources: unknown[],
   fileSources: unknown[],
+  initial: InitialTitle,
   spaceId?: string,
   regenerate = false,
   model?: AnswerModel,
-): Promise<{ title: string; supersededAnswer?: string; userMessageId?: string; assistantMessageId: string }> {
+): Promise<{ title: string; titlePending: boolean; supersededAnswer?: string; userMessageId?: string; assistantMessageId: string }> {
   const now = new Date()
   const assistantMessageId = randomUUID()
   let userMessageId: string | undefined
-  const title = msgs.find(m => m.role === 'user')?.content.slice(0, SESSION_TITLE_MAX) ?? 'Chat'
+  const { title } = initial
+  // Only a chat's first exchange creates its row; later turns leave the stored title alone.
+  const titlePending = initial.scope !== null && msgs.filter(m => m.role === 'user').length === 1 && !regenerate
   const lastUser = [...msgs].reverse().find(m => m.role === 'user')
   let supersededAnswer: string | undefined
 
   await db.transaction(async (tx) => {
-    await tx.insert(chatSessions).values({ id: sessionId, title, createdAt: now, updatedAt: now, userId, spaceId: spaceId ?? null })
+    await tx.insert(chatSessions).values({ id: sessionId, title, autoTitleScope: titlePending ? initial.scope : null, createdAt: now, updatedAt: now, userId, spaceId: spaceId ?? null })
       .onConflictDoUpdate({ target: chatSessions.id, set: { updatedAt: now, graduated: 1 } })
     if (regenerate) {
       // The question is already stored from the first attempt — replace only the answer, so a
@@ -523,5 +562,5 @@ async function persistMessage(
     await tx.insert(messages).values({ id: assistantMessageId, sessionId, role: 'assistant', content: assistantContent, sources: JSON.stringify(sources), fileSources: JSON.stringify(fileSources), model: model ? JSON.stringify(model) : null, createdAt: now })
   })
 
-  return { title, supersededAnswer, userMessageId, assistantMessageId }
+  return { title, titlePending, supersededAnswer, userMessageId, assistantMessageId }
 }

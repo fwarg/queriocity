@@ -26,6 +26,7 @@ export type StepKind =
   | 'readPart'     // exploring: reading one part (`detail`: "C2 · 3/9")
   | 'note'         // exploring: notes taken so far (`count`)
   | 'readNotes'    // exploring done: the model reading its notes before it writes (`count`)
+  | 'savedNote'    // exploring: notes saved to the library so far (`count`)
 
 export interface ProgressStep {
   kind: StepKind
@@ -65,6 +66,7 @@ export function stepText(step: ProgressStep): string {
     case 'readPart':   return `Reading ${step.detail ?? ''}`
     case 'note':       return `Noted (${step.count ?? 0})`
     case 'readNotes':  return `Reading the notes (${step.count ?? 0})…`
+    case 'savedNote':  return `Saved to the library (${step.count ?? 0})`
   }
 }
 

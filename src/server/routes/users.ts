@@ -8,41 +8,12 @@ import { authMiddleware, type AppEnv } from '../middleware/auth.ts'
 import {
   hashPassword, verifyPassword, validatePassword, signToken, AUTH_COOKIE, COOKIE_OPTIONS,
 } from '../lib/auth.ts'
-import { getUserMemories, saveUserMemory, deleteUserMemory, embedMemory, suggestUserMemories } from '../lib/memory.ts'
-import { LANG_CODES } from '../../shared/i18n/index.ts'
-import { THEMES } from '../../shared/theme.ts'
+import { getUserMemories, saveUserMemory, deleteUserMemory, embedMemory, suggestUserMemories } from '../lib/memory/index.ts'
+import { userSettingsSchema } from '../../shared/user-settings.ts'
 
 export const usersRouter = new Hono<AppEnv>()
 
 usersRouter.use('*', authMiddleware)
-
-const VALID_TIMEZONES = new Set(Intl.supportedValuesOf('timeZone'))
-
-const settingsSchema = z.object({
-  customPrompt: z.string().max(2000).optional(),
-  showThinking: z.object({ balanced: z.boolean(), thorough: z.boolean() }).optional(),
-  useThinking: z.boolean().optional(),
-  useSpaceRag: z.boolean().optional(),
-  useChatRag: z.boolean().optional(),
-  fontSize: z.number().min(12).max(22).optional(),
-  theme: z.enum(THEMES).optional(),
-  timezone: z.string().refine(v => !v || VALID_TIMEZONES.has(v), 'Invalid timezone').optional(),
-  querySuggestions: z.boolean().optional(),
-  followUpSuggestions: z.boolean().optional(),
-  /** Off by default: when disabled neither the block nor the save_user_fact tool is added, so
-   *  prompt size and tool count are unchanged for anyone who has not opted in. */
-  userMemory: z.boolean().optional(),
-  /** Visible "AI-generated" caption burned into downloaded images. On by default — the AI Act's
-   *  disclosure duty (Art 50(4)) falls on whoever deploys the app, and only a visible mark
-   *  survives a platform stripping the file's metadata. Metadata marking is unconditional. */
-  imageWatermark: z.boolean().optional(),
-  /** UI language. Absent for everyone who signed up before the selector existed — the client
-   *  falls back to the browser's language rather than assuming English. */
-  language: z.enum(LANG_CODES).optional(),
-  /** The user has confirmed they understand a cloud model is sent everything in the prompt. Their
-   *  own consent, so it lives with their settings; cloud picks are refused until it is given. */
-  cloudAcknowledged: z.boolean().optional(),
-})
 
 usersRouter.post('/password', zValidator('json', z.object({
   currentPassword: z.string(),
@@ -85,7 +56,7 @@ usersRouter.get('/settings', async (c) => {
   return c.json(parseSettings(user.settings))
 })
 
-usersRouter.patch('/settings', zValidator('json', settingsSchema), async (c) => {
+usersRouter.patch('/settings', zValidator('json', userSettingsSchema), async (c) => {
   const updates = c.req.valid('json')
   const user = await db.select({ settings: users.settings }).from(users)
     .where(eq(users.id, c.get('userId'))).get()

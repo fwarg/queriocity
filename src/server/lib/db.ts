@@ -3,6 +3,8 @@ import * as sqliteVec from 'sqlite-vec'
 import { drizzle } from 'drizzle-orm/bun-sqlite'
 import { eq, sql } from 'drizzle-orm'
 import { sqliteTable, text, integer, primaryKey, type AnySQLiteColumn } from 'drizzle-orm/sqlite-core'
+import { migrate } from './migrations.ts'
+import { parseUserSettings, type UserSettings } from '../../shared/user-settings.ts'
 
 const DB_PATH = process.env.DB_PATH ?? 'queriocity.db'
 
@@ -99,6 +101,9 @@ export const chatSessions = sqliteTable('chat_sessions', {
   locked: integer('locked', { mode: 'boolean' }).notNull().default(false),
   /** JSON array: the confidential collections and resources that locked it, named for its banner. */
   lockedBy: text('locked_by'),
+  /** Set while the title is a weak first one the small model may replace (lib/chat-title.ts): the
+   *  scope prefix the replacement keeps, '' for none. Cleared by that replacement or a rename. */
+  autoTitleScope: text('auto_title_scope'),
 })
 
 export const spaceMemories = sqliteTable('space_memories', {
@@ -184,6 +189,17 @@ export const uploadedFiles = sqliteTable('uploaded_files', {
    *  owner-checked, and simply shows nothing once the chat is gone. */
   originSessionId: text('origin_session_id'),
   originMessageId: text('origin_message_id'),
+  /** Who wrote a note: `human`, or the label of the model that wrote it. Null means unknown (notes
+   *  saved before this was recorded) and for files. See shared/note-trust.ts. */
+  generatedBy: text('generated_by'),
+  /** When the owner marked the note reviewed; null when not. Notes are per user, so the reviewer is
+   *  always the owner. */
+  verifiedAt: integer('verified_at', { mode: 'timestamp' }),
+  /** When the owner last changed the text of a note a model (or an unknown author) wrote; null when
+   *  never. Not a review: an edit may touch one sentence. */
+  editedAt: integer('edited_at', { mode: 'timestamp' }),
+  /** draft | stable | deprecated, after OKF's lifecycle. Null means stable. */
+  status: text('status', { enum: ['draft', 'stable', 'deprecated'] }),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }),
 })
@@ -225,6 +241,11 @@ export const customTemplates = sqliteTable('custom_templates', {
   description: text('description'),
   promptText: text('prompt_text').notNull(),
   suggestedMode: text('suggested_mode').notNull().default('balanced'),
+  /** A recipe's parts (lib/recipes.ts), JSON; null on a plain template. */
+  instructionNoteIds: text('instruction_note_ids'),
+  instructionText: text('instruction_text'),
+  exampleFileIds: text('example_file_ids'),
+  settings: text('settings'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 })
@@ -281,15 +302,14 @@ function dimensionChanged(table: string): boolean {
  *  dimension change needs re-embedding, never re-chunking, and never the loss of a resource. This
  *  used to delete every uploaded file, which also took its space tags and any note derived from it.
  *
- *  Exported for the test that guards that; initSchema is the only caller in production. */
+ *  Exported for the test that guards that; ensureVectorTables is the only caller in production. */
 export function resetFileEmbeddings(): void {
   sqlite.run('DROP TABLE IF EXISTS file_chunks')
 }
 
-function initSchema() {
-  // Ahead of everything below: the notes work added it, and several statements here read it.
-  try { sqlite.run(`ALTER TABLE uploaded_files ADD COLUMN kind TEXT NOT NULL DEFAULT 'file'`) } catch { /* already present, or no table yet */ }
-
+/** Runs on every start, after the migrations: the vector tables follow EMBED_DIMENSIONS, which can
+ *  change between starts, so they are checked each time rather than versioned. */
+function ensureVectorTables(): void {
   // Recreate the vector tables if the embedding dimension changed. Both keep their `*_chunk_meta`
   // rows, so reembedMissingVectors() at startup restores them from text already on disk — which is
   // why neither is gated behind ALLOW_EMBED_RESET any more: there is nothing left to destroy.
@@ -303,96 +323,9 @@ function initSchema() {
     sqlite.run('DROP TABLE IF EXISTS chat_chunks')
   }
 
-  sqlite.run(`
-    CREATE TABLE IF NOT EXISTS users (
-      id         TEXT PRIMARY KEY,
-      email      TEXT NOT NULL UNIQUE,
-      name       TEXT,
-      role       TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('user','admin')),
-      settings   TEXT NOT NULL DEFAULT '{}',
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS auth_credentials (
-      id            INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      email         TEXT NOT NULL UNIQUE,
-      password_hash TEXT NOT NULL,
-      active        INTEGER NOT NULL DEFAULT 1
-    );
-    CREATE TABLE IF NOT EXISTS invites (
-      id         TEXT PRIMARY KEY,
-      created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      email      TEXT,
-      created_at INTEGER NOT NULL,
-      expires_at INTEGER NOT NULL,
-      used_at    INTEGER
-    );
-    CREATE TABLE IF NOT EXISTS spaces (
-      id         TEXT PRIMARY KEY,
-      name       TEXT NOT NULL,
-      user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      kind       TEXT NOT NULL DEFAULT 'space' CHECK(kind IN ('space','collection')),
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS chat_sessions (
-      id         TEXT PRIMARY KEY,
-      title      TEXT NOT NULL,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL,
-      user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE
-    );
-    CREATE TABLE IF NOT EXISTS messages (
-      id         TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
-      role       TEXT NOT NULL CHECK(role IN ('user','assistant')),
-      content    TEXT NOT NULL,
-      sources    TEXT,
-      created_at INTEGER NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS uploaded_files (
-      id         TEXT PRIMARY KEY,
-      user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      filename   TEXT NOT NULL,
-      mime_type  TEXT NOT NULL,
-      size       INTEGER NOT NULL,
-      kind       TEXT NOT NULL DEFAULT 'file' CHECK(kind IN ('file','note')),
-      body       TEXT,
-      summary    TEXT,
-      topics     TEXT,
-      origin     TEXT,
-      derived_from TEXT REFERENCES uploaded_files(id) ON DELETE SET NULL,
-      origin_session_id TEXT,
-      origin_message_id TEXT,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER
-    );
-    CREATE TABLE IF NOT EXISTS app_settings (
-      key   TEXT PRIMARY KEY,
-      value TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS space_memories (
-      id          TEXT PRIMARY KEY,
-      space_id    TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
-      content     TEXT NOT NULL,
-      source      TEXT NOT NULL DEFAULT 'tool' CHECK(source IN ('tool','extraction','manual','compact')),
-      session_id  TEXT REFERENCES chat_sessions(id) ON DELETE SET NULL,
-      always_keep INTEGER NOT NULL DEFAULT 0,
-      sources     TEXT,
-      checked_at  INTEGER,
-      created_at  INTEGER NOT NULL,
-      updated_at  INTEGER NOT NULL
-    );
-  `)
   sqlite.run(`CREATE VIRTUAL TABLE IF NOT EXISTS file_chunks USING vec0(
     chunk_id TEXT PRIMARY KEY,
     embedding FLOAT[${EMBED_DIMS}]
-  )`)
-  sqlite.run(`CREATE TABLE IF NOT EXISTS file_chunk_meta (
-    chunk_id TEXT PRIMARY KEY,
-    file_id  TEXT NOT NULL,
-    content  TEXT NOT NULL
   )`)
   sqlite.run(`CREATE VIRTUAL TABLE IF NOT EXISTS chat_chunks USING vec0(
     chunk_id TEXT PRIMARY KEY,
@@ -414,263 +347,11 @@ function initSchema() {
     memory_id TEXT PRIMARY KEY,
     embedding FLOAT[${EMBED_DIMS}]
   )`)
-  sqlite.run(`CREATE TABLE IF NOT EXISTS chat_chunk_meta (
-    chunk_id   TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL,
-    content    TEXT NOT NULL
-  )`)
-  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_chat_chunk_meta_session ON chat_chunk_meta(session_id)`)
-  sqlite.run(`CREATE TABLE IF NOT EXISTS space_files (
-    space_id TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
-    file_id  TEXT NOT NULL REFERENCES uploaded_files(id) ON DELETE CASCADE,
-    PRIMARY KEY (space_id, file_id)
-  )`)
+}
 
-  // One digest per resource and model for whole-collection tasks; `text_hash` covers the text read
-  // and the digest prompt, so an edit or a prompt change makes the row stale rather than wrong.
-  sqlite.run(`CREATE TABLE IF NOT EXISTS resource_digests (
-    file_id    TEXT NOT NULL REFERENCES uploaded_files(id) ON DELETE CASCADE,
-    model      TEXT NOT NULL,
-    text_hash  TEXT NOT NULL,
-    digest     TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    PRIMARY KEY (file_id, model)
-  )`)
-
-  // What a resource says about one task (lib/files/collection-extracts.ts), per model; `key_hash`
-  // covers the prompt, the task, the draft card and the text read. Pruned to the newest per resource.
-  // One outline line per part of a resource (lib/files/collection-parts.ts), keyed by the part's text,
-  // so a re-indexed resource gets new lines and its old ones go with the resource.
-  sqlite.run(`CREATE TABLE IF NOT EXISTS resource_outlines (
-    file_id    TEXT NOT NULL REFERENCES uploaded_files(id) ON DELETE CASCADE,
-    part_hash  TEXT NOT NULL,
-    line       TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    PRIMARY KEY (file_id, part_hash)
-  )`)
-
-  sqlite.run(`CREATE TABLE IF NOT EXISTS resource_extracts (
-    file_id    TEXT NOT NULL REFERENCES uploaded_files(id) ON DELETE CASCADE,
-    model      TEXT NOT NULL,
-    key_hash   TEXT NOT NULL,
-    extract    TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    PRIMARY KEY (file_id, model, key_hash)
-  )`)
-
-  // Migration: drop old memory_chunks table (replaced by chat_chunks)
-  sqlite.run('DROP TABLE IF EXISTS memory_chunks')
-
-  // Migration: add space_id column if it doesn't exist yet
-  try {
-    sqlite.run(`ALTER TABLE chat_sessions ADD COLUMN space_id TEXT REFERENCES spaces(id) ON DELETE SET NULL`)
-  } catch {}
-
-  // Migration: add graduated column for monitor session graduation
-  try {
-    sqlite.run(`ALTER TABLE chat_sessions ADD COLUMN graduated INTEGER NOT NULL DEFAULT 0`)
-  } catch {}
-
-  // Migration: add offline (locked) flag for spaces. Defaults to 0, so every existing space keeps
-  // its web access — locking is always an explicit choice.
-  try {
-    sqlite.run(`ALTER TABLE spaces ADD COLUMN offline INTEGER NOT NULL DEFAULT 0`)
-  } catch {}
-
-  // Migration: add 'compact' to space_memories source CHECK constraint.
-  // Guarded on the constraint actually being stale — the rebuild used to run on every boot
-  // (CREATE IF NOT EXISTS → INSERT SELECT * → DROP → RENAME round-trips the table each start),
-  // which is both wasteful and unsafe once the table gains columns the v2 definition lacks:
-  // `SELECT *` would quietly copy them into the wrong slots or drop them.
-  const memoriesSql = (sqlite.query(
-    "SELECT sql FROM sqlite_master WHERE type='table' AND name='space_memories'"
-  ).get() as { sql: string } | null)?.sql ?? ''
-  if (memoriesSql && !memoriesSql.includes("'compact'")) {
-    sqlite.run(`DROP TABLE IF EXISTS space_memories_v2`)
-    sqlite.run(`CREATE TABLE space_memories_v2 (
-      id         TEXT PRIMARY KEY,
-      space_id   TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
-      content    TEXT NOT NULL,
-      source     TEXT NOT NULL DEFAULT 'tool' CHECK(source IN ('tool','extraction','manual','compact')),
-      session_id TEXT REFERENCES chat_sessions(id) ON DELETE SET NULL,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    )`)
-    // Explicit column list, not SELECT *, so the copy cannot silently misalign.
-    sqlite.run(`INSERT OR IGNORE INTO space_memories_v2
-      (id, space_id, content, source, session_id, created_at, updated_at)
-      SELECT id, space_id, content, source, session_id, created_at, updated_at FROM space_memories`)
-    sqlite.run(`DROP TABLE space_memories`)
-    sqlite.run(`ALTER TABLE space_memories_v2 RENAME TO space_memories`)
-    console.log('[db] Migrated space_memories to allow source=compact')
-  }
-  // Leftover from when the rebuild above ran unconditionally.
-  sqlite.run(`DROP TABLE IF EXISTS space_memories_v2`)
-
-  // The rebuild block above copies only the seven original columns; every column added since —
-  // always_keep, sources, checked_at — is (re-)added by the ALTERs below, which no-op once applied.
-  // Migration: per-memory "always keep" flag (see spaceMemories schema).
-  try {
-    sqlite.run(`ALTER TABLE space_memories ADD COLUMN always_keep INTEGER NOT NULL DEFAULT 0`)
-  } catch {}
-
-  // Migration: space-memory provenance (see spaceMemories schema). Both nullable and best-effort —
-  // a memory with no cited web sources or no verification timestamp is the normal case.
-  try { sqlite.run(`ALTER TABLE space_memories ADD COLUMN sources TEXT`) } catch {}
-  try { sqlite.run(`ALTER TABLE space_memories ADD COLUMN checked_at INTEGER`) } catch {}
-
-  sqlite.run(`CREATE TABLE IF NOT EXISTS user_memories (
-    id          TEXT PRIMARY KEY,
-    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    content     TEXT NOT NULL,
-    source      TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('tool','manual')),
-    always_keep INTEGER NOT NULL DEFAULT 0,
-    created_at  INTEGER NOT NULL,
-    updated_at  INTEGER NOT NULL
-  )`)
-  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_user_memories_user_id ON user_memories(user_id)`)
-
-  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_spaces_user_id ON spaces(user_id)`)
-  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_id ON chat_sessions(user_id)`)
-  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_chat_sessions_space_id ON chat_sessions(space_id)`)
-  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)`)
-  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_uploaded_files_user_id ON uploaded_files(user_id)`)
-  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_file_chunk_meta_file_id ON file_chunk_meta(file_id)`)
-  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_space_memories_space_id ON space_memories(space_id)`)
-  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_space_files_space_id ON space_files(space_id)`)
-  sqlite.run(`CREATE TABLE IF NOT EXISTS custom_templates (
-    id             TEXT PRIMARY KEY,
-    user_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    name           TEXT NOT NULL,
-    description    TEXT,
-    prompt_text    TEXT NOT NULL,
-    suggested_mode TEXT NOT NULL DEFAULT 'balanced',
-    created_at     INTEGER NOT NULL,
-    updated_at     INTEGER NOT NULL
-  )`)
-  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_custom_templates_user_id ON custom_templates(user_id)`)
-
-  sqlite.run(`CREATE TABLE IF NOT EXISTS monitors (
-    id               TEXT PRIMARY KEY,
-    user_id          TEXT REFERENCES users(id) ON DELETE CASCADE,
-    name             TEXT NOT NULL,
-    prompt_text      TEXT NOT NULL,
-    focus_mode       TEXT NOT NULL DEFAULT 'balanced',
-    interval_minutes INTEGER NOT NULL,
-    keep_count       INTEGER NOT NULL DEFAULT 3,
-    is_global        INTEGER NOT NULL DEFAULT 0,
-    space_id         TEXT REFERENCES spaces(id) ON DELETE SET NULL,
-    enabled          INTEGER NOT NULL DEFAULT 1,
-    next_run_at      INTEGER,
-    last_run_at      INTEGER,
-    created_at       INTEGER NOT NULL,
-    updated_at       INTEGER NOT NULL
-  )`)
-  sqlite.run(`CREATE TABLE IF NOT EXISTS monitor_subscriptions (
-    monitor_id TEXT NOT NULL REFERENCES monitors(id) ON DELETE CASCADE,
-    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    PRIMARY KEY (monitor_id, user_id)
-  )`)
-  sqlite.run(`CREATE TABLE IF NOT EXISTS monitor_runs (
-    id         TEXT PRIMARY KEY,
-    monitor_id TEXT NOT NULL REFERENCES monitors(id) ON DELETE CASCADE,
-    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    session_id TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
-    run_at     INTEGER NOT NULL
-  )`)
-  // Calls per search provider per UTC month, for the monthly quotas in search/policy.ts.
-  sqlite.run(`CREATE TABLE IF NOT EXISTS search_usage (
-    provider TEXT NOT NULL,
-    month    TEXT NOT NULL,
-    count    INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (provider, month)
-  )`)
-  // Cloud LLM providers a user may use, with a monthly budget in the provider's currency.
-  sqlite.run(`CREATE TABLE IF NOT EXISTS user_llm_access (
-    user_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    provider_id    TEXT NOT NULL,
-    monthly_budget REAL NOT NULL,
-    PRIMARY KEY (user_id, provider_id)
-  )`)
-  // Cloud LLM spend per user, provider and UTC month. No foreign key: a deleted user's spend
-  // still counts towards the provider's monthly cap.
-  sqlite.run(`CREATE TABLE IF NOT EXISTS llm_usage (
-    user_id       TEXT NOT NULL,
-    provider_id   TEXT NOT NULL,
-    month         TEXT NOT NULL,
-    cost          REAL NOT NULL DEFAULT 0,
-    input_tokens  INTEGER NOT NULL DEFAULT 0,
-    output_tokens INTEGER NOT NULL DEFAULT 0,
-    requests      INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (user_id, provider_id, month)
-  )`)
-  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_monitors_user_id ON monitors(user_id)`)
-  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_monitors_next_run ON monitors(next_run_at)`)
-  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_monitor_runs_monitor_user ON monitor_runs(monitor_id, user_id)`)
-  try { sqlite.run('ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0') } catch {}
-  try { sqlite.run('ALTER TABLE users ADD COLUMN cloud_enabled INTEGER NOT NULL DEFAULT 0') } catch {}
-  try { sqlite.run('ALTER TABLE messages ADD COLUMN model TEXT') } catch {}
-  try { sqlite.run('ALTER TABLE auth_credentials ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0') } catch {}
-  try { sqlite.run('ALTER TABLE monitors ADD COLUMN preferred_hour INTEGER') } catch {}
-  try { sqlite.run('ALTER TABLE monitors ADD COLUMN timezone TEXT') } catch {}
-  try { sqlite.run('ALTER TABLE monitors ADD COLUMN feed_sources TEXT') } catch {}
-  try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN content_hash TEXT') } catch {}
-  // `kind` is added at the top of initSchema — the reset branch there depends on it.
-  try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN body TEXT') } catch {}
-  try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN summary TEXT') } catch {}
-  try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN topics TEXT') } catch {}
-  try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN updated_at INTEGER') } catch {}
-  // No REFERENCES clause: SQLite's ALTER TABLE ADD COLUMN rejects one with a non-null default and
-  // cannot add the constraint to an existing table at all. New databases get it from the CREATE
-  // above; on an upgraded one the column is a plain id, and routes/files.ts nulls it on delete.
-  try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN derived_from TEXT') } catch {}
-  try { sqlite.run(`ALTER TABLE spaces ADD COLUMN kind TEXT NOT NULL DEFAULT 'space'`) } catch {}
-  try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN origin TEXT') } catch {}
-  try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN origin_session_id TEXT') } catch {}
-  try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN origin_message_id TEXT') } catch {}
-  sqlite.run(`CREATE TABLE IF NOT EXISTS tags (
-    id      TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    path    TEXT NOT NULL,
-    UNIQUE (user_id, path)
-  )`)
-  sqlite.run(`CREATE TABLE IF NOT EXISTS resource_tags (
-    resource_id TEXT NOT NULL REFERENCES uploaded_files(id) ON DELETE CASCADE,
-    tag_id      TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
-    PRIMARY KEY (resource_id, tag_id)
-  )`)
-  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_resource_tags_tag ON resource_tags(tag_id)`)
-  sqlite.run(`CREATE TABLE IF NOT EXISTS resource_links (
-    src_id    TEXT NOT NULL REFERENCES uploaded_files(id) ON DELETE CASCADE,
-    dst_id    TEXT REFERENCES uploaded_files(id) ON DELETE SET NULL,
-    dst_title TEXT NOT NULL
-  )`)
-  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_resource_links_src ON resource_links(src_id)`)
-  sqlite.run(`CREATE INDEX IF NOT EXISTS idx_resource_links_dst ON resource_links(dst_id)`)
-  // Names the small model gave topic-map clusters, keyed by a hash of the members, so reopening
-  // the map does not re-name what has not changed.
-  sqlite.run(`CREATE TABLE IF NOT EXISTS topic_names (
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    key     TEXT NOT NULL,
-    name    TEXT NOT NULL,
-    tag     TEXT,
-    PRIMARY KEY (user_id, key)
-  )`)
-  // Suggested links the user turned down, so the same pair is not proposed again.
-  sqlite.run(`CREATE TABLE IF NOT EXISTS link_dismissals (
-    src_id TEXT NOT NULL REFERENCES uploaded_files(id) ON DELETE CASCADE,
-    dst_id TEXT NOT NULL REFERENCES uploaded_files(id) ON DELETE CASCADE,
-    PRIMARY KEY (src_id, dst_id)
-  )`)
-  try { sqlite.run('ALTER TABLE messages ADD COLUMN file_sources TEXT') } catch {}
-  try { sqlite.run('ALTER TABLE messages ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0') } catch {}
-  try { sqlite.run('ALTER TABLE chat_sessions ADD COLUMN context_report TEXT') } catch {}
-  try { sqlite.run('ALTER TABLE chat_sessions ADD COLUMN history_summary TEXT') } catch {}
-  try { sqlite.run('ALTER TABLE chat_sessions ADD COLUMN locked INTEGER NOT NULL DEFAULT 0') } catch {}
-  try { sqlite.run('ALTER TABLE chat_sessions ADD COLUMN locked_by TEXT') } catch {}
-  // Briefly named `locked`, before content and chats got a word each; renamed where it exists.
-  try { sqlite.run('ALTER TABLE uploaded_files RENAME COLUMN locked TO confidential') } catch {}
-  try { sqlite.run('ALTER TABLE uploaded_files ADD COLUMN confidential INTEGER NOT NULL DEFAULT 0') } catch {}
+/** Personal monitors without a timezone take their owner's, once the owner has set one. Every start,
+ *  because the owner may set it long after the monitor was created. */
+function backfillMonitorTimezones(): void {
   // Migrate: backfill timezone from owner's settings for personal monitors that have none
   try {
     sqlite.run(`
@@ -685,17 +366,32 @@ function initSchema() {
   } catch {}
 }
 
-initSchema()
+migrate(sqlite)
+ensureVectorTables()
+backfillMonitorTimezones()
 
 export { sqlite }
 
-/** Safely parse a user's settings JSON, returning {} on malformed data. */
-export function parseSettings(s: string): Record<string, unknown> {
-  try { return JSON.parse(s) } catch { return {} }
+/** A user's stored settings JSON, validated; malformed JSON reads as no settings at all. */
+export function parseSettings(s: string): UserSettings {
+  try { return parseUserSettings(JSON.parse(s)) } catch { return {} }
 }
 
 export async function getAppSetting(key: string, fallback: string): Promise<string> {
   const row = await db.select().from(appSettings).where(eq(appSettings.key, key)).get()
+  return row?.value ?? fallback
+}
+
+/** A numeric app setting; `fallback` when it is unset or not a number. */
+export async function getNumberSetting(key: string, fallback: number): Promise<number> {
+  const raw = (await getAppSetting(key, '')).trim()
+  const value = raw === '' ? NaN : Number(raw)
+  return Number.isFinite(value) ? value : fallback
+}
+
+/** getAppSetting for a caller that cannot await: one primary-key lookup. */
+export function getAppSettingSync(key: string, fallback: string): string {
+  const row = sqlite.query('SELECT value FROM app_settings WHERE key = ?').get(key) as { value: string } | null
   return row?.value ?? fallback
 }
 

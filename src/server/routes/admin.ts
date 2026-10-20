@@ -2,12 +2,12 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { generateText, embed } from 'ai'
-import { db, users, invites, chatSessions, spaces, spaceMemories, userMemories, uploadedFiles, authCredentials, getAppSetting, setAppSetting, bumpTokenVersion } from '../lib/db.ts'
+import { db, users, invites, chatSessions, spaces, spaceMemories, userMemories, uploadedFiles, authCredentials, getAppSetting, getNumberSetting, setAppSetting, bumpTokenVersion } from '../lib/db.ts'
 import { similarityReport, SIMILARITY_REPORT_LIMIT } from '../lib/files/related.ts'
-import { relatedMinSimilarity as relatedMinSimilaritySetting, relatedMinRelevance as relatedMinRelevanceSetting, notesRagBudget as notesRagBudgetSetting, topicMinSimilarity as topicMinSimilaritySetting, exploreMinRelevance } from '../lib/rag-settings.ts'
+import { relatedMinSimilarity as relatedMinSimilaritySetting, relatedMinRelevance as relatedMinRelevanceSetting, notesRagBudget as notesRagBudgetSetting, topicMinSimilarity as topicMinSimilaritySetting, exploreMinRelevance, tagMatchSimilarity as tagMatchSimilaritySetting, tagPlaceSimilarity as tagPlaceSimilaritySetting, memoryTokenBudget as memoryTokenBudgetSetting, spaceRagBudget as spaceRagBudgetSetting } from '../lib/rag-settings.ts'
 import { eq, desc } from 'drizzle-orm'
 import { indexSession, deindexSession } from '../lib/chat-indexer.ts'
-import { EMBED_MAX_INPUT_CHARS, SMALL_MODEL_INPUT_CHARS, DEFAULT_MEMORY_TOKEN_BUDGET } from '../lib/llm.ts'
+import { EMBED_MAX_INPUT_CHARS, SMALL_MODEL_INPUT_CHARS, researchMaxTokens as researchMaxTokensSetting } from '../lib/llm.ts'
 import { DEFAULT_MAX_URL_CONTEXT_CHARS, MIN_URL_CONTEXT_CHARS, SCRAPE_MAX_CHARS } from '../lib/fetch-url.ts'
 import { randomUUID, randomInt } from 'crypto'
 import { hashPassword } from '../lib/auth.ts'
@@ -17,7 +17,7 @@ import { loadCatalogue, saveCatalogue, keyStatus, cloudTarget, catalogueSchema }
 import { allLlmAccess, setLlmAccess, monthlyLlmUsage, meteredUsage } from '../lib/llm-usage.ts'
 import { monthKey } from '../lib/search/usage.ts'
 import { rerank, rerankEnabled } from '../lib/reranker.ts'
-import { runDream, deleteMemoryEmbeddings } from '../lib/memory.ts'
+import { runDream, deleteMemoryEmbeddings } from '../lib/memory/index.ts'
 import { deleteFileChunks } from '../lib/vector-cleanup.ts'
 import { deleteUserImages } from '../lib/image-store.ts'
 import { describeProviders, PROVIDERS } from '../lib/search/index.ts'
@@ -25,7 +25,7 @@ import { loadSearchPolicy, saveSearchPolicy, resetSearchPolicy, hasStoredSearchP
 import { telemetrySnapshot } from '../lib/search/telemetry.ts'
 import { monthlyUsage } from '../lib/search/usage.ts'
 import { DEFAULT_COLLECTION_FULL_TEXT_TOKENS, DEFAULT_COLLECTION_FULL_TEXT_TOKENS_CLOUD } from '../lib/turn/collection.ts'
-import { DEFAULT_EXPLORE_MAX_STEPS } from '../lib/turn/collection-agent.ts'
+import { DEFAULT_EXPLORE_MAX_STEPS, MAX_EXPLORE_STEPS } from '../lib/turn/collection-agent.ts'
 
 type ProbeResult = { ok: boolean; ms: number; info: string }
 
@@ -60,23 +60,24 @@ adminRouter.use('*', authMiddleware)
 adminRouter.use('*', adminMiddleware)
 
 adminRouter.get('/settings', async (c) => {
-  const [memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, ragMinRelevance, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow, compressHistoryOverflow, resourceSummary, relatedMinSimilarity, relatedMinRelevance, notesRagBudget, topicMinSimilarity, collectionFullTextTokens, collectionFullTextTokensCloud, collectionExploreMaxSteps, collectionExploreMinRelevance] = await Promise.all([
-    getAppSetting('memory_token_budget', DEFAULT_MEMORY_TOKEN_BUDGET).then(Number),
-    getAppSetting('user_memory_token_budget', '300').then(Number),
-    getAppSetting('dream_hour', '-1').then(Number),
-    getAppSetting('dream_threshold', '1500').then(Number),
-    getAppSetting('dream_target', '700').then(Number),
+  const [memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, ragMinRelevance, attachmentChars, spaceRagBudget, queryReformulation, chatTitleModel, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow, compressHistoryOverflow, resourceSummary, relatedMinSimilarity, relatedMinRelevance, notesRagBudget, topicMinSimilarity, collectionFullTextTokens, collectionFullTextTokensCloud, collectionExploreMaxSteps, collectionExploreMinRelevance, researchMaxTokens, tagMatchSimilarity, tagPlaceSimilarity] = await Promise.all([
+    memoryTokenBudgetSetting(),
+    getNumberSetting('user_memory_token_budget', 300),
+    getNumberSetting('dream_hour', -1),
+    getNumberSetting('dream_threshold', 1500),
+    getNumberSetting('dream_target', 700),
     getAppSetting('dream_deep', 'false').then(v => v === 'true'),
-    getAppSetting('memory_extract_chars', '6000').then(Number),
-    getAppSetting('rerank_top_n', '15').then(Number),
-    getAppSetting('rag_top_k', '15').then(Number),
-    getAppSetting('rag_min_relevance', '0').then(Number),
-    getAppSetting('attachment_chars', '20000').then(Number),
-    getAppSetting('space_rag_budget', '500').then(Number),
+    getNumberSetting('memory_extract_chars', 6000),
+    getNumberSetting('rerank_top_n', 15),
+    getNumberSetting('rag_top_k', 15),
+    getNumberSetting('rag_min_relevance', 0),
+    getNumberSetting('attachment_chars', 20000),
+    spaceRagBudgetSetting(),
     getAppSetting('query_reformulation', 'true').then(v => v === 'true'),
-    getAppSetting('rss_feed_chars_budget', '50000').then(Number),
-    getAppSetting('fetch_max_pages', '8').then(Number),
-    getAppSetting('fetch_max_url_context_chars', String(DEFAULT_MAX_URL_CONTEXT_CHARS)).then(Number),
+    getAppSetting('chat_title_model', 'true').then(v => v === 'true'),
+    getNumberSetting('rss_feed_chars_budget', 50000),
+    getNumberSetting('fetch_max_pages', 8),
+    getNumberSetting('fetch_max_url_context_chars', DEFAULT_MAX_URL_CONTEXT_CHARS),
     getAppSetting('fetch_summarize_overflow', 'false').then(v => v === 'true'),
     getAppSetting('compress_history_overflow', 'false').then(v => v === 'true'),
     getAppSetting('resource_summary', 'true').then(v => v === 'true'),
@@ -84,15 +85,18 @@ adminRouter.get('/settings', async (c) => {
     relatedMinRelevanceSetting(),
     notesRagBudgetSetting(),
     topicMinSimilaritySetting(),
-    getAppSetting('collection_full_text_tokens', DEFAULT_COLLECTION_FULL_TEXT_TOKENS).then(Number),
-    getAppSetting('collection_full_text_tokens_cloud', DEFAULT_COLLECTION_FULL_TEXT_TOKENS_CLOUD).then(Number),
-    getAppSetting('collection_explore_max_steps', DEFAULT_EXPLORE_MAX_STEPS).then(Number),
+    getNumberSetting('collection_full_text_tokens', DEFAULT_COLLECTION_FULL_TEXT_TOKENS),
+    getNumberSetting('collection_full_text_tokens_cloud', DEFAULT_COLLECTION_FULL_TEXT_TOKENS_CLOUD),
+    getNumberSetting('collection_explore_max_steps', DEFAULT_EXPLORE_MAX_STEPS),
     exploreMinRelevance(),
+    researchMaxTokensSetting(),
+    tagMatchSimilaritySetting(),
+    tagPlaceSimilaritySetting(),
   ])
   // Read-only, derived from the model context env vars. Two of the settings above are silently
   // clamped by these at use time, so the panel needs them to show what a value actually does
   // rather than what was typed.
-  return c.json({ memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, ragMinRelevance, attachmentChars, spaceRagBudget, queryReformulation, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow, compressHistoryOverflow, resourceSummary, relatedMinSimilarity, relatedMinRelevance, notesRagBudget, topicMinSimilarity, collectionFullTextTokens, collectionFullTextTokensCloud, collectionExploreMaxSteps, collectionExploreMinRelevance, rerankEnabled: rerankEnabled(), limits: { smallModelInputChars: SMALL_MODEL_INPUT_CHARS, embedInputChars: EMBED_MAX_INPUT_CHARS, scrapeMaxChars: SCRAPE_MAX_CHARS, minUrlContextChars: MIN_URL_CONTEXT_CHARS } })
+  return c.json({ memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, ragMinRelevance, attachmentChars, spaceRagBudget, queryReformulation, chatTitleModel, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow, compressHistoryOverflow, resourceSummary, relatedMinSimilarity, relatedMinRelevance, notesRagBudget, topicMinSimilarity, collectionFullTextTokens, collectionFullTextTokensCloud, collectionExploreMaxSteps, collectionExploreMinRelevance, researchMaxTokens, tagMatchSimilarity, tagPlaceSimilarity, rerankEnabled: rerankEnabled(), limits: { smallModelInputChars: SMALL_MODEL_INPUT_CHARS, embedInputChars: EMBED_MAX_INPUT_CHARS, scrapeMaxChars: SCRAPE_MAX_CHARS, minUrlContextChars: MIN_URL_CONTEXT_CHARS } })
 })
 
 adminRouter.patch('/settings', zValidator('json', z.object({
@@ -113,10 +117,14 @@ adminRouter.patch('/settings', zValidator('json', z.object({
   notesRagBudget: z.number().int().min(0).max(10000).optional(),
   collectionFullTextTokens: z.number().int().min(0).max(1_000_000).optional(),
   collectionFullTextTokensCloud: z.number().int().min(0).max(1_000_000).optional(),
-  collectionExploreMaxSteps: z.number().int().min(3).max(100).optional(),
+  collectionExploreMaxSteps: z.number().int().min(3).max(MAX_EXPLORE_STEPS).optional(),
   collectionExploreMinRelevance: z.number().min(0).max(1).optional(),
+  researchMaxTokens: z.number().int().min(1000).max(200_000).optional(),
   topicMinSimilarity: z.number().min(0).max(1).optional(),
+  tagMatchSimilarity: z.number().min(0).max(1).optional(),
+  tagPlaceSimilarity: z.number().min(0).max(1).optional(),
   queryReformulation: z.boolean().optional(),
+  chatTitleModel: z.boolean().optional(),
   rssFeedCharsBudget: z.number().int().min(5000).max(500000).optional(),
   fetchMaxPages: z.number().int().min(0).max(50).optional(),
   fetchMaxUrlContextChars: z.number().int().min(MIN_URL_CONTEXT_CHARS).max(SCRAPE_MAX_CHARS).optional(),
@@ -148,9 +156,13 @@ adminRouter.patch('/settings', zValidator('json', z.object({
   if (body.collectionFullTextTokens != null) ops.push(setAppSetting('collection_full_text_tokens', String(body.collectionFullTextTokens)))
   if (body.collectionFullTextTokensCloud != null) ops.push(setAppSetting('collection_full_text_tokens_cloud', String(body.collectionFullTextTokensCloud)))
   if (body.collectionExploreMaxSteps != null) ops.push(setAppSetting('collection_explore_max_steps', String(body.collectionExploreMaxSteps)))
+  if (body.researchMaxTokens != null) ops.push(setAppSetting('research_max_tokens', String(body.researchMaxTokens)))
   if (body.collectionExploreMinRelevance != null) ops.push(setAppSetting('collection_explore_min_relevance', String(body.collectionExploreMinRelevance)))
   if (body.topicMinSimilarity != null) ops.push(setAppSetting('topic_min_similarity', String(body.topicMinSimilarity)))
+  if (body.tagMatchSimilarity != null) ops.push(setAppSetting('tag_match_similarity', String(body.tagMatchSimilarity)))
+  if (body.tagPlaceSimilarity != null) ops.push(setAppSetting('tag_place_similarity', String(body.tagPlaceSimilarity)))
   if (body.queryReformulation != null) ops.push(setAppSetting('query_reformulation', String(body.queryReformulation)))
+  if (body.chatTitleModel != null) ops.push(setAppSetting('chat_title_model', String(body.chatTitleModel)))
   if (body.rssFeedCharsBudget != null) ops.push(setAppSetting('rss_feed_chars_budget', String(body.rssFeedCharsBudget)))
   if (body.fetchMaxPages != null) ops.push(setAppSetting('fetch_max_pages', String(body.fetchMaxPages)))
   if (body.fetchMaxUrlContextChars != null) ops.push(setAppSetting('fetch_max_url_context_chars', String(body.fetchMaxUrlContextChars)))
@@ -165,7 +177,7 @@ adminRouter.patch('/settings', zValidator('json', z.object({
  *  Only the caller's resources: an admin tool, but not a way to read other users' titles. */
 adminRouter.get('/similarity', async (c) => {
   const [report, minSimilarity, minRelevance] = await Promise.all([
-    similarityReport(c.get('userId') as string), relatedMinSimilaritySetting(), relatedMinRelevanceSetting(),
+    similarityReport(c.get('userId')), relatedMinSimilaritySetting(), relatedMinRelevanceSetting(),
   ])
   return c.json({ ...report, minSimilarity, minRelevance, reranker: rerankEnabled(), limit: SIMILARITY_REPORT_LIMIT })
 })
@@ -347,7 +359,7 @@ adminRouter.post('/llm-catalogue/test', zValidator('json', z.object({ modelId: z
   if (!target) return c.json({ ok: false, ms: 0, info: 'Not in the saved catalogue, or its API key env var is not set' } satisfies ProbeResult)
   console.log(`  [admin] testing cloud model ${modelId} (${target.model}) at ${target.baseURL}`)
   // Metered like any other call: the probe is paid for, and counts towards the provider's cap.
-  const metered = { ...target, onUsage: meteredUsage(c.get('userId') as string, target.entry, target.source, { endpoint: target }) }
+  const metered = { ...target, onUsage: meteredUsage(c.get('userId'), target.entry, target.source, { endpoint: target }) }
   return c.json(await probeChat(languageModel(metered), Math.min(target.entry.maxOutputTokens, CLOUD_PROBE_MAX_TOKENS)))
 })
 

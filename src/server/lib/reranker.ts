@@ -1,4 +1,4 @@
-import { getAppSetting } from './db.ts'
+import { getNumberSetting } from './db.ts'
 
 // Read per call rather than at load, like the model config in llm.ts, so the env in force is the
 // one used — a test configuring a fake reranker cannot be outrun by another file importing first.
@@ -109,7 +109,7 @@ export async function rerankScores(query: string, documents: string[], floor?: n
  *  configured or the call fails. */
 export async function rerank(query: string, documents: string[], topN?: number, minScore?: number): Promise<number[]> {
   if (!rerankEnabled() || documents.length === 0) return documents.map((_, i) => i)
-  const n = topN ?? parseInt(await getAppSetting('rerank_top_n', '15'), 10)
+  const n = topN ?? await getNumberSetting('rerank_top_n', 15)
   const scores = await rerankScores(query, documents, minScore)
   if (!scores) return documents.map((_, i) => i)
   return selectRerankedIndices(scores.map((relevance_score, index) => ({ index, relevance_score })), n, minScore)

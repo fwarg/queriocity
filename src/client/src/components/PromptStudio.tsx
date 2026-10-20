@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
 import { Modal } from './Modal.tsx'
 import { streamChat, createCustomTemplate, updateCustomTemplate, type CustomTemplate } from '../lib/api.ts'
+import { RecipeParts, type Picked, type RecipeDraft } from './RecipeParts.tsx'
+import { isRecipe } from '@shared/recipes.ts'
 import type { FocusMode } from '../lib/templates.ts'
 import { useT } from '../lib/i18n.tsx'
 import type { TranslationKey } from '@shared/i18n/index.ts'
@@ -31,19 +33,22 @@ function assemble(template: string, values: Record<string, string>): string {
 
 interface Props {
   initial?: CustomTemplate
+  /** A new recipe started from a note, e.g. a style guide saved from an answer. */
+  seed?: { name: string; instructions: Picked[] }
   onSave: (t: CustomTemplate) => void
   onClose: () => void
 }
 
 const MODE_OPTIONS: FocusMode[] = ['flash', 'balanced', 'thorough']
 
-export function PromptStudio({ initial, onSave, onClose }: Props) {
+export function PromptStudio({ initial, seed, onSave, onClose }: Props) {
   const t = useT()
-  const [promptText, setPromptText] = useState(initial?.promptText ?? '')
+  const [promptText, setPromptText] = useState(initial?.promptText ?? (seed ? t('recipe.seedPrompt') : ''))
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({})
   const [mode, setMode] = useState<FocusMode>(initial?.suggestedMode ?? 'balanced')
-  const [name, setName] = useState(initial?.name ?? '')
+  const [name, setName] = useState(initial?.name ?? seed?.name ?? '')
   const [description, setDescription] = useState(initial?.description ?? '')
+  const [recipe, setRecipe] = useState<RecipeDraft>({ instructionText: initial?.instructionText ?? '', instructions: initial?.instructions ?? seed?.instructions ?? [], examples: initial?.examples ?? [], settings: initial?.settings ?? {} })
   const [output, setOutput] = useState('')
   const [status, setStatus] = useState('')
   const [running, setRunning] = useState(false)
@@ -55,6 +60,7 @@ export function PromptStudio({ initial, onSave, onClose }: Props) {
   const assembled = assemble(promptText, fieldValues)
   const canRun = promptText.trim().length > 0 && !running
   const canSave = name.trim().length > 0 && promptText.trim().length > 0 && !saving
+  const recipeIds = { instructionText: recipe.instructionText.trim() || undefined, instructionNoteIds: recipe.instructions.map(p => p.id), exampleFileIds: recipe.examples.map(p => p.id) }
 
   async function handleRun() {
     abortRef.current?.abort()
@@ -65,6 +71,8 @@ export function PromptStudio({ initial, onSave, onClose }: Props) {
     setRunning(true)
     let accumulated = ''
     try {
+      // The whole recipe is tried, unsaved: its notes, examples and collection settings.
+      const { collectionIds, collectionMode, exploreWeb } = recipe.settings
       for await (const chunk of streamChat(
         [{ role: 'user', content: assembled }],
         mode,
@@ -72,6 +80,11 @@ export function PromptStudio({ initial, onSave, onClose }: Props) {
         ctrl.signal,
         undefined,
         true,
+        undefined, undefined, undefined,
+        collectionIds, undefined, undefined, undefined,
+        collectionMode, undefined,
+        collectionMode === 'explore' && exploreWeb, undefined,
+        isRecipe(recipeIds) ? { name: name.trim() || t('studio.newTitle'), ...recipeIds } : undefined,
       )) {
         if (chunk.type === 'text') {
           accumulated += chunk.delta as string
@@ -100,14 +113,11 @@ export function PromptStudio({ initial, onSave, onClose }: Props) {
         description: description.trim() || undefined,
         promptText,
         suggestedMode: mode,
+        ...recipeIds,
+        instructionText: recipe.instructionText.trim(),
+        settings: recipe.settings,
       }
-      let saved: CustomTemplate
-      if (initial) {
-        await updateCustomTemplate(initial.id, data)
-        saved = { ...initial, ...data }
-      } else {
-        saved = await createCustomTemplate(data)
-      }
+      const saved: CustomTemplate = initial ? await updateCustomTemplate(initial.id, data) : await createCustomTemplate(data)
       onSave(saved)
     } catch (e: unknown) {
       setSaveError(e instanceof Error ? e.message : t('studio.saveFailed'))
@@ -189,14 +199,18 @@ export function PromptStudio({ initial, onSave, onClose }: Props) {
             </div>
           </div>
 
-          {/* Output */}
-          <div className="flex flex-col gap-1">
+          {/* Output: as tall as the editor beside it */}
+          <div className="flex flex-col gap-1 min-h-0">
             <p className="text-xs text-gray-400">{t('studio.output')}</p>
             {status && <p className="text-xs text-blue-400 italic">{status}</p>}
-            <div className="rounded bg-gray-800 border border-gray-700 p-2.5 text-sm text-gray-300 min-h-[14rem] max-h-[26rem] overflow-y-auto whitespace-pre-wrap">
+            <div className="flex-1 rounded bg-gray-800 border border-gray-700 p-2.5 text-sm text-gray-300 min-h-[14rem] max-h-[26rem] overflow-y-auto whitespace-pre-wrap">
               {output || <span className="text-gray-600 italic">{t('studio.outputEmpty')}</span>}
             </div>
           </div>
+        </div>
+
+        <div className="border-t border-gray-800 pt-4">
+          <RecipeParts draft={recipe} onChange={setRecipe} />
         </div>
 
         {/* Save */}

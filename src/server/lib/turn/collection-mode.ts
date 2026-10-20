@@ -11,6 +11,7 @@ import { collectionIndex } from './collection-agent.ts'
 /** A choice is quick or not worth waiting for: excerpts are the safe default. */
 const CHOOSE_TIMEOUT_MS = 20_000
 
+/** Output: `excerpts|whole|explore - reason`; chooseMode falls back to excerpts when it cannot parse it. */
 const CHOOSE_SYSTEM = `You decide how to answer a message about a collection of documents. Reply with one word — excerpts, whole or explore — then " - " and a reason of at most 12 words.
 excerpts: the answer is a fact or passage found in one or a few places in the documents.
 whole: the message is about the collection as a whole — summarise, compare, report on, or review something against all of it.
@@ -30,7 +31,7 @@ export async function collectionModeFor(ctx: TurnContext, sink: TurnSink): Promi
   // Read as excerpts (the space's usual search) when there is nothing else to read: Whole and Explore
   // with no documents have nothing to do, and Auto in a space with nothing picked would cost a call
   // on every message.
-  if (asked === 'auto' && !ctx.collections.length) return 'excerpts'
+  if (asked === 'auto' && !ctx.collections.length && !ctx.documentIds?.length) return 'excerpts'
   if (asked !== 'excerpts' && !collectionIndex(documentSet(ctx), ctx.locked).length) return 'excerpts'
   if (asked !== 'auto') return asked
   await sink.emit({ type: 'status', text: 'Choosing how to read the collection…' })

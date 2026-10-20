@@ -38,4 +38,14 @@ describe('semanticChunk', () => {
   it('drops nothing from text with no surrogates at all', () => {
     expect(semanticChunk('One short paragraph.', 2000, 300, 0)).toEqual(['One short paragraph.'])
   })
+
+  it('repeats nothing between chunks when overlap is 0', () => {
+    const sentences = Array.from({ length: 40 }, (_, i) => `Sentence number ${i} carries a little text.`)
+    const chunks = semanticChunk(sentences.join(' '), 200, 0)
+    for (const chunk of chunks) expect(chunk.length).toBeLessThanOrEqual(200)
+    expect(chunks.join(' ')).toBe(sentences.join(' '))
+
+    const long = semanticChunk('x'.repeat(450), 200, 0)
+    expect(long.join('')).toBe('x'.repeat(450))
+  })
 })

@@ -19,6 +19,9 @@ function trimOrphanSurrogates(text: string): string {
   return start === 0 && end === text.length ? text : text.slice(start, end)
 }
 
+/** The last `n` characters; empty for `n <= 0`, where `slice(-0)` would return the whole string. */
+const tail = (text: string, n: number) => n > 0 ? text.slice(-n) : ''
+
 /** Split text into overlapping chunks at paragraph/sentence boundaries. */
 export function semanticChunk(text: string, size: number, overlap: number, minLen = 0): string[] {
   const segments = text
@@ -38,13 +41,13 @@ export function semanticChunk(text: string, size: number, overlap: number, minLe
         const c = trimOrphanSurrogates(seg.slice(i, i + size))
         if (c.length >= minLen) chunks.push(c)
       }
-      buf = trimOrphanSurrogates(seg.slice(-Math.min(overlap, seg.length)))
+      buf = trimOrphanSurrogates(tail(seg, overlap))
       continue
     }
     const next = buf ? buf + ' ' + seg : seg
     if (next.length > size) {
       if (buf.length >= minLen) chunks.push(buf)
-      const seed = buf.length > overlap ? trimOrphanSurrogates(buf.slice(-overlap)) : buf
+      const seed = buf.length > overlap ? trimOrphanSurrogates(tail(buf, overlap)) : buf
       buf = seed ? seed + ' ' + seg : seg
     } else {
       buf = next

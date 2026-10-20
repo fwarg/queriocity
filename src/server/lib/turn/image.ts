@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { readFile } from 'node:fs/promises'
 import { streamText, tool, stepCountIs } from 'ai'
 import { webSearch, newSearchBudget, type SearchResult, type EngineError, type SearchBudget } from '../search/index.ts'
-import { languageModel, modelTarget, RESEARCH_MAX_TOKENS } from '../llm.ts'
+import { languageModel, modelTarget, researchMaxTokens } from '../llm.ts'
 import { ThinkExtractor } from '../think-extractor.ts'
 import { findLeakedToolCall, stripLeakedToolCall, coerceNumericArgs, findLeakedImageMarkdown, stripLeakedImageMarkdown } from '../leaked-tool-call.ts'
 import { trimMessages, CONTEXT_RESERVE_FRACTION } from '../trim-messages.ts'
@@ -69,6 +69,7 @@ const editImageSchema = z.object({
 
 type ToolOutcome = { success: boolean; prompt: string; seed?: number; error?: string }
 
+/** Image turns: a generate_image or edit_image call; any text only after a web_search, as one sentence. */
 const imageSystem = (lastGeneratedImageUrl?: string) => `You are an image generation assistant.
 - When asked to draw, illustrate, create, or generate an image, call generate_image with a detailed visual prompt.
 - When asked to edit, change, or modify a previously generated image, call edit_image.${lastGeneratedImageUrl ? ` The most recently generated image is at ${lastGeneratedImageUrl}.` : ''}
@@ -272,7 +273,7 @@ async function streamImageModel(ctx: TurnContext, sink: TurnSink, job: ImageJob)
     messages: history.messages,
     tools: job.tools(),
     stopWhen: stepCountIs(4),
-    maxOutputTokens: RESEARCH_MAX_TOKENS,
+    maxOutputTokens: researchMaxTokens(),
   })
   // Image mode's text is buffered rather than streamed delta-by-delta: diffusion blocks the
   // stream for minutes anyway, and the system prompt permits at most one summary sentence — so

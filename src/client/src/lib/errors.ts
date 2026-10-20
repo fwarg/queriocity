@@ -8,11 +8,14 @@ import type { TranslationKey } from '@shared/i18n/index.ts'
  *  Prefers the server's stable code, so the message is in the reader's language; falls back to the
  *  server's English string for the routes that do not send one yet, and to `fallback` for anything
  *  that is not an Error at all. The `in en` guard means an unrecognised code — an older client
- *  against a newer server — degrades to the English text rather than rendering a raw key. */
+ *  against a newer server — degrades to the English text rather than rendering a raw key.
+ *
+ *  A TypeError is what `fetch` rejects with when the server cannot be reached; its message is the
+ *  browser's own ("Failed to fetch", "NetworkError when…"), so the caller's fallback says it better. */
 export function errorMessage(t: TFunction, err: unknown, fallback: string): string {
   if (err instanceof ApiError && err.code) {
     const key = `error.${err.code}`
     if (key in en) return t(key as TranslationKey)
   }
-  return err instanceof Error ? err.message : fallback
+  return err instanceof Error && !(err instanceof TypeError) ? err.message : fallback
 }

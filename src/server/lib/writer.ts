@@ -1,8 +1,9 @@
 import { streamText } from 'ai'
-import { languageModel, outputCap, RESEARCH_MAX_TOKENS, type ModelTarget } from './llm.ts'
+import { languageModel, outputCap, researchMaxTokens, type ModelTarget } from './llm.ts'
 import { contextCharBudget } from './trim-messages.ts'
 import type { SearchResult } from './search/index.ts'
 
+/** Output: the research report as Markdown streamed to the user, citing the numbered results as [N]. */
 const WRITER_SYSTEM = `You are a research writer. Given the research results, write a well-structured report.
 
 Formatting rules:
@@ -93,6 +94,6 @@ export function runWriter(
     abortSignal,
     system,
     messages: [{ role: 'user', content: userContent }],
-    maxOutputTokens: outputCap(model, RESEARCH_MAX_TOKENS),
+    maxOutputTokens: outputCap(model, researchMaxTokens()),
   })
 }

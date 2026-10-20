@@ -42,6 +42,19 @@ export function linkNoteCitations(body: string, tokens: Set<string>, href: (toke
     tokens.has(token) ? `[\\[${token}\\]](${href(token)})` : m))
 }
 
+/** Markers with a source become keyed footnotes (`[^1]`) and each source line the footnote's
+ *  definition, as OKF attributes claims. Markers without a source are left as text. */
+export function footnoteCitations(body: string): string {
+  const sources = noteSources(body)
+  const marked = outsideCode(body, text => text.replace(MARKER, (m, token: string) => sources.has(token) ? `[^${token}]` : m))
+  return marked.replace(SOURCE_LINE, (line: string, token: string) => {
+    const s = sources.get(token)!
+    // The pattern's leading \s* can span blank lines above the item; those are kept.
+    const newlines = line.slice(0, line.search(/\S/)).replace(/[^\n]/g, '')
+    return `${newlines}[^${token}]: ${s.url ? `[${s.title}](${s.url})` : s.title}`
+  })
+}
+
 /** The old form back to plain markers — only where the sources list holds that very URL, so a
  *  conversion can never lose one. */
 export function plainCitations(body: string): string {

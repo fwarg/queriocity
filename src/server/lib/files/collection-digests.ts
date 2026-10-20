@@ -17,6 +17,8 @@ const DIGEST_MAX_TOKENS = 1000
 /** Room for a map prompt and its answer when sizing a document for one call. */
 export const MAP_PROMPT_RESERVE_CHARS = 6000
 
+/** Output: the digest as headed bullet points, stored as written. Part of the cache key, so editing it
+ *  re-digests every document. */
 const DIGEST_SYSTEM = `You write a digest of one document, to be compared later with the other documents in a collection.
 Use these headings with short bullet points, and leave out any heading the document gives nothing for:
 What it is (type, topic, authors or venue if stated); Main claims; Method; Results and evidence;

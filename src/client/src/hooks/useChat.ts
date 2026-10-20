@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react'
-import { streamChat, stopChat, fetchRelatedQuestions } from '../lib/api.ts'
+import { streamChat, stopChat, fetchRelatedQuestions, refineChatTitle } from '../lib/api.ts'
 import { hasAttachment, type ContextReport, type CollectionMode } from '@shared/context.ts'
+import type { ActiveRecipe } from '@shared/recipes.ts'
 import type { Message } from '../lib/api.ts'
 import { useT } from '../lib/i18n.tsx'
 import { ChatRun, type FocusMode } from './chat-run.ts'
@@ -21,6 +22,12 @@ interface UseChatOptions {
   collectionMode?: CollectionMode
   /** Explore may also search the web. */
   exploreWeb?: boolean
+  /** Explore may save notes to the library. */
+  exploreNotes?: boolean
+  /** The recipe whose chip is in the input; every message carries it. */
+  recipe?: ActiveRecipe
+  /** One resource read as Explore's or Whole's document, beside any collections. */
+  documentIds?: string[]
   includeMemoryIds?: string[]
   spaceId?: string
   /** User setting; when false no related-questions call is made at all. */
@@ -28,6 +35,8 @@ interface UseChatOptions {
   /** An extra model picked for this chat's messages. */
   modelId?: string
   onSessionCreated: (id: string, title: string, lockedBy?: string[]) => void
+  /** A chat's title changed after its answer: the small model named it. */
+  onSessionTitle?: (id: string, title: string) => void
 }
 
 /** Gives the just-sent question its stored id, so it can be pinned without reloading the chat. */
@@ -47,7 +56,7 @@ function retryOf(messages: Message[]): { history: Message[]; question: string } 
 }
 
 export function useChat(options: UseChatOptions) {
-  const { sessionId, focusMode, followUpSuggestions = true, modelId, onSessionCreated } = options
+  const { sessionId, focusMode, followUpSuggestions = true, modelId, onSessionCreated, onSessionTitle } = options
   const t = useT()
   const [messages, setMessages] = useState<Message[]>([])
   const [busy, setBusy] = useState(false)
@@ -94,9 +103,9 @@ export function useChat(options: UseChatOptions) {
     setBusy(true)
     setAnswerTime('')
     const chatRun = new ChatRun({ t, setStreaming, setStreamingThinking, setStatus, setSteps, setAnswerTime, setApproval, setContext, rafRef, liveSessionRef, onSessionCreated }, text, focusMode)
-    const { searchCategories, includeFileIds, includeMemoryIds, collectionIds, spaceId, notesFirst, collectionMode, exploreWeb } = options
+    const { searchCategories, includeFileIds, includeMemoryIds, collectionIds, spaceId, notesFirst, collectionMode, exploreWeb, exploreNotes, recipe, documentIds } = options
     try {
-      for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId, undefined, searchCategories, includeFileIds, includeMemoryIds, collectionIds, regenerating, notesFirst, modelId, collectionMode, attachedFileIds, exploreWeb)) {
+      for await (const chunk of streamChat(next, focusMode, sessionId, ctrl.signal, spaceId, undefined, searchCategories, includeFileIds, includeMemoryIds, collectionIds, regenerating, notesFirst, modelId, collectionMode, attachedFileIds, exploreWeb, exploreNotes, recipe, documentIds)) {
         chatRun.handle(chunk)
       }
     } catch (err: unknown) {
@@ -126,6 +135,10 @@ export function useChat(options: UseChatOptions) {
       setStatus('')
     }
     setBusy(false)
+    const sid = liveSessionRef.current
+    if (chatRun.titlePending && sid && !chatRun.aborted) {
+      refineChatTitle(sid).then(title => { if (title) onSessionTitle?.(sid, title) }).catch(() => {})
+    }
     // Fire-and-forget: chips appear a moment after the answer, or not at all.
     if (followUpSuggestions && chatRun.text.length >= 200 && !chatRun.aborted && chatRun.images.length === 0) {
       fetchRelatedQuestions(question, chatRun.text).then(setRelated).catch(() => {})

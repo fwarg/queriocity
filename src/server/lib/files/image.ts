@@ -1,7 +1,8 @@
 import { generateText } from 'ai'
 import { getChatModel } from '../llm.ts'
 
-const VISION_PROMPT = 'Extract all text and describe the content of this image in detail. Focus on any text, data, or key visual elements.'
+/** Sent with the image as the user message. Output: the image's text and a description, as plain text. */
+const VISION_PROMPT ='Extract all text and describe the content of this image in detail. Focus on any text, data, or key visual elements.'
 
 /** Describe/OCR an image. Uses vision LLM; falls back to tesseract.js. */
 export async function extractImageText(buffer: ArrayBuffer, mimeType: string): Promise<string> {

@@ -175,6 +175,7 @@ function cachedNames(userId: string): Map<string, { name: string; tag: string | 
   return new Map(rows.map(r => [r.key, { name: r.name, tag: r.tag }]))
 }
 
+/** Output: a `name:` line and a `tag:` line, each read with its own regex in nameTopic. */
 const NAMING_SYSTEM = `You name a group of related notes from a personal knowledge base.
 Reply with exactly two lines and nothing else:
 name: a 2-4 word name for what the notes have in common, in their language

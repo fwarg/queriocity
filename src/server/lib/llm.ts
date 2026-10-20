@@ -1,5 +1,6 @@
 import { createOpenAI } from '@ai-sdk/openai'
 import { wrapLanguageModel, type EmbeddingModel } from 'ai'
+import { getAppSettingSync } from './db.ts'
 import { observeResponse, modelMiddleware, type ResponseProbe, type TokenUsage } from './llm-metering.ts'
 
 export type { TokenUsage } from './llm-metering.ts'
@@ -60,12 +61,14 @@ function withExtraBody(init: RequestInit | undefined, extra: Record<string, unkn
 
 // Output cap for the research/writer generations. Backstop against runaway
 // (esp. thinking-model) loops; covers reasoning + answer tokens together.
-export const RESEARCH_MAX_TOKENS = parseInt(process.env.RESEARCH_MAX_TOKENS ?? '6000')
+export const DEFAULT_RESEARCH_MAX_TOKENS = process.env.RESEARCH_MAX_TOKENS ?? '6000'
+/** The cap in force: the admin's `research_max_tokens`, else the env default. */
+export const researchMaxTokens = () => Number(getAppSettingSync('research_max_tokens', DEFAULT_RESEARCH_MAX_TOKENS))
 
 /** Default `memory_token_budget` when the admin setting is unset: how many tokens of space memory
  *  may go into a prompt. Sized for the richer 1-3 sentence notes the extractor now writes; the
  *  reranker keeps only the most relevant ones, so a larger store does not mean a larger prompt. */
-export const DEFAULT_MEMORY_TOKEN_BUDGET = '1500'
+export const DEFAULT_MEMORY_TOKEN_BUDGET = 1500
 
 /** The one token↔char conversion in the app. Every context budget derives from it.
  *

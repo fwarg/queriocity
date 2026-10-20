@@ -8,7 +8,7 @@ import { randomUUID } from 'crypto'
 import { canUnlock, describeContents, monitorsInSpace, sessionIdsInSpace } from '../lib/space-lock.ts'
 import { deleteSessionImages } from '../lib/image-store.ts'
 import { deindexSession } from '../lib/chat-indexer.ts'
-import { deleteMemoryEmbeddings } from '../lib/memory.ts'
+import { deleteMemoryEmbeddings } from '../lib/memory/index.ts'
 
 export const spacesRouter = new Hono<AppEnv>()
 
@@ -17,7 +17,7 @@ spacesRouter.use('*', authMiddleware)
 /** Named once: four routes refuse the same thing, and they should say so identically. */
 
 spacesRouter.get('/', async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
 
   const chatCountSq = db.select({ spaceId: chatSessions.spaceId, chatN: count().as('chat_n') })
     .from(chatSessions)
@@ -63,7 +63,7 @@ spacesRouter.post('/', zValidator('json', z.object({
   // needs no second call, and so the lock is in place before the first document arrives.
   offline: z.boolean().optional().default(false),
 })), async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const { name, kind, offline } = c.req.valid('json')
   const now = new Date()
   const id = randomUUID()
@@ -84,7 +84,7 @@ spacesRouter.patch('/:id', zValidator('json', z.object({
   offline: z.boolean().optional(),
   kind: z.enum(['space', 'collection']).optional(),
 })), async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const id = c.req.param('id')
   const { name, offline, kind } = c.req.valid('json')
 
@@ -143,7 +143,7 @@ spacesRouter.patch('/:id', zValidator('json', z.object({
  *  behind as an ordinary unlocked one — the quietest way out of a locked space, since nothing about
  *  "delete space" suggests it touches the lock. The client confirms this before calling. */
 spacesRouter.delete('/:id', async (c) => {
-  const userId = c.get('userId') as string
+  const userId = c.get('userId')
   const id = c.req.param('id')
 
   const space = await db.select().from(spaces).where(and(eq(spaces.id, id), eq(spaces.userId, userId))).get()

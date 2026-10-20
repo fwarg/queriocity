@@ -41,7 +41,7 @@ mock.module('./embeddings.ts', () => ({
 }))
 afterAll(() => { mock.module('./embeddings.ts', () => realEmbeddings) })
 
-const { buildMemoryBlock, saveMemory } = await import('./memory.ts')
+const { buildMemoryBlock, saveMemory } = await import('./memory/index.ts')
 
 const SPACE = 'space-under-test'
 const OTHER_SPACE = 'space-noise'
@@ -112,7 +112,7 @@ describe('buildMemoryBlock relevance recall', () => {
   test('a memory edited after creation is re-embedded, not scored on its old wording', async () => {
     const target = (await db.select().from(spaceMemories))
       .find(m => m.content.includes('dark editor theme'))!
-    const { saveMemory: save } = await import('./memory.ts')
+    const { saveMemory: save } = await import('./memory/index.ts')
     await save(SPACE, 'The user prefers a dark editor theme and a large language model', 'extraction')
 
     const { block } = await buildMemoryBlock(SPACE, ONE_MEMORY_BUDGET * 2, 0, 'what language do I use?')
@@ -121,7 +121,7 @@ describe('buildMemoryBlock relevance recall', () => {
   })
 
   test('user memory is injected only for users who opted in', async () => {
-    const { saveUserMemory, userMemoryBlockIfEnabled } = await import('./memory.ts')
+    const { saveUserMemory, userMemoryBlockIfEnabled } = await import('./memory/index.ts')
     const { setAppSetting } = await import('./db.ts')
     // Set explicitly rather than relying on the default: app_settings is shared across the whole
     // suite, so another file's admin test could otherwise decide this one's outcome.
@@ -163,7 +163,7 @@ describe('buildMemoryBlock relevance recall', () => {
   })
 
   test('search_space_history is scoped the same way and is not starved by other spaces', async () => {
-    const { searchSpaceHistory } = await import('./memory.ts')
+    const { searchSpaceHistory } = await import('./memory/index.ts')
 
     // Depends on the chunks indexed by the previous test.
     const hits = await searchSpaceHistory(SPACE, 'what did we agree about the database and editor?', 8)

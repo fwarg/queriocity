@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useT, type TFunction } from '../lib/i18n.tsx'
 import type { TranslationKey } from '@shared/i18n/index.ts'
 
@@ -70,7 +70,9 @@ function label(step: LogStep, t: TFunction): string {
     case 'outline':    return t('log.outline', { doc: step.detail ?? '' })
     case 'readPart':   return t('log.readPart', { part: step.detail ?? '' })
     case 'note':       return t('log.note', { count: step.count ?? 0 })
-    case 'readNotes':  return t('log.readNotes', { count: step.count ?? 0 })
+    // No notes: the answer reads the parts and passages found instead.
+    case 'readNotes':  return step.count ? t('log.readNotes', { count: step.count }) : t('log.readFound')
+    case 'savedNote':  return t('log.savedNote', { count: step.count ?? 0 })
     default:           return step.text
   }
 }
@@ -122,6 +124,11 @@ function summary(steps: LogStep[], t: TFunction): string {
 export function ProgressLog({ steps, collapsed }: { steps: LogStep[]; collapsed: boolean }) {
   const t = useT()
   const [expanded, setExpanded] = useState(false)
+  const listRef = useRef<HTMLUListElement>(null)
+  // A long run scrolls inside the log; while it runs, the newest step stays in view.
+  useEffect(() => {
+    if (!collapsed && listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight
+  }, [steps, collapsed])
   if (steps.length === 0) return null
 
   if (collapsed && !expanded) {
@@ -143,7 +150,7 @@ export function ProgressLog({ steps, collapsed }: { steps: LogStep[]; collapsed:
           ▾ {t('log.researched')} · {summary(steps, t)}
         </button>
       )}
-      <ul className="flex flex-col gap-0.5">
+      <ul ref={listRef} className="flex flex-col gap-0.5 max-h-[40vh] overflow-y-auto">
         {steps.map((s, i) => <StepRow key={i} step={s} />)}
       </ul>
     </div>

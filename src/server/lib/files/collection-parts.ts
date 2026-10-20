@@ -20,6 +20,7 @@ const OUTLINE_MAX_TOKENS = 150
 const MIN_OVERLAP = 40
 const MAX_OVERLAP = 600
 
+/** Output: one line describing the part, kept as that part's outline line. */
 const OUTLINE_SYSTEM = `You describe one part of a document in a single line of at most ${OUTLINE_LINE_CHARS} characters: what it covers, naming any section headings it contains. No preamble. ${LANGUAGE_RULE}`
 
 export interface DocPart {
@@ -30,6 +31,12 @@ export interface DocPart {
 
 /** The part a chunk falls in; chunk numbers are the 0-based suffixes of `file_chunk_meta.chunk_id`. */
 export const partOfChunk = (chunkNumber: number) => Math.floor(chunkNumber / PART_CHUNKS) + 1
+
+/** How many parts a document has, without reading their text. */
+export function partCount(fileId: string): number {
+  const { n } = sqlite.prepare('SELECT COUNT(*) AS n FROM file_chunk_meta WHERE file_id = ?').get(fileId) as { n: number }
+  return Math.ceil(n / PART_CHUNKS)
+}
 
 /** A document's parts, in order. */
 export function documentParts(fileId: string): DocPart[] {

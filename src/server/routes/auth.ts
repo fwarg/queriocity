@@ -1,20 +1,21 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
-import { getCookie, setCookie, deleteCookie } from 'hono/cookie'
-import { db, users, authCredentials, invites, parseSettings, getAppSetting } from '../lib/db.ts'
-import { eq, count } from 'drizzle-orm'
+import { setCookie, deleteCookie } from 'hono/cookie'
+import { db, users, authCredentials, invites, parseSettings, bumpTokenVersion } from '../lib/db.ts'
+import { and, eq, count, isNull } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import bcrypt from 'bcryptjs'
 import {
-  hashPassword, verifyPassword, signToken, verifyToken,
+  hashPassword, verifyPassword, signToken,
   validatePassword, AUTH_COOKIE, COOKIE_OPTIONS,
 } from '../lib/auth.ts'
 import { RateLimiter, clientIp, warnIfProxyUntrusted } from '../lib/rate-limit.ts'
-import { DEFAULT_MEMORY_TOKEN_BUDGET } from '../lib/llm.ts'
+import { authMiddleware, currentUser, type AppEnv } from '../middleware/auth.ts'
+import { memoryTokenBudget as memoryTokenBudgetSetting } from '../lib/rag-settings.ts'
 import { LANG_CODES } from '../../shared/i18n/index.ts'
 
-export const authRouter = new Hono()
+export const authRouter = new Hono<AppEnv>()
 
 // Max 10 attempts per 15 minutes per client address, for both login and registration.
 const authAttempts = new RateLimiter(10, 15 * 60 * 1000)
@@ -63,25 +64,33 @@ authRouter.post('/register', zValidator('json', registerSchema), async (c) => {
     .where(eq(authCredentials.email, email.toLowerCase())).get()
   if (existing) return c.json({ error: 'Email already registered', code: 'email_registered' }, 409)
 
-  // Consumed only once registration is certain to proceed. Marking it above, before the
-  // duplicate-email check, meant someone who already had an account burned their own invite by
-  // opening the link a second time — and only an admin could issue another.
-  if (userCount > 0 && inviteToken) {
-    await db.update(invites).set({ usedAt: new Date() }).where(eq(invites.id, inviteToken))
-  }
-
-  const role: 'user' | 'admin' = userCount === 0 ? 'admin' : 'user'
   const userId = randomUUID()
   const now = new Date()
   const passwordHash = await hashPassword(password)
 
-  await db.insert(users).values({
-    id: userId, email: email.toLowerCase(), name: name ?? null,
-    role, settings: JSON.stringify(language ? { language } : {}), createdAt: now, updatedAt: now,
+  // Synchronous, with no await inside: the checks above ran across awaits, so two concurrent
+  // requests could both pass them. Re-deciding the role and claiming the invite here is what makes
+  // "one first admin" and "one use per invite" hold. The invite is consumed only once registration
+  // is certain to proceed — burning it before the duplicate-email check locked out returning users.
+  const role = db.transaction((tx): 'user' | 'admin' | null => {
+    const [{ value: current }] = tx.select({ value: count() }).from(users).all()
+    if (current > 0) {
+      if (!inviteToken) return null
+      const claimed = tx.update(invites).set({ usedAt: now })
+        .where(and(eq(invites.id, inviteToken), isNull(invites.usedAt))).returning({ id: invites.id }).all()
+      if (!claimed.length) return null
+    }
+    const role = current === 0 ? 'admin' : 'user'
+    tx.insert(users).values({
+      id: userId, email: email.toLowerCase(), name: name ?? null,
+      role, settings: JSON.stringify(language ? { language } : {}), createdAt: now, updatedAt: now,
+    }).run()
+    tx.insert(authCredentials).values({
+      userId, email: email.toLowerCase(), passwordHash, active: true,
+    }).run()
+    return role
   })
-  await db.insert(authCredentials).values({
-    userId, email: email.toLowerCase(), passwordHash, active: true,
-  })
+  if (!role) return c.json({ error: 'Invite already used', code: 'invite_used' }, 403)
 
   const token = await signToken({ userId, email: email.toLowerCase(), role, tokenVersion: 0 })
   setCookie(c, AUTH_COOKIE, token, COOKIE_OPTIONS)
@@ -112,31 +121,29 @@ authRouter.post('/login', zValidator('json', loginSchema), async (c) => {
   return c.json({ id: user.id, email: user.email, name: user.name, role: user.role, mustChangePassword: cred.mustChangePassword })
 })
 
-authRouter.post('/logout', (c) => {
+authRouter.post('/logout', async (c) => {
+  // Revokes the token rather than only dropping the cookie, so a copied cookie stops working too.
+  // Tokens carry no per-device id, so this signs the user out everywhere. Checked against the
+  // current version first: an already-revoked token must not be able to sign out the live sessions.
+  const user = await currentUser(c)
+  if (user) await bumpTokenVersion(user.userId)
   deleteCookie(c, AUTH_COOKIE, { path: '/' })
   return c.json({ ok: true })
 })
 
-authRouter.get('/me', async (c) => {
-  const token = getCookie(c, AUTH_COOKIE)
-  if (!token) return c.json({ error: 'Unauthorized' }, 401)
-  try {
-    const { userId, tokenVersion } = await verifyToken(token)
-    const [user, memoryTokenBudget, cred] = await Promise.all([
-      db.select().from(users).where(eq(users.id, userId)).get(),
-      getAppSetting('memory_token_budget', DEFAULT_MEMORY_TOKEN_BUDGET).then(v => parseInt(v)),
-      db.select({ mustChangePassword: authCredentials.mustChangePassword })
-        .from(authCredentials).where(eq(authCredentials.userId, userId)).get(),
-    ])
-    if (!user) return c.json({ error: 'User not found' }, 404)
-    if (user.tokenVersion !== tokenVersion) return c.json({ error: 'Invalid token' }, 401)
-    return c.json({
-      id: user.id, email: user.email, name: user.name,
-      role: user.role, settings: parseSettings(user.settings),
-      memoryTokenBudget,
-      mustChangePassword: cred?.mustChangePassword ?? false,
-    })
-  } catch {
-    return c.json({ error: 'Invalid token' }, 401)
-  }
+authRouter.get('/me', authMiddleware, async (c) => {
+  const userId = c.get('userId')
+  const [user, memoryTokenBudget, cred] = await Promise.all([
+    db.select().from(users).where(eq(users.id, userId)).get(),
+    memoryTokenBudgetSetting(),
+    db.select({ mustChangePassword: authCredentials.mustChangePassword })
+      .from(authCredentials).where(eq(authCredentials.userId, userId)).get(),
+  ])
+  if (!user) return c.json({ error: 'User not found' }, 404)
+  return c.json({
+    id: user.id, email: user.email, name: user.name,
+    role: user.role, settings: parseSettings(user.settings),
+    memoryTokenBudget,
+    mustChangePassword: cred?.mustChangePassword ?? false,
+  })
 })

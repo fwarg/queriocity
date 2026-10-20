@@ -419,7 +419,10 @@ Three ways to make one:
   wherever the list already held the URL.
 - **Transform a resource.** See below.
 - **Split a long one.** The scissors beside a long answer (or **Split into notes** on a long note)
-  has the chat model propose it as several short notes, one idea each, keeping the citation markers;
+  has the chat model propose it as several short notes, one idea each, keeping the citation markers.
+  Each is titled by the concept or claim it holds, not the section it came from, and never says "the
+  study"; the wording is kept and nothing is added (unlike Explore's *Save notes*, which explains
+  concepts in general terms too);
   each part gets only the sources it cites. Each part comes with 1–3 proposed tags, preferring tags you already
 use, editable in place. Untick parts you don't want, edit titles and text (✎, with
 a preview), **merge** a part with the next one, or describe how you want it split ("fewer notes",
@@ -434,6 +437,24 @@ by picking it from the notebook icon beside the paperclip in the chat input; and
 attached that way — a file's text is stored solely as overlapping excerpts, so injecting it would
 repeat passages; the paperclip already covers sending a document whole.
 
+**Authorship and review.** Every note records who wrote it: you, or the model that wrote it (an
+answer saved as a note, a transform, the parts of a split, and notes Explore saves). The note's
+*Authorship* section says which, and a model's note stays marked *unreviewed* until you click **Mark
+reviewed** (or tick the box when saving an answer). Editing a note does not count as a review: a fixed
+typo is not a checked claim. Changing the text of a model's note marks it *edited by you* — the model
+stays its author — and the editor then offers *I have reviewed the whole note*, to mark it reviewed in
+the same save. Notes saved before this was recorded show *author unknown*; **I wrote
+this** or **A model wrote this** settles it, once — a recorded author is never changed. A note also has a status — *current*,
+*draft* or *outdated* — and reviewing a draft makes it current. The Resources list marks unreviewed,
+unknown, draft and outdated notes. [Notes first](#notes-first) leaves outdated notes out and tells the
+model which of the notes it was given you have not vouched for, naming those you edited apart from
+untouched drafts. Only notes have this: a file's text is
+extracted, not written, so there is nothing to review in it.
+
+**Earlier versions.** When the model reworks one of its own drafts (Explore's *Save notes*, below), or
+you change the text of a note a model wrote, the version replaced is kept under *Earlier versions* in the note, with **Restore**. Restoring keeps the
+current text as a version in turn. The newest ten are kept.
+
 ### Links and tags
 
 Notes can link to each other, Zettelkasten-style, and any resource can carry tags.
@@ -442,7 +463,9 @@ Notes can link to each other, Zettelkasten-style, and any resource can carry tag
   by its title — or tap **Insert link** in the editor and pick one from a list, which works better on
   a phone; typing `[[` opens the same list. Matching ignores case. A link to a title nothing has
   yet is kept and shown as **Create note "…"**, so writing the link first and the note later works.
-  Renaming a resource rewrites `[[Old title]]` in every note linking to it. Code spans and blocks are
+  Renaming a resource rewrites `[[Old title]]` in every note linking to it. Deleting one leaves the
+  links to it dangling, so they reconnect if a resource with that title comes back; tick the option in
+  the delete dialog to turn them into plain text instead. Code spans and blocks are
   never parsed as links.
 - **Backlinks.** A resource's detail view lists what it **links to** and what is **linked from** it.
 - **Chat of origin.** A note saved from an answer remembers its chat and shows **Saved from chat**,
@@ -453,7 +476,13 @@ Notes can link to each other, Zettelkasten-style, and any resource can carry tag
 - **Tags.** Hierarchical, lowercase, `/`-separated (`#ml/rag`), on any resource, set in the detail
   view or the note editor. The small model's topics are offered as **suggested** tags, one tap to
   adopt — they are no longer applied automatically, and your tags are never overwritten when a note
-  is re-summarised. A tag disappears once nothing carries it.
+  is re-summarised. Suggestions prefer the tags you have: a topic naming one of your tags, or its last
+  segment, is offered as that tag (`roses` → `#plants/roses`), as is one close to it in meaning
+  (embedding cosine ≥ *Tag match similarity*, default 0.8 — each topic's nearest tag and score is logged as `[tags] topic …` to calibrate it), and
+  tags that similar resources share join them under **Your tags**; the remaining topics are listed as
+  **New** — placed beside the nearest tag when one is related (cosine ≥ *Tag placement similarity*, default 0.6: `tulips` near
+  `#plants/roses` is offered as `#plants/tulips`, under a tag that already has sub-tags, else beside
+  it), otherwise at the top level. Without embeddings, matching falls back to names. A tag disappears once nothing carries it.
 - **Inline tags.** `#tag` or `#tag/sub` written in a note's text is added to its tags on save and
   shown as a tappable tag (opening the library filtered on it). Removing it from the text leaves the
   tag on the note — the tag field is what counts; remove it there. Headings (`# Title`), `#12`,
@@ -479,7 +508,7 @@ Notes can link to each other, Zettelkasten-style, and any resource can carry tag
   scores your own most recent 40 resources pairwise exactly as this box does and marks the pairs
   that would be shown. They are suggestions: **Link** adds `- [[Title]]` under a
   **See also** heading in the note (from a file, **Link from it** adds the link in the similar note
-  instead), and tags that two or more similar resources share can be adopted with a tap. Already
+  instead), and tags that two or more similar resources share are offered in the tag editor. Already
   connected ones say **Linked**.
 
 Tags organise and filter; they deliberately have **no effect on retrieval**, so you can tag freely
@@ -493,7 +522,13 @@ you work (chats, memory, lock), a **collection** is a shelf you attach to a chat
 
 - **Tags** — every tag as a collapsible tree with counts (`3 · 12 incl. sub-tags`: carried directly,
   and by anything under it). Tap a tag to open the library filtered on it; the **⋯** menu renames
-  (sub-tags move along, an existing name merges), deletes, or shows it in the graph. **To organise**
+  (sub-tags move along, an existing name merges), **moves it under** another tag (`#roses` under
+  `#plants` becomes `#plants/roses` — a rename, so the same applies), deletes, or shows it in the
+  graph. **Tidy tags…** asks the small model to look over the whole tree and propose renames —
+  merging synonyms, plurals and translations, nesting a tag under the one it belongs to, grouping
+  siblings under a new parent — with tags close in meaning found by embedding first and handed over
+  as hints. Each proposal is ticked to apply as an ordinary rename; one touching a tag an earlier
+  proposal changes is dropped, so running it again after applying may find more. **To organise**
   at the bottom opens resources **without tags** and notes **without links**.
 - **Topics** — your notes grouped by what they are about, from the vectors already stored for
   retrieval: no tags or links needed, so it also covers what you haven't organised yet. Notes are
@@ -593,13 +628,13 @@ Click any resource to open it. The detail view shows, top to bottom:
   what makes a library of two hundred documents readable at a glance. Administrators can turn the
   generation off (Admin > System settings); it is best-effort either way, and a resource whose
   summary failed works normally without one.
-- Its **tags**, editable in place, with the small model's topics offered as suggestions.
+- Its **tags**, editable in place, with suggestions: your own tags that fit first, then new ones.
 - For a note, its **text**, rendered with citations, `[[links]]` and `#tags` you can tap.
 - Its **links** — what it links to and what links to it, *Created from* / *Notes made from this* for
   transforms, and for a note **Suggest links**. See [Links and tags](#links-and-tags).
 - **Connections**, the small graph of its explicit neighbourhood.
 - Which **spaces and collections** the resource is in.
-- **Similar content**, with one-tap links and tag hints.
+- **Similar content**, with one-tap links.
 - **Transform** (below).
 - The **indexed excerpts**, folded away by default: what retrieval actually sees, worth opening
   when a PDF or a YouTube transcript has extracted badly. They overlap by design, so text repeats
@@ -852,6 +887,17 @@ Saved templates appear in the template picker under **Custom**. Each card has al
 
 Templates are stored per user in the database and persist across sessions.
 
+**Recipes.** The Studio's *Recipe (optional)* section turns a template into a recipe — the app's take on agent "skills", without scripts:
+
+- **Instructions typed in the recipe:** short rules ("British spelling, at most two pages"), up to 4000 characters. Your own words, so there is nothing to review; they come before the notes.
+- **Instruction notes** (up to 3): a style guide or a procedure. They go into the system prompt as instructions, ahead of *About you* and space memory where they conflict. A note acts as an instruction **only** through a recipe you picked — a note retrieval returns stays data, so a bad or injected note cannot steer answers.
+- **Examples** (up to 2): resources whose *form* to imitate — structure, tone, length, citation habits — never their facts. Each gets a share of the answering model's room; a long one is cut to its opening, where its form shows. In thorough mode only the writer sees them, not the researcher.
+- **Collections to read**, with a read mode and, for Explore, *Also search the web*.
+
+Picking a recipe fills the message box like any template, applies its settings, and puts a **Recipe: name** chip above the message box. Every message of that chat carries the recipe until you remove the chip; a new or other chat starts without it. Notes are referenced by id, so editing the style note changes the next answer. An instruction note you haven't reviewed (see *Authorship and review*) shows a warning beside the chip, without blocking. A confidential note or example locks the chat, as attaching it would. **▶ Run** in the Studio tries the whole recipe before it is saved; recipe cards in the picker carry a *recipe* badge.
+
+**A recipe in a collection's style.** On a collection's page, **Create recipe** opens a new chat that reads every document (Whole collection) with a prompt asking for their shared style as a guide: structure, length, tone, terminology, how sources are cited. Check and send it, then save the answer as a note — it is offered the title *Style: collection* and marked model-written. Review it, then on the note's page choose **New recipe with this note**: a new template opens with the note as its instructions. Add one or two of the documents as examples, write the prompt (e.g. `Write a report on {{topic}}.`), and save. The button is on every note, so a style guide you wrote yourself, or a procedure saved from any chat, works the same way.
+
 ---
 
 ## Settings
@@ -873,7 +919,7 @@ Open **Settings** from the bottom of the sidebar. Settings are saved per user.
 | **Font size** | UI font size: Small (15 px), Normal (17 px), Large (19 px), XL (21 px). Sizes scale up automatically on narrow viewports. |
 | **Theme** | Dark (default), Light, or E-ink: black on white with no animations, for e-paper readers such as Boox. Colour stays only where it carries meaning (graph topics, mode badges, errors), in strong hues that read as tints on a colour panel and distinct greys on a mono one. Remembered in the browser too, so the sign-in screen uses it. |
 | **Timezone** | IANA timezone (e.g. `Europe/Stockholm`) used when scheduling monitors at a specific hour of the day. Defaults to server time (UTC in Docker) if not set. |
-| **Export** | **Download vault (.zip)**: your notes and resources as an Obsidian vault. Tick *Also include every chat and the images generated in them* for a full export: `Chats/` holds one markdown file per chat (each turn under *You* / *Assistant*, sources listed), `Images/` the generated images they show, and a note's *saved from chat* links to its chat file. The app keeps only the text of uploads, not the original files. One markdown file per item named by its title, so `[[links]]` resolve (titles with characters a file name can't hold are renamed, links rewritten to match and the original kept as an alias); `Notes/` and `Resources/` folders; tags, spaces and collections, dates, source URL, "made from" and the chat a note was saved from in YAML frontmatter. Uploaded files and pages are included as their extracted text. |
+| **Export** | Pick a format and **Download (.zip)**: *Obsidian vault* (your notes and resources), or *Open Knowledge Format* for an [OKF v0.2](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) bundle for AI agents instead: the same files with OKF frontmatter (`type` Note / Document / Web page, `title`, `description` from the summary, `resource` for a page's URL, `sources` keyed by citation marker, `generated` and `verified` from a note's authorship and review — `generated.at` is the last change to the text: for a model's note the last time its text was replaced, for your own notes the last save, so renaming or retagging one counts too — `edited` — an extension key, which OKF allows — when you changed a model's note, `status`), bundle-absolute markdown links in place of `[[wikilinks]]`, citations as footnotes (`[^1]`), and an `index.md` in every folder (the root one carries `okf_version`). Obsidian opens it but follows the links less well. In either format, tick *Also include every chat and the images generated in them* for a full export: `Chats/` holds one markdown file per chat (each turn under *You* / *Assistant*, sources listed), `Images/` the generated images they show, and a note's *saved from chat* links to its chat file (in OKF, each chat file has `type: Chat` and is listed in `Chats/index.md`). The app keeps only the text of uploads, not the original files. One markdown file per item named by its title, so `[[links]]` resolve (titles with characters a file name can't hold are renamed, links rewritten to match and the original kept as an alias); `Notes/` and `Resources/` folders; tags, spaces and collections, dates, source URL, "made from" and the chat a note was saved from in YAML frontmatter. Uploaded files and pages are included as their extracted text. |
 | **Password** | Change your password. Requires the current one; the new one needs 8+ characters with upper and lower case, a digit and a symbol. Changing it signs out your other devices but keeps the current session. |
 
 ### Languages
@@ -1222,6 +1268,26 @@ has read the documents, so a query could carry their text out; an uncertain one 
 clear one refused. The search budget is that of a balanced question. Like the collection picks, the
 choice resets on a new chat. A model that
 handles many tool calls reliably works best; on a small local model, prefer *Whole collection*.
+
+**Saving notes is opt-in too.** Ticking *Save notes* beside the Explore chip gives the agent a
+`save_note` tool: it keeps findings as notes in your library, one concept per note — explained so the
+note is useful without the documents, then how the documents use it — and every note must
+cite the documents it draws on (`[C1]`, listed under *Sources* with the documents' titles). A note it
+saves is marked as written by the model, unreviewed, and a draft. It may rework its own unreviewed
+drafts, keeping the old text as an [earlier version](#notes), but never a note you wrote or reviewed: a
+note of that title is left alone and the draft is saved beside it as *Title (draft)*, linking to it. In a
+locked chat the notes are confidential. With web search on too, the agent may look up a concept it
+cannot explain confidently; a web result it cites is listed under *Sources* beside the documents, and
+a note must still cite a document. The step limit doubles while saving notes, and grows with the collection to a step per part plus room to save (up to 100); the first look is skipped, since every document is covered whatever the wording. If exploring stops
+with a document unread, the agent is told once which, and may go on. The answer reports the notes
+saved — one line each, and which documents no note cites — rather than writing them out again. If exploring ends with nothing saved — the model answered instead of calling a tool — or at the
+step limit, one more pass, offered only `save_note`, saves the findings from what was read and noted,
+besides the notes already saved; if still nothing is saved, the answer says so rather than claiming otherwise. **Compile into notes**, on a collection's page (or a space's), opens a new chat set up
+for this — Explore with *Save notes* on, web search off, and a prompt to go through every document and save its
+main concepts — for you to check and send. **Save notes from this document**, on a document's page, does the same for that one
+document, read with no collection picked — fewer documents to share the steps. The page then lists
+the notes saved from it (any agent note citing it, from either action), so it is not redone by
+mistake: running it again asks first, and deleting those notes clears the list.
 
 *Summarize resources* is offered in spaces only: it saves a memory, which only a space's chats read.
 In a collection, use *Analyze in chat*, whose per-document reading is cached and reused.
@@ -1664,7 +1730,8 @@ REFORMULATE_ASSISTANT_CTX=1000            # max chars of prior assistant turns
 # fallbacks. Backstop against runaway generation (especially thinking-model
 # reasoning loops); covers reasoning + answer tokens together. For a clean stop
 # on a thinking model, also bound reasoning server-side (e.g. llama.cpp
-# --reasoning-budget) so the cap isn't spent entirely on <think> tokens. Default 6000.
+# --reasoning-budget) so the cap isn't spent entirely on <think> tokens. Default 6000; Admin → Context
+# → Answer length cap overrides it.
 # RESEARCH_MAX_TOKENS=6000
 ```
 
@@ -2103,6 +2170,7 @@ The **Admin panel > System settings** tab exposes runtime-configurable parameter
 | Retrieval | Chunks per search | 15 | How many nearest chunks each vector search retrieves — document RAG, chat-history RAG, and the `uploads_search` / `search_space_history` tools. One value for all of them. Reranking prunes this list, so it is also the ceiling on what reranking can consider |
 | Reranking | Top N | 15 | Results kept after reranking (requires `RERANK_MODEL`). Applies to pre-search results in balanced and thorough, and to the accumulated sources handed to the thorough writer — lower it to shrink prompts, raise it to give the model more to work with |
 | Search | Query reformulation | On | Use a small LLM to rewrite queries before searching. Improves relevance at the cost of a small model call. Disable on slow hardware. |
+| Search | Chat titles by the small model | On | A new chat is titled from its first question, prefixed with the document, collection or recipe it reads. When that title is cut short or under three words, the small model names the chat from the first exchange, after the answer is shown; a title you renamed is never replaced. |
 | Search | RSS feed character budget | 50000 | Total characters of news content fetched per monitor run when RSS sources are selected. Items per feed and content length per item scale automatically to fill this budget. Increase for large-context models; decrease for small ones (8K context ≈ 20 000 chars). |
 | Search | Max pages per URL | 8 | How many paginated pages to fetch when a user provides a URL (`?page=2`, `?page=3`…). 0 = unlimited. |
 | Search | Summarize oversized URL content | Off | Summarize fetched URL content that exceeds the context budget with the small model instead of hard-truncating. Adds latency. |
@@ -2111,6 +2179,8 @@ The **Admin panel > System settings** tab exposes runtime-configurable parameter
 | Resources | Minimum similarity for "Similar content" | 0.5 | Cosine similarity another resource must reach to be suggested as similar, when no reranker judges the candidates. Model-dependent; calibrate from the `[related] similarities` log line. 0 shows the nearest regardless. |
 | Resources | Minimum reranker relevance for "Similar content" | 0.5 | With `RERANK_MODEL` set, the reranker relevance (0–1) a candidate must reach. Calibrate from the `[reranker]` log lines. |
 | Resources | Topic map similarity | 0.6 | Average cosine similarity at which Explore → Topics stops merging notes into a topic. Higher: more, tighter topics. Depends on the embedding model; the Cosine column in Admin → Similarity shows what your related and unrelated notes score. |
+| Resources | Tag match similarity | 0.8 | Cosine similarity at which a suggested topic is offered as an existing tag, and at which Tidy tags hints two tags may be the same. Depends on the embedding model; calibrate from the `[tags] topic …` log lines, which give each topic's nearest tag and score. |
+| Resources | Tag placement similarity | 0.6 | Lower cosine similarity at which a new topic is suggested beside its nearest tag in the tree (`tulips` near `plants/roses` → `plants/tulips`). Keep it below the match similarity. |
 | Resources | Summarize on ingest | On | Generate a one-line summary and a few topics for every uploaded file, ingested URL and note, shown in the Resources list and detail view. One small-model call per resource, made after it is stored — a failure leaves it without a summary rather than losing it |
 | Attachments | Max context chars | 20000 | Max characters extracted from an attached file and sent as context. The chat model receives all of it and the text is indexed for later search, but the *query* embedding for that turn uses only the first `EMBED_MAX_INPUT_CHARS` — a startup warning appears if you set this much higher |
 

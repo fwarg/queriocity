@@ -7,10 +7,12 @@ import { useT } from '../lib/i18n.tsx'
 const MAX_SHOWN = 50
 
 /** Pick a resource to link to by title. A list to tap rather than an inline completion popup,
- *  which on a phone would sit under the keyboard. */
-export function LinkPicker({ excludeId, onPick, onClose }: {
+ *  which on a phone would sit under the keyboard. Also picks a recipe's notes and examples. */
+export function LinkPicker({ excludeId, notesOnly = false, title, onPick, onClose }: {
   excludeId?: string
-  onPick: (title: string) => void
+  notesOnly?: boolean
+  title?: string
+  onPick: (title: string, resource: Resource) => void
   onClose: () => void
 }) {
   const t = useT()
@@ -21,12 +23,12 @@ export function LinkPicker({ excludeId, onPick, onClose }: {
 
   const q = query.trim().toLowerCase()
   const shown = (resources ?? [])
-    .filter(r => r.id !== excludeId && (!q || r.filename.toLowerCase().includes(q)))
+    .filter(r => r.id !== excludeId && (!notesOnly || r.kind === 'note') && (!q || r.filename.toLowerCase().includes(q)))
     .sort((a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt))
     .slice(0, MAX_SHOWN)
 
   return (
-    <Modal title={t('links.pickerTitle')} onClose={onClose}>
+    <Modal title={title ?? t('links.pickerTitle')} onClose={onClose}>
       <input
         autoFocus
         value={query}
@@ -45,7 +47,7 @@ export function LinkPicker({ excludeId, onPick, onClose }: {
                 <button
                   key={r.id}
                   type="button"
-                  onClick={() => onPick(r.filename)}
+                  onClick={() => onPick(r.filename, r)}
                   className="flex items-center gap-2 px-3 py-2.5 rounded text-left text-sm text-gray-200 bg-gray-800 hover:bg-gray-700"
                 >
                   {r.kind === 'note'

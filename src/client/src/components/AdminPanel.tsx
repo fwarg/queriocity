@@ -33,6 +33,8 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   const [relatedMinSimilarityDraft, setRelatedMinSimilarityDraft] = useState('0.5')
   const [relatedMinRelevanceDraft, setRelatedMinRelevanceDraft] = useState('0.5')
   const [topicMinSimilarityDraft, setTopicMinSimilarityDraft] = useState('0.6')
+  const [tagMatchSimilarityDraft, setTagMatchSimilarityDraft] = useState('0.8')
+  const [tagPlaceSimilarityDraft, setTagPlaceSimilarityDraft] = useState('0.6')
   const [rerankConfigured, setRerankConfigured] = useState(false)
   // Derived server-side from the model context env vars; two settings below are clamped by them.
   const [limits, setLimits] = useState<{ smallModelInputChars: number; embedInputChars: number; scrapeMaxChars: number; minUrlContextChars: number } | null>(null)
@@ -43,8 +45,10 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
   const [collectionFullTextCloudDraft, setCollectionFullTextCloudDraft] = useState('1000000')
   const [exploreMaxStepsDraft, setExploreMaxStepsDraft] = useState('20')
   const [exploreMinRelevanceDraft, setExploreMinRelevanceDraft] = useState('0.05')
+  const [researchMaxTokensDraft, setResearchMaxTokensDraft] = useState('6000')
   const [userMemoryBudgetDraft, setUserMemoryBudgetDraft] = useState('300')
   const [queryReformulationDraft, setQueryReformulationDraft] = useState(true)
+  const [chatTitleModelDraft, setChatTitleModelDraft] = useState(true)
   const [rssFeedCharsBudgetDraft, setRssFeedCharsBudgetDraft] = useState('50000')
   const [fetchMaxPagesDraft, setFetchMaxPagesDraft] = useState('8')
   const [fetchMaxUrlContextCharsDraft, setFetchMaxUrlContextCharsDraft] = useState('40000')
@@ -87,6 +91,8 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
       setRelatedMinSimilarityDraft(String(s.relatedMinSimilarity))
       setRelatedMinRelevanceDraft(String(s.relatedMinRelevance))
       setTopicMinSimilarityDraft(String(s.topicMinSimilarity))
+      setTagMatchSimilarityDraft(String(s.tagMatchSimilarity))
+      setTagPlaceSimilarityDraft(String(s.tagPlaceSimilarity))
       setRerankConfigured(s.rerankEnabled)
       setLimits(s.limits)
       setAttachmentCharsDraft(String(s.attachmentChars))
@@ -96,8 +102,10 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
       setCollectionFullTextCloudDraft(String(s.collectionFullTextTokensCloud))
       setExploreMaxStepsDraft(String(s.collectionExploreMaxSteps))
       setExploreMinRelevanceDraft(String(s.collectionExploreMinRelevance))
+      setResearchMaxTokensDraft(String(s.researchMaxTokens))
       setUserMemoryBudgetDraft(String(s.userMemoryTokenBudget))
       setQueryReformulationDraft(s.queryReformulation)
+      setChatTitleModelDraft(s.chatTitleModel)
       setRssFeedCharsBudgetDraft(String(s.rssFeedCharsBudget))
       setFetchMaxPagesDraft(String(s.fetchMaxPages))
       setFetchMaxUrlContextCharsDraft(String(s.fetchMaxUrlContextChars))
@@ -126,6 +134,8 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     const relatedMinSimilarity = parseFloat(relatedMinSimilarityDraft)
     const relatedMinRelevance = parseFloat(relatedMinRelevanceDraft)
     const topicMinSimilarity = parseFloat(topicMinSimilarityDraft)
+    const tagMatchSimilarity = parseFloat(tagMatchSimilarityDraft)
+    const tagPlaceSimilarity = parseFloat(tagPlaceSimilarityDraft)
     const attachmentChars = parseInt(attachmentCharsDraft)
     const spaceRagBudget = parseInt(spaceRagBudgetDraft)
     const notesRagBudget = parseInt(notesRagBudgetDraft)
@@ -133,6 +143,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     const collectionFullTextTokensCloud = parseInt(collectionFullTextCloudDraft)
     const collectionExploreMaxSteps = parseInt(exploreMaxStepsDraft)
     const collectionExploreMinRelevance = parseFloat(exploreMinRelevanceDraft)
+    const researchMaxTokens = parseInt(researchMaxTokensDraft)
     const userMemoryTokenBudget = parseInt(userMemoryBudgetDraft)
     const rssFeedCharsBudget = parseInt(rssFeedCharsBudgetDraft)
     const fetchMaxPages = parseInt(fetchMaxPagesDraft)
@@ -149,6 +160,8 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     if (isNaN(relatedMinSimilarity) || relatedMinSimilarity < 0 || relatedMinSimilarity > 1) return
     if (isNaN(relatedMinRelevance) || relatedMinRelevance < 0 || relatedMinRelevance > 1) return
     if (isNaN(topicMinSimilarity) || topicMinSimilarity < 0 || topicMinSimilarity > 1) return
+    if (isNaN(tagMatchSimilarity) || tagMatchSimilarity < 0 || tagMatchSimilarity > 1) return
+    if (isNaN(tagPlaceSimilarity) || tagPlaceSimilarity < 0 || tagPlaceSimilarity > 1) return
     if (isNaN(attachmentChars) || attachmentChars < 1000) return
     if (isNaN(spaceRagBudget) || spaceRagBudget < 0) return
     if (isNaN(notesRagBudget) || notesRagBudget < 0) return
@@ -156,6 +169,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     if (isNaN(collectionFullTextTokensCloud) || collectionFullTextTokensCloud < 0) return
     if (isNaN(collectionExploreMaxSteps) || collectionExploreMaxSteps < 3) return
     if (isNaN(collectionExploreMinRelevance) || collectionExploreMinRelevance < 0 || collectionExploreMinRelevance > 1) return
+    if (isNaN(researchMaxTokens) || researchMaxTokens < 1000 || researchMaxTokens > 200_000) return
     if (isNaN(userMemoryTokenBudget) || userMemoryTokenBudget < 0) return
     if (isNaN(rssFeedCharsBudget) || rssFeedCharsBudget < 5000) return
     if (isNaN(fetchMaxPages) || fetchMaxPages < 0) return
@@ -166,7 +180,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     setError('')
     setSavingBudget(true)
     try {
-      await updateAdminSettings({ memoryTokenBudget: budget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, ragTopK, ragMinRelevance, relatedMinSimilarity, relatedMinRelevance, topicMinSimilarity, attachmentChars, spaceRagBudget, notesRagBudget, collectionFullTextTokens, collectionFullTextTokensCloud, collectionExploreMaxSteps, collectionExploreMinRelevance, queryReformulation: queryReformulationDraft, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow: fetchSummarizeOverflowDraft, compressHistoryOverflow: compressHistoryOverflowDraft, resourceSummary: resourceSummaryDraft })
+      await updateAdminSettings({ memoryTokenBudget: budget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep: dreamDeepDraft, memoryExtractChars: extractChars, rerankTopN, ragTopK, ragMinRelevance, relatedMinSimilarity, relatedMinRelevance, topicMinSimilarity, tagMatchSimilarity, tagPlaceSimilarity, attachmentChars, spaceRagBudget, notesRagBudget, collectionFullTextTokens, collectionFullTextTokensCloud, collectionExploreMaxSteps, collectionExploreMinRelevance, researchMaxTokens, queryReformulation: queryReformulationDraft, chatTitleModel: chatTitleModelDraft, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow: fetchSummarizeOverflowDraft, compressHistoryOverflow: compressHistoryOverflowDraft, resourceSummary: resourceSummaryDraft })
 
       onBudgetChange?.(budget)
       setBudgetSaved(true)
@@ -185,6 +199,8 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
       const { sessions } = await reindexChats()
       setReindexResult(sessions)
       setTimeout(() => setReindexResult(null), 5000)
+    } catch {
+      setError('Failed to reindex chats.')
     } finally {
       setReindexing(false)
     }
@@ -195,6 +211,8 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
     setModelResults(null)
     try {
       setModelResults(await testModels())
+    } catch {
+      setError('Failed to test models.')
     } finally {
       setTestingModels(false)
     }
@@ -206,6 +224,8 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
       await triggerDream()
       setDreamTriggered(true)
       setTimeout(() => setDreamTriggered(false), 3000)
+    } catch {
+      setError('Failed to start compaction.')
     } finally {
       setDreamRunning(false)
     }
@@ -238,6 +258,8 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
       const url = `${window.location.origin}/register?token=${token}`
       setInviteUrl(url)
       setInvites(await listInvites())
+    } catch {
+      setError('Failed to create invite.')
     } finally {
       setBusy(false)
     }
@@ -463,6 +485,20 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                   onChange={e => setTopicMinSimilarityDraft(e.target.value)}
                   className="w-24 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
               </div>
+              <div className="flex flex-col gap-1.5">
+                <p className="text-xs text-gray-400 font-medium">Tag match similarity</p>
+                <p className="text-xs text-gray-500">Cosine similarity at which a suggested topic is offered as one of the user's existing tags instead of a new one (<code>rosor</code> → <code>#plants/roses</code>), and at which Tidy tags hands two tags to the model as possibly the same. One-to-three-word phrases embed noisily and the scale depends on the embedding model; every suggestion logs its nearest tag and score as a <code>[tags]</code> line.</p>
+                <input type="number" min={0} max={1} step={0.05} value={tagMatchSimilarityDraft}
+                  onChange={e => setTagMatchSimilarityDraft(e.target.value)}
+                  className="w-24 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <p className="text-xs text-gray-400 font-medium">Tag placement similarity</p>
+                <p className="text-xs text-gray-500">Lower cosine similarity at which a new topic is related enough to its nearest tag to be suggested beside it in the tree (<code>tulips</code> near <code>#plants/roses</code> → <code>#plants/tulips</code>). Below it, new tags are suggested at the top level. Should be below the match similarity; at or above it, nothing is placed.</p>
+                <input type="number" min={0} max={1} step={0.05} value={tagPlaceSimilarityDraft}
+                  onChange={e => setTagPlaceSimilarityDraft(e.target.value)}
+                  className="w-24 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
+              </div>
             </div>
 
             {/* Search */}
@@ -473,6 +509,15 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
                 <p className="text-xs text-gray-500">Use a small LLM to rewrite queries before searching. Improves relevance but adds latency. Disable on slow hardware.</p>
                 <label className="flex items-center gap-2 cursor-pointer w-fit">
                   <input type="checkbox" checked={queryReformulationDraft} onChange={e => setQueryReformulationDraft(e.target.checked)}
+                    className="accent-blue-500 w-3.5 h-3.5" />
+                  <span className="text-xs text-gray-400">Enabled</span>
+                </label>
+              </div>
+              <div className="flex flex-col gap-1.5 border-t border-gray-800/60 pt-3">
+                <p className="text-xs text-gray-400 font-medium">Chat titles by the small model</p>
+                <p className="text-xs text-gray-500">A new chat is titled from its first question and what it reads (document, collection, recipe). When that title is cut short or too brief, the small model names the chat after the first answer — one short call per such chat, never delaying the answer.</p>
+                <label className="flex items-center gap-2 cursor-pointer w-fit">
+                  <input type="checkbox" checked={chatTitleModelDraft} onChange={e => setChatTitleModelDraft(e.target.checked)}
                     className="accent-blue-500 w-3.5 h-3.5" />
                   <span className="text-xs text-gray-400">Enabled</span>
                 </label>
@@ -514,6 +559,13 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
             {/* Context */}
             <div className="flex flex-col gap-3 border-t border-gray-800 pt-5">
               <p className="text-xs font-semibold text-gray-300 uppercase tracking-wider">Context</p>
+              <div className="flex flex-col gap-1.5">
+                <p className="text-xs text-gray-400 font-medium">Answer length cap (tokens)</p>
+                <p className="text-xs text-gray-500">Most tokens a research or collection answer may write, thinking included — a backstop against runaway output. A long answer, such as a report or notes on a whole collection, stops mid-sentence at this cap. A model with its own output limit configured uses that instead. Defaults to the <code>RESEARCH_MAX_TOKENS</code> env var.</p>
+                <input type="number" min={1000} max={200000} step={500} value={researchMaxTokensDraft}
+                  onChange={e => setResearchMaxTokensDraft(e.target.value)}
+                  className="w-32 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
+              </div>
               <div className="flex flex-col gap-1.5">
                 <p className="text-xs text-gray-400 font-medium">Compress dropped history</p>
                 <p className="text-xs text-gray-500">When a research turn's conversation history must be trimmed to fit the context budget, summarize the dropped messages with the small model and fold the summary into the system prompt instead of discarding them outright. Adds latency; only applies to balanced/thorough research turns.</p>

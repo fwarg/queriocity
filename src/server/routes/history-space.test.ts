@@ -9,8 +9,9 @@
 import '../lib/test-support/test-env.ts'
 
 import { describe, test, expect, beforeAll } from 'bun:test'
-import { db, users, spaces, chatSessions } from '../lib/db.ts'
-import { historyRouter } from './history.ts'
+import { db, users, spaces, chatSessions, messages } from '../lib/db.ts'
+import { historyRouter, ftsPrefixQuery } from './history.ts'
+import { eq } from 'drizzle-orm'
 import { signToken, AUTH_COOKIE } from '../lib/auth.ts'
 import { Hono } from 'hono'
 
@@ -114,5 +115,55 @@ describe('GET /history/search', () => {
     const items = await res.json() as Array<{ updatedAt: number }>
     const times = items.map(i => i.updatedAt)
     expect(times).toEqual([...times].sort((a, b) => b - a))
+  })
+
+  test('treats % and _ in the query as literal characters', async () => {
+    // Unescaped, `_` matches any one character and `%` anything, so both would hit every chat.
+    for (const q of ['old_chat', 'old%chat']) {
+      const res = await app.request(`/history/search?q=${encodeURIComponent(q)}`, { headers: { cookie } })
+      expect(await res.json()).toEqual([])
+    }
+  })
+})
+
+describe('GET /history/search over message content', () => {
+  const search = async (q: string) => {
+    const res = await app.request(`/history/search?q=${encodeURIComponent(q)}`, { headers: { cookie } })
+    expect(res.status).toBe(200)
+    return (await res.json() as Array<{ id: string }>).map(i => i.id)
+  }
+
+  beforeAll(async () => {
+    const now = new Date()
+    await db.insert(messages).values([
+      { id: 'fts-1', sessionId: 'old-0', role: 'assistant', content: 'Honungen från Åre lagras i kallt förråd.', createdAt: now },
+      { id: 'fts-2', sessionId: 'old-1', role: 'user', content: 'Where does the post office open?', createdAt: now },
+    ])
+  })
+
+  test('matches word prefixes regardless of case, Å and å alike', async () => {
+    expect(await search('honung')).toEqual(['old-0'])
+    expect(await search('ÅRE KALL')).toEqual(['old-0'])
+  })
+
+  test('matches the start of a word, not a fragment inside one', async () => {
+    expect(await search('ost')).toEqual([])
+    expect(await search('pos')).toEqual(['old-1'])
+  })
+
+  test('reads FTS syntax in the query as plain words', async () => {
+    expect(await search('"post* (office')).toEqual(['old-1'])
+  })
+
+  test('forgets a message once it is deleted', async () => {
+    await db.delete(messages).where(eq(messages.id, 'fts-2'))
+    expect(await search('post')).toEqual([])
+  })
+})
+
+describe('ftsPrefixQuery', () => {
+  test('quotes each word as a prefix and drops punctuation', () => {
+    expect(ftsPrefixQuery('bee* "hive" OR')).toBe('"bee"* "hive"* "OR"*')
+    expect(ftsPrefixQuery('%_ -')).toBeNull()
   })
 })

@@ -13,7 +13,7 @@ export { toStoredSource } from './research.ts'
 /** Runs one turn in its focus mode, writing events to `sink`; the caller emits `session` first and persists after. */
 export async function runTurn(ctx: TurnContext, sink: TurnSink): Promise<TurnResult> {
   // A space chat reads its space's resources in these modes too, with nothing picked.
-  if ((ctx.collections.length || ctx.spaceId) && ctx.focusMode !== 'image') {
+  if ((ctx.collections.length || ctx.spaceId || ctx.documentIds?.length) && ctx.focusMode !== 'image') {
     const mode = await collectionModeFor(ctx, sink)
     if (mode === 'whole') return runCollectionTurn(ctx, sink)
     if (mode === 'explore') return runCollectionAgent(ctx, sink)

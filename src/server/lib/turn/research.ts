@@ -8,7 +8,7 @@ import { rerankSearchResults } from '../reranker.ts'
 import type { SearchResult, EngineError } from '../search/index.ts'
 import { prepareResearch, type ResearchInputs } from './prepare.ts'
 import { AnswerStream } from './stream-answer.ts'
-import { userQueryOf, withKeepalive, type TurnContext, type TurnResult, type TurnSink } from './context.ts'
+import { userQueryOf, additionalInstructions, withKeepalive, type TurnContext, type TurnResult, type TurnSink } from './context.ts'
 
 // Snippet kept per stored source so citation hover previews still work after a reload —
 // short enough that it costs little in the sources JSON column.
@@ -112,7 +112,7 @@ function researcherOptions(ctx: TurnContext, sink: TurnSink, inputs: ResearchInp
   return {
     messages: ctx.msgs, focusMode: ctx.focusMode as 'balanced' | 'thorough', userId: ctx.userId, abortSignal: ctx.abortSignal,
     initialQueries: inputs.initialQueries, initialResults: inputs.initialResults, prefetchedUrls: inputs.processedUrls,
-    customPrompt: ctx.customPrompt, hasFiles: inputs.hasFiles, spaceId: ctx.spaceId, sessionId: ctx.sid,
+    customPrompt: additionalInstructions(ctx, { examples: ctx.focusMode !== 'thorough' }), hasFiles: inputs.hasFiles, spaceId: ctx.spaceId, sessionId: ctx.sid,
     memoryBlock: inputs.memoryBlock, userMemoryEnabled: ctx.settings.userMemory === true,
     fetchSummarize: inputs.fetchSummarize, urlContextChars: inputs.urlContextChars, compressHistory: inputs.compressHistory,
     searchCategory: ctx.searchCategory, onEngineErrors: progress.warnEngineErrors, onUrlRead: progress.urlOutcome,
@@ -148,7 +148,7 @@ async function runThorough(ctx: TurnContext, sink: TurnSink, inputs: ResearchInp
   await sink.emit({ type: 'sources', sources: finalSources })
 
   await sink.step({ kind: 'write' })
-  const writerResult = runWriter(ctx.models.chat, finalSources, ctx.msgs, researcherNotes.slice(0, RESEARCHER_NOTES_CAP), ctx.abortSignal, { customPrompt: ctx.customPrompt, memoryBlock: inputs.memoryBlock })
+  const writerResult = runWriter(ctx.models.chat, finalSources, ctx.msgs, researcherNotes.slice(0, RESEARCHER_NOTES_CAP), ctx.abortSignal, { customPrompt: additionalInstructions(ctx), memoryBlock: inputs.memoryBlock })
   const content = await new AnswerStream(sink, { showThinking: inputs.showThinking }).consume(writerResult.stream, { reasoning: true })
   if (!content) {
     console.error('  [writer] produced 0 chars — model may be in a bad state')

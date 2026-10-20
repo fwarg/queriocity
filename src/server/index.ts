@@ -15,6 +15,7 @@ import { authMiddleware, type AppEnv } from './middleware/auth.ts'
 import { cors } from 'hono/cors'
 import { secureHeaders } from 'hono/secure-headers'
 import { logger } from 'hono/logger'
+import { bodyLimit } from 'hono/body-limit'
 import { serveStatic } from 'hono/bun'
 import { chatRouter } from './routes/chat.ts'
 import { filesRouter } from './routes/files.ts'
@@ -28,8 +29,9 @@ import { imagesRouter } from './routes/images.ts'
 import { templatesRouter } from './routes/templates.ts'
 import { monitorsRouter } from './routes/monitors.ts'
 import { feedsRouter } from './routes/feeds.ts'
-import { db, messages, sqlite, getAppSetting, setAppSetting } from './lib/db.ts'
-import { runDream } from './lib/memory.ts'
+import { db, messages, sqlite, getAppSetting, getNumberSetting, setAppSetting } from './lib/db.ts'
+import { like } from 'drizzle-orm'
+import { runDream } from './lib/memory/index.ts'
 import { runDueMonitors } from './lib/monitor-runner.ts'
 import { validateConfig, checkEmbeddingDimensions, checkAttachmentBudget } from './lib/config-check.ts'
 import { purgeOrphanVectors } from './lib/vector-cleanup.ts'
@@ -93,6 +95,13 @@ if (ALLOWED_ORIGIN === '*') {
   console.warn('[cors] ALLOWED_ORIGIN=* allows any site to call this API. Set it to your own origin, or leave it unset for same-origin only.')
 }
 if (ALLOWED_ORIGIN) app.use('/api/*', cors({ origin: ALLOWED_ORIGIN, credentials: true }))
+
+// Bun's own cap is 128 MB. Pasted text and attachments sent as text can be large, hence 10 MB
+// rather than the usual 1 MB; the upload routes carry their own, larger limit.
+const API_BODY_LIMIT = 10 * 1024 * 1024
+const UPLOAD_PATHS = new Set(['/api/files/upload', '/api/files/extract'])
+const apiBodyLimit = bodyLimit({ maxSize: API_BODY_LIMIT, onError: c => c.json({ error: 'Request too large (max 10 MB)' }, 413) })
+app.use('/api/*', (c, next) => UPLOAD_PATHS.has(c.req.path) ? next() : apiBodyLimit(c, next))
 
 app.route('/api/auth', authRouter)
 app.route('/api/chat', chatRouter)
@@ -191,7 +200,8 @@ purgeOrphanVectors()
 sweepOrphanImages().catch(e => console.error('[image] orphan sweep failed:', e))
 
 async function sweepOrphanImages(): Promise<void> {
-  const rows = await db.select({ content: messages.content }).from(messages)
+  // Only rows that can hold an image link, rather than every message in the database in memory.
+  const rows = await db.select({ content: messages.content }).from(messages).where(like(messages.content, '%](/images/%'))
   await purgeOrphanImages(imageUrlsIn(rows.map(r => r.content)))
 }
 
@@ -216,7 +226,7 @@ preflight().catch(() => {})
 setInterval(async () => {
   runDueMonitors().catch(e => console.error('[monitors] run failed:', e))
 
-  const hour = parseInt(await getAppSetting('dream_hour', '-1'))
+  const hour = await getNumberSetting('dream_hour', -1)
   if (hour < 0) return
   const now = new Date()
   if (now.getHours() !== hour) return

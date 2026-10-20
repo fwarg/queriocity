@@ -11,8 +11,9 @@ import { envOverride } from '../test-support/env-override.ts'
 
 const { db, sqlite, users, uploadedFiles, chatSessions, setAppSetting, EMBED_DIMS } = await import('../db.ts')
 const { eq } = await import('drizzle-orm')
-const { saveNote, renameResource } = await import('./notes.ts')
-const { normaliseTag, setResourceTags, listTags, renameTag, deleteTag, resourceTagList, suggestedTags } = await import('./tags.ts')
+const { saveNote, renameResource, unlinkDeleted } = await import('./notes.ts')
+const { normaliseTag, setResourceTags, listTags, renameTag, deleteTag, resourceTagList } = await import('./tags.ts')
+const { suggestedTags } = await import('./tag-suggestions.ts')
 const { parseWikilinks, linksOf } = await import('./links.ts')
 
 const ME = 'zk-user'
@@ -90,8 +91,46 @@ describe('tags', () => {
     expect(resourceTagList(id)).toEqual(['keep'])
   })
 
-  test('suggestions are the topics, normalised, minus tags already carried', () => {
-    expect(suggestedTags(['Machine Learning', 'RAG', 'rag'], ['rag'])).toEqual(['machine-learning'])
+  test('suggestions are the topics, normalised, minus tags already carried', async () => {
+    expect(await suggestedTags(ME, ['Machine Learning', 'RAG', 'rag'], ['rag'])).toEqual([{ path: 'machine-learning', existing: false }])
+  })
+
+  test('a topic naming an existing tag, or its last segment, is offered as that tag first', async () => {
+    await note(ME, 'A', 'x', { tags: ['plants/roses', 'ml'] })
+    const id = await note(ME, 'B', 'y')
+    expect(await suggestedTags(ME, ['Tulips', 'Roses', 'ML'], resourceTagList(id))).toEqual([
+      { path: 'plants/roses', existing: true }, { path: 'ml', existing: true }, { path: 'tulips', existing: false },
+    ])
+  })
+
+  test('a topic close in meaning to a tag becomes that tag; parents of carried tags are not offered', async () => {
+    await note(ME, 'A', 'x', { tags: ['gardening/roses'] })
+    // Bag-of-words fake embeddings: the same words in another order are identical.
+    expect(await suggestedTags(ME, ['Roses gardening', 'gardening'], ['gardening/roses/pruning'])).toEqual([])
+    expect(await suggestedTags(ME, ['Roses gardening'], [])).toEqual([{ path: 'gardening/roses', existing: true }])
+  })
+
+  test('a topic only related to a tag is placed beside it, as a new tag', async () => {
+    await note(ME, 'A', 'x', { tags: ['plants/garden-roses', 'tax'] })
+    // Bag-of-words: two of three words shared (0.67) is related, not the same.
+    expect(await suggestedTags(ME, ['Garden plants tulips', 'Bicycle repair'], [])).toEqual([
+      { path: 'plants/garden-plants-tulips', existing: false }, { path: 'bicycle-repair', existing: false },
+    ])
+  })
+
+  test('the match similarity is the admin setting', async () => {
+    await note(ME, 'A', 'x', { tags: ['plants/garden-roses'] })
+    await setAppSetting('tag_match_similarity', '0.5')
+    try {
+      expect(await suggestedTags(ME, ['Garden plants tulips'], [])).toEqual([{ path: 'plants/garden-roses', existing: true }])
+    } finally { await setAppSetting('tag_match_similarity', '0.8') }
+  })
+
+  test('without embeddings, matching falls back to names', async () => {
+    await note(ME, 'A', 'x', { tags: ['plants/roses'] })
+    expect(await server.whileFailing(() => suggestedTags(ME, ['Roses', 'Rose garden care'], []))).toEqual([
+      { path: 'plants/roses', existing: true }, { path: 'rose-garden-care', existing: false },
+    ])
   })
 })
 
@@ -117,6 +156,15 @@ describe('wikilinks', () => {
     await renameResource(ME, target, 'Old name', 'New name')
     expect(await bodyOf(src)).toBe('See [[New name]] and [[New name|this]].')
     expect(linksOf(ME, target).backlinks.map(b => b.id)).toEqual([src])
+  })
+
+  test('unlinking a deleted note leaves plain text, an alias as its text, and other links alone', async () => {
+    const target = await note(ME, 'Doomed')
+    const other = await note(ME, 'Kept')
+    const src = await note(ME, 'Source', 'See [[doomed]], [[Doomed|this one]] and [[Kept]].')
+    await unlinkDeleted(ME, target, 'Doomed')
+    expect(await bodyOf(src)).toBe('See doomed, this one and [[Kept]].')
+    expect(linksOf(ME, src).links.map(l => l.target?.id ?? null)).toEqual([other])
   })
 
   test('renaming a note through saveNote relinks too', async () => {

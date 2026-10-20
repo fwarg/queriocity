@@ -43,7 +43,11 @@ export class ChatRun {
   readonly sources: Source[] = []
   readonly fileSources: FileSource[] = []
   readonly images: Array<{ url: string; alt: string }> = []
+  // Notes an Explore turn saved to the library, listed under the answer.
+  private savedNotes: Array<{ id: string; title: string }> = []
   storedIds: { user?: string; assistant?: string } = {}
+  /** The new chat's first title was weak; the small model may name it once the answer is shown. */
+  titlePending = false
   aborted = false
   private readonly blockedEngines: Array<{ engine: string; reason: string }> = []
   // Which picked model answered, or why the pick was refused, for the answer's footer.
@@ -82,6 +86,7 @@ export class ChatRun {
       thinking: this.thinking || undefined,
       images: this.images.length > 0 ? this.images : undefined,
       model: this.model,
+      savedNotes: this.savedNotes.length > 0 ? this.savedNotes : undefined,
     }
   }
 
@@ -118,6 +123,7 @@ export class ChatRun {
         return true
       case 'sources': this.sources.push(...(chunk.sources as Source[])); return true
       case 'file_sources': this.fileSources.push(...(chunk.sources as FileSource[])); return true
+      case 'saved_notes': this.savedNotes = chunk.notes as Array<{ id: string; title: string }>; return true
       case 'search_warning': this.blockedEngines.push(...(chunk.engines as Array<{ engine: string; reason: string }>)); return true
       case 'model':
         this.setModel({ id: chunk.id as string, label: chunk.label as string, kind: chunk.kind as AnswerModel['kind'], provider: chunk.provider as string })
@@ -204,6 +210,7 @@ export class ChatRun {
     }
     view.liveSessionRef.current = chunk.sessionId as string
     this.storedIds = { user: chunk.userMessageId as string | undefined, assistant: chunk.assistantMessageId as string | undefined }
+    this.titlePending = chunk.titlePending === true
     view.onSessionCreated(chunk.sessionId as string, (chunk.title as string | undefined) ?? this.question.slice(0, 60), chunk.chatLocked === true ? (chunk.lockedBy as string[] ?? []) : undefined)
   }
 }

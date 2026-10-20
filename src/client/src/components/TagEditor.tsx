@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Plus, X } from 'lucide-react'
 import { normaliseTag, tagAncestry } from '@shared/tags.ts'
-import { fetchTags } from '../lib/api.ts'
+import { fetchTags, type TagSuggestion } from '../lib/api.ts'
 import { useT } from '../lib/i18n.tsx'
 import { errorMessage } from '../lib/errors.ts'
 
@@ -9,8 +9,8 @@ const MAX_COMPLETIONS = 6
 
 interface Props {
   tags: string[]
-  /** The small model's topics not yet adopted, offered as one-tap additions. */
-  suggestions?: string[]
+  /** One-tap additions: the user's own tags that fit, shown first, then new ones from the topics. */
+  suggestions?: TagSuggestion[]
   /** Called with the full new list. May save straight away (detail view) or just hold it (editor). */
   onChange: (tags: string[]) => void | Promise<void>
 }
@@ -50,7 +50,9 @@ export function TagEditor({ tags, suggestions = [], onChange }: Props) {
   const completions = query
     ? known.filter(k => k.includes(query) && !tags.includes(k)).slice(0, MAX_COMPLETIONS)
     : []
-  const offered = suggestions.filter(s => !tags.includes(s))
+  const offered = suggestions.filter(s => !tags.includes(s.path))
+  const existing = offered.filter(s => s.existing).map(s => s.path)
+  const fresh = offered.filter(s => !s.existing).map(s => s.path)
 
   return (
     <div className="flex flex-col gap-2">
@@ -98,8 +100,10 @@ export function TagEditor({ tags, suggestions = [], onChange }: Props) {
       {(completions.length > 0 || offered.length > 0) && (
         <div className="flex flex-wrap items-center gap-1.5">
           {completions.map(tag => <AddChip key={`c-${tag}`} tag={tag} onAdd={add} />)}
-          {completions.length === 0 && offered.length > 0 && <span className="text-xs text-gray-500">{t('tags.suggested')}:</span>}
-          {completions.length === 0 && offered.map(tag => <AddChip key={`s-${tag}`} tag={tag} onAdd={add} dashed />)}
+          {completions.length === 0 && existing.length > 0 && <span className="text-xs text-gray-500">{t('tags.suggestedExisting')}:</span>}
+          {completions.length === 0 && existing.map(tag => <AddChip key={`e-${tag}`} tag={tag} onAdd={add} />)}
+          {completions.length === 0 && fresh.length > 0 && <span className="text-xs text-gray-500">{t('tags.suggestedNew')}:</span>}
+          {completions.length === 0 && fresh.map(tag => <AddChip key={`s-${tag}`} tag={tag} onAdd={add} dashed />)}
         </div>
       )}
       {error && <p className="text-xs text-red-400">{error}</p>}

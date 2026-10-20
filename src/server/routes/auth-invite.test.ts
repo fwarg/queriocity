@@ -81,4 +81,28 @@ describe('POST /auth/register', () => {
     expect(res.status).toBe(403)
     expect(await res.json()).toMatchObject({ error: 'Invite already used' })
   })
+
+  test('lets only one of several concurrent registrations spend it', async () => {
+    const responses = await Promise.all([1, 2, 3].map(i => register(`race${i}-${randomUUID()}@example.invalid`, token)))
+    const statuses = responses.map(r => r.status)
+
+    expect(statuses.filter(s => s === 201)).toHaveLength(1)
+    expect(statuses.filter(s => s === 403)).toHaveLength(2)
+  })
+})
+
+describe('POST /auth/logout', () => {
+  test('revokes the token, so a copy of the cookie stops working', async () => {
+    const login = await app.request('/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: TAKEN, password: PASSWORD }),
+    })
+    const cookie = login.headers.get('set-cookie')!.split(';')[0]
+    expect((await app.request('/auth/me', { headers: { cookie } })).status).toBe(200)
+
+    await app.request('/auth/logout', { method: 'POST', headers: { cookie } })
+
+    expect((await app.request('/auth/me', { headers: { cookie } })).status).toBe(401)
+  })
 })

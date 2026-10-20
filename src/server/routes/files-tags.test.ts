@@ -8,7 +8,8 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { Hono } from 'hono'
 import { startFakeEmbeddings } from '../lib/test-support/fake-embeddings.ts'
 import { envOverride } from '../lib/test-support/env-override.ts'
-import { db, sqlite, users, chatSessions, messages, setAppSetting, EMBED_DIMS } from '../lib/db.ts'
+import { db, sqlite, users, chatSessions, messages, uploadedFiles, setAppSetting, EMBED_DIMS } from '../lib/db.ts'
+import { readStoredZip, okfViolations } from '../lib/test-support/okf-conformance.ts'
 import { filesRouter } from './files.ts'
 import { signToken, AUTH_COOKIE } from '../lib/auth.ts'
 
@@ -139,6 +140,55 @@ describe('full Obsidian export', () => {
     expect(full).toContain('Chats/Bees.md')
     expect(full).toContain('## You\n\nDraw a bee\n\n## Assistant\n\nHere: ![bee](../Images/bee-1.png)\n\n- **[1]** [Bees](https://bees.example)')
     expect(full).toContain('saved_from_chat: "[[Bees]]"')
+    expect(full).not.toContain('type: "Chat"')
+    const okf = new TextDecoder().decode(new Uint8Array(await (await call('/export/obsidian?full=1&okf=1')).arrayBuffer()))
+    expect(okf).toContain('type: "Chat"')
+    expect(okf).toContain('saved_from_chat: "/Chats/Bees.md"')
+  })
+})
+
+describe('OKF export', () => {
+  test('writes OKF frontmatter, markdown links, index files, and keeps reserved names free', async () => {
+    await createNote({ title: 'index', body: 'Named like a reserved file.' })
+    await createNote({ title: 'Answer', body: 'See [[index]] [1].\n\n- **[1]** [Site](https://x.example)', author: 'model', model: 'GLM' })
+
+    const okf = new TextDecoder().decode(new Uint8Array(await (await call('/export/obsidian?okf=1')).arrayBuffer()))
+    expect(okf).toContain('Notes/index (2).md')
+    expect(okf).toContain('okf_version: "0.2"')
+    expect(okf).toContain('type: "Note"')
+    expect(okf).toContain('generated: {"by":"queriocity/GLM"')
+    expect(okf).toContain('sources: [{"id":"1","resource":"https://x.example","title":"Site"}]')
+    expect(okf).toContain('See [index](/Notes/index%20(2).md) [^1].')
+    expect(okf).toContain('Notes/index.md')
+  })
+
+  test('a full bundle conforms to OKF v0.2 §11', async () => {
+    const now = new Date()
+    await db.insert(messages).values({ id: 'conf-q', sessionId: 'tags-chat', role: 'user', content: 'Hello', createdAt: now })
+    await db.insert(uploadedFiles).values({ id: 'conf-file', userId: OWNER, filename: 'paper.pdf', mimeType: 'application/pdf', size: 1, kind: 'file', body: 'Text.', summary: 'A paper.', createdAt: now, updatedAt: now })
+    await createNote({ title: 'log', body: 'Named like the other reserved file, linking [[Nowhere]].' })
+    await createNote({ title: 'Answer', body: 'Cites [1].\n\n- **[1]** [Site](https://x.example)', author: 'model', model: 'GLM' })
+
+    const files = readStoredZip(new Uint8Array(await (await call('/export/obsidian?full=1&okf=1')).arrayBuffer()))
+    expect([...files.keys()]).toEqual(expect.arrayContaining(['index.md', 'Notes/index.md', 'Resources/index.md', 'Chats/index.md']))
+    expect(okfViolations(files)).toEqual([])
+  })
+
+  test('the conformance check catches what breaks a bundle', () => {
+    const broken = new Map([
+      ['index.md', '---\nokf_version: "0.2"\n---\n\n# Contents\n\n* [Notes](Notes/)\n* [Gone](Gone/)'],
+      ['Notes/index.md', '---\ntitle: x\n---\n\nNo heading\n* [A](A.md)'],
+      ['Notes/A.md', '---\ntitle: "A"\n---\n\nNo type.'],
+      ['Notes/B.md', 'No frontmatter.'],
+    ])
+    expect(okfViolations(broken)).toEqual([
+      'index.md: entry links nowhere: Gone/',
+      'Notes/index.md: frontmatter other than a root okf_version: title',
+      'Notes/index.md: does not start with a section heading',
+      'Notes/index.md: not an index entry: No heading',
+      'Notes/A.md: no non-empty type',
+      'Notes/B.md: no frontmatter block',
+    ])
   })
 })
 
@@ -150,6 +200,17 @@ describe('POST /files/extract', () => {
     const res = await app.request('/files/extract', { method: 'POST', headers: { Cookie: cookies[OWNER] }, body: form })
     expect(await res.json()).toMatchObject({ filename: 'long.txt', content: 'Line of te', truncated: true, totalChars: 70 })
     await setAppSetting('attachment_chars', '20000')
+  })
+
+  test('refuses a file whose contents do not match its declared type', async () => {
+    const send = async (file: File) => {
+      const form = new FormData()
+      form.append('file', file)
+      return (await app.request('/files/extract', { method: 'POST', headers: { Cookie: cookies[OWNER] }, body: form })).status
+    }
+    expect(await send(new File(['plain words, not a PDF'], 'fake.pdf', { type: 'application/pdf' }))).toBe(400)
+    expect(await send(new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 0])], 'img.txt', { type: 'text/plain' }))).toBe(400)
+    expect(await send(new File(['%PDF-1.7 garbled'], 'x.png', { type: 'image/png' }))).toBe(400)
   })
 })
 

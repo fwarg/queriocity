@@ -1,14 +1,15 @@
 import { streamText } from 'ai'
-import { getAppSetting } from '../db.ts'
-import { languageModel, outputCap, tokensToChars, estimateTokens, RESEARCH_MAX_TOKENS, type ModelTarget } from '../llm.ts'
+import { getNumberSetting } from '../db.ts'
+import { languageModel, outputCap, tokensToChars, estimateTokens, researchMaxTokens, type ModelTarget } from '../llm.ts'
 import { splitAttachments } from '../../../shared/context.ts'
-import { userMemoryBlockIfEnabled, joinMemoryBlocks } from '../memory.ts'
+import { userMemoryBlockIfEnabled, joinMemoryBlocks } from '../memory/index.ts'
 import { coverCollection } from '../files/collection-coverage.ts'
 import { trimMessages, meterBudgetChars, CONTEXT_RESERVE_FRACTION } from '../trim-messages.ts'
 import { thinkingFor, spaceMemoryOnly } from './prepare.ts'
 import { AnswerStream } from './stream-answer.ts'
-import { userQueryOf, withKeepalive, documentSet, type TurnContext, type TurnResult, type TurnSink } from './context.ts'
+import { userQueryOf, withInstructions, withKeepalive, documentSet, type TurnContext, type TurnResult, type TurnSink } from './context.ts'
 
+/** Whole-collection mode: every document is in the prompt; Markdown streamed to the user, citing by label. */
 const COLLECTION_SYSTEM = `You work on a collection of documents the user selected, all of which are given below, together with anything the user attaches to their message (for instance a draft of their own).
 Do the task the user asks for, grounded in these documents. Do not invent what they do not say; say so when they do not cover something.
 When you compare or assess, refer to each document by its label and be specific: name the claim, section or result you mean.
@@ -21,8 +22,8 @@ const HISTORY_RESERVE_CHARS = 4000
  *  sharply with prompt length, while a cloud model reads a long prompt quickly, and seeing every
  *  document side by side finds the links between them that reading one at a time misses. The model's
  *  own context caps both, so the cloud default amounts to "whatever fits". */
-export const DEFAULT_COLLECTION_FULL_TEXT_TOKENS = '30000'
-export const DEFAULT_COLLECTION_FULL_TEXT_TOKENS_CLOUD = '1000000'
+export const DEFAULT_COLLECTION_FULL_TEXT_TOKENS = 30000
+export const DEFAULT_COLLECTION_FULL_TEXT_TOKENS_CLOUD = 1_000_000
 /** The task when a message is only an attachment. */
 const ATTACHMENT_ONLY_TASK = 'Review the attached document against the documents in the collection.'
 
@@ -41,7 +42,7 @@ async function answerFromCollection(ctx: TurnContext, sink: TurnSink): Promise<T
   const model = answerModel(ctx)
   const query = userQueryOf(ctx.msgs)
   const head = joinMemoryBlocks(
-    COLLECTION_SYSTEM + (ctx.customPrompt ? `\n\nAdditional instructions:\n${ctx.customPrompt}` : ''),
+    COLLECTION_SYSTEM + withInstructions(ctx),
     await userMemoryBlockIfEnabled(ctx.userId, ctx.settings, query),
     await spaceMemoryOnly(ctx, query),
   )
@@ -72,7 +73,7 @@ async function answerFromCollection(ctx: TurnContext, sink: TurnSink): Promise<T
     abortSignal: ctx.abortSignal,
     system,
     messages: history.messages,
-    maxOutputTokens: outputCap(model, RESEARCH_MAX_TOKENS),
+    maxOutputTokens: outputCap(model, researchMaxTokens()),
   })
   const content = await new AnswerStream(sink, { citations: false, showThinking: thinkingFor(ctx).showThinking })
     .consume(onFirstOutput(result.stream, () => sink.step({ kind: 'write' })), { reasoning: true })
@@ -96,9 +97,9 @@ async function* onFirstOutput<P extends { type: string }>(stream: AsyncIterable<
 /** The full-text threshold for this model: the cloud one for a cloud (metered) model, else the local one. */
 async function fullTextMaxChars(model: ModelTarget): Promise<number> {
   const tokens = model.onUsage
-    ? await getAppSetting('collection_full_text_tokens_cloud', DEFAULT_COLLECTION_FULL_TEXT_TOKENS_CLOUD)
-    : await getAppSetting('collection_full_text_tokens', DEFAULT_COLLECTION_FULL_TEXT_TOKENS)
-  return tokensToChars(Number(tokens))
+    ? await getNumberSetting('collection_full_text_tokens_cloud', DEFAULT_COLLECTION_FULL_TEXT_TOKENS_CLOUD)
+    : await getNumberSetting('collection_full_text_tokens', DEFAULT_COLLECTION_FULL_TEXT_TOKENS)
+  return tokensToChars(tokens)
 }
 
 /** The model that answers, and so reads each document: flash's model in flash, else as research picks it. */
