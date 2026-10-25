@@ -73,12 +73,18 @@ export function initialChatTitle(content: string, scope: TitleScope): InitialTit
   return { title, scope: weak && getAppSettingSync('chat_title_model', 'true') === 'true' ? label : null }
 }
 
-/** The model's reply as a title: first line, without quotes, markup, a "Title:" label or a final stop. */
+/** Longer than this, a reply of one word is taken as words run together ("solsemesterfruktosolbad"),
+ *  not a title. Assumes a real Swedish compound standing alone as a title rarely exceeds it. */
+const MAX_SINGLE_WORD = 20
+
+/** The model's reply as a title: first line, without quotes, markup, a "Title:" label or a final stop.
+ *  Empty when the reply is words run together, so the question's own title is kept. */
 export function cleanTitle(raw: string): string {
-  return (raw.trim().split('\n')[0] ?? '')
+  const title = (raw.trim().split('\n')[0] ?? '')
     .replace(/^(title|titel)\s*:\s*/i, '')
     .replace(/^[\s"'“”‘’«»*#_`]+|[\s"'“”‘’«»*_`.]+$/g, '')
     .trim()
+  return !/\s/.test(title) && title.length > MAX_SINGLE_WORD ? '' : title
 }
 
 /** Output: the title alone; cleanTitle takes the first line and strips quotes, "Title:" and a final full stop. */
@@ -104,7 +110,10 @@ export async function refineChatTitle(sessionId: string, userId: string): Promis
       abortSignal: AbortSignal.timeout(20_000),
     })
     const topic = cleanTitle(text)
-    if (!topic) return claimed.title
+    if (!topic) {
+      console.log(`  [title] unusable reply ${JSON.stringify(text.trim().slice(0, 80))} — keeping ${JSON.stringify(claimed.title)}`)
+      return claimed.title
+    }
     const room = SESSION_TITLE_MAX - (claimed.scope ? claimed.scope.length + 2 : 0)
     const title = (claimed.scope ? `${claimed.scope}: ` : '') + cutAtWord(topic, room)
     sqlite.run('UPDATE chat_sessions SET title = ? WHERE id = ? AND title = ?', [title, sessionId, claimed.title])

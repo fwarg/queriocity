@@ -65,6 +65,11 @@ describe('initial titles', () => {
   test('the model\'s reply is cleaned to a bare title', () => {
     expect(cleanTitle('Title: "Self-attention in transformers."\nMore')).toBe('Self-attention in transformers')
   })
+
+  test('words run together are no title; a single compound is', () => {
+    expect(cleanTitle('solsemesterfruktosolbad')).toBe('')
+    expect(cleanTitle('Badrumsrenovering')).toBe('Badrumsrenovering')
+  })
 })
 
 describe('refineChatTitle', () => {
@@ -86,5 +91,13 @@ describe('refineChatTitle', () => {
     const pending = refineChatTitle('title-2', ME)
     sqlite.run('UPDATE chat_sessions SET title = ? WHERE id = ?', ['My own title', 'title-2'])
     expect(await pending).toBe('My own title')
+  })
+
+  test('words run together keep the question\'s title', async () => {
+    fake = startFakeOpenAI([{ text: ['solsemesterfruktosolbad'] }])
+    restore = envOverride({ SMALL_BASE_URL: fake.baseURL, SMALL_MODEL: 'small', SMALL_API_KEY: 't' })
+    await chat('title-3', 'Compile the document into…', '')
+    expect(await refineChatTitle('title-3', ME)).toBe('Compile the document into…')
+    expect(titleOf('title-3')).toEqual({ title: 'Compile the document into…', scope: null })
   })
 })

@@ -2,35 +2,6 @@ import { generateText } from 'ai'
 import { getSmallModel, modelTarget, targetLabel } from './llm.ts'
 import { queryTerms, querySimilarity, hasMangledToken, QUERY_DUPLICATE_THRESHOLD } from './query-terms.ts'
 
-const PRONOUN_RE = /\b(it|its|they|their|them|this|that|these|those|he|him|his|she|her|hers|we|us|our|ours)\b/i
-
-/** Speed mode: regex heuristic, no LLM call. Returns single query string. */
-export function reformulateSpeed(messages: Array<{ role: string; content: string }>): string {
-  const lastUser = [...messages].reverse().find(m => m.role === 'user')
-  if (!lastUser) return ''
-
-  if (messages.length <= 1 || !PRONOUN_RE.test(lastUser.content)) {
-    console.log(`  [speed] passthrough → ${JSON.stringify(lastUser.content)}`)
-    return lastUser.content
-  }
-
-  const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant')
-  if (!lastAssistant) {
-    console.log(`  [speed] passthrough (no assistant turn) → ${JSON.stringify(lastUser.content)}`)
-    return lastUser.content
-  }
-
-  const subject = lastAssistant.content.match(/^[^,.]+/)?.[0]?.trim()
-  if (!subject) {
-    console.log(`  [speed] passthrough (no subject) → ${JSON.stringify(lastUser.content)}`)
-    return lastUser.content
-  }
-
-  const q = `${subject}: ${lastUser.content}`
-  console.log(`  [speed] subject-prepend → ${JSON.stringify(q)}`)
-  return q
-}
-
 // Reformulation sits on the critical path of every balanced/thorough query, before a single byte
 // reaches the client, so it must never be the thing that hangs a request. The caller degrades to
 // no pre-search on failure, which is far better than an unbounded wait.
@@ -52,6 +23,8 @@ Rules:
 4. For products, technologies, companies, software, or other topics primarily covered in English sources, write the query in English regardless of the user's language.
 5. Append the year ${YEAR} ONLY when the answer depends on what is newest or current right now: latest versions/releases, prices, rankings, schedules, ongoing events, news, or questions that say "latest/current/newest/now". Do NOT add a year to definitions, explanations, how-to, or conceptual questions ("what is X", "how does Y work") — even for cutting-edge or AI topics. When unsure, do not add a year.
 6. Output ONLY the search string. No explanations, no quotes, no preamble.
+7. Keep each query to 2–6 words. For a long question with many wishes (advice, recommendations, planning), give each query ONE core need instead of cramming every constraint into each. Facts about the user (where they live, family size) are context: include one only where it narrows the results.
+8. For local or regional topics (travel, housing, shops, services, local news), write the query in the user's language.
 
 Examples:
 - "vad är hidden state engineering" → hidden state engineering        (concept — no year)
@@ -60,7 +33,10 @@ Examples:
 - "best LLM for coding right now" → best LLM coding ${YEAR}           (current ranking — add year)
 - "What happened to DOGE, the department run by Elon Musk?"
   → DOGE Department of Government Efficiency status ${YEAR}           (keep the qualifier — "DOGE" alone finds the cryptocurrency)
-- "Hur gick det för Vasaloppet i år?" → Vasaloppet results ${YEAR}    (English for an international topic, name kept verbatim)`
+- "Hur gick det för Vasaloppet i år?" → Vasaloppet results ${YEAR}    (English for an international topic, name kept verbatim)
+- "Vi ska renovera badrummet i vår villa i Göteborg, vill ha golvvärme och dusch istället för badkar, får inte bli för dyrt. Vad kostar det och vilka firmor är bra?"
+  → badrumsrenovering kostnad ${YEAR}
+  → badrumsfirma Göteborg omdömen                                     (one need per query, user's language, location only where it narrows)`
 }
 
 /** Returns true if the string looks like a natural language sentence rather than a search query. */
