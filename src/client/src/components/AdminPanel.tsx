@@ -463,7 +463,7 @@ export function AdminPanel({ currentUserId, onClose, onBudgetChange }: Props) {
               </div>
               <div className="flex flex-col gap-1.5">
                 <p className="text-xs text-gray-400 font-medium">Minimum relevance for resources</p>
-                <p className="text-xs text-gray-500">Reranker score (0–1) a resource/collection excerpt must clear to be injected at all, instead of always filling out the chunk count above regardless of match quality. 0 disables the floor. Only applies when a reranker model is configured.</p>
+                <p className="text-xs text-gray-500">Reranker score (0–1) a resource/collection excerpt must clear to be injected at all, instead of always filling out the chunk count above regardless of match quality. 0 disables the floor.{!rerankConfigured && <span className="text-amber-400"> No reranker is configured (RERANK_MODEL), so this has no effect — the similarity floor below applies instead.</span>}</p>
                 <input type="number" min={0} max={1} step={0.05} value={ragMinRelevanceDraft}
                   onChange={e => setRagMinRelevanceDraft(e.target.value)}
                   className="w-24 px-3 py-1.5 rounded bg-gray-800 border border-gray-700 text-sm text-gray-100 focus:outline-none focus:border-blue-500" />
