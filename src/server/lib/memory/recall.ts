@@ -28,7 +28,7 @@ export async function searchSpaceHistory(
   const topK = k ?? await ragTopK()
   let embedding: number[]
   try {
-    embedding = await embedText(query)
+    embedding = await embedText(query, 'query')
   } catch (e) {
     console.error('  [memory] history search embed failed:', e)
     return []
@@ -151,7 +151,7 @@ export async function buildMemoryBlock(
   let embedding: number[] | null = null
   if (query?.trim()) {
     try {
-      embedding = await embedText(query)
+      embedding = await embedText(query, 'query')
     } catch (e) {
       console.error('  [memory] RAG embed failed:', e)
     }

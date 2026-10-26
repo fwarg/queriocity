@@ -307,19 +307,37 @@ export function resetFileEmbeddings(): void {
   sqlite.run('DROP TABLE IF EXISTS file_chunks')
 }
 
-/** Runs on every start, after the migrations: the vector tables follow EMBED_DIMENSIONS, which can
- *  change between starts, so they are checked each time rather than versioned. */
-function ensureVectorTables(): void {
-  // Recreate the vector tables if the embedding dimension changed. Both keep their `*_chunk_meta`
-  // rows, so reembedMissingVectors() at startup restores them from text already on disk — which is
-  // why neither is gated behind ALLOW_EMBED_RESET any more: there is nothing left to destroy.
-  if (dimensionChanged('file_chunks')) {
-    console.log(`[db] Embedding dimension changed → recreating file_chunks (${EMBED_DIMS} dims), resources kept for re-embedding`)
+/** What the stored vectors were made with, beyond their dimension. A different model or document
+ *  prefix at the same dimension gives vectors from another space: they still fit the table, so
+ *  nothing fails — searches just quietly match old and new text badly against each other. Only the
+ *  *document* side is stored; query and similarity prefixes take effect without a rebuild. */
+const embedFingerprint = () => JSON.stringify([process.env.EMBED_MODEL ?? '', process.env.EMBED_DOCUMENT_PREFIX ?? ''])
+const FINGERPRINT_KEY = 'embed_fingerprint'
+
+/** True when vectors were recorded under another model or document prefix. A database that never
+ *  recorded one is taken as current — it gets recorded now, rather than rebuilt on an upgrade. */
+function fingerprintChanged(): boolean {
+  const row = sqlite.query('SELECT value FROM app_settings WHERE key = ?').get(FINGERPRINT_KEY) as { value: string } | null
+  return !!row && row.value !== embedFingerprint()
+}
+
+/** Runs on every start, after the migrations: the vector tables follow EMBED_DIMENSIONS and the
+ *  fingerprint above, either of which can change between starts, so they are checked each time
+ *  rather than versioned. Exported for the test that guards the fingerprint; import runs it in production. */
+export function ensureVectorTables(): void {
+  // Recreate the vector tables if the embedding dimension or fingerprint changed. Both keep their
+  // `*_chunk_meta` rows, so reembedMissingVectors() at startup restores them from text already on
+  // disk — which is why neither is gated behind ALLOW_EMBED_RESET any more: there is nothing left to destroy.
+  const stale = fingerprintChanged()
+  if (stale) console.log('[db] Embedding model or EMBED_DOCUMENT_PREFIX changed → recreating vector tables, text kept for re-embedding')
+
+  if (stale || dimensionChanged('file_chunks')) {
+    console.log(`[db] Recreating file_chunks (${EMBED_DIMS} dims), resources kept for re-embedding`)
     resetFileEmbeddings()
   }
 
-  if (dimensionChanged('chat_chunks')) {
-    console.log(`[db] Embedding dimension changed → recreating chat_chunks (${EMBED_DIMS} dims), history kept for re-embedding`)
+  if (stale || dimensionChanged('chat_chunks')) {
+    console.log(`[db] Recreating chat_chunks (${EMBED_DIMS} dims), history kept for re-embedding`)
     sqlite.run('DROP TABLE IF EXISTS chat_chunks')
   }
 
@@ -339,14 +357,15 @@ function ensureVectorTables(): void {
   const existingMemVec = sqlite.query(
     "SELECT sql FROM sqlite_master WHERE type='table' AND name='memory_embeddings'"
   ).get() as { sql: string } | null
-  if (existingMemVec && !existingMemVec.sql.includes(`FLOAT[${EMBED_DIMS}]`)) {
-    console.log(`[db] Embedding dimension changed → recreating memory_embeddings (${EMBED_DIMS} dims)`)
+  if (existingMemVec && (stale || !existingMemVec.sql.includes(`FLOAT[${EMBED_DIMS}]`))) {
+    console.log(`[db] Recreating memory_embeddings (${EMBED_DIMS} dims)`)
     sqlite.run('DROP TABLE IF EXISTS memory_embeddings')
   }
   sqlite.run(`CREATE VIRTUAL TABLE IF NOT EXISTS memory_embeddings USING vec0(
     memory_id TEXT PRIMARY KEY,
     embedding FLOAT[${EMBED_DIMS}]
   )`)
+  sqlite.run('INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', [FINGERPRINT_KEY, embedFingerprint()])
 }
 
 /** Personal monitors without a timezone take their owner's, once the owner has set one. Every start,

@@ -131,7 +131,7 @@ export async function buildCollectionBlock(
 
   let rows: ChunkResult[] = []
   try {
-    const embedding = await embedText(query)
+    const embedding = await embedText(query, 'query')
     rows = await searchCollections(collectionIds, query, embedding, undefined, includeConfidential)
     if (rerankEnabled() && rows.length) {
       const order = await rerank(query, rows.map(r => r.content), rows.length, await ragMinRelevance())

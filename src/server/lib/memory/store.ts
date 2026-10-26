@@ -31,7 +31,7 @@ export async function getSpaceMemories(spaceId: string) {
  *  memory itself, and `backfillMemoryEmbeddings` retries on the next read. */
 export async function embedMemory(memoryId: string, content: string): Promise<void> {
   try {
-    const embedding = await embedText(content)
+    const embedding = await embedText(content, 'document')
     sqlite.run('DELETE FROM memory_embeddings WHERE memory_id = ?', [memoryId])
     sqlite.run('INSERT INTO memory_embeddings(memory_id, embedding) VALUES (?,?)',
       [memoryId, JSON.stringify(embedding)])
@@ -58,7 +58,7 @@ export async function backfillMemoryEmbeddings(memories: Array<{ id: string; con
   const missing = memories.filter(m => !present.has(m.id))
   if (!missing.length) return
   try {
-    const vectors = await embedTexts(missing.map(m => m.content))
+    const vectors = await embedTexts(missing.map(m => m.content), 'document')
     const stmt = sqlite.prepare('INSERT INTO memory_embeddings(memory_id, embedding) VALUES (?,?)')
     sqlite.transaction(() => {
       for (let i = 0; i < missing.length; i++) stmt.run(missing[i].id, JSON.stringify(vectors[i]))

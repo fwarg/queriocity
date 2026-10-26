@@ -96,7 +96,7 @@ export async function indexResourceText(
 ): Promise<number> {
   const { size, overlap } = chunkConfig(mimeType)
   const rawChunks = semanticChunk(text, size, overlap, minChunkChars)
-  const embeddings = await embedTexts(rawChunks)
+  const embeddings = await embedTexts(rawChunks, 'document')
 
   deleteFileChunks(fileId)
   const insertChunk = sqlite.prepare(

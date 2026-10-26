@@ -45,7 +45,7 @@ export async function searchSpaceFiles(spaceId: string, query: string, embedding
  *  Confidential resources are left out unless the turn is locked (`includeConfidential`). */
 export async function searchUploads(query: string, userId: string, limit?: number, minScore?: number, kind?: 'note' | 'file', includeConfidential = false): Promise<ChunkResult[]> {
   const topK = limit ?? await ragTopK()
-  const embedding = await embedText(query)
+  const embedding = await embedText(query, 'query')
 
   // Ownership is scoped through a pushed-down IN rather than a JOIN predicate — see the note on
   // searchSpaceFiles. With a JOIN filter, one user's chunks crowd every other user out of `k`.

@@ -28,7 +28,7 @@ async function conflictCandidates(existing: MemoryRow[], facts: string[]): Promi
   const scope = existing.map(m => m.id)
   const picked = new Set<string>()
   try {
-    const embeddings = await embedTexts(facts)
+    const embeddings = await embedTexts(facts, 'query')
     for (const embedding of embeddings) {
       for (const id of nearestMemoryIds(embedding, scope, 5)) picked.add(id)
     }

@@ -79,7 +79,7 @@ export async function buildUserMemoryBlock(
   let ranked = rest
   if (query?.trim() && rest.length) {
     try {
-      ranked = (await rankMemoriesByRelevance(rest, query, await embedText(query))) ?? rest
+      ranked = (await rankMemoriesByRelevance(rest, query, await embedText(query, 'query'))) ?? rest
     } catch (e) {
       console.error('  [memory] user memory ranking failed:', e)
     }

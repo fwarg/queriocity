@@ -88,7 +88,7 @@ export async function relevantHits(query: string, hits: Hit[], floor: number | u
 export async function firstLook(task: string, docs: Doc[], gathered: Gathered, { search = true } = {}): Promise<string> {
   try {
     gathered.task = task
-    gathered.query = await embedText(task)
+    gathered.query = await embedText(task, 'query')
     gathered.floor = await relevanceFloor()
     // Without the search, only what ranks the parts read later is set.
     if (!search) return ''

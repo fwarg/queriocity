@@ -64,7 +64,7 @@ async function seedResource(id: string, filename: string, content: string, group
   )
   sqlite.run('INSERT INTO file_chunk_meta(chunk_id, file_id, content) VALUES (?,?,?)', [`${id}:0`, id, content])
   sqlite.run('INSERT INTO file_chunks(chunk_id, embedding) VALUES (?,?)',
-    [`${id}:0`, JSON.stringify(await embedText(content))])
+    [`${id}:0`, JSON.stringify(await embedText(content, 'document'))])
   for (const groupId of groupIds) {
     sqlite.run('INSERT INTO space_files(space_id, file_id) VALUES (?,?)', [groupId, id])
   }
@@ -99,7 +99,7 @@ describe('searchCollections', () => {
     await seedResource('f1', 'retrieval.pdf', 'Dense retrieval outperforms sparse retrieval on this benchmark.', ['c1'])
     await seedResource('f2', 'protocol.pdf', 'The wire protocol frames every message with a length prefix.', ['c2'])
 
-    const hits = await searchCollections(['c1', 'c2'], 'retrieval', await embedText('retrieval'), 10)
+    const hits = await searchCollections(['c1', 'c2'], 'retrieval', await embedText('retrieval', 'query'), 10)
     expect(hits.map(h => h.filename).sort()).toEqual(['protocol.pdf', 'retrieval.pdf'])
   })
 
@@ -110,7 +110,7 @@ describe('searchCollections', () => {
     await seedResource('f2', 'protocol.pdf', 'The wire protocol frames every message with a length prefix.', ['c2'])
 
     const query = 'dense retrieval benchmark'
-    const hits = await searchCollections(['c1', 'c2'], query, await embedText(query), 10)
+    const hits = await searchCollections(['c1', 'c2'], query, await embedText(query, 'query'), 10)
     expect(hits[0].filename).toBe('retrieval.pdf')
   })
 
@@ -120,7 +120,7 @@ describe('searchCollections', () => {
     await seedGroup('c2', 'Reading list', 'collection')
     await seedResource('f1', 'shared.pdf', 'A document that belongs to both collections at once.', ['c1', 'c2'])
 
-    const hits = await searchCollections(['c1', 'c2'], 'document', await embedText('document'), 10)
+    const hits = await searchCollections(['c1', 'c2'], 'document', await embedText('document', 'query'), 10)
     expect(hits).toHaveLength(1)
   })
 
@@ -130,7 +130,7 @@ describe('searchCollections', () => {
     await seedResource('f1', 'tagged.pdf', 'This document is filed in the selected collection.', ['c1'])
     await seedResource('f2', 'elsewhere.pdf', 'This document is filed in a space instead.', ['s1'])
 
-    const hits = await searchCollections(['c1'], 'document', await embedText('document'), 10)
+    const hits = await searchCollections(['c1'], 'document', await embedText('document', 'query'), 10)
     expect(hits.map(h => h.filename)).toEqual(['tagged.pdf'])
   })
 
@@ -145,7 +145,7 @@ describe('searchCollections', () => {
     for (let i = 0; i < 5; i++) {
       await seedResource(`f${i}`, `doc${i}.pdf`, `Document number ${i} about retrieval and ranking.`, ['c1'])
     }
-    expect(await searchCollections(['c1'], 'retrieval', await embedText('retrieval'), 2)).toHaveLength(2)
+    expect(await searchCollections(['c1'], 'retrieval', await embedText('retrieval', 'query'), 2)).toHaveLength(2)
   })
 })
 
@@ -165,14 +165,14 @@ describe('confidential resources', () => {
 
   test('an unlocked turn leaves them out of collection and library search', async () => {
     await seedLibrary()
-    const embedding = await embedText('retrieval')
+    const embedding = await embedText('retrieval', 'query')
     expect(ids(await searchCollections(['c1'], 'retrieval', embedding))).toEqual(['open'])
     expect(ids(await searchUploads('retrieval', OWNER))).toEqual(['open'])
   })
 
   test('a locked turn reads them', async () => {
     await seedLibrary()
-    const embedding = await embedText('retrieval')
+    const embedding = await embedText('retrieval', 'query')
     expect(ids(await searchCollections(['c1'], 'retrieval', embedding, undefined, true))).toEqual(['open', 'own', 'viacoll'])
     expect(ids(await searchUploads('retrieval', OWNER, undefined, undefined, undefined, true))).toEqual(['open', 'own', 'viacoll'])
   })

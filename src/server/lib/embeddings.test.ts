@@ -1,8 +1,9 @@
 import './test-support/test-env.ts'
-import { describe, expect, it } from 'bun:test'
-import { _test } from './embeddings.ts'
+import { afterEach, describe, expect, it } from 'bun:test'
+import { _test, embedPrefix } from './embeddings.ts'
+import { envOverride } from './test-support/env-override.ts'
 
-const { bound, batchByTotalChars, EMBED_MAX_CHARS, EMBED_BATCH_CHARS } = _test
+const { bound, prepare, batchByTotalChars, EMBED_MAX_CHARS, EMBED_BATCH_CHARS } = _test
 
 /** The bound exists because embedding servers reject oversized input outright — there is no partial
  *  result: the call 400s and every feature depending on it fails at once. Found when a 170k-char
@@ -97,5 +98,47 @@ describe('unpairable characters', () => {
     // Truncation is itself a cut at a code-unit index, so the fix has to run on both sides of it.
     const text = 'x'.repeat(EMBED_MAX_CHARS - 1) + '🔒' + 'y'.repeat(100)
     expect(lone.test(bound(text))).toBe(false)
+  })
+})
+
+/** Asymmetric models (EmbeddingGemma, Nemotron, E5) embed a question and its answer differently and
+ *  only do so when told which is which. Without the marker they still return vectors of the right
+ *  size, so a missing prefix costs retrieval quality without anything failing. */
+describe('embedding prefixes', () => {
+  let restore = () => {}
+  afterEach(() => restore())
+  const configure = (vars: Record<string, string>) => {
+    restore = envOverride({ EMBED_QUERY_PREFIX: '', EMBED_DOCUMENT_PREFIX: '', EMBED_SIMILARITY_PREFIX: '', ...vars })
+  }
+
+  it('adds nothing when none is configured, so a symmetric model sees what it saw before', () => {
+    configure({})
+    expect(prepare('hello', 'query')).toBe('hello')
+    expect(prepare('hello', 'document')).toBe('hello')
+    expect(prepare('hello', 'similarity')).toBe('hello')
+  })
+
+  it('marks each side of a search with its own prefix', () => {
+    configure({ EMBED_QUERY_PREFIX: 'task: search result | query: ', EMBED_DOCUMENT_PREFIX: 'title: none | text: ' })
+    expect(prepare('reset password', 'query')).toBe('task: search result | query: reset password')
+    expect(prepare('Click forgot password.', 'document')).toBe('title: none | text: Click forgot password.')
+  })
+
+  it('falls back to the query prefix for similarity, as query/passage models expect', () => {
+    configure({ EMBED_QUERY_PREFIX: 'query: ' })
+    delete process.env.EMBED_SIMILARITY_PREFIX
+    expect(embedPrefix('similarity')).toBe('query: ')
+  })
+
+  it('uses a similarity prefix of its own when one is set', () => {
+    configure({ EMBED_QUERY_PREFIX: 'query: ', EMBED_SIMILARITY_PREFIX: 'task: sentence similarity | query: ' })
+    expect(prepare('garden roses', 'similarity')).toBe('task: sentence similarity | query: garden roses')
+  })
+
+  it('truncates the text, never the prefix, and stays within the per-vector bound', () => {
+    configure({ EMBED_DOCUMENT_PREFIX: 'title: none | text: ' })
+    const out = prepare('x'.repeat(170_000), 'document')
+    expect(out.startsWith('title: none | text: x')).toBe(true)
+    expect(out.length).toBe(EMBED_MAX_CHARS)
   })
 })
