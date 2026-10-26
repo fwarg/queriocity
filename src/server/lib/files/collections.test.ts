@@ -15,7 +15,7 @@ const { embedText } = await import('../embeddings.ts')
 const { ownedCollectionIds, searchCollections } = await import('./collections.ts')
 const { readsConfidential, trackLeftOut } = await import('./confidential.ts')
 const { confidentialInScope } = await import('./collection-coverage.ts')
-const { searchUploads } = await import('./uploads-search.ts')
+const { searchUploads, aboveSimilarity } = await import('./uploads-search.ts')
 
 const OWNER = 'coll-owner'
 const STRANGER = 'coll-stranger'
@@ -192,5 +192,65 @@ describe('confidential resources', () => {
     const leftOut = new Set<string>()
     await trackLeftOut(leftOut, () => searchUploads('retrieval', OWNER))
     expect([...leftOut].sort()).toEqual(['own', 'viacoll'])
+  })
+})
+
+/** Without a reranker, a cosine floor is what keeps a barely related excerpt out of the prompt —
+ *  so the similarity on each hit has to be the real cosine, not something derived from L2 distance. */
+describe('similarity without a reranker', () => {
+  const setFloor = (v: number) => sqlite.run(
+    "INSERT INTO app_settings (key, value) VALUES ('rag_min_similarity', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [String(v)])
+  const clearFloor = () => sqlite.run("DELETE FROM app_settings WHERE key = 'rag_min_similarity'")
+
+  async function seedTwo() {
+    await seedResource('exact', 'exact.txt', 'Dense retrieval outperforms sparse retrieval.', [])
+    await seedResource('other', 'other.txt', 'The wire protocol frames every message with a length prefix.', [])
+  }
+
+  test('each hit carries its cosine similarity to the query', async () => {
+    await seedTwo()
+    const rows = await searchUploads('Dense retrieval outperforms sparse retrieval.', OWNER)
+    const exact = rows.find(r => r.fileId === 'exact')!
+    const other = rows.find(r => r.fileId === 'other')!
+    // No prefixes are configured here, so query and document embed identically: an exact match is 1.
+    expect(exact.similarity).toBeCloseTo(1, 4)
+    expect(other.similarity).toBeLessThan(exact.similarity)
+    expect(other.similarity).toBeGreaterThanOrEqual(-1)
+  })
+
+  test('a caller asking for a floor gets the similarity floor instead of the reranker one', async () => {
+    await seedTwo()
+    setFloor(0.99)
+    try {
+      const floored = await searchUploads('Dense retrieval outperforms sparse retrieval.', OWNER, undefined, 0)
+      expect(floored.map(r => r.fileId)).toEqual(['exact'])
+      // No floor asked for: everything nearest comes back, as before.
+      expect((await searchUploads('Dense retrieval outperforms sparse retrieval.', OWNER)).length).toBe(2)
+    } finally {
+      clearFloor()
+    }
+  })
+
+  test('a floor of 0 keeps everything', () => {
+    const rows = [{ similarity: 0.1 }, { similarity: -0.2 }]
+    expect(aboveSimilarity(rows, 0, 'test')).toEqual(rows)
+    expect(aboveSimilarity(rows, 0.05, 'test')).toEqual([{ similarity: 0.1 }])
+  })
+})
+
+/** The prefix is only worth anything if it is what the server actually embeds. */
+describe('embedding prefixes on the wire', () => {
+  test('a query and a stored chunk reach the server with their own prefixes', async () => {
+    const restore = envOverride({ EMBED_QUERY_PREFIX: 'query: ', EMBED_DOCUMENT_PREFIX: 'passage: ' })
+    try {
+      const before = server.requests.length
+      await embedText('reset my password', 'query')
+      await embedText('Click forgot password.', 'document')
+      const sent = server.requests.slice(before).map(r => JSON.stringify(r))
+      expect(sent[0]).toContain('query: reset my password')
+      expect(sent[1]).toContain('passage: Click forgot password.')
+    } finally {
+      restore()
+    }
   })
 })

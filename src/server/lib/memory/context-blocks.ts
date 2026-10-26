@@ -3,9 +3,9 @@
 import { sqlite } from '../db.ts'
 import { estimateTokens } from '../llm.ts'
 import { embedText } from '../embeddings.ts'
-import { searchUploads, type ChunkResult } from '../files/uploads-search.ts'
+import { searchUploads, aboveSimilarity, type ChunkResult } from '../files/uploads-search.ts'
 import { rerank, rerankEnabled } from '../reranker.ts'
-import { ragTopK, ragMinRelevance } from '../rag-settings.ts'
+import { ragTopK, ragMinRelevance, ragMinSimilarity } from '../rag-settings.ts'
 import { searchCollections } from '../files/collections.ts'
 import { withoutConfidential } from '../files/confidential.ts'
 import { trustByNote, trustInstruction } from '../files/note-trust.ts'
@@ -136,6 +136,8 @@ export async function buildCollectionBlock(
     if (rerankEnabled() && rows.length) {
       const order = await rerank(query, rows.map(r => r.content), rows.length, await ragMinRelevance())
       rows = order.map(i => rows[i])
+    } else {
+      rows = aboveSimilarity(rows, await ragMinSimilarity(), 'rag:collection')
     }
   } catch (e) {
     console.error('  [memory] collection RAG failed:', e)

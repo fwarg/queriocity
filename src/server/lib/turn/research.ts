@@ -6,6 +6,7 @@ import { describeOutcome, type UrlOutcome } from '../fetch-url.ts'
 import { ThinkExtractor } from '../think-extractor.ts'
 import { rerankSearchResults } from '../reranker.ts'
 import type { SearchResult, EngineError } from '../search/index.ts'
+import { interleaveBatches } from '../search/fusion.ts'
 import { prepareResearch, type ResearchInputs } from './prepare.ts'
 import { AnswerStream } from './stream-answer.ts'
 import { userQueryOf, additionalInstructions, withKeepalive, type TurnContext, type TurnResult, type TurnSink } from './context.ts'
@@ -124,14 +125,16 @@ function researcherOptions(ctx: TurnContext, sink: TurnSink, inputs: ResearchInp
 /** Thorough: the researcher gathers sources and notes silently, then the writer answers over them. */
 async function runThorough(ctx: TurnContext, sink: TurnSink, inputs: ResearchInputs, progress: ResearchProgress) {
   await progress.preSearch()
-  const allSources: SearchResult[] = [...(inputs.initialResults ?? [])]
+  // One batch per search, kept apart so the cut in writerSources takes from every search rather than
+  // only the first ones — see interleaveBatches.
+  const batches: SearchResult[][] = [inputs.initialResults ?? []]
   // URLs the user pointed at or the model chose to read in full — kept out of the reranker's
   // prune below so a page that was explicitly fetched always reaches the writer.
   const fetchedUrls = new Set<string>()
   const researcherResult = await runResearcher({
     ...researcherOptions(ctx, sink, inputs, progress),
     model: inputs.researchModel,
-    onSource: (s) => { allSources.push(s); fetchedUrls.add(s.url) },
+    onSource: (s) => { batches.push([s]); fetchedUrls.add(s.url) },
   })
   let researcherNotes = ''
   // Unconditional: the extractor also drops leaked tool-call markup, which has to be stripped
@@ -141,10 +144,10 @@ async function runThorough(ctx: TurnContext, sink: TurnSink, inputs: ResearchInp
     extractor: new ThinkExtractor(),
     emitTextAsThinking: true,
     onText: (text) => { researcherNotes += text },
-    onSources: (results) => { allSources.push(...results) },
+    onSources: (results) => { batches.push(results) },
   }))
 
-  const finalSources = await writerSources(userQueryOf(ctx.msgs), allSources, fetchedUrls)
+  const finalSources = await writerSources(userQueryOf(ctx.msgs), batches, fetchedUrls)
   await sink.emit({ type: 'sources', sources: finalSources })
 
   await sink.step({ kind: 'write' })
@@ -157,16 +160,13 @@ async function runThorough(ctx: TurnContext, sink: TurnSink, inputs: ResearchInp
   return { content, sources: finalSources.map(toStoredSource) }
 }
 
-/** Dedups by URL, then reranks and prunes. Previously the full length was passed as topN, so the
- *  configured rerank_top_n was bypassed and every source reached the writer. Fetched pages skip
- *  the prune — they were read deliberately — and lead the list so their numbers are low. */
-async function writerSources(query: string, allSources: SearchResult[], fetchedUrls: ReadonlySet<string>) {
-  const seen = new Set<string>()
-  const deduped = allSources.filter(s => {
-    if (seen.has(s.url)) return false
-    seen.add(s.url)
-    return true
-  })
+/** Merges the searches' batches (deduped by URL), then reranks and prunes to rerank_top_n — or,
+ *  without a reranker, just prunes, which is why the batches are interleaved rather than joined.
+ *  Previously the full length was passed as topN, so the configured rerank_top_n was bypassed and
+ *  every source reached the writer. Fetched pages skip the prune — they were read deliberately —
+ *  and lead the list so their numbers are low. */
+async function writerSources(query: string, batches: SearchResult[][], fetchedUrls: ReadonlySet<string>) {
+  const deduped = interleaveBatches(batches)
   const fetched = deduped.filter(s => fetchedUrls.has(s.url))
   const reranked = await rerankSearchResults(query, deduped.filter(s => !fetchedUrls.has(s.url)))
   return [...fetched, ...reranked]

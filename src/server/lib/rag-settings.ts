@@ -34,6 +34,14 @@ export const ragTopK = (): Promise<number> =>
 export const ragMinRelevance = (): Promise<number> =>
   getNumberSetting('rag_min_relevance', 0)
 
+/** Cosine similarity a resource, collection or chat excerpt must reach to be injected when there is
+ *  no reranker — the embedding-only counterpart of `rag_min_relevance`. `0` (default) disables it,
+ *  because the scale belongs to the embedding model: EmbeddingGemma 2 puts on-topic best hits at
+ *  0.67+ and off-topic ones at 0.55–0.69, so 0.65 drops nearly all of the latter, while another
+ *  model may score everything lower. Every filtered search logs its similarities to calibrate it. */
+export const ragMinSimilarity = (): Promise<number> =>
+  getNumberSetting('rag_min_similarity', 0)
+
 /** Reranker relevance (0–1) below which an Explore answer takes a passage or part as unrelated.
  *  Lower than the retrieval floor: question-to-passage scores run low — relevant passages scored
  *  0.05–0.86 in real runs, unrelated ones 0.035 or less. */

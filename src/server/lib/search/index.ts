@@ -3,7 +3,7 @@
  *  Adding a provider: implement SearchProvider in providers/, list it in PROVIDERS, and give it a
  *  default in policy.ts envPolicy(). Nothing outside this directory needs to change. */
 
-import { interleaveSupplements, mergeBatches, mergeFallback, mergePrimaries, pageKey, plain, rrfFuse, type ProviderRun } from './fusion.ts'
+import { interleaveBatches, interleaveSupplements, mergeBatches, mergeFallback, mergePrimaries, pageKey, plain, rrfFuse, type ProviderRun } from './fusion.ts'
 import { hasMajorEngineList, isMajorEngine, loadSearchPolicy, type ProviderPolicy, type SearchKind, type SearchPolicy } from './policy.ts'
 import { mojeekProvider } from './providers/mojeek.ts'
 import { searxngProvider } from './providers/searxng.ts'
@@ -157,7 +157,8 @@ export async function webSearchMulti(
 ): Promise<SearchResult[]> {
   const allowed = searchBudget ? queries.slice(0, Math.max(0, searchBudget.queriesRemaining)) : queries
   if (allowed.length < queries.length) console.log(`  [search] query limit for this request — running ${allowed.length} of ${queries.length} queries`)
-  return mergeBatches(await Promise.all(allowed.map(q => webSearch(q, countEach, categories, onEngineErrors, searchBudget))))
+  // Interleaved, not concatenated: no query outranks another, and the list is cut to rerank_top_n.
+  return interleaveBatches(await Promise.all(allowed.map(q => webSearch(q, countEach, categories, onEngineErrors, searchBudget))))
 }
 
 /** The providers trusted for locked spaces, alone, over several queries — the only search a locked

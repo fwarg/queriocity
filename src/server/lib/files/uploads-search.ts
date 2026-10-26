@@ -1,7 +1,7 @@
 import { sqlite } from '../db.ts'
 import { embedText } from '../embeddings.ts'
 import { rerank, rerankEnabled } from '../reranker.ts'
-import { ragTopK } from '../rag-settings.ts'
+import { ragTopK, ragMinSimilarity } from '../rag-settings.ts'
 import { withoutConfidential, confidentialSql, trackingLeftOut, noteLeftOut } from './confidential.ts'
 
 export interface ChunkResult {
@@ -10,6 +10,19 @@ export interface ChunkResult {
   filename: string
   content: string
   distance: number
+  /** Cosine similarity to the query vector, computed rather than derived from `distance`, which is
+   *  L2 and only equivalent when the embedding model normalises its output. */
+  similarity: number
+}
+
+/** The rows at or above `floor`, with their similarities logged — the scores, not just the counts,
+ *  so the floor can be picked from what this embedding model actually produces. A floor of 0 keeps
+ *  everything and logs nothing. The embedding-only stand-in for a reranker's relevance floor. */
+export function aboveSimilarity<T extends { similarity: number }>(rows: T[], floor: number, label: string): T[] {
+  if (floor <= 0 || !rows.length) return rows
+  const kept = rows.filter(r => r.similarity >= floor)
+  console.log(`  [${label}] similarities: [${rows.map(r => r.similarity.toFixed(3)).join(', ')}] (floor ${floor}) → ${kept.length}/${rows.length} kept`)
+  return kept
 }
 
 /** Returns true if the space has any tagged files — cheap check before embedding. */
@@ -42,7 +55,8 @@ export async function searchSpaceFiles(spaceId: string, query: string, embedding
 }
 
 /** `kind` limits the search to the user's notes, or to everything else (files and pages).
- *  Confidential resources are left out unless the turn is locked (`includeConfidential`). */
+ *  Confidential resources are left out unless the turn is locked (`includeConfidential`).
+ *  `minScore` is the reranker's floor; given without a reranker, rag_min_similarity applies instead. */
 export async function searchUploads(query: string, userId: string, limit?: number, minScore?: number, kind?: 'note' | 'file', includeConfidential = false): Promise<ChunkResult[]> {
   const topK = limit ?? await ragTopK()
   const embedding = await embedText(query, 'query')
@@ -54,7 +68,10 @@ export async function searchUploads(query: string, userId: string, limit?: numbe
         WHERE f2.user_id = ?${kind ? ' AND f2.kind = ?' : ''}`
   const rows = nearestChunks(JSON.stringify(embedding), topK, scope, [userId, ...(kind ? [kind] : [])], 'm2.file_id', includeConfidential)
 
-  if (!rerankEnabled() || rows.length === 0) return rows
+  if (rows.length === 0) return rows
+  // A caller passing a relevance floor wants weak matches kept out; without a reranker to judge
+  // them, the similarity floor does that instead.
+  if (!rerankEnabled()) return minScore == null ? rows : aboveSimilarity(rows, await ragMinSimilarity(), 'uploads')
   const indices = await rerank(query, rows.map(r => r.content), rows.length, minScore)
   return indices.map(i => rows[i])
 }
@@ -69,7 +86,8 @@ export function searchFile(fileId: string, embedding: number[], k: number, inclu
  *  and those that would have been among the results are recorded for the turn (noteLeftOut). */
 function nearestChunks(embeddingJson: string, topK: number, scope: string, params: string[], fileCol: string, includeConfidential: boolean): ChunkResult[] {
   const run = (filter: string) => sqlite.prepare(`
-    SELECT m.chunk_id AS chunkId, m.file_id AS fileId, f.filename, m.content, v.distance
+    SELECT m.chunk_id AS chunkId, m.file_id AS fileId, f.filename, m.content, v.distance,
+      1 - vec_distance_cosine(v.embedding, ?) AS similarity
     FROM file_chunks v
     JOIN file_chunk_meta m ON m.chunk_id = v.chunk_id
     JOIN uploaded_files f  ON f.id = m.file_id
@@ -77,7 +95,7 @@ function nearestChunks(embeddingJson: string, topK: number, scope: string, param
       AND k = ?
       AND v.chunk_id IN (${scope} ${filter})
     ORDER BY v.distance
-  `).all(embeddingJson, topK, ...params) as ChunkResult[]
+  `).all(embeddingJson, embeddingJson, topK, ...params) as ChunkResult[]
   const rows = run(withoutConfidential(fileCol, includeConfidential))
   if (!includeConfidential && trackingLeftOut()) {
     // Close enough to have made the cut: nearer than the farthest kept result, or any when fewer were kept.

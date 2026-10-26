@@ -25,10 +25,17 @@ const RERANK_TIMEOUT_MS = parseInt(process.env.RERANK_TIMEOUT_MS ?? '30000', 10)
 const RERANK_MAX_DOC_CHARS = parseInt(process.env.RERANK_MAX_INPUT_CHARS ?? '', 10) || 1200
 
 /** Orders search results by relevance, best-first, and prunes to the configured `rerank_top_n`.
- *  Identity when no reranker is configured, so callers need no branch of their own. Pruning is
- *  as much the point as ordering: everything kept here is paid for in the prompt downstream. */
+ *  Without a reranker (or when it fails) the order is kept and the prune still applies, so callers
+ *  need no branch of their own. Pruning is as much the point as ordering: everything kept here is
+ *  paid for in the prompt downstream — so the input should already be interleaved across queries
+ *  (interleaveBatches) for a plain cut to keep something from each. */
 export async function rerankSearchResults<T extends { content: string }>(query: string, results: T[]): Promise<T[]> {
-  if (!rerankEnabled() || results.length === 0 || !query) return results
+  if (results.length === 0 || !query) return results
+  if (!rerankEnabled()) {
+    const n = await getNumberSetting('rerank_top_n', 15)
+    if (results.length > n) console.log(`  [search] no reranker: ${results.length} → ${n} sources in search order`)
+    return results.slice(0, n)
+  }
   const t = performance.now()
   const indices = await rerank(query, results.map(r => r.content))
   const ranked = indices.map(i => results[i]).filter(Boolean)
@@ -106,11 +113,12 @@ export async function rerankScores(query: string, documents: string[], floor?: n
 
 /** Reranks documents by relevance to query: indices best-first, capped at `topN` (default the
  *  `rerank_top_n` setting) and floored at `minScore`. Identity order when no reranker is
- *  configured or the call fails. */
+ *  configured; original order capped at `topN` when the call fails. */
 export async function rerank(query: string, documents: string[], topN?: number, minScore?: number): Promise<number[]> {
   if (!rerankEnabled() || documents.length === 0) return documents.map((_, i) => i)
   const n = topN ?? await getNumberSetting('rerank_top_n', 15)
   const scores = await rerankScores(query, documents, minScore)
-  if (!scores) return documents.map((_, i) => i)
+  // A failed call keeps the original order but still honours the cap, as no reranker at all does.
+  if (!scores) return documents.map((_, i) => i).slice(0, n)
   return selectRerankedIndices(scores.map((relevance_score, index) => ({ index, relevance_score })), n, minScore)
 }

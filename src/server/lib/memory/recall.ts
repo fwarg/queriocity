@@ -3,9 +3,9 @@
 import { sqlite } from '../db.ts'
 import { estimateTokens } from '../llm.ts'
 import { embedText } from '../embeddings.ts'
-import { searchSpaceFiles, spaceHasTaggedFiles, type ChunkResult } from '../files/uploads-search.ts'
+import { searchSpaceFiles, spaceHasTaggedFiles, aboveSimilarity, type ChunkResult } from '../files/uploads-search.ts'
 import { rerank, rerankEnabled } from '../reranker.ts'
-import { ragTopK, ragMinRelevance } from '../rag-settings.ts'
+import { ragTopK, ragMinRelevance, ragMinSimilarity } from '../rag-settings.ts'
 import { asDocumentReferences } from '../../../shared/citations.ts'
 import { getSpaceMemories, backfillMemoryEmbeddings, nearestMemoryIds } from './store.ts'
 
@@ -188,13 +188,13 @@ export async function buildMemoryBlock(
     if (embedding) {
       // Fetch candidates from both sources
       const topK = await ragTopK()
-      let chatRows: Array<{ chunk_id: string; content: string }> = []
+      let chatRows: Array<{ chunk_id: string; content: string; similarity: number }> = []
       try {
         // Space scoping via pushed-down IN rather than a JOIN predicate — with `AND cs.space_id`
         // outside, `k` would mean "k nearest chunks anywhere", and a busy neighbouring space
         // leaves this one with nothing. See the note on searchSpaceFiles.
         chatRows = sqlite.prepare(`
-          SELECT ccm.chunk_id, ccm.content
+          SELECT ccm.chunk_id, ccm.content, 1 - vec_distance_cosine(cc.embedding, ?) AS similarity
           FROM chat_chunks cc
           JOIN chat_chunk_meta ccm ON ccm.chunk_id = cc.chunk_id
           WHERE cc.embedding MATCH ?
@@ -205,7 +205,7 @@ export async function buildMemoryBlock(
               WHERE s2.space_id = ?
             )
           ORDER BY cc.distance
-        `).all(JSON.stringify(embedding), topK, spaceId) as Array<{ chunk_id: string; content: string }>
+        `).all(JSON.stringify(embedding), JSON.stringify(embedding), topK, spaceId) as Array<{ chunk_id: string; content: string; similarity: number }>
       } catch (e) {
         console.error('  [memory] chat RAG search failed:', e)
       }
@@ -255,7 +255,11 @@ export async function buildMemoryBlock(
         if (chatLines.length) block += '\n\n## Relevant past conversations\n' + chatLines.map(l => `> ${l}`).join('\n\n')
         if (fileLines.length) block += '\n\n## Relevant document excerpts\n' + fileLines.map(l => `> ${l}`).join('\n\n')
       } else {
-        // No reranker: 50/50 budget split so files are never fully crowded out
+        // No reranker: 50/50 budget split so files are never fully crowded out, and the similarity
+        // floor standing in for the relevance one.
+        const floor = await ragMinSimilarity()
+        chatRows = aboveSimilarity(chatRows, floor, 'rag:chat')
+        fileRows = aboveSimilarity(fileRows, floor, 'rag:file')
         let chatRemaining = Math.floor(ragBudget / 2)
         let fileRemaining = ragBudget - chatRemaining
 
