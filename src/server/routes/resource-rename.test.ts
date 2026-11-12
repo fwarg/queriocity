@@ -64,7 +64,7 @@ async function seedResource(id: string, filename: string, content: string, userI
   )
   sqlite.run('INSERT INTO file_chunk_meta(chunk_id, file_id, content) VALUES (?,?,?)', [`${id}:0`, id, content])
   sqlite.run('INSERT INTO file_chunks(chunk_id, embedding) VALUES (?,?)',
-    [`${id}:0`, JSON.stringify(await embedText(content))])
+    [`${id}:0`, JSON.stringify(await embedText(content, 'document'))])
 }
 
 const nameOf = async (id: string) =>

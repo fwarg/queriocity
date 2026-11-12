@@ -176,7 +176,7 @@ describe('relevance floor', () => {
       const docs = []
       for (const [name, text] of [['on.txt', 'Safety contracts with guarantees.'], ['off.txt', 'Risk norms for driving.']]) {
         const id = seedDoc(name, [text])
-        sqlite.run('INSERT INTO file_chunks(chunk_id, embedding) VALUES (?,?)', [`${id}:0`, JSON.stringify(await embedText(text))])
+        sqlite.run('INSERT INTO file_chunks(chunk_id, embedding) VALUES (?,?)', [`${id}:0`, JSON.stringify(await embedText(text, 'document'))])
         docs.push({ label: name === 'on.txt' ? 'C1' : 'C2', fileId: id, filename: name, summary: null })
       }
       const gathered = { notes: [], seen: new Map(), reads: new Map(), queries: [] as string[], locked: false }
@@ -202,7 +202,7 @@ describe('relevance floor', () => {
     try {
       const { embedText } = await import('../embeddings.ts')
       const id = seedDoc('off.txt', ['Risk norms for driving.'])
-      sqlite.run('INSERT INTO file_chunks(chunk_id, embedding) VALUES (?,?)', [`${id}:0`, JSON.stringify(await embedText('Risk norms for driving.'))])
+      sqlite.run('INSERT INTO file_chunks(chunk_id, embedding) VALUES (?,?)', [`${id}:0`, JSON.stringify(await embedText('Risk norms for driving.', 'document'))])
       const doc = { label: 'C1', fileId: id, filename: 'off.txt', summary: null }
       const gathered = { notes: [], seen: new Map(), reads: new Map(), queries: [] as string[], locked: false }
       const look = await firstLook('Can you check again?', [doc], gathered)
@@ -259,7 +259,7 @@ describe('floor on searches', () => {
       const { embedText } = await import('../embeddings.ts')
       for (const [name, text] of [['on.txt', 'Safety contracts with guarantees.'], ['off.txt', 'Risk norms for driving.']]) {
         const id = seedDoc(name, [text])
-        sqlite.run('INSERT INTO file_chunks(chunk_id, embedding) VALUES (?,?)', [`${id}:0`, JSON.stringify(await embedText(text))])
+        sqlite.run('INSERT INTO file_chunks(chunk_id, embedding) VALUES (?,?)', [`${id}:0`, JSON.stringify(await embedText(text, 'document'))])
       }
       const model = fakeTarget('')
       const f = serve([{ toolCall: { id: 's1', name: 'search_collection', args: { query: 'driving' } } }, { text: ['done'] }, { text: ['Answer.'] }])
@@ -503,7 +503,7 @@ describe('explore turn', () => {
       const { embedText } = await import('../embeddings.ts')
       for (const [name, text] of [['a.txt', 'Contracts with assumptions and guarantees.'], ['b.txt', 'Risk norms for driving.']]) {
         const id = seedDoc(name, [text])
-        sqlite.run('INSERT INTO file_chunks(chunk_id, embedding) VALUES (?,?)', [`${id}:0`, JSON.stringify(await embedText(text))])
+        sqlite.run('INSERT INTO file_chunks(chunk_id, embedding) VALUES (?,?)', [`${id}:0`, JSON.stringify(await embedText(text, 'document'))])
       }
       const f = serve([call('search_collection', { query: 'contracts' }), { text: ['done'] }, { text: ['[C1] has contracts.'] }])
       await runTurn(ctxFor(fakeTarget(f.baseURL)), createSink(captureSSE().stream as never))

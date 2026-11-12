@@ -60,7 +60,7 @@ adminRouter.use('*', authMiddleware)
 adminRouter.use('*', adminMiddleware)
 
 adminRouter.get('/settings', async (c) => {
-  const [memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, ragMinRelevance, attachmentChars, spaceRagBudget, queryReformulation, chatTitleModel, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow, compressHistoryOverflow, resourceSummary, relatedMinSimilarity, relatedMinRelevance, notesRagBudget, topicMinSimilarity, collectionFullTextTokens, collectionFullTextTokensCloud, collectionExploreMaxSteps, collectionExploreMinRelevance, researchMaxTokens, tagMatchSimilarity, tagPlaceSimilarity] = await Promise.all([
+  const [memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, ragMinRelevance, ragMinSimilarity, attachmentChars, spaceRagBudget, queryReformulation, chatTitleModel, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow, compressHistoryOverflow, resourceSummary, relatedMinSimilarity, relatedMinRelevance, notesRagBudget, topicMinSimilarity, collectionFullTextTokens, collectionFullTextTokensCloud, collectionExploreMaxSteps, collectionExploreMinRelevance, researchMaxTokens, tagMatchSimilarity, tagPlaceSimilarity] = await Promise.all([
     memoryTokenBudgetSetting(),
     getNumberSetting('user_memory_token_budget', 300),
     getNumberSetting('dream_hour', -1),
@@ -71,6 +71,7 @@ adminRouter.get('/settings', async (c) => {
     getNumberSetting('rerank_top_n', 15),
     getNumberSetting('rag_top_k', 15),
     getNumberSetting('rag_min_relevance', 0),
+    getNumberSetting('rag_min_similarity', 0),
     getNumberSetting('attachment_chars', 20000),
     spaceRagBudgetSetting(),
     getAppSetting('query_reformulation', 'true').then(v => v === 'true'),
@@ -96,7 +97,7 @@ adminRouter.get('/settings', async (c) => {
   // Read-only, derived from the model context env vars. Two of the settings above are silently
   // clamped by these at use time, so the panel needs them to show what a value actually does
   // rather than what was typed.
-  return c.json({ memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, ragMinRelevance, attachmentChars, spaceRagBudget, queryReformulation, chatTitleModel, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow, compressHistoryOverflow, resourceSummary, relatedMinSimilarity, relatedMinRelevance, notesRagBudget, topicMinSimilarity, collectionFullTextTokens, collectionFullTextTokensCloud, collectionExploreMaxSteps, collectionExploreMinRelevance, researchMaxTokens, tagMatchSimilarity, tagPlaceSimilarity, rerankEnabled: rerankEnabled(), limits: { smallModelInputChars: SMALL_MODEL_INPUT_CHARS, embedInputChars: EMBED_MAX_INPUT_CHARS, scrapeMaxChars: SCRAPE_MAX_CHARS, minUrlContextChars: MIN_URL_CONTEXT_CHARS } })
+  return c.json({ memoryTokenBudget, userMemoryTokenBudget, dreamHour, dreamThreshold, dreamTarget, dreamDeep, memoryExtractChars, rerankTopN, ragTopK, ragMinRelevance, ragMinSimilarity, attachmentChars, spaceRagBudget, queryReformulation, chatTitleModel, rssFeedCharsBudget, fetchMaxPages, fetchMaxUrlContextChars, fetchSummarizeOverflow, compressHistoryOverflow, resourceSummary, relatedMinSimilarity, relatedMinRelevance, notesRagBudget, topicMinSimilarity, collectionFullTextTokens, collectionFullTextTokensCloud, collectionExploreMaxSteps, collectionExploreMinRelevance, researchMaxTokens, tagMatchSimilarity, tagPlaceSimilarity, rerankEnabled: rerankEnabled(), limits: { smallModelInputChars: SMALL_MODEL_INPUT_CHARS, embedInputChars: EMBED_MAX_INPUT_CHARS, scrapeMaxChars: SCRAPE_MAX_CHARS, minUrlContextChars: MIN_URL_CONTEXT_CHARS } })
 })
 
 adminRouter.patch('/settings', zValidator('json', z.object({
@@ -110,6 +111,7 @@ adminRouter.patch('/settings', zValidator('json', z.object({
   rerankTopN: z.number().int().min(1).max(100).optional(),
   ragTopK: z.number().int().min(1).max(100).optional(),
   ragMinRelevance: z.number().min(0).max(1).optional(),
+  ragMinSimilarity: z.number().min(0).max(1).optional(),
   relatedMinSimilarity: z.number().min(0).max(1).optional(),
   relatedMinRelevance: z.number().min(0).max(1).optional(),
   attachmentChars: z.number().int().min(1000).max(500000).optional(),
@@ -148,6 +150,7 @@ adminRouter.patch('/settings', zValidator('json', z.object({
   if (body.rerankTopN != null) ops.push(setAppSetting('rerank_top_n', String(body.rerankTopN)))
   if (body.ragTopK != null) ops.push(setAppSetting('rag_top_k', String(body.ragTopK)))
   if (body.ragMinRelevance != null) ops.push(setAppSetting('rag_min_relevance', String(body.ragMinRelevance)))
+  if (body.ragMinSimilarity != null) ops.push(setAppSetting('rag_min_similarity', String(body.ragMinSimilarity)))
   if (body.relatedMinSimilarity != null) ops.push(setAppSetting('related_min_similarity', String(body.relatedMinSimilarity)))
   if (body.relatedMinRelevance != null) ops.push(setAppSetting('related_min_relevance', String(body.relatedMinRelevance)))
   if (body.attachmentChars != null) ops.push(setAppSetting('attachment_chars', String(body.attachmentChars)))

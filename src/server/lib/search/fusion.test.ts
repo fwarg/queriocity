@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test'
-import { rrfFuse, interleaveSupplements, type ProviderRun } from './fusion.ts'
+import { rrfFuse, interleaveSupplements, interleaveBatches, type ProviderRun } from './fusion.ts'
 import { envPolicy, mergePolicy, engineWeight, hasMajorEngineList, type ProviderPolicy } from './policy.ts'
 import type { SearchProvider } from './types.ts'
 
@@ -99,5 +99,22 @@ describe('policy', () => {
     expect(engineWeight(p, 'marginalia')).toBe(0.5)
     expect(hasMajorEngineList(p)).toBe(true)
     expect(hasMajorEngineList(policy())).toBe(false)
+  })
+})
+
+/** Batches from different queries, none outranking another. Without a reranker the merged list is
+ *  only cut, so a concatenation would keep the first query's results and drop the others whole. */
+describe('interleaveBatches', () => {
+  const hit = (url: string) => ({ title: url, url, content: '' })
+  test('takes every batch\'s best before any batch\'s second', () => {
+    expect(urls(interleaveBatches([[hit('a1'), hit('a2'), hit('a3')], [hit('b1'), hit('b2')], [hit('c1')]])))
+      .toEqual(['a1', 'b1', 'c1', 'a2', 'b2', 'a3'])
+  })
+  test('keeps the first occurrence of a URL two queries both found', () => {
+    expect(urls(interleaveBatches([[hit('a1'), hit('x')], [hit('x'), hit('b2')]]))).toEqual(['a1', 'x', 'b2'])
+  })
+  test('copes with no batches and empty ones', () => {
+    expect(interleaveBatches([])).toEqual([])
+    expect(urls(interleaveBatches([[], [hit('b1')]]))).toEqual(['b1'])
   })
 })

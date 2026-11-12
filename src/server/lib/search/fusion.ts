@@ -33,6 +33,24 @@ export function dedupeByDomain<T extends SearchResult>(list: T[]): T[] {
   })
 }
 
+/** Round-robin over result batches — every batch's best, then every batch's second best — keeping
+ *  the first occurrence of each URL. For batches from *different queries*, where no batch outranks
+ *  another: concatenated instead, a later cut to the top N keeps the first query's results and
+ *  drops the rest, which is what happens without a reranker to reorder them first. */
+export function interleaveBatches<T extends SearchResult>(batches: T[][]): T[] {
+  const seen = new Set<string>()
+  const out: T[] = []
+  for (let i = 0; i < Math.max(0, ...batches.map(b => b.length)); i++) {
+    for (const b of batches) {
+      if (i < b.length && !seen.has(b[i].url)) {
+        seen.add(b[i].url)
+        out.push(b[i])
+      }
+    }
+  }
+  return out
+}
+
 /** Concatenate result batches, keeping the first occurrence of each URL. */
 export function mergeBatches<T extends SearchResult>(batches: T[][]): T[] {
   const seen = new Set<string>()

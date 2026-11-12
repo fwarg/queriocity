@@ -1,4 +1,4 @@
-import { embedTexts } from '../embeddings.ts'
+import { embedTexts, embedPrefix } from '../embeddings.ts'
 import { modelTarget, targetLabel } from '../llm.ts'
 import { listTags } from './tags.ts'
 import { cosineSimilarity } from './topic-cluster.ts'
@@ -106,12 +106,12 @@ export async function similarTagPairs(paths: string[], floor: number): Promise<A
 }
 
 async function vectorsFor(paths: string[]): Promise<number[][]> {
-  const model = targetLabel(modelTarget('embed'))
+  const model = `${targetLabel(modelTarget('embed'))}\n${embedPrefix('similarity')}`
   const key = (path: string) => `${model}\n${asPhrase(path)}`
   if (phraseVectors.size + paths.length > MAX_CACHED_PHRASES) phraseVectors.clear()
   const missing = [...new Set(paths.filter(p => !phraseVectors.has(key(p))))]
   if (missing.length) {
-    const vectors = await embedTexts(missing.map(asPhrase))
+    const vectors = await embedTexts(missing.map(asPhrase), 'similarity')
     vectors.forEach((v, i) => phraseVectors.set(key(missing[i]), v))
   }
   return paths.map(p => phraseVectors.get(key(p))!)

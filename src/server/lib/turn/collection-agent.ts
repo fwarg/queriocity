@@ -194,7 +194,7 @@ function exploreTools(ctx: TurnContext, sink: TurnSink, docs: Doc[], gathered: G
         // matches (one document's whole treatment of a topic scored 0.05). Only those above it are
         // passed to the answer unasked; anything the model finds relevant it notes.
         gathered.queries.push(query)
-        const found = searchSpread(one ? [one] : docs, await embedText(query), ctx.locked)
+        const found = searchSpread(one ? [one] : docs, await embedText(query, 'query'), ctx.locked)
         const { kept } = await relevantHits(query, found, gathered.floor)
         for (const h of kept) seeHit(h, gathered)
         return found.map(formatHit).join('\n\n') || 'Nothing found.'

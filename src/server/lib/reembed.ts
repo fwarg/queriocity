@@ -49,7 +49,7 @@ async function reembedTable(t: ChunkTable): Promise<number> {
     ).all() as Array<{ chunkId: string; content: string }>
     if (!page.length) break
 
-    const embeddings = await embedTexts(page.map(c => c.content))
+    const embeddings = await embedTexts(page.map(c => c.content), 'document')
     sqlite.transaction(() => {
       page.forEach((chunk, i) => insert.run(chunk.chunkId, JSON.stringify(embeddings[i])))
     })()

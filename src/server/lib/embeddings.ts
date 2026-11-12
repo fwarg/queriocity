@@ -26,20 +26,51 @@ let warnedTruncation = false
 const stripLoneSurrogates = (text: string): string =>
   text.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '')
 
-function bound(text: string): string {
+function bound(text: string, max = EMBED_MAX_CHARS): string {
   const clean = stripLoneSurrogates(text)
-  if (clean.length <= EMBED_MAX_CHARS) return clean
+  if (clean.length <= max) return clean
   if (!warnedTruncation) {
     warnedTruncation = true
-    console.warn(`  [embed] input of ${clean.length} chars truncated to ${EMBED_MAX_CHARS} (EMBED_MAX_INPUT_CHARS). Expected for a query carrying a large attachment — a shorter query embeds to a sharper vector. If it fires for stored chunks, raise it.`)
+    console.warn(`  [embed] input of ${clean.length} chars truncated to ${max} (EMBED_MAX_INPUT_CHARS). Expected for a query carrying a large attachment — a shorter query embeds to a sharper vector. If it fires for stored chunks, raise it.`)
   }
   // Truncation is itself a cut at a code-unit index, so it can orphan a surrogate of its own.
-  return stripLoneSurrogates(clean.slice(0, EMBED_MAX_CHARS))
+  return stripLoneSurrogates(clean.slice(0, max))
 }
 
-export async function embedText(text: string): Promise<number[]> {
+/** What a text is embedded *as*. Asymmetric retrieval models are trained on a marker telling a
+ *  question from the passage that answers it, and embed each differently — so the same string needs
+ *  a different prefix depending on which side of the comparison it is on.
+ *
+ *  - `query`: compared against stored documents (a search, a message recalling memories).
+ *  - `document`: stored to be found (file and chat chunks, memories).
+ *  - `similarity`: compared with its own kind (tag and topic phrases).
+ *
+ *  Required at every call site rather than defaulted, so a new caller has to decide which side it is. */
+export type EmbedRole = 'query' | 'document' | 'similarity'
+
+/** The configured prefix for a role, read per call like the model config. Empty unless set, which is
+ *  right for symmetric models and keeps a deployment that sets none exactly as before. Similarity
+ *  falls back to the query prefix: models with only query/passage markers (E5, Nemotron) put the
+ *  query marker on both sides of a symmetric comparison.
+ *
+ *  Changing EMBED_DOCUMENT_PREFIX (or the model) makes every stored vector stale — db.ts notices and
+ *  rebuilds them from stored text at the next start. */
+export function embedPrefix(role: EmbedRole): string {
+  const query = process.env.EMBED_QUERY_PREFIX ?? ''
+  if (role === 'query') return query
+  if (role === 'document') return process.env.EMBED_DOCUMENT_PREFIX ?? ''
+  return process.env.EMBED_SIMILARITY_PREFIX ?? query
+}
+
+/** Prefixed and bounded, with the bound applied to the text alone so the prefix is never cut. */
+function prepare(text: string, role: EmbedRole): string {
+  const prefix = embedPrefix(role)
+  return prefix + bound(text, Math.max(0, EMBED_MAX_CHARS - prefix.length))
+}
+
+export async function embedText(text: string, role: EmbedRole): Promise<number[]> {
   return timed('embed', targetLabel(modelTarget('embed')), async () => {
-    const { embedding } = await embed({ model: getEmbeddingModel(), value: bound(text) })
+    const { embedding } = await embed({ model: getEmbeddingModel(), value: prepare(text, role) })
     return embedding
   })
 }
@@ -72,11 +103,11 @@ function batchByTotalChars(values: string[], maxChars: number): string[][] {
   return batches
 }
 
-export async function embedTexts(texts: string[]): Promise<number[][]> {
+export async function embedTexts(texts: string[], role: EmbedRole): Promise<number[][]> {
   // Per string: the quality bound. Per request: the capacity bound. Two different numbers, which is
   // the whole point of the split — raising the server's context buys bigger batches without
   // quietly making each vector blurrier.
-  const batches = batchByTotalChars(texts.map(bound), EMBED_BATCH_CHARS)
+  const batches = batchByTotalChars(texts.map(t => prepare(t, role)), EMBED_BATCH_CHARS)
   return timed('embed', `${targetLabel(modelTarget('embed'))} ×${texts.length}${batches.length > 1 ? ` in ${batches.length} batches` : ''}`, async () => {
     const out: number[][] = []
     // Serial rather than parallel: these servers are usually a single local process, and firing
@@ -89,4 +120,4 @@ export async function embedTexts(texts: string[]): Promise<number[][]> {
   })
 }
 
-export const _test = { bound, batchByTotalChars, EMBED_MAX_CHARS, EMBED_BATCH_CHARS }
+export const _test = { bound, prepare, batchByTotalChars, EMBED_MAX_CHARS, EMBED_BATCH_CHARS }

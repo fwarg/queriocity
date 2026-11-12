@@ -10,7 +10,7 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { startFakeEmbeddings } from './test-support/fake-embeddings.ts'
 import { envOverride } from './test-support/env-override.ts'
 
-const { sqlite, db, users, uploadedFiles, spaceFiles, spaces, resetFileEmbeddings, EMBED_DIMS } = await import('./db.ts')
+const { sqlite, db, users, uploadedFiles, spaceFiles, spaces, resetFileEmbeddings, ensureVectorTables, EMBED_DIMS } = await import('./db.ts')
 const { eq } = await import('drizzle-orm')
 const { reembedMissingVectors } = await import('./reembed.ts')
 
@@ -94,6 +94,47 @@ describe('an embedding-dimension change', () => {
     // Chunk boundaries depend on the mime type, not the model, so the text must come back identical
     // — a re-chunk here would silently change what every stored citation points at.
     expect(sqlite.query('SELECT chunk_id AS id, content FROM file_chunk_meta ORDER BY chunk_id').all()).toEqual(before)
+  })
+})
+
+/** A different model or document prefix at the *same* dimension fits the table, so nothing fails:
+ *  old vectors just sit in another space from new ones and searches match them badly. */
+describe('an embedding model or document-prefix change', () => {
+  const fingerprint = () => (sqlite.query("SELECT value FROM app_settings WHERE key = 'embed_fingerprint'").get() as { value: string } | null)?.value
+
+  test('drops the vectors and keeps the text, so re-embedding recovers', async () => {
+    seedResource('f1', 'report.pdf', ['First chunk.', 'Second chunk.'])
+    ensureVectorTables()
+    const restore = envOverride({ EMBED_DOCUMENT_PREFIX: 'title: none | text: ' })
+    try {
+      ensureVectorTables()
+      expect(vectorCount()).toBe(0)
+      expect((sqlite.query('SELECT count(*) AS n FROM file_chunk_meta').get() as { n: number }).n).toBe(2)
+      expect(fingerprint()).toContain('title: none | text: ')
+      await reembedMissingVectors()
+      expect(vectorCount()).toBe(2)
+    } finally {
+      restore()
+      ensureVectorTables()
+      // Every vector table was dropped, chat's included, and the database is shared by every test
+      // file in the process — so rebuild them all rather than leave other files' chunks unvectorised.
+      await reembedMissingVectors()
+    }
+  })
+
+  test('keeps the vectors when nothing changed', () => {
+    seedResource('f1', 'report.pdf', ['First chunk.'])
+    ensureVectorTables()
+    ensureVectorTables()
+    expect(vectorCount()).toBe(1)
+  })
+
+  test('records a database that never had a fingerprint rather than rebuilding it', () => {
+    seedResource('f1', 'report.pdf', ['First chunk.'])
+    sqlite.run("DELETE FROM app_settings WHERE key = 'embed_fingerprint'")
+    ensureVectorTables()
+    expect(vectorCount()).toBe(1)
+    expect(fingerprint()).toBeDefined()
   })
 })
 

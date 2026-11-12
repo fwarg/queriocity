@@ -9,6 +9,6 @@ dist/
 bun.lockb
 .DS_Store
 docker/env.local
-docker/data/
+docker/data*/
 tmp/
 production/

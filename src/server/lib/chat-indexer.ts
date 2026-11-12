@@ -68,7 +68,7 @@ export async function indexContents(sessionId: string, contents: string[]): Prom
   const chunks = newChunks(sessionId, contents)
   if (!chunks.length) return 0
 
-  const embeddings = await embedTexts(chunks.map(c => c.content))
+  const embeddings = await embedTexts(chunks.map(c => c.content), 'document')
 
   const insertMeta = sqlite.prepare('INSERT INTO chat_chunk_meta(chunk_id, session_id, content) VALUES (?,?,?)')
   const insertVec = sqlite.prepare('INSERT INTO chat_chunks(chunk_id, embedding) VALUES (?,?)')

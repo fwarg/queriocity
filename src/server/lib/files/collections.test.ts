@@ -15,7 +15,7 @@ const { embedText } = await import('../embeddings.ts')
 const { ownedCollectionIds, searchCollections } = await import('./collections.ts')
 const { readsConfidential, trackLeftOut } = await import('./confidential.ts')
 const { confidentialInScope } = await import('./collection-coverage.ts')
-const { searchUploads } = await import('./uploads-search.ts')
+const { searchUploads, aboveSimilarity } = await import('./uploads-search.ts')
 
 const OWNER = 'coll-owner'
 const STRANGER = 'coll-stranger'
@@ -64,7 +64,7 @@ async function seedResource(id: string, filename: string, content: string, group
   )
   sqlite.run('INSERT INTO file_chunk_meta(chunk_id, file_id, content) VALUES (?,?,?)', [`${id}:0`, id, content])
   sqlite.run('INSERT INTO file_chunks(chunk_id, embedding) VALUES (?,?)',
-    [`${id}:0`, JSON.stringify(await embedText(content))])
+    [`${id}:0`, JSON.stringify(await embedText(content, 'document'))])
   for (const groupId of groupIds) {
     sqlite.run('INSERT INTO space_files(space_id, file_id) VALUES (?,?)', [groupId, id])
   }
@@ -99,7 +99,7 @@ describe('searchCollections', () => {
     await seedResource('f1', 'retrieval.pdf', 'Dense retrieval outperforms sparse retrieval on this benchmark.', ['c1'])
     await seedResource('f2', 'protocol.pdf', 'The wire protocol frames every message with a length prefix.', ['c2'])
 
-    const hits = await searchCollections(['c1', 'c2'], 'retrieval', await embedText('retrieval'), 10)
+    const hits = await searchCollections(['c1', 'c2'], 'retrieval', await embedText('retrieval', 'query'), 10)
     expect(hits.map(h => h.filename).sort()).toEqual(['protocol.pdf', 'retrieval.pdf'])
   })
 
@@ -110,7 +110,7 @@ describe('searchCollections', () => {
     await seedResource('f2', 'protocol.pdf', 'The wire protocol frames every message with a length prefix.', ['c2'])
 
     const query = 'dense retrieval benchmark'
-    const hits = await searchCollections(['c1', 'c2'], query, await embedText(query), 10)
+    const hits = await searchCollections(['c1', 'c2'], query, await embedText(query, 'query'), 10)
     expect(hits[0].filename).toBe('retrieval.pdf')
   })
 
@@ -120,7 +120,7 @@ describe('searchCollections', () => {
     await seedGroup('c2', 'Reading list', 'collection')
     await seedResource('f1', 'shared.pdf', 'A document that belongs to both collections at once.', ['c1', 'c2'])
 
-    const hits = await searchCollections(['c1', 'c2'], 'document', await embedText('document'), 10)
+    const hits = await searchCollections(['c1', 'c2'], 'document', await embedText('document', 'query'), 10)
     expect(hits).toHaveLength(1)
   })
 
@@ -130,7 +130,7 @@ describe('searchCollections', () => {
     await seedResource('f1', 'tagged.pdf', 'This document is filed in the selected collection.', ['c1'])
     await seedResource('f2', 'elsewhere.pdf', 'This document is filed in a space instead.', ['s1'])
 
-    const hits = await searchCollections(['c1'], 'document', await embedText('document'), 10)
+    const hits = await searchCollections(['c1'], 'document', await embedText('document', 'query'), 10)
     expect(hits.map(h => h.filename)).toEqual(['tagged.pdf'])
   })
 
@@ -145,7 +145,7 @@ describe('searchCollections', () => {
     for (let i = 0; i < 5; i++) {
       await seedResource(`f${i}`, `doc${i}.pdf`, `Document number ${i} about retrieval and ranking.`, ['c1'])
     }
-    expect(await searchCollections(['c1'], 'retrieval', await embedText('retrieval'), 2)).toHaveLength(2)
+    expect(await searchCollections(['c1'], 'retrieval', await embedText('retrieval', 'query'), 2)).toHaveLength(2)
   })
 })
 
@@ -165,14 +165,14 @@ describe('confidential resources', () => {
 
   test('an unlocked turn leaves them out of collection and library search', async () => {
     await seedLibrary()
-    const embedding = await embedText('retrieval')
+    const embedding = await embedText('retrieval', 'query')
     expect(ids(await searchCollections(['c1'], 'retrieval', embedding))).toEqual(['open'])
     expect(ids(await searchUploads('retrieval', OWNER))).toEqual(['open'])
   })
 
   test('a locked turn reads them', async () => {
     await seedLibrary()
-    const embedding = await embedText('retrieval')
+    const embedding = await embedText('retrieval', 'query')
     expect(ids(await searchCollections(['c1'], 'retrieval', embedding, undefined, true))).toEqual(['open', 'own', 'viacoll'])
     expect(ids(await searchUploads('retrieval', OWNER, undefined, undefined, undefined, true))).toEqual(['open', 'own', 'viacoll'])
   })
@@ -192,5 +192,65 @@ describe('confidential resources', () => {
     const leftOut = new Set<string>()
     await trackLeftOut(leftOut, () => searchUploads('retrieval', OWNER))
     expect([...leftOut].sort()).toEqual(['own', 'viacoll'])
+  })
+})
+
+/** Without a reranker, a cosine floor is what keeps a barely related excerpt out of the prompt —
+ *  so the similarity on each hit has to be the real cosine, not something derived from L2 distance. */
+describe('similarity without a reranker', () => {
+  const setFloor = (v: number) => sqlite.run(
+    "INSERT INTO app_settings (key, value) VALUES ('rag_min_similarity', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [String(v)])
+  const clearFloor = () => sqlite.run("DELETE FROM app_settings WHERE key = 'rag_min_similarity'")
+
+  async function seedTwo() {
+    await seedResource('exact', 'exact.txt', 'Dense retrieval outperforms sparse retrieval.', [])
+    await seedResource('other', 'other.txt', 'The wire protocol frames every message with a length prefix.', [])
+  }
+
+  test('each hit carries its cosine similarity to the query', async () => {
+    await seedTwo()
+    const rows = await searchUploads('Dense retrieval outperforms sparse retrieval.', OWNER)
+    const exact = rows.find(r => r.fileId === 'exact')!
+    const other = rows.find(r => r.fileId === 'other')!
+    // No prefixes are configured here, so query and document embed identically: an exact match is 1.
+    expect(exact.similarity).toBeCloseTo(1, 4)
+    expect(other.similarity).toBeLessThan(exact.similarity)
+    expect(other.similarity).toBeGreaterThanOrEqual(-1)
+  })
+
+  test('a caller asking for a floor gets the similarity floor instead of the reranker one', async () => {
+    await seedTwo()
+    setFloor(0.99)
+    try {
+      const floored = await searchUploads('Dense retrieval outperforms sparse retrieval.', OWNER, undefined, 0)
+      expect(floored.map(r => r.fileId)).toEqual(['exact'])
+      // No floor asked for: everything nearest comes back, as before.
+      expect((await searchUploads('Dense retrieval outperforms sparse retrieval.', OWNER)).length).toBe(2)
+    } finally {
+      clearFloor()
+    }
+  })
+
+  test('a floor of 0 keeps everything', () => {
+    const rows = [{ similarity: 0.1 }, { similarity: -0.2 }]
+    expect(aboveSimilarity(rows, 0, 'test')).toEqual(rows)
+    expect(aboveSimilarity(rows, 0.05, 'test')).toEqual([{ similarity: 0.1 }])
+  })
+})
+
+/** The prefix is only worth anything if it is what the server actually embeds. */
+describe('embedding prefixes on the wire', () => {
+  test('a query and a stored chunk reach the server with their own prefixes', async () => {
+    const restore = envOverride({ EMBED_QUERY_PREFIX: 'query: ', EMBED_DOCUMENT_PREFIX: 'passage: ' })
+    try {
+      const before = server.requests.length
+      await embedText('reset my password', 'query')
+      await embedText('Click forgot password.', 'document')
+      const sent = server.requests.slice(before).map(r => JSON.stringify(r))
+      expect(sent[0]).toContain('query: reset my password')
+      expect(sent[1]).toContain('passage: Click forgot password.')
+    } finally {
+      restore()
+    }
   })
 })

@@ -662,7 +662,8 @@ separated from the document they were asked of.
 
 ### Changing the embedding model
 
-Changing `EMBED_DIMENSIONS` invalidates every stored vector, and nothing else. The chunk *text* is
+Changing `EMBED_DIMENSIONS`, `EMBED_MODEL` or `EMBED_DOCUMENT_PREFIX` invalidates every stored
+vector, and nothing else. The chunk *text* is
 held in the database beside each vector, and chunk boundaries follow the file type rather than the
 model — so recovery is re-embedding what is already stored. No resource is deleted, nothing is
 re-chunked, and nothing has to be uploaded again. Space tags, notes derived from a resource, and the
@@ -676,6 +677,9 @@ for the following start rather than losing anything.
 Because nothing is destroyed, `ALLOW_EMBED_RESET` is obsolete: it is no longer read, and a dimension
 change no longer refuses to start. If your embedding model reports a different dimension than you
 configured, the startup config check says so.
+
+A new model usually also needs new prefixes and recalibrated similarity thresholds — see
+[configuration.md](configuration.md) for both, with measured values for specific models.
 
 ---
 
@@ -1529,6 +1533,9 @@ EMBED_DIMENSIONS=1536                       # must match the model's output size
 #                                            # match everything weakly, so this stays small on
 #                                            # purpose; it bounds *queries*, which are never chunked.
 #                                            # Clamped to fit one request.
+# EMBED_QUERY_PREFIX="query: "               # for asymmetric models: what marks a search, a stored
+# EMBED_DOCUMENT_PREFIX="passage: "          # text, and a like-with-like comparison. Quoted, so the
+# EMBED_SIMILARITY_PREFIX=                   # trailing space survives. See configuration.md.
 
 # ── Reranker (optional) ───────────────────────────────────────────────────────
 # When RERANK_MODEL is set, a cross-encoder reranker reorders accumulated sources
