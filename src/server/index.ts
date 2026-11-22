@@ -35,6 +35,7 @@ import { runDream } from './lib/memory/index.ts'
 import { runDueMonitors } from './lib/monitor-runner.ts'
 import { validateConfig, checkEmbeddingDimensions, checkAttachmentBudget } from './lib/config-check.ts'
 import { purgeOrphanVectors } from './lib/vector-cleanup.ts'
+import { pruneTraces } from './lib/feedback.ts'
 import { reindexNotes, simplifyNoteCitations } from './lib/files/notes.ts'
 import { reembedMissingVectors } from './lib/reembed.ts'
 import { describeModels, modelTarget, EMBED_BATCH_CHARS, EMBED_MAX_INPUT_CHARS } from './lib/llm.ts'
@@ -223,8 +224,19 @@ async function rebuildEmbeddings(): Promise<void> {
 
 preflight().catch(() => {})
 
+// Unrated research traces expire after TRACE_RETENTION_DAYS (lib/feedback.ts); an indexed delete,
+// cheap enough to run on every tick rather than tracking when it last ran.
+const pruneExpiredTraces = () => {
+  try {
+    const n = pruneTraces()
+    if (n) console.log(`  [feedback] pruned ${n} unrated research trace${n === 1 ? '' : 's'}`)
+  } catch (e) { console.error('[feedback] trace prune failed:', e) }
+}
+pruneExpiredTraces()
+
 setInterval(async () => {
   runDueMonitors().catch(e => console.error('[monitors] run failed:', e))
+  pruneExpiredTraces()
 
   const hour = await getNumberSetting('dream_hour', -1)
   if (hour < 0) return

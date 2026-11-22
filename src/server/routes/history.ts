@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { db, sqlite, chatSessions, messages, spaces, spaceMemories, monitorRuns } from '../lib/db.ts'
+import { db, sqlite, chatSessions, messages, spaces, spaceMemories, monitorRuns, users, parseSettings } from '../lib/db.ts'
 import { eq, and, desc, ne, count, isNull, or, sql, inArray } from 'drizzle-orm'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
@@ -10,6 +10,8 @@ import { deleteSessionImages } from '../lib/image-store.ts'
 import { canMoveChat } from '../lib/space-lock.ts'
 import { deindexContent, deindexSession, indexSession } from '../lib/chat-indexer.ts'
 import { parseLockedBy } from '../lib/files/confidential.ts'
+import { feedbackFor, setFeedback, deleteFeedback } from '../lib/feedback.ts'
+import { FEEDBACK_REASONS, FEEDBACK_COMMENT_MAX } from '../../shared/feedback.ts'
 
 export const historyRouter = new Hono<AppEnv>()
 
@@ -109,7 +111,30 @@ historyRouter.get('/:id', async (c) => {
   const byMessage = new Map<string, Array<{ id: string; title: string }>>()
   for (const n of notes) byMessage.set(n.messageId, [...(byMessage.get(n.messageId) ?? []), { id: n.id, title: n.title }])
 
-  return c.json({ session, messages: msgs.map(m => ({ ...m, savedNotes: byMessage.get(m.id) ?? [] })) })
+  const feedback = feedbackFor(id)
+
+  return c.json({ session, messages: msgs.map(m => ({ ...m, savedNotes: byMessage.get(m.id) ?? [], feedback: feedback.get(m.id) })) })
+})
+
+const feedbackSchema = z.object({
+  rating: z.union([z.literal(1), z.literal(-1), z.null()]),
+  reasons: z.array(z.enum(FEEDBACK_REASONS)).max(FEEDBACK_REASONS.length).transform(r => [...new Set(r)]),
+  comment: z.string().max(FEEDBACK_COMMENT_MAX),
+})
+
+/** Rates one answer. Refused unless the user opted in: the setting is the consent to keep it. */
+historyRouter.put('/:id/messages/:mid/feedback', zValidator('json', feedbackSchema), async (c) => {
+  const userId = c.get('userId')
+  const id = c.req.param('id')
+  const mid = c.req.param('mid')
+  const user = await db.select({ settings: users.settings }).from(users).where(eq(users.id, userId)).get()
+  if (parseSettings(user?.settings ?? '{}').researchFeedback !== true) return c.json({ error: 'Answer feedback is turned off in your settings' }, 403)
+  const answer = await db.select({ id: messages.id }).from(messages)
+    .innerJoin(chatSessions, eq(chatSessions.id, messages.sessionId))
+    .where(and(eq(messages.id, mid), eq(messages.sessionId, id), eq(messages.role, 'assistant'), eq(chatSessions.userId, userId))).get()
+  if (!answer) return c.json({ error: 'Not found' }, 404)
+  setFeedback(id, mid, c.req.valid('json'))
+  return c.json({ ok: true })
 })
 
 /** Pins or unpins one message: a pinned message is kept in full when the chat outgrows the context. */
@@ -137,8 +162,9 @@ historyRouter.delete('/:id/messages', zValidator('json', z.object({ ids: z.array
 
   const deleted = await db.delete(messages)
     .where(and(eq(messages.sessionId, id), inArray(messages.id, c.req.valid('json').ids)))
-    .returning({ content: messages.content })
+    .returning({ id: messages.id, content: messages.content })
   if (!deleted.length) return c.json({ error: 'Not found' }, 404)
+  deleteFeedback(deleted.map(m => m.id))
   // The stored report indexes into the old message list; the next turn writes a fresh one.
   await db.update(chatSessions).set({ contextReport: null }).where(eq(chatSessions.id, id))
   for (const m of deleted) deindexContent(id, m.content)

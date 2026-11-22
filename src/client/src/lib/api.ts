@@ -6,6 +6,7 @@ import type { ActiveRecipe, RecipeSettings } from '@shared/recipes.ts'
 import type { ApiErrorBody, ErrorCode } from '@shared/error-codes.ts'
 import type { LlmCatalogue, LlmAccess, UsageRow, AnswerModel, ModelChoices } from '@shared/llm-catalogue.ts'
 import type { CollectionMode } from '@shared/context.ts'
+import type { MessageFeedback } from '@shared/feedback.ts'
 
 /** An API failure, carrying the server's stable code where the route sends one.
  *
@@ -104,6 +105,8 @@ export interface Message {
   savedNotes?: Array<{ id: string; title: string }>
   /** The picked model that wrote this answer; absent for the default model. */
   model?: AnswerModel
+  /** The user's rating of this answer, when they opted in to answer feedback and left one. */
+  feedback?: MessageFeedback
 }
 
 // Auth — cookies are sent automatically by the browser
@@ -411,6 +414,11 @@ function toMessages(messages: unknown): Message[] {
 
 export async function setMessagePinned(sessionId: string, messageId: string, pinned: boolean): Promise<void> {
   await send(`${BASE}/history/${sessionId}/messages/${messageId}`, 'Could not update the pin', { method: 'PATCH', json: { pinned } })
+}
+
+/** Rates one stored answer; replaces any earlier rating of it. */
+export async function setMessageFeedback(sessionId: string, messageId: string, feedback: MessageFeedback): Promise<void> {
+  await send(`${BASE}/history/${sessionId}/messages/${messageId}/feedback`, 'Could not save the feedback', { method: 'PUT', json: feedback })
 }
 
 /** Deletes one turn (a question and its answer) from a stored chat. */

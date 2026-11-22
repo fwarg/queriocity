@@ -1,0 +1,25 @@
+// Seed questions for scripts/research-eval.ts: one JSON object per line.
+// Answers are chosen to be stable over time. Categories: control (a model likely knows it without
+// searching), lookup (a specific fact worth searching for), multihop (needs two facts combined).
+{"id": "sqlite-year", "category": "control", "question": "In what year was the SQLite database engine first released?", "answer": "2000"}
+{"id": "dagen-h", "category": "control", "question": "In which year did Sweden switch from driving on the left to driving on the right?", "answer": "1967"}
+{"id": "hubble-launch", "category": "control", "question": "In what year was the Hubble Space Telescope launched?", "answer": "1990"}
+{"id": "nunavut-capital", "category": "control", "question": "What is the capital of the Canadian territory Nunavut?", "answer": "Iqaluit"}
+{"id": "vasa-sank", "category": "control", "question": "In which year did the Swedish warship Vasa sink on its maiden voyage?", "answer": "1628"}
+{"id": "bun-creator", "category": "lookup", "question": "Who created the Bun JavaScript runtime?", "answer": "Jarred Sumner"}
+{"id": "attention-first-author", "category": "lookup", "question": "Who is the first-listed author of the paper 'Attention Is All You Need'?", "answer": "Ashish Vaswani", "aliases": ["Vaswani"]}
+{"id": "rfc-9110", "category": "lookup", "question": "What is the title of RFC 9110?", "answer": "HTTP Semantics"}
+{"id": "rfc-json", "category": "lookup", "question": "Which RFC number is the current IETF standard for the JSON data interchange format?", "answer": "RFC 8259", "aliases": ["8259"]}
+{"id": "llama-server-port", "category": "lookup", "question": "What TCP port does llama.cpp's llama-server listen on by default?", "answer": "8080"}
+{"id": "searxng-port", "category": "lookup", "question": "What port does SearXNG's built-in web server listen on by default, according to its default settings.yml?", "answer": "8888"}
+{"id": "sqlite-license", "category": "lookup", "question": "Under what license is the SQLite source code distributed?", "answer": "public domain"}
+{"id": "turning-torso-height", "category": "lookup", "question": "How tall is the Turning Torso building in Malmö, in metres?", "answer": "190 metres", "aliases": ["190 m", "190"]}
+{"id": "turning-torso-architect", "category": "lookup", "question": "Which architect designed the Turning Torso in Malmö?", "answer": "Santiago Calatrava", "aliases": ["Calatrava"]}
+{"id": "oresund-open", "category": "lookup", "question": "In what year did the Öresund Bridge between Denmark and Sweden open to traffic?", "answer": "2000"}
+{"id": "nobel-lit-2023", "category": "lookup", "question": "Who received the Nobel Prize in Literature in 2023?", "answer": "Jon Fosse"}
+{"id": "jwst-rocket", "category": "lookup", "question": "Which rocket launched the James Webb Space Telescope?", "answer": "Ariane 5"}
+{"id": "chatgpt-release", "category": "lookup", "question": "On what date was ChatGPT first released to the public?", "answer": "30 November 2022", "aliases": ["November 30, 2022", "2022-11-30"]}
+{"id": "vasa-salvage-gap", "category": "multihop", "question": "How many years passed between the sinking of the Swedish warship Vasa and the year it was salvaged?", "answer": "333 years", "aliases": ["333"]}
+{"id": "oresund-nobel", "category": "multihop", "question": "Who won the Nobel Prize in Literature in the year the Öresund Bridge opened?", "answer": "Gao Xingjian"}
+{"id": "hubble-olympics", "category": "multihop", "question": "Which city hosted the Summer Olympics two years after the Hubble Space Telescope was launched?", "answer": "Barcelona"}
+{"id": "torso-vs-bridge", "category": "multihop", "question": "Which opened first: the Öresund Bridge or the Turning Torso in Malmö, and by how many years?", "answer": "The Öresund Bridge, by 5 years", "aliases": ["Öresund Bridge opened first, 5 years earlier"]}

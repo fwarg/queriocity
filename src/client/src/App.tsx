@@ -575,6 +575,7 @@ export default function App() {
           querySuggestions={currentUser.settings?.querySuggestions !== false}
           followUpSuggestions={currentUser.settings?.followUpSuggestions !== false}
           userMemory={currentUser.settings?.userMemory === true}
+          researchFeedback={currentUser.settings?.researchFeedback === true}
           imageWatermark={currentUser.settings?.imageWatermark !== false}
           fontSize={currentUser.settings?.fontSize ?? 17}
           theme={currentUser.settings?.theme ?? DEFAULT_THEME}
@@ -800,6 +801,7 @@ export default function App() {
                   onDeleteTurn={busy ? undefined : deleteTurn}
                   focusMessageId={focusMessageId}
                   onNotesChanged={reloadFiles}
+                  feedbackEnabled={currentUser?.settings?.researchFeedback === true}
                   styleNoteTitle={selectedCollections.length ? t('recipe.styleNoteTitle', { name: selectedCollections.map(id => spaces.find(sp => sp.id === id)?.name).filter(Boolean).join(', ') }) : undefined}
                 />
               </ImageCaptionContext.Provider>

@@ -347,7 +347,31 @@ const INDEXES = `
 export const SCHEMA = TABLES + INDEXES
 
 /** Changes after the baseline: entry i takes a database from BASELINE_VERSION + i to the next. */
-export const MIGRATIONS: ReadonlyArray<(sqlite: Database) => void> = []
+export const MIGRATIONS: ReadonlyArray<(sqlite: Database) => void> = [
+  // 3 → 4: answer feedback and research traces (lib/feedback.ts). Keyed by message id without a
+  // foreign key on it: a retry deletes the answer it replaces, and that rejected answer is exactly
+  // the example worth keeping. The session cascade still removes both with the chat or its user.
+  sqlite => sqlite.run(`
+    CREATE TABLE message_feedback (
+      message_id  TEXT PRIMARY KEY,
+      session_id  TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+      rating      INTEGER CHECK(rating IN (-1, 1)),
+      reasons     TEXT,
+      comment     TEXT,
+      regenerated INTEGER NOT NULL DEFAULT 0,
+      updated_at  INTEGER NOT NULL
+    );
+    CREATE INDEX idx_message_feedback_session ON message_feedback(session_id);
+    CREATE TABLE research_traces (
+      message_id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+      trace      BLOB NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX idx_research_traces_session ON research_traces(session_id);
+    CREATE INDEX idx_research_traces_created ON research_traces(created_at);
+  `),
+]
 
 export const LATEST_VERSION = BASELINE_VERSION + MIGRATIONS.length
 

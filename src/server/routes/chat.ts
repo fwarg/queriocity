@@ -34,6 +34,7 @@ import {
 } from '../lib/stream-buffer.ts'
 import { deleteSupersededImages } from '../lib/image-store.ts'
 import { linkNotesToAnswer } from '../lib/files/agent-notes.ts'
+import { TraceRecorder, saveTrace, markRegenerated } from '../lib/feedback.ts'
 import { runTurn, createSink, toSearxngCategories, userQueryOf, documentSet, KEEPALIVE_INTERVAL_MS, type TurnContext } from '../lib/turn/index.ts'
 
 
@@ -310,7 +311,9 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     abortSignal: run.controller.signal,
   }
   return streamRun(c, run, async (out) => {
-    const sink = createSink(out, approvalRequester(run, out))
+    const recorder = traceRecorder(ctx, recipe?.name, ephemeral)
+    const live = createSink(out, approvalRequester(run, out))
+    const sink = recorder ? recorder.wrap(live) : live
     await sink.emit({ type: 'session', sessionId: sid })
     for (const event of modelEvents(resolved)) await sink.emit(event)
     // An unlocked turn leaves confidential resources out — of the picked collections, and of every
@@ -331,9 +334,27 @@ chatRouter.post('/', rateLimitByUser(chatLimiter, 'chat'), zValidator('json', ch
     }
     // The latest report is also stored with the chat, so the meter reappears when it is reopened.
     // Read now, not before the turn: the hosting provider is known only once the calls report it.
-    await finishTurn(out, { ...tail, fullContent: result.content, sources: result.sources, fileSources: result.fileSources, context: sink.lastContext, aborted, model, onStored: id => { attachAnswer(resolved, id); linkNotesToAnswer(userId, result.savedNoteIds ?? [], sid, id) } })
+    await finishTurn(out, { ...tail, fullContent: result.content, sources: result.sources, fileSources: result.fileSources, context: sink.lastContext, aborted, model, onStored: id => {
+      attachAnswer(resolved, id)
+      linkNotesToAnswer(userId, result.savedNoteIds ?? [], sid, id)
+      if (recorder) saveTrace(sid, id, recorder.serialize(result.content, model))
+    } })
   })
 })
+
+/** A recorder for the turn when its user opted in to research feedback; never for a locked turn,
+ *  whose reading is confidential, nor an ephemeral one, which leaves no message to attach it to. */
+function traceRecorder(ctx: TurnContext, recipe: string | undefined, ephemeral?: boolean): TraceRecorder | undefined {
+  if (ctx.settings.researchFeedback !== true || ctx.locked || ephemeral) return undefined
+  return new TraceRecorder({
+    question: userQueryOf(ctx.msgs),
+    priorMessages: ctx.msgs.length - 1,
+    focusMode: ctx.focusMode,
+    collectionMode: ctx.collections.length || ctx.documentIds?.length ? ctx.collectionMode : undefined,
+    searchCategory: ctx.searchCategory,
+    recipe,
+  })
+}
 
 /** Which model answers, or why the pick was refused; sent right after `session`. */
 function modelEvents(resolved: ResolvedModels): Array<{ type: string; [k: string]: unknown }> {
@@ -539,6 +560,7 @@ async function persistMessage(
   const titlePending = initial.scope !== null && msgs.filter(m => m.role === 'user').length === 1 && !regenerate
   const lastUser = [...msgs].reverse().find(m => m.role === 'user')
   let supersededAnswer: string | undefined
+  let supersededId: string | undefined
 
   await db.transaction(async (tx) => {
     await tx.insert(chatSessions).values({ id: sessionId, title, autoTitleScope: titlePending ? initial.scope : null, createdAt: now, updatedAt: now, userId, spaceId: spaceId ?? null })
@@ -553,6 +575,7 @@ async function persistMessage(
         .orderBy(desc(messages.createdAt)).limit(1).get()
       if (previous) {
         supersededAnswer = previous.content
+        supersededId = previous.id
         await tx.delete(messages).where(eq(messages.id, previous.id))
       }
     } else if (lastUser) {
@@ -561,6 +584,7 @@ async function persistMessage(
     }
     await tx.insert(messages).values({ id: assistantMessageId, sessionId, role: 'assistant', content: assistantContent, sources: JSON.stringify(sources), fileSources: JSON.stringify(fileSources), model: model ? JSON.stringify(model) : null, createdAt: now })
   })
+  if (supersededId) markRegenerated(sessionId, supersededId)
 
   return { title, titlePending, supersededAnswer, userMessageId, assistantMessageId }
 }

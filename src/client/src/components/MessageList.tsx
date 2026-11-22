@@ -15,6 +15,7 @@ import { SplitNotesDialog } from './SplitNotesDialog.tsx'
 const SPLIT_MIN_CHARS = 1500
 import { useT } from '../lib/i18n.tsx'
 import { NoteEditor } from './NoteEditor.tsx'
+import { useFeedback, FeedbackButtons, FeedbackDetails } from './FeedbackControls.tsx'
 import { answerAsNoteBody } from '../lib/note-from-answer.ts'
 import type { ContextReport } from '@shared/context.ts'
 import type { AnswerModel } from '@shared/llm-catalogue.ts'
@@ -65,6 +66,8 @@ interface Props {
   /** The title offered for a note saved from the answer to *Create recipe*'s style prompt, e.g.
    *  "Style: Annual reports"; other answers offer their question. */
   styleNoteTitle?: string
+  /** The user opted in to answer feedback: stored answers get 👍/👎. */
+  feedbackEnabled?: boolean
 }
 
 /** Normalize SVG blocks: unwrap any existing ```svg fences, then rewrap consistently. */
@@ -279,7 +282,7 @@ function HighlightedText({ text, query }: { text: string; query: string }) {
   )}</>
 }
 
-function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, searchQuery, noteTitle, onOpenResource, sessionId, onTogglePin, onDeleteTurn, onNotesChanged, keptInFull }: { msg: Message; isFirst?: boolean; defaultCollapsed?: boolean; isMatch?: boolean; isActive?: boolean; searchQuery?: string; noteTitle?: string; onOpenResource?: (id: string) => void; sessionId?: string; onTogglePin?: () => void; onDeleteTurn?: () => void; onNotesChanged?: () => void; keptInFull?: boolean }) {
+function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, searchQuery, noteTitle, onOpenResource, sessionId, onTogglePin, onDeleteTurn, onNotesChanged, keptInFull, feedbackEnabled }: { msg: Message; isFirst?: boolean; defaultCollapsed?: boolean; isMatch?: boolean; isActive?: boolean; searchQuery?: string; noteTitle?: string; onOpenResource?: (id: string) => void; sessionId?: string; onTogglePin?: () => void; onDeleteTurn?: () => void; onNotesChanged?: () => void; keptInFull?: boolean; feedbackEnabled?: boolean }) {
   const t = useT()
   const [highlighted, setHighlighted] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState(!!defaultCollapsed)
@@ -292,6 +295,9 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
   const savedNotes = [...(msg.savedNotes ?? []), ...savedHere]
   const toggleSource = useCallback((key: string) => setHighlighted(v => v === key ? null : key), [])
   const mdComponents = makeMdComponents(highlighted, toggleSource, msg.sources, msg.fileSources)
+  const feedback = useFeedback(sessionId, msg.id, msg.feedback)
+  // Only a stored answer can be rated: the rating is kept against its id.
+  const canRate = feedbackEnabled && msg.role === 'assistant' && !!msg.id && !!sessionId
 
   function handleSpeak() {
     if (speaking) {
@@ -370,6 +376,7 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
                   </span>
                 )}
                 {noteSaved && <span className="text-[11px] text-green-400">{t('note.savedFromAnswer')}</span>}
+                {canRate && <FeedbackButtons state={feedback} />}
                 {onTogglePin && <PinButton pinned={msg.pinned} keptInFull={keptInFull} onToggle={onTogglePin} />}
                 <button
                   onClick={() => setSavingNote(true)}
@@ -398,6 +405,7 @@ function MessageItem({ msg, isFirst, defaultCollapsed, isMatch, isActive, search
                 )}
               </div>
             )}
+            {canRate && <FeedbackDetails state={feedback} />}
             {splitting && (
               <SplitNotesDialog
                 title={noteTitle ?? ''}
@@ -472,7 +480,7 @@ function noteTitleFor(messages: Message[], index: number): string | undefined {
 const unpinnedIn = (messages: Message[], from: number, to: number) =>
   messages.slice(from, to).filter(m => !m.pinned).length
 
-export const MessageList = memo(function MessageList({ messages, streaming, streamingThinking, collapseFirstQuestion, searchQuery, searchMatchIndices, searchActiveIndex, onOpenResource, sessionId, context, onTogglePin, onDeleteTurn, focusMessageId, onNotesChanged, styleNoteTitle }: Props) {
+export const MessageList = memo(function MessageList({ messages, streaming, streamingThinking, collapseFirstQuestion, searchQuery, searchMatchIndices, searchActiveIndex, onOpenResource, sessionId, context, onTogglePin, onDeleteTurn, focusMessageId, onNotesChanged, styleNoteTitle, feedbackEnabled }: Props) {
   const t = useT()
   const stylePrompt = t('collection.stylePrompt')
   const msgRefs = useRef<Map<number, HTMLDivElement>>(new Map())
@@ -524,6 +532,7 @@ export const MessageList = memo(function MessageList({ messages, streaming, stre
             onDeleteTurn={onDeleteTurn ? () => onDeleteTurn(i) : undefined}
             onNotesChanged={onNotesChanged}
             keptInFull={!!context && i < context.cut}
+            feedbackEnabled={feedbackEnabled}
           />
         </div>
       ))}

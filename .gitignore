@@ -11,4 +11,6 @@ bun.lockb
 docker/env.local
 docker/data*/
 tmp/
+temp/
 production/
+eval-results/
