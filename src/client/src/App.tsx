@@ -24,6 +24,7 @@ import { ChatsView, type ChatsTab } from './components/ChatsView.tsx'
 import { ChatHeader } from './components/ChatHeader.tsx'
 import { ChatSearchBar } from './components/ChatSearchBar.tsx'
 import { ExportMenu } from './components/ExportMenu.tsx'
+import { AwayShield, useAway } from './components/AwayShield.tsx'
 import { ResourcesView } from './components/ResourcesView.tsx'
 import {
   fetchHistory, fetchSession, deleteSession, updateSessionTitle, fetchFiles, updateSettings, fetchSpaces,
@@ -154,6 +155,8 @@ export default function App() {
   const activeChatLocked = !!activeSession?.chatLocked
   const pickedLockedCollection = spaces.some(sp => sp.kind === 'collection' && sp.offline && selectedCollections.includes(sp.id))
   const turnLocked = activeSpaceLocked || activeChatLocked || pickedLockedCollection
+  // Covers a locked chat while the window is away, for users who opted in (components/AwayShield.tsx).
+  const away = useAway(currentUser?.settings?.obscureLocked === true && view === 'chat' && (activeSpaceLocked || activeChatLocked))
   /** Only spaces can hold a chat, so only spaces are offered as a destination for one. The server
    *  refuses a collection either way; this keeps the UI from proposing what it will refuse. */
   const chatSpaces = spaces.filter(sp => sp.kind === 'space')
@@ -576,6 +579,7 @@ export default function App() {
           followUpSuggestions={currentUser.settings?.followUpSuggestions !== false}
           userMemory={currentUser.settings?.userMemory === true}
           researchFeedback={currentUser.settings?.researchFeedback === true}
+          obscureLocked={currentUser.settings?.obscureLocked === true}
           imageWatermark={currentUser.settings?.imageWatermark !== false}
           fontSize={currentUser.settings?.fontSize ?? 17}
           theme={currentUser.settings?.theme ?? DEFAULT_THEME}
@@ -886,6 +890,7 @@ export default function App() {
         )}
       </div>
     </div>
+    <AwayShield show={away} />
     </>
   )
 }

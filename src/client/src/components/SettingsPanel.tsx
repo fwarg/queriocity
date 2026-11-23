@@ -225,6 +225,7 @@ export interface UserSettingsForm {
   followUpSuggestions: boolean
   userMemory: boolean
   researchFeedback: boolean
+  obscureLocked: boolean
   imageWatermark: boolean
   fontSize: number
   theme: Theme
@@ -242,7 +243,7 @@ interface Props extends Omit<UserSettingsForm, 'language'> {
   onSave: (settings: UserSettingsForm) => void
 }
 
-export function SettingsPanel({ customPrompt: initial, showThinking: initialShowThinking, useThinking: initialUseThinking, useSpaceRag: initialUseSpaceRag, useChatRag: initialUseChatRag, querySuggestions: initialQuerySuggestions, followUpSuggestions: initialFollowUpSuggestions, userMemory: initialUserMemory, researchFeedback: initialResearchFeedback, imageWatermark: initialImageWatermark, fontSize: initialFontSize, theme: initialTheme, timezone: initialTimezone, onClose, onPasswordChanged, onSave }: Props) {
+export function SettingsPanel({ customPrompt: initial, showThinking: initialShowThinking, useThinking: initialUseThinking, useSpaceRag: initialUseSpaceRag, useChatRag: initialUseChatRag, querySuggestions: initialQuerySuggestions, followUpSuggestions: initialFollowUpSuggestions, userMemory: initialUserMemory, researchFeedback: initialResearchFeedback, obscureLocked: initialObscureLocked, imageWatermark: initialImageWatermark, fontSize: initialFontSize, theme: initialTheme, timezone: initialTimezone, onClose, onPasswordChanged, onSave }: Props) {
   const t = useT()
   const { lang, setLang } = useLang()
   const [customPrompt, setCustomPrompt] = useState(initial)
@@ -254,6 +255,7 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
   const [followUpSuggestions, setFollowUpSuggestions] = useState(initialFollowUpSuggestions)
   const [userMemory, setUserMemory] = useState(initialUserMemory)
   const [researchFeedback, setResearchFeedback] = useState(initialResearchFeedback)
+  const [obscureLocked, setObscureLocked] = useState(initialObscureLocked)
   const [imageWatermark, setImageWatermark] = useState(initialImageWatermark)
   const [fontSize, setFontSize] = useState(initialFontSize)
   const [theme, setTheme] = useState(initialTheme)
@@ -292,7 +294,7 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
     setBusy(true)
     setSaveError('')
     try {
-      const form = { customPrompt, showThinking, useThinking, useSpaceRag, useChatRag, querySuggestions, followUpSuggestions, userMemory, researchFeedback, imageWatermark, fontSize, theme, timezone, language: lang }
+      const form = { customPrompt, showThinking, useThinking, useSpaceRag, useChatRag, querySuggestions, followUpSuggestions, userMemory, researchFeedback, obscureLocked, imageWatermark, fontSize, theme, timezone, language: lang }
       await updateSettings({ ...form, timezone: timezone || undefined })
       onSave(form)
       setSaved(true)
@@ -437,6 +439,20 @@ export function SettingsPanel({ customPrompt: initial, showThinking: initialShow
                 className="accent-blue-500"
               />
               {t('settings.researchFeedbackEnable')}
+            </label>
+          </div>
+          <div className="border-t border-gray-800" />
+          <div className="flex flex-col gap-2">
+            <label className="text-xs text-gray-400 font-medium">{t('settings.obscureLocked')}</label>
+            <p className="text-xs text-gray-500">{t('settings.obscureLockedDesc')}</p>
+            <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={obscureLocked}
+                onChange={e => setObscureLocked(e.target.checked)}
+                className="accent-blue-500"
+              />
+              {t('settings.obscureLockedEnable')}
             </label>
           </div>
           <div className="border-t border-gray-800" />

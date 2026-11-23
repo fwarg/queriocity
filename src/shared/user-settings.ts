@@ -24,6 +24,8 @@ export const userSettingsSchema = z.object({
   /** Off by default: answer ratings and the research traces behind them (lib/feedback.ts). Nothing
    *  is recorded, and no rating buttons are shown, until the user opts in. */
   researchFeedback: z.boolean().optional(),
+  /** Off by default: covers a locked chat while the window is hidden or unfocused (AwayShield). */
+  obscureLocked: z.boolean().optional(),
   /** Visible "AI-generated" caption burned into downloaded images. On by default — the AI Act's
    *  disclosure duty (Art 50(4)) falls on whoever deploys the app, and only a visible mark
    *  survives a platform stripping the file's metadata. Metadata marking is unconditional. */

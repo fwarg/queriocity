@@ -857,6 +857,20 @@ document is sent there in the very first request, before any tool could exist. Q
 startup when those endpoints are not local. For a document that must not leave your machine at all,
 the model server has to be on it.
 
+**Nor does it change what can read your screen.** A locked chat controls what the server sends out.
+It does not control the device showing the answer. AI assistants built into the operating system
+(Gemini on Android and ChromeOS, Siri's Onscreen Awareness, Windows Recall) can read what is on
+screen. AI features built into the browser (Gemini in Chrome, Copilot in Edge), and AI extensions
+you have installed, can read the page itself. A web page cannot block either: browsers offer no
+equivalent of an app's screenshot protection. For confidential work:
+- Turn off the assistant's screen access on the device.
+- Use a browser profile with no AI extensions.
+- On Windows, use a private window, which Recall skips in supported browsers.
+- Turn on **Settings → Hide locked chats when away**. It covers a locked chat with a blank screen
+  whenever the window is hidden or loses focus. That keeps it out of screenshots and app-switcher
+  previews, and away from assistants opened over another window. It does not stop the browser's own
+  AI or extensions, which read the page itself.
+
 ---
 
 ## Prompt templates
